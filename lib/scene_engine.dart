@@ -2303,7 +2303,6 @@ class SceneEngine {
       _chainOpening = false;
     }
     if (next == ScenePhase.browserShowing) {
-      _activeBrowser?.framesIntoPhase = 0;
       _chainOpening = false;
     }
     if (next == ScenePhase.cardShowing) {

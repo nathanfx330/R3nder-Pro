@@ -407,9 +407,6 @@ class _ActiveBrowser {
 
   int pageIndex = 0;
 
-  /// Frames since this page finished loading. Drives the scroll.
-  int framesIntoPhase = 0;
-
   _ActiveBrowser({
     required this.images,
     required this.sources,
@@ -473,30 +470,18 @@ class _ActiveBrowser {
 
   BrowserScroll get currentScroll => scrollAt(pageIndex);
 
-  /// How far down the page the viewport has travelled, 0..1, on this exact
-  /// frame.
+  /// How far down the page the viewport has travelled, 0..1, at [frames]
+  /// inside this page's hold.
   ///
-  /// A pure function of [framesIntoPhase] and the page's own hold, which is
-  /// what keeps it deterministic and what keeps it frame-neutral: the
-  /// travel is carved out of a hold the page already owned, so a capture
-  /// twenty screens tall costs exactly the same frames as one that fits.
-  /// The painter multiplies this by whatever overflow the capture actually
-  /// has, so a page that fits the viewport reports travel and simply has
-  /// nowhere to apply it.
+  /// Pure function of [frames] and the page's own hold. The travel is carved
+  /// out of a hold the page already owned, so a capture twenty screens tall
+  /// costs exactly the same frames as one that fits. The painter multiplies
+  /// this by whatever overflow the capture actually has once it knows the
+  /// viewport.
   ///
-  /// Returns 0 for TOP and FIT, and for a hold too short to travel
-  /// legibly. Skipped rather than sped up: a scroll crammed into fifteen
-  /// frames is not a fast read, it is a flicker.
-  double get scrollT => scrollTAt(framesIntoPhase);
-
-  /// The same answer for an arbitrary frame of this page's hold.
-  ///
-  /// Takes the frame rather than reading [framesIntoPhase] so a caller that
-  /// needs the value at the END of the hold — the navigation and the close,
-  /// both of which must leave the outgoing capture exactly where the last
-  /// drawn frame put it — can ask for it without writing to this object.
-  /// An accessor that mutates state to compute a read is a bug waiting for
-  /// a second caller.
+  /// Returns 0 for TOP and FIT, and for a hold too short to travel legibly.
+  /// Skipped rather than sped up: a scroll crammed into fifteen frames is not
+  /// a fast read, it is a flicker.
   double scrollTAt(int frames) {
     if (currentScroll != BrowserScroll.scroll) return 0.0;
     final int hold = currentHold;
