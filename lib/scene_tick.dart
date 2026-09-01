@@ -130,9 +130,10 @@ extension _SceneEngineTicking on SceneEngine {
           break;
         }
 
-        // Ordinary gallery playback is unchanged.
-        g.framesIntoPhase++;
-        if (g.framesIntoPhase >= g.holdFrames) {
+        // Ordinary still galleries use absolute scene phase age for each
+        // image hold. CUT explicitly re-enters viewerShowing so the next
+        // image gets a new absolute phase start frame without a side counter.
+        if (_phaseEndsThisTick(g.holdFrames)) {
           if (g.imageIndex >= g.images.length - 1) {
             // Last image held: close the viewer. If another presentation
             // tag is next in the script, hand off instead of zooming in.
@@ -141,7 +142,7 @@ extension _SceneEngineTicking on SceneEngine {
           } else if (g.transition == 'CUT') {
             // Instant page turn.
             g.imageIndex++;
-            g.framesIntoPhase = 0;
+            _enterPhase(ScenePhase.viewerShowing);
           } else {
             // Animated page turn (FADE / FLIP).
             g.imageIndex++;
