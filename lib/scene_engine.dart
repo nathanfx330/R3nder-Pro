@@ -1869,7 +1869,7 @@ class SceneEngine {
       }
       _activeApp = _composeApp(appReq, images, imageCaptions);
 
-      // Silence is the failure mode worth guarding here. Pane life is a config
+      // Silence is the failure mode to avoid here. Pane life is a config
       // set once at the top of a script, so a hold that is too short to
       // move in looks exactly like the feature not working, and the author
       // has no way to tell which. The page still runs at its scripted
