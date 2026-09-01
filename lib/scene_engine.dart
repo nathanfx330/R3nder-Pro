@@ -119,10 +119,9 @@ class SceneEngine {
   /// 0..1 progress through the current animated phase.
   ///
   /// Painter-facing animation age is derived from the absolute scene frame
-  /// and the frame on which this phase became visible. The legacy mutable
-  /// [_phaseFrames] counter still drives transition decisions for now; keeping
-  /// that control path unchanged makes this first direct-time conversion easy
-  /// to regression-test in isolation.
+  /// and the frame on which this phase became visible. Transition decisions
+  /// use that same absolute phase age, so painting and phase boundaries share
+  /// one clock.
   double get phaseProgress {
     switch (phase) {
       case ScenePhase.termZoomOut:
@@ -166,10 +165,6 @@ class SceneEngine {
         return 0.0;
     }
   }
-
-  /// Legacy transition counter. This remains until the next migration step,
-  /// where phase-boundary decisions move to the same absolute-frame model.
-  int _phaseFrames = 0;
 
   /// Absolute scene frame on which the current phase first became visible.
   int _phaseStartFrame = 0;
@@ -538,7 +533,9 @@ class SceneEngine {
   double get browserScrollT {
     final b = _activeBrowser;
     if (b == null) return 0.0;
-    if (phase == ScenePhase.browserShowing) return b.scrollT;
+    if (phase == ScenePhase.browserShowing) {
+      return b.scrollTAt(_phaseVisualFrames);
+    }
     if (phase == ScenePhase.browserNavigating ||
         phase == ScenePhase.browserRestoring ||
         phase == ScenePhase.browserClosing) {
@@ -1766,7 +1763,6 @@ class SceneEngine {
     inPrerollSequence = _configWithPreroll;
     phase = inPrerollSequence ? ScenePhase.prerollIdle : ScenePhase.terminal;
     
-    _phaseFrames = 0;
     _phaseStartFrame = 0;
     _activeGallery = null;
     _activeApp = null;
@@ -2294,7 +2290,6 @@ class SceneEngine {
 
   void _enterPhase(ScenePhase next) {
     phase = next;
-    _phaseFrames = 0;
     // _enterPhase() runs inside the current tick. frameCount increments only
     // after the tick finishes, so the newly entered phase first becomes
     // visible at frameCount + 1 and must report visual age zero there.
