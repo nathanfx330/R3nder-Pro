@@ -712,7 +712,7 @@ class SceneEngine {
     if (t == null) return 0.0;
     if (phase == ScenePhase.timelineClosing) return 1.0; // fully drawn on exit
     if (phase != ScenePhase.timelineShowing) return 0.0;
-    return t.spineProgress;
+    return (_phaseVisualFrames / kTlSpineFrames).clamp(0.0, 1.0);
   }
 
   /// 0..1 reveal progress of event [i]. 0 outside timelineShowing, 1 during
@@ -722,7 +722,11 @@ class SceneEngine {
     if (t == null) return 0.0;
     if (phase == ScenePhase.timelineClosing) return 1.0;
     if (phase != ScenePhase.timelineShowing) return 0.0;
-    return t.eventProgress(i);
+    final int start = kTlSpineFrames + i * kTlEventStagger;
+    final int local = _phaseVisualFrames - start;
+    if (local <= 0) return 0.0;
+    if (local >= kTlEventFade) return 1.0;
+    return local / kTlEventFade;
   }
 
   /// 0..1 how far the timeline panel has slid ON screen. Same contract as
@@ -767,16 +771,25 @@ class SceneEngine {
   /// Whether the background dimming effect is active.
   bool get timelineFocusMode => _activeTimeline?.focusMode ?? false;
 
-  /// Connector-line tip parameter in "segments travelled" (see
-  /// _ActiveTimeline.stageLineT). 0 outside timelineShowing; parked at the
-  /// last paired photo during closing so the line doesn't retract while
-  /// the panel slides away.
+  /// Connector-line tip parameter in "segments travelled". 0 outside
+  /// timelineShowing; parked at the last paired photo during closing so the
+  /// line doesn't retract while the panel slides away.
   double get timelineStageLineT {
     final t = _activeTimeline;
     if (t == null || t.stagePairCount == 0) return 0.0;
     if (phase == ScenePhase.timelineClosing) return t.stagePairCount.toDouble();
     if (phase != ScenePhase.timelineShowing) return 0.0;
-    return t.stageLineT;
+
+    final int n = t.stagePairCount;
+    final int f = _phaseVisualFrames;
+    if (f <= 0) return 0.0;
+    if (f < kTlSpineFrames) return f / kTlSpineFrames;
+
+    final int past = f - kTlSpineFrames;
+    final int seg = past ~/ kTlEventStagger;
+    if (seg >= n - 1) return n.toDouble();
+    final double frac = (past % kTlEventStagger) / kTlEventStagger;
+    return 1.0 + seg + frac;
   }
 
   /// 0..1 border-activation progress of stage photo [i]. Pinned to the
@@ -789,7 +802,7 @@ class SceneEngine {
     if (i >= t.stagePairCount) return 0.0;
     if (phase == ScenePhase.timelineClosing) return 1.0;
     if (phase != ScenePhase.timelineShowing) return 0.0;
-    return t.eventProgress(i);
+    return timelineEventProgress(i);
   }
 
   /// Preloaded, decoded images keyed by folder name. Gallery, video, app,
@@ -1856,7 +1869,7 @@ class SceneEngine {
       }
       _activeApp = _composeApp(appReq, images, imageCaptions);
 
-      // Silence is the failure mode to avoid here. Pane life is a config
+      // Silence is the failure mode worth guarding here. Pane life is a config
       // set once at the top of a script, so a hold that is too short to
       // move in looks exactly like the feature not working, and the author
       // has no way to tell which. The page still runs at its scripted
