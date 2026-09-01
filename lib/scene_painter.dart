@@ -1902,11 +1902,10 @@ class ScenePainter extends CustomPainter {
   ///   page k: rests for _kDossierScrollHoldFrames, then eases up one tile
   ///   over _kDossierScrollAnimFrames. Monotonic; clamped to [maxSteps].
   ///
-  /// During dossierSplitShowing, frames = the dossier's live framesIntoPhase.
-  /// During dossierTransitioning, the SceneEngine has stopped advancing that
-  /// counter (it only resets on entering dossierFullShowing), so it sits
-  /// frozen at its final split value — the hand-off inherits the exact
-  /// scrolled positions for free, with no snapshot state anywhere.
+  /// During dossierSplitShowing, [frames] is the live absolute phase age.
+  /// During dossierTransitioning, SceneEngine pins dossierFramesIntoPhase to
+  /// the completed split hold, so the hand-off inherits the exact scrolled
+  /// position without carrying a mutable dossier clock.
   static double _dossierScrollOffset(int frames, int maxSteps) {
     if (maxSteps <= 0) return 0.0;
     const int cycle = _kDossierScrollHoldFrames + _kDossierScrollAnimFrames;
@@ -1916,7 +1915,7 @@ class ScenePainter extends CustomPainter {
 
     final int local = frames % cycle;
     if (local < _kDossierScrollHoldFrames) {
-      return completed.toDouble(); // Resting on this pair.
+      return completed.toDouble(); // Resting on this three-up view.
     }
     final double t =
         (local - _kDossierScrollHoldFrames) / _kDossierScrollAnimFrames;
@@ -1925,12 +1924,11 @@ class ScenePainter extends CustomPainter {
 
   /// Draws the dossier gallery window.
   ///
-  /// SPLIT MODE (transitionT = 0): a single-column strip showing TWO tiles
-  /// at a time in the window left of the info card. All tiles are laid out
-  /// in one vertical strip; a paged scroll offset (pure function of
-  /// framesIntoPhase, see _dossierScrollOffset) slides the strip upward one
-  /// tile at a time. Off-strip tiles are clipped by the window — the point
-  /// is browsing, not seeing everything.
+  /// SPLIT MODE (transitionT = 0): a single-column strip showing THREE large
+  /// tiles at a time in the window left of the info card. All tiles are laid
+  /// out in one vertical strip; a paged scroll offset slides the strip upward
+  /// one tile at a time. Off-strip tiles are clipped by the window — the point
+  /// is browsing, not seeing everything at once.
   ///
   /// TRANSITION (0 < transitionT < 1): the window bounds lerp to the full
   /// app-window rect while every tile lerps from its scrolled strip position
@@ -1983,7 +1981,7 @@ class ScenePainter extends CustomPainter {
       final double gap = engineW * _kAppTileGapFrac;
 
       // ---------------------------------------------------------------
-      // STATE A LAYOUT: the browsing strip. One column, two tiles visible;
+      // STATE A LAYOUT: the browsing strip. One column, three tiles visible;
       // every tile gets a strip position, shifted by the paged scroll.
       // Off-screen positions are perfectly valid rects — the content clip
       // hides them in split mode, and the transition lerp launches them
@@ -1995,13 +1993,14 @@ class ScenePainter extends CustomPainter {
       final double stripPadT = contentA.top + pad;
       final double stripW = contentA.width - pad * 2;
       final double stripVisH = contentA.height - pad * 2;
-      // Two tiles + one gap fill the visible strip exactly.
-      final double stripTileH = math.max((stripVisH - gap) / 2.0, 1.0);
+      // Three tiles + two gaps fill the visible strip exactly.
+      final double stripTileH =
+          math.max((stripVisH - gap * 2.0) / 3.0, 1.0);
       final double stripStep = stripTileH + gap;
 
       // Paged scroll: monotonic, clamped so the strip rests with the last
-      // tile seated in the bottom slot (count - 2 steps; 0 for <= 2 tiles).
-      final int maxSteps = math.max(count - 2, 0);
+      // tile seated in the bottom slot (count - 3 steps; 0 for <= 3 tiles).
+      final int maxSteps = math.max(count - 3, 0);
       final double scroll = _dossierScrollOffset(
           scene.dossierFramesIntoPhase, maxSteps);
 
