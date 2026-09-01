@@ -117,11 +117,17 @@ class SceneEngine {
   bool get isChainOpening => _chainOpening;
 
   /// 0..1 progress through the current animated phase.
+  ///
+  /// Painter-facing animation age is derived from the absolute scene frame
+  /// and the frame on which this phase became visible. The legacy mutable
+  /// [_phaseFrames] counter still drives transition decisions for now; keeping
+  /// that control path unchanged makes this first direct-time conversion easy
+  /// to regression-test in isolation.
   double get phaseProgress {
     switch (phase) {
       case ScenePhase.termZoomOut:
       case ScenePhase.termZoomIn:
-        return (_phaseFrames / kZoomAnimFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kZoomAnimFrames).clamp(0.0, 1.0);
       case ScenePhase.viewerOpening:
       case ScenePhase.viewerClosing:
       case ScenePhase.appOpening:
@@ -130,9 +136,9 @@ class SceneEngine {
       case ScenePhase.browserClosing:
       case ScenePhase.dossierGalleryOpening:
       case ScenePhase.dossierTransitioning:
-        return (_phaseFrames / kWindowAnimFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kWindowAnimFrames).clamp(0.0, 1.0);
       case ScenePhase.dossierClosing:
-        return (_phaseFrames /
+        return (_phaseVisualFrames /
                 (dossierSideOnly ? kCardSlideFrames : kWindowAnimFrames))
             .clamp(0.0, 1.0);
       case ScenePhase.cardOpening:
@@ -140,28 +146,36 @@ class SceneEngine {
       case ScenePhase.dossierOpening:
       case ScenePhase.timelineOpening:
       case ScenePhase.timelineClosing:
-        return (_phaseFrames / kCardSlideFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kCardSlideFrames).clamp(0.0, 1.0);
       case ScenePhase.viewerTransition:
-        return (_phaseFrames / kGalleryTransitionFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kGalleryTransitionFrames).clamp(0.0, 1.0);
       case ScenePhase.browserNavigating:
-        return (_phaseFrames / kBrowserNavFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kBrowserNavFrames).clamp(0.0, 1.0);
       case ScenePhase.appPanning:
       case ScenePhase.dossierMosaicPanning:
-        return (_phaseFrames / kAppPanFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kAppPanFrames).clamp(0.0, 1.0);
       case ScenePhase.appMaximizing:
       case ScenePhase.appRestoring:
-        return (_phaseFrames / kAppMaximizeFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kAppMaximizeFrames).clamp(0.0, 1.0);
       case ScenePhase.browserMaximizing:
       case ScenePhase.browserRestoring:
-        return (_phaseFrames / kBrowserMaximizeFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kBrowserMaximizeFrames).clamp(0.0, 1.0);
       case ScenePhase.prerollWipe:
-        return (_phaseFrames / kPrerollWipeFrames).clamp(0.0, 1.0);
+        return (_phaseVisualFrames / kPrerollWipeFrames).clamp(0.0, 1.0);
       default:
         return 0.0;
     }
   }
 
+  /// Legacy transition counter. This remains until the next migration step,
+  /// where phase-boundary decisions move to the same absolute-frame model.
   int _phaseFrames = 0;
+
+  /// Absolute scene frame on which the current phase first became visible.
+  int _phaseStartFrame = 0;
+
+  /// Frames elapsed in the current phase as seen by the painter.
+  int get _phaseVisualFrames => frameCount - _phaseStartFrame;
 
   _ActiveGallery? _activeGallery;
   _ActiveApp? _activeApp;
@@ -258,7 +272,7 @@ class SceneEngine {
   /// The painter owns the easing, as it does for every other animation.
   double get appPanT {
     if (phase != ScenePhase.appPanning) return 0.0;
-    return (_phaseFrames / kAppPanFrames).clamp(0.0, 1.0);
+    return (_phaseVisualFrames / kAppPanFrames).clamp(0.0, 1.0);
   }
 
   /// Per-tile cascade opacity for panel index [i] on the current page, 0..1.
@@ -628,7 +642,7 @@ class SceneEngine {
 
   double get dossierMosaicPanT {
     if (phase != ScenePhase.dossierMosaicPanning) return 0.0;
-    return (_phaseFrames / kAppPanFrames).clamp(0.0, 1.0);
+    return (_phaseVisualFrames / kAppPanFrames).clamp(0.0, 1.0);
   }
 
   /// 0..1 how far the dossier's info card has slid ON screen. Seated
@@ -1753,6 +1767,7 @@ class SceneEngine {
     phase = inPrerollSequence ? ScenePhase.prerollIdle : ScenePhase.terminal;
     
     _phaseFrames = 0;
+    _phaseStartFrame = 0;
     _activeGallery = null;
     _activeApp = null;
     _activeBrowser = null;
@@ -2280,6 +2295,10 @@ class SceneEngine {
   void _enterPhase(ScenePhase next) {
     phase = next;
     _phaseFrames = 0;
+    // _enterPhase() runs inside the current tick. frameCount increments only
+    // after the tick finishes, so the newly entered phase first becomes
+    // visible at frameCount + 1 and must report visual age zero there.
+    _phaseStartFrame = frameCount + 1;
     if (next == ScenePhase.viewerShowing) {
       _activeGallery?.framesIntoPhase = 0;
       _chainOpening = false;
