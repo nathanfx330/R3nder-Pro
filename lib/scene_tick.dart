@@ -266,13 +266,15 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserShowing:
         final br = _activeBrowser!;
+        // Keep the legacy scroll counter advancing in parallel for this test
+        // pass, but let absolute phase age decide when the page hold ends.
         br.framesIntoPhase++;
         // The page's own hold, which under SCROLL is also the budget the
         // travel lives inside. The scroll divides it and never extends it,
         // so a capture twenty screens tall costs the same frames as one
         // that fits — the same neutrality rule Pane Life follows, and for
         // the same reason: a look must not re-time a finished piece.
-        if (br.framesIntoPhase >= br.currentHold) {
+        if (_phaseEndsThisTick(br.currentHold)) {
           if (br.hasMorePages) {
             _enterPhase(ScenePhase.browserNavigating);
           } else if (_tryAbsorbNextBrowser()) {
