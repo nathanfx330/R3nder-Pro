@@ -12,20 +12,21 @@
 // individual effects become direct-time evaluators, their implementations can
 // move behind this seam without changing callers again.
 //
-// The legacy engine is frame-discrete, so sub-frame ProjectTime is rejected
-// rather than silently rounded. Epoch and clock mode belong to scheduling and
-// invalidation; they do not alter deterministic scene content.
+// The legacy engine is frame-discrete. A ProjectTime sampled between frames
+// therefore evaluates the containing whole frame, [time.frame]. The exact
+// rational phase is preserved on the request for future interpolation, but it
+// does not affect scene content yet. Epoch and clock mode belong to scheduling
+// and invalidation; they do not alter deterministic scene content.
 
 import 'project_clock.dart';
 import 'scene_engine.dart';
 
 /// Result of evaluating a mutable SceneEngine toward an explicit project time.
 ///
-/// [exact] is false when a bounded evaluation stopped before the requested
-/// frame, or when the requested frame lies beyond the point where the scene
-/// reports finished. That distinction matters for preview and future scrub
-/// callers: bounded catch-up is allowed, but it must never pretend skipped
-/// mutable state has already been evaluated.
+/// [exact] means the engine reached the requested whole project frame. The
+/// current frame-discrete scene does not yet evaluate sub-frame phase. It is
+/// false when a bounded evaluation stopped before that frame, or when the
+/// requested frame lies beyond the point where the scene reports finished.
 class SceneEvaluationResult {
   final ProjectTime requested;
   final int reachedFrame;
@@ -51,13 +52,6 @@ extension SceneProjectEvaluation on SceneEngine {
     ProjectTime time, {
     int? maxForwardFrames,
   }) {
-    if (!time.isOnFrame) {
-      throw ArgumentError.value(
-        time,
-        'time',
-        'SceneEngine currently evaluates whole project frames only.',
-      );
-    }
     if (time.frame < 0) {
       throw ArgumentError.value(
         time.frame,
