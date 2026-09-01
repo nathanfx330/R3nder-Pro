@@ -429,10 +429,6 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.timelineShowing:
         final t = _activeTimeline!;
-        // Mirror the legacy visual age from absolute scene phase age. This
-        // preserves every existing timeline helper while proving the reveal
-        // clock no longer depends on the value written by the previous tick.
-        t.framesIntoPhase = _phaseVisualFrames + 1;
         if (_phaseEndsThisTick(t.revealTotalFrames + t.holdFrames)) {
           _chainClosing = terminal.peekNextPresentation();
           _enterPhase(ScenePhase.timelineClosing);
