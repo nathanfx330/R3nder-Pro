@@ -46,3 +46,7 @@ app.*.map.json
 
 # R3nder local/session state
 .r3nder_session.json
+
+# R3nder generated local project data
+/default_workspace/
+/templates/
