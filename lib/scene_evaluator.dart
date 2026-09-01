@@ -2,14 +2,15 @@
 //
 // ProjectTime-facing evaluation seam for the existing deterministic scene
 // engine. This is intentionally a compatibility layer, not the finished
-// purity migration.
+// direct-time implementation.
 //
 // Today SceneEngine is still a state machine advanced by tick(). This file
 // gives callers the contract we actually want to keep: ask for one explicit
-// ProjectTime and receive the scene at that project frame. Forward evaluation
-// advances the existing deterministic machine. Backward evaluation resets and
-// replays. As individual effects become pure, their implementations can move
-// behind this seam without changing callers again.
+// ProjectTime and receive the scene evaluated as far toward that time as the
+// caller's work budget allows. Forward evaluation advances the existing
+// deterministic machine. Backward evaluation resets and replays. As
+// individual effects become direct-time evaluators, their implementations can
+// move behind this seam without changing callers again.
 //
 // The legacy engine is frame-discrete, so sub-frame ProjectTime is rejected
 // rather than silently rounded. Epoch and clock mode belong to scheduling and
@@ -18,12 +19,13 @@
 import 'project_clock.dart';
 import 'scene_engine.dart';
 
-/// Result of evaluating a mutable SceneEngine at an explicit project time.
+/// Result of evaluating a mutable SceneEngine toward an explicit project time.
 ///
-/// [exact] is false only when the requested frame lies beyond the point where
-/// the scene reports finished. That distinction matters for future scrub and
-/// export callers: reaching the last valid frame is not the same thing as
-/// reaching an arbitrary requested frame after the piece has ended.
+/// [exact] is false when a bounded evaluation stopped before the requested
+/// frame, or when the requested frame lies beyond the point where the scene
+/// reports finished. That distinction matters for preview and future scrub
+/// callers: bounded catch-up is allowed, but it must never pretend skipped
+/// mutable state has already been evaluated.
 class SceneEvaluationResult {
   final ProjectTime requested;
   final int reachedFrame;
@@ -42,10 +44,13 @@ class SceneEvaluationResult {
 ///
 /// This extension is the migration boundary. Callers should move toward
 /// [evaluate] instead of owning reset/tick loops themselves. The implementation
-/// may still replay today; later pure evaluators and snapshot restoration can
-/// replace that machinery behind the same API.
+/// may still replay today; later direct-time evaluators and snapshot restoration
+/// can replace that machinery behind the same API.
 extension SceneProjectEvaluation on SceneEngine {
-  SceneEvaluationResult evaluate(ProjectTime time) {
+  SceneEvaluationResult evaluate(
+    ProjectTime time, {
+    int? maxForwardFrames,
+  }) {
     if (!time.isOnFrame) {
       throw ArgumentError.value(
         time,
@@ -60,13 +65,27 @@ extension SceneProjectEvaluation on SceneEngine {
         'Project frame must be zero or greater.',
       );
     }
+    if (maxForwardFrames != null && maxForwardFrames <= 0) {
+      throw ArgumentError.value(
+        maxForwardFrames,
+        'maxForwardFrames',
+        'Forward frame budget must be greater than zero.',
+      );
+    }
 
     if (time.frame < frameCount) {
       reset();
     }
 
-    while (frameCount < time.frame && !isFinished) {
+    final int remaining = time.frame - frameCount;
+    final int budget = maxForwardFrames == null
+        ? remaining
+        : remaining.clamp(0, maxForwardFrames).toInt();
+
+    int advanced = 0;
+    while (advanced < budget && !isFinished) {
       tick();
+      advanced++;
     }
 
     return SceneEvaluationResult(
