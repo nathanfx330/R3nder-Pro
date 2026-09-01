@@ -266,10 +266,6 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserShowing:
         final br = _activeBrowser!;
-        // The browser's visual age now mirrors absolute scene phase age.
-        // The field remains temporarily because the painter-facing browser
-        // helper still reads it; it is no longer an accumulating clock.
-        br.framesIntoPhase = _phaseVisualFrames + 1;
         // The page's own hold, which under SCROLL is also the budget the
         // travel lives inside. The scroll divides it and never extends it,
         // so a capture twenty screens tall costs the same frames as one
@@ -308,9 +304,8 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserNavigating:
         if (_phaseEndsThisTick(kBrowserNavFrames)) {
-          // The incoming page becomes the held page. _enterPhase resets
-          // framesIntoPhase, so the new page starts its own hold — and
-          // therefore its own scroll — from zero.
+          // The incoming page becomes the held page. Its own hold and scroll
+          // begin when browserShowing starts on the next scene frame.
           _activeBrowser!.pageIndex++;
           _enterPhase(ScenePhase.browserShowing);
         }
