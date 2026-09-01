@@ -187,7 +187,9 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appShowing:
         final a = _activeApp!;
-        a.framesIntoPhase++;
+        // Preserve the existing painter helpers while deriving their visual
+        // age from the absolute scene phase instead of accumulating a clock.
+        a.framesIntoPhase = _phaseVisualFrames + 1;
         // Wait for the cascade to finish, THEN hold for the script's
         // duration. In MOSAIC the hold is per page, so a page that still has
         // successors pans on instead of leaving.
@@ -195,8 +197,8 @@ extension _SceneEngineTicking on SceneEngine {
         // currentHoldFrames, not holdFrames: a page whose panes authored
         // `+N` extensions genuinely owns more time than the script's base
         // hold. This is the point at which the piece gets longer.
-        if (a.framesIntoPhase >=
-            a.cascadeTotalFrames + a.currentHoldFrames) {
+        if (_phaseEndsThisTick(
+            a.cascadeTotalFrames + a.currentHoldFrames)) {
           if (a.hasMorePages) {
             _enterPhase(ScenePhase.appPanning);
           } else if (_tryAbsorbNextApp()) {
@@ -371,8 +373,10 @@ extension _SceneEngineTicking on SceneEngine {
         break;
 
       case ScenePhase.dossierSplitShowing:
-        _activeDossier!.framesIntoPhase++;
-        if (_activeDossier!.framesIntoPhase >= _activeDossier!.holdSplit) {
+        // Keep the existing painter-facing field as a direct mirror while
+        // both the visual age and the split boundary use absolute phase age.
+        _activeDossier!.framesIntoPhase = _phaseVisualFrames + 1;
+        if (_phaseEndsThisTick(_activeDossier!.holdSplit)) {
           if (_activeDossier!.centerMode == DossierCenterMode.sideOnly) {
             _chainClosing = terminal.peekNextPresentation();
             _enterPhase(ScenePhase.dossierClosing);
@@ -389,8 +393,10 @@ extension _SceneEngineTicking on SceneEngine {
         break;
 
       case ScenePhase.dossierFullShowing:
-        _activeDossier!.framesIntoPhase++;
-        if (_activeDossier!.framesIntoPhase >= _activeDossier!.holdFull) {
+        // Full view follows the same rule as split view. During the mosaic
+        // pan this value freezes at the end of the completed full hold.
+        _activeDossier!.framesIntoPhase = _phaseVisualFrames + 1;
+        if (_phaseEndsThisTick(_activeDossier!.holdFull)) {
           if (_activeDossier!.hasMoreMosaicPages) {
             _enterPhase(ScenePhase.dossierMosaicPanning);
           } else {
