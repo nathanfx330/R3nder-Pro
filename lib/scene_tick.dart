@@ -187,9 +187,6 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appShowing:
         final a = _activeApp!;
-        // Preserve the existing painter helpers while deriving their visual
-        // age from the absolute scene phase instead of accumulating a clock.
-        a.framesIntoPhase = _phaseVisualFrames + 1;
         // Wait for the cascade to finish, THEN hold for the script's
         // duration. In MOSAIC the hold is per page, so a page that still has
         // successors pans on instead of leaving.
@@ -222,8 +219,8 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appPanning:
         if (_phaseEndsThisTick(kAppPanFrames)) {
-          // The incoming page becomes the held page. _enterPhase resets
-          // framesIntoPhase, so the new page starts its own hold clean.
+          // The incoming page becomes the held page. Entering appShowing
+          // gives it a fresh absolute phase start frame for its own hold.
           _activeApp!.pageIndex++;
           // New page, new panel count and no cascade, so the motion plan
           // is rebuilt against the budget this page actually owns.
@@ -373,9 +370,6 @@ extension _SceneEngineTicking on SceneEngine {
         break;
 
       case ScenePhase.dossierSplitShowing:
-        // Keep the existing painter-facing field as a direct mirror while
-        // both the visual age and the split boundary use absolute phase age.
-        _activeDossier!.framesIntoPhase = _phaseVisualFrames + 1;
         if (_phaseEndsThisTick(_activeDossier!.holdSplit)) {
           if (_activeDossier!.centerMode == DossierCenterMode.sideOnly) {
             _chainClosing = terminal.peekNextPresentation();
@@ -393,9 +387,6 @@ extension _SceneEngineTicking on SceneEngine {
         break;
 
       case ScenePhase.dossierFullShowing:
-        // Full view follows the same rule as split view. During the mosaic
-        // pan this value freezes at the end of the completed full hold.
-        _activeDossier!.framesIntoPhase = _phaseVisualFrames + 1;
         if (_phaseEndsThisTick(_activeDossier!.holdFull)) {
           if (_activeDossier!.hasMoreMosaicPages) {
             _enterPhase(ScenePhase.dossierMosaicPanning);

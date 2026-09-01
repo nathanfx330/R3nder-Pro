@@ -284,7 +284,7 @@ class SceneEngine {
       return 1.0;
     }
     if (phase != ScenePhase.appShowing) return 0.0;
-    return a.tileOpacity(i);
+    return a.tileOpacityAt(i, _phaseVisualFrames);
   }
 
   /// Scale and drift for mosaic panel [i] on page [page].
@@ -295,10 +295,9 @@ class SceneEngine {
   ///
   /// FREEZES RATHER THAN RELEASING. Only the held page moves, and only
   /// during appShowing, but a panel that has drifted must not snap back
-  /// when that phase ends. framesIntoPhase resets on every phase change,
-  /// so returning identity outside appShowing would jump every panel to
-  /// centre on the exact frame a page turn begins, which is the frame the
-  /// eye is already tracking.
+  /// when that phase ends. The direct phase age restarts on every phase
+  /// change, so evaluating the outgoing pane at the new phase's zero would
+  /// jump every panel to centre on the exact frame a page turn begins.
   ///
   /// So during the pan, the restore, and the close, the outgoing page is
   /// evaluated at the end of the budget it just finished: exactly where it
@@ -411,7 +410,7 @@ class SceneEngine {
 
     switch (phase) {
       case ScenePhase.appShowing:
-        return a.paneFrame(i);
+        return a.paneFrameAt(i, _phaseVisualFrames);
 
       case ScenePhase.appPanning:
       case ScenePhase.appRestoring:
@@ -617,9 +616,28 @@ class SceneEngine {
   bool get dossierSideOnly =>
       dossierCenterMode == DossierCenterMode.sideOnly;
 
-  /// Frames elapsed inside the current dossier phase. Drives the thumbnail
-  /// cascade in the gallery grid.
-  int get dossierFramesIntoPhase => _activeDossier?.framesIntoPhase ?? 0;
+  /// Visual age used by the dossier thumbnail cascade. Showing phases read
+  /// their live absolute phase age. Transition, pan, and close phases pin the
+  /// completed hold so the outgoing thumbnails stay exactly where they were.
+  int get dossierFramesIntoPhase {
+    final d = _activeDossier;
+    if (d == null) return 0;
+    switch (phase) {
+      case ScenePhase.dossierSplitShowing:
+      case ScenePhase.dossierFullShowing:
+        return _phaseVisualFrames;
+      case ScenePhase.dossierTransitioning:
+        return d.holdSplit;
+      case ScenePhase.dossierMosaicPanning:
+        return d.holdFull;
+      case ScenePhase.dossierClosing:
+        return d.centerMode == DossierCenterMode.sideOnly
+            ? d.holdSplit
+            : d.holdFull;
+      default:
+        return 0;
+    }
+  }
 
   int get dossierMosaicPageIndex => _activeDossier?.mosaicPageIndex ?? 0;
 
@@ -2311,24 +2329,12 @@ class SceneEngine {
       _activeGallery?.framesIntoPhase = 0;
       _chainOpening = false;
     }
-    if (next == ScenePhase.appShowing) {
-      _activeApp?.framesIntoPhase = 0;
-      _chainOpening = false;
-    }
-    if (next == ScenePhase.browserShowing) {
-      _chainOpening = false;
-    }
-    if (next == ScenePhase.cardShowing) {
-      _activeCard?.framesIntoPhase = 0;
-      _chainOpening = false;
-    }
-    if (next == ScenePhase.dossierSplitShowing ||
-        next == ScenePhase.dossierFullShowing) {
-      _activeDossier?.framesIntoPhase = 0;
-      _chainOpening = false;
-    }
-    if (next == ScenePhase.timelineShowing) {
-      _activeTimeline?.framesIntoPhase = 0;
+    if (next == ScenePhase.appShowing ||
+        next == ScenePhase.browserShowing ||
+        next == ScenePhase.cardShowing ||
+        next == ScenePhase.dossierSplitShowing ||
+        next == ScenePhase.dossierFullShowing ||
+        next == ScenePhase.timelineShowing) {
       _chainOpening = false;
     }
   }

@@ -119,7 +119,7 @@ class _MosaicPane {
 }
 
 /// An app-window sequence in flight: up to 9 decoded images, the panel
-/// layout they render into, and cascade/hold/pan timing state.
+/// layout they render into, and cascade/hold/pan configuration.
 ///
 /// LAYOUT CONTRACT WITH THE PAINTER
 ///
@@ -191,10 +191,6 @@ class _ActiveApp {
   /// Page currently held. During a pan this is the OUTGOING page, and the
   /// incoming one is pageIndex + 1. Always 0 for GRID.
   int pageIndex = 0;
-
-  /// Frames since the current appShowing phase began. Drives the cascade
-  /// math and the post-cascade hold. Reset on entry to every page.
-  int framesIntoPhase = 0;
 
   _ActiveApp({
     required this.images,
@@ -328,10 +324,8 @@ class _ActiveApp {
     }(), 'Pane motion overruns the page budget; frame counts would move.');
   }
 
-  /// Motion for panel [i] at the current [framesIntoPhase].
-  PaneMotion paneMotion(int i) => panePlan.motionAt(i, framesIntoPhase);
-
-  PaneFrame paneFrame(int i) => panePlan.frameAt(i, framesIntoPhase);
+  /// Motion/frame evaluation at explicit age inside appShowing.
+  PaneFrame paneFrameAt(int i, int frames) => panePlan.frameAt(i, frames);
 
   int get pageCount => isMosaic ? pages.length : 1;
 
@@ -356,13 +350,13 @@ class _ActiveApp {
     return (n - 1) * kAppCascadeStagger + kAppCascadeTileFade;
   }
 
-  /// 0..1 opacity of panel [i] on the current page at the current
-  /// framesIntoPhase. Reading order, so the visible sweep runs diagonally.
-  /// Always 1.0 on pages after the first, per [cascadeTotalFrames].
-  double tileOpacity(int i) {
+  /// 0..1 opacity of panel [i] at explicit age inside appShowing.
+  /// Reading order, so the visible sweep runs diagonally. Always 1.0 on
+  /// pages after the first, per [cascadeTotalFrames].
+  double tileOpacityAt(int i, int frames) {
     if (pageIndex > 0) return 1.0;
     final int start = i * kAppCascadeStagger;
-    final int local = framesIntoPhase - start;
+    final int local = frames - start;
     if (local <= 0) return 0.0;
     if (local >= kAppCascadeTileFade) return 1.0;
     return local / kAppCascadeTileFade;
@@ -509,9 +503,6 @@ class _ActiveCard {
   final String heading;
   final String body;
 
-  /// Frames since cardShowing began. Drives the hold.
-  int framesIntoPhase = 0;
-
   _ActiveCard({
     required this.image,
     required this.holdFrames,
@@ -542,8 +533,6 @@ class _ActiveDossier {
   final String heading;
   final String body;
 
-  int framesIntoPhase = 0;
-
   _ActiveDossier({
     required this.images,
     required this.titleImage,
@@ -572,12 +561,10 @@ class TimelineEvent {
   TimelineEvent({required this.date, required this.text});
 }
 
-/// A timeline sequence in flight: the parsed events plus reveal/hold timing
-/// state snapshotted from the [TIMELINE] block. Optionally carries a
-/// "center stage" — a list of contact-sheet photos paired 1:1 with events,
-/// whose connector line and border activations derive from the SAME
-/// framesIntoPhase counter that drives the spine, so the two presentations
-/// can never drift.
+/// A timeline sequence in flight: parsed events plus reveal/hold configuration
+/// snapshotted from the [TIMELINE] block. Optionally carries a "center stage"
+/// contact sheet paired 1:1 with events. All reveal evaluation lives on the
+/// SceneEngine's explicit phase age, so no mutable timeline clock is stored.
 class _ActiveTimeline {
   final List<TimelineEvent> events;
   final int holdFrames; // Hold AFTER all events revealed
@@ -599,10 +586,6 @@ class _ActiveTimeline {
   /// Whether the background dimming effect is active.
   final bool focusMode;
 
-  /// Frames since timelineShowing began. Drives the spine draw, the event
-  /// cascade, the post-reveal hold, AND the stage connector line.
-  int framesIntoPhase = 0;
-
   _ActiveTimeline({
     required this.events,
     required this.holdFrames,
@@ -618,54 +601,9 @@ class _ActiveTimeline {
   int get revealTotalFrames =>
       kTlSpineFrames + (events.length - 1) * kTlEventStagger + kTlEventFade;
 
-  /// 0..1 progress of the spine drawing top-to-bottom.
-  double get spineProgress =>
-      (framesIntoPhase / kTlSpineFrames).clamp(0.0, 1.0);
-
-  /// 0..1 reveal progress of event [i]. Events start revealing after the
-  /// spine completes, in order, staggered.
-  double eventProgress(int i) {
-    final int start = kTlSpineFrames + i * kTlEventStagger;
-    final int local = framesIntoPhase - start;
-    if (local <= 0) return 0.0;
-    if (local >= kTlEventFade) return 1.0;
-    return local / kTlEventFade;
-  }
-
   /// Number of photo<->event pairs that animate.
   int get stagePairCount =>
       stagePhotos.length < events.length ? stagePhotos.length : events.length;
-
-  /// Continuous parameter for the stage connector line's tip, in units of
-  /// "segments travelled":
-  ///
-  ///   0.0        = tip at the line's origin (sheet top-left)
-  ///   0.0 -> 1.0 = travelling origin -> photo 0
-  ///   1.0 -> 2.0 = travelling photo 0 -> photo 1
-  ///   ...
-  ///   pairCount  = tip parked at the last paired photo
-  ///
-  /// The tip ARRIVES at photo i at exactly frame kTlSpineFrames +
-  /// i * kTlEventStagger — the same frame event i starts revealing on the
-  /// spine. Pure function of framesIntoPhase; the painter maps this
-  /// parameter onto the snake path geometry it owns.
-  double get stageLineT {
-    final int n = stagePairCount;
-    if (n == 0) return 0.0;
-
-    final int f = framesIntoPhase;
-
-    // Segment 0: origin -> photo 0, over [0, kTlSpineFrames].
-    if (f <= 0) return 0.0;
-    if (f < kTlSpineFrames) return f / kTlSpineFrames;
-
-    // Segment i (1-based): photo i-1 -> photo i, over kTlEventStagger each.
-    final int past = f - kTlSpineFrames;
-    final int seg = past ~/ kTlEventStagger; // full segments completed
-    if (seg >= n - 1) return n.toDouble(); // parked at the last photo
-    final double frac = (past % kTlEventStagger) / kTlEventStagger;
-    return 1.0 + seg + frac;
-  }
 
   /// Parses raw block body into events. One event per "date | text" line,
   /// split on the FIRST pipe. A line with no pipe continues the previous
