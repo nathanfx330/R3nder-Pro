@@ -330,8 +330,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.cardShowing:
         final c = _activeCard!;
-        c.framesIntoPhase++;
-        if (c.framesIntoPhase >= c.holdFrames) {
+        if (_phaseEndsThisTick(c.holdFrames)) {
           _chainClosing = terminal.peekNextPresentation();
           _enterPhase(ScenePhase.cardClosing);
         }
