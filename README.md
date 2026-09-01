@@ -1,4 +1,6 @@
-# R3nder
+# R3nder Pro
+
+**Work in progress.** R3nder Pro is the active development version of R3nder and is currently undergoing a major architectural overhaul.
 
 A motion graphics tool for terminal sequences. You write a script in a small markup language, it plays back deterministically, and it bakes to ProRes 4444 with a real alpha channel. Linux, Flutter, no cloud, no subscription.
 
