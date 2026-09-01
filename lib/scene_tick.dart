@@ -7,20 +7,33 @@ part of 'scene_engine.dart';
 // phase transitions. The public SceneEngine.tick() contract is unchanged.
 
 extension _SceneEngineTicking on SceneEngine {
+  /// Whether the current phase reaches [duration] on this tick.
+  ///
+  /// [_phaseVisualFrames] is the authoritative value: absolute scene frame
+  /// minus the frame where this phase became visible. The old [_phaseFrames]
+  /// counter is still incremented during this one regression pass only so the
+  /// debug assertion can prove the two clocks agree exactly before that
+  /// mutable counter is removed altogether.
+  bool _phaseEndsThisTick(int duration) {
+    final int elapsedAfterTick = _phaseVisualFrames + 1;
+    assert(_phaseFrames == elapsedAfterTick);
+    return elapsedAfterTick >= duration;
+  }
+
   void _tickDeterministic() {
     if (isFinished) return;
 
     switch (phase) {
       case ScenePhase.prerollIdle:
         _phaseFrames++;
-        if (_phaseFrames >= kPrerollIdleFrames) {
+        if (_phaseEndsThisTick(kPrerollIdleFrames)) {
           _enterPhase(ScenePhase.prerollWipe);
         }
         break;
 
       case ScenePhase.prerollWipe:
         _phaseFrames++;
-        if (_phaseFrames >= kPrerollWipeFrames) {
+        if (_phaseEndsThisTick(kPrerollWipeFrames)) {
           // Do NOT turn off inPrerollSequence yet! The terminal still needs to
           // visually zoom in over the green background.
           _enterPhase(ScenePhase.termZoomIn);
@@ -45,7 +58,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.termZoomOut:
         _phaseFrames++;
-        if (_phaseFrames >= kZoomAnimFrames) {
+        if (_phaseEndsThisTick(kZoomAnimFrames)) {
           // Route into whichever presentation is queued. The terminal parser
           // only sets one pending request per tag, so this is really a
           // mutual-exclusion switch.
@@ -70,7 +83,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.viewerOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           _enterPhase(ScenePhase.viewerShowing);
         }
         break;
@@ -149,7 +162,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.viewerTransition:
         _phaseFrames++;
-        if (_phaseFrames >= kGalleryTransitionFrames) {
+        if (_phaseEndsThisTick(kGalleryTransitionFrames)) {
           _activeGallery!.framesIntoPhase = 0;
           _enterPhase(ScenePhase.viewerShowing);
         }
@@ -157,7 +170,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.viewerClosing:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -168,7 +181,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           // Only a _FULL window grows into the frame. Everything else,
           // mosaic included, stays the size it opened at.
           _enterPhase(_activeApp!.maximizes
@@ -179,7 +192,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appMaximizing:
         _phaseFrames++;
-        if (_phaseFrames >= kAppMaximizeFrames) {
+        if (_phaseEndsThisTick(kAppMaximizeFrames)) {
           _enterPhase(ScenePhase.appShowing);
         }
         break;
@@ -219,7 +232,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appPanning:
         _phaseFrames++;
-        if (_phaseFrames >= kAppPanFrames) {
+        if (_phaseEndsThisTick(kAppPanFrames)) {
           // The incoming page becomes the held page. _enterPhase resets
           // framesIntoPhase, so the new page starts its own hold clean.
           _activeApp!.pageIndex++;
@@ -232,14 +245,14 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.appRestoring:
         _phaseFrames++;
-        if (_phaseFrames >= kAppMaximizeFrames) {
+        if (_phaseEndsThisTick(kAppMaximizeFrames)) {
           _enterPhase(ScenePhase.appClosing);
         }
         break;
 
       case ScenePhase.appClosing:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -250,7 +263,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           // A full browser grows out of the window it just opened as, rather
           // than arriving at full frame. The mosaic does the same, and for
           // the same reason: a window that is fullscreen from the first frame
@@ -263,7 +276,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserMaximizing:
         _phaseFrames++;
-        if (_phaseFrames >= kBrowserMaximizeFrames) {
+        if (_phaseEndsThisTick(kBrowserMaximizeFrames)) {
           _enterPhase(ScenePhase.browserShowing);
         }
         break;
@@ -303,14 +316,14 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserRestoring:
         _phaseFrames++;
-        if (_phaseFrames >= kBrowserMaximizeFrames) {
+        if (_phaseEndsThisTick(kBrowserMaximizeFrames)) {
           _enterPhase(ScenePhase.browserClosing);
         }
         break;
 
       case ScenePhase.browserNavigating:
         _phaseFrames++;
-        if (_phaseFrames >= kBrowserNavFrames) {
+        if (_phaseEndsThisTick(kBrowserNavFrames)) {
           // The incoming page becomes the held page. _enterPhase resets
           // framesIntoPhase, so the new page starts its own hold — and
           // therefore its own scroll — from zero.
@@ -321,7 +334,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.browserClosing:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -332,7 +345,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.cardOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kCardSlideFrames) {
+        if (_phaseEndsThisTick(kCardSlideFrames)) {
           _enterPhase(ScenePhase.cardShowing);
         }
         break;
@@ -348,7 +361,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.cardClosing:
         _phaseFrames++;
-        if (_phaseFrames >= kCardSlideFrames) {
+        if (_phaseEndsThisTick(kCardSlideFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -359,7 +372,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.dossierOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kCardSlideFrames) {
+        if (_phaseEndsThisTick(kCardSlideFrames)) {
           // With a scripted lead the card is now seated alone; count the
           // lead down before the gallery joins. Classic (lead = 0) goes
           // straight to the split, gallery having opened alongside.
@@ -373,14 +386,14 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.dossierCardLead:
         _phaseFrames++;
-        if (_phaseFrames >= _activeDossier!.cardLead) {
+        if (_phaseEndsThisTick(_activeDossier!.cardLead)) {
           _enterPhase(ScenePhase.dossierGalleryOpening);
         }
         break;
 
       case ScenePhase.dossierGalleryOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           _enterPhase(ScenePhase.dossierSplitShowing);
         }
         break;
@@ -399,7 +412,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.dossierTransitioning:
         _phaseFrames++;
-        if (_phaseFrames >= kWindowAnimFrames) {
+        if (_phaseEndsThisTick(kWindowAnimFrames)) {
           _enterPhase(ScenePhase.dossierFullShowing);
         }
         break;
@@ -418,7 +431,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.dossierMosaicPanning:
         _phaseFrames++;
-        if (_phaseFrames >= kAppPanFrames) {
+        if (_phaseEndsThisTick(kAppPanFrames)) {
           _activeDossier!.mosaicPageIndex++;
           _enterPhase(ScenePhase.dossierFullShowing);
         }
@@ -430,7 +443,7 @@ extension _SceneEngineTicking on SceneEngine {
                 DossierCenterMode.sideOnly
             ? kCardSlideFrames
             : kWindowAnimFrames;
-        if (_phaseFrames >= closeFrames) {
+        if (_phaseEndsThisTick(closeFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -441,7 +454,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.timelineOpening:
         _phaseFrames++;
-        if (_phaseFrames >= kCardSlideFrames) {
+        if (_phaseEndsThisTick(kCardSlideFrames)) {
           _enterPhase(ScenePhase.timelineShowing);
         }
         break;
@@ -458,7 +471,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.timelineClosing:
         _phaseFrames++;
-        if (_phaseFrames >= kCardSlideFrames) {
+        if (_phaseEndsThisTick(kCardSlideFrames)) {
           if (_chainClosing) {
             _performChainHandoff();
           } else {
@@ -469,7 +482,7 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.termZoomIn:
         _phaseFrames++;
-        if (_phaseFrames >= kZoomAnimFrames) {
+        if (_phaseEndsThisTick(kZoomAnimFrames)) {
           // Shared exit: whichever kind of presentation was up gets torn
           // down and whichever pending request is set on the terminal gets
           // cleared.
