@@ -9,12 +9,18 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME}
   "main.cc"
   "my_application.cc"
+  "project_clock.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
+
+# project_clock.cc is reached from Dart through DynamicLibrary.process().
+# Export the runner's C symbols into the dynamic symbol table so the FFI lookup
+# is identical in flutter run and in the installed portable bundle.
+target_link_options(${BINARY_NAME} PRIVATE "-Wl,--export-dynamic")
 
 # Add preprocessor definitions for the application ID.
 add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
