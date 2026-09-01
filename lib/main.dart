@@ -12,6 +12,7 @@ import 'engine.dart';
 import 'project_clock.dart';
 import 'parser.dart';
 import 'scene_engine.dart';
+import 'scene_evaluator.dart';
 import 'scene_painter.dart';
 import 'exporter.dart';
 import 'editor_screen.dart';
@@ -139,16 +140,10 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// Authoritative realtime project clock.
   ///
   /// The Flutter Ticker is only a polling cadence. It samples this clock,
-  /// advances the legacy frame-counted scene to the sampled whole frame,
-  /// then asks the preview subtree to repaint.
+  /// asks the scene to evaluate toward that explicit ProjectTime, then asks
+  /// the preview subtree to repaint when scene state actually advances.
   late final NativeRealtimeProjectClock _projectClock;
   late final Ticker _ticker;
-
-  /// Legacy mutable engine frames already evaluated for this preview.
-  ///
-  /// ProjectClock says where project time is while the old frame-counted
-  /// engine is still ticked forward until it reaches that frame.
-  int _previewFramesDone = 0;
 
   List<String> _availableTemplates = [];
   List<String> _availableFonts = ["monospace"];
@@ -1630,7 +1625,6 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       _isLoadingScene = false;
       _currentState = AppState.preview;
     });
-    _previewFramesDone = 0;
     // Not started here: with preroll on, the bed must wait for the wipe to
     // finish. _onTick starts it on the terminal engine's first tick, which
     // is the same instant in both preroll and classic runs.
@@ -1743,8 +1737,10 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// Vsync callback for the live preview.
   ///
   /// Flutter decides when we look. Native ProjectClock decides what project
-  /// time it is. During the purity migration the existing mutable SceneEngine
-  /// is still advanced frame by frame until it reaches the clock's whole frame.
+  /// time it is. SceneEngine is still mutable, so explicit-time evaluation is
+  /// bounded to one second of scene work per callback. A badly stalled window
+  /// therefore catches up in honest chunks: it never blocks on an arbitrary
+  /// backlog, and it never pretends skipped mutable state was evaluated.
   void _onTick(Duration _) {
     if (_currentState != AppState.preview) {
       return;
@@ -1756,23 +1752,12 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     }
 
     final ProjectTime now = _projectClock.sample();
-    final int targetFrames = now.frame;
+    final int before = _scene.frameCount;
 
-    int behind = targetFrames - _previewFramesDone;
-    if (behind <= 0) {
+    _scene.evaluate(now, maxForwardFrames: engineFps);
+
+    if (_scene.frameCount == before) {
       return;
-    }
-
-    if (behind > engineFps) {
-      // Stalled (window suspended, heavy hitch): skip ahead rather than
-      // replaying the backlog. Preview drops frames; export never will.
-      _previewFramesDone = targetFrames - engineFps;
-      behind = engineFps;
-    }
-
-    for (int i = 0; i < behind && !_scene.isFinished; i++) {
-      _scene.tick();
-      _previewFramesDone++;
     }
 
     // Audio remains the existing ffmpeg -> paplay/aplay path for now.
