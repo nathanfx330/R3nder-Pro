@@ -430,8 +430,10 @@ extension _SceneEngineTicking on SceneEngine {
       case ScenePhase.timelineShowing:
         final t = _activeTimeline!;
         t.framesIntoPhase++;
-        // Wait for the full reveal (spine + event cascade), THEN hold.
-        if (t.framesIntoPhase >= t.revealTotalFrames + t.holdFrames) {
+        // Keep the existing mutable visual counter in parallel for the spine,
+        // event cascade, and stage connector. Only the phase boundary moves to
+        // absolute scene age in this regression slice.
+        if (_phaseEndsThisTick(t.revealTotalFrames + t.holdFrames)) {
           _chainClosing = terminal.peekNextPresentation();
           _enterPhase(ScenePhase.timelineClosing);
         }
