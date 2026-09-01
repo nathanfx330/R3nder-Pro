@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'engine.dart';
+import 'project_clock.dart';
 import 'parser.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
@@ -134,12 +135,19 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
 
   // --- Engine State ---
   late final SceneEngine _scene;
+
+  /// Authoritative realtime project clock.
+  ///
+  /// The Flutter Ticker is only a polling cadence. It samples this clock,
+  /// advances the legacy frame-counted scene to the sampled whole frame,
+  /// then asks the preview subtree to repaint.
+  late final NativeRealtimeProjectClock _projectClock;
   late final Ticker _ticker;
 
-  /// Engine frames advanced since the preview Ticker started. The Ticker
-  /// fires per vsync (60/120/144Hz...), but the engine runs at engineFps;
-  /// _onTick converts elapsed wall time into a target frame count and ticks
-  /// until caught up, so preview speed matches export timing on any monitor.
+  /// Legacy mutable engine frames already evaluated for this preview.
+  ///
+  /// ProjectClock says where project time is while the old frame-counted
+  /// engine is still ticked forward until it reaches that frame.
   int _previewFramesDone = 0;
 
   List<String> _availableTemplates = [];
@@ -395,6 +403,7 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     _session.load();
 
     _scene = SceneEngine();
+    _projectClock = NativeRealtimeProjectClock(RationalFrameRate(engineFps));
     _ticker = createTicker(_onTick);
 
     // Workspace next: every path lookup below depends on it.
@@ -1075,6 +1084,7 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     _bedGainSaveTimer?.cancel();
     _bedPlayer?.dispose();
     _ticker.dispose();
+    _projectClock.dispose();
     super.dispose();
   }
 
@@ -1626,7 +1636,10 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     // is the same instant in both preroll and classic runs.
     _bedStartedThisRun = false;
     await _bedPlayer?.stop();
-    _ticker.start(); // Ticker elapsed restarts from zero on start()
+
+    // Reset authoritative project time immediately before polling begins.
+    _projectClock.seekMonotonic(ProjectTime.zero());
+    _ticker.start();
   }
 
   /// Ends a preview run: stops the clock, silences the bed, returns to menu.
@@ -1727,23 +1740,28 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     });
   }
 
-  /// Vsync callback for the live preview. Fires at monitor refresh rate,
-  /// but advances the engine at exactly engineFps using a frame accumulator:
-  /// target = elapsed seconds * engineFps, tick until caught up. Catch-up is
-  /// clamped to one second of frames per callback so a stalled/suspended
-  /// window can't trigger a burst that locks the UI.
-  void _onTick(Duration elapsed) {
-    if (_currentState != AppState.preview) return;
+  /// Vsync callback for the live preview.
+  ///
+  /// Flutter decides when we look. Native ProjectClock decides what project
+  /// time it is. During the purity migration the existing mutable SceneEngine
+  /// is still advanced frame by frame until it reaches the clock's whole frame.
+  void _onTick(Duration _) {
+    if (_currentState != AppState.preview) {
+      return;
+    }
 
     if (_scene.isFinished) {
       _endPreview();
       return;
     }
 
-    final int targetFrames =
-        (elapsed.inMicroseconds * engineFps) ~/ Duration.microsecondsPerSecond;
+    final ProjectTime now = _projectClock.sample();
+    final int targetFrames = now.frame;
+
     int behind = targetFrames - _previewFramesDone;
-    if (behind <= 0) return; // This vsync lands between engine frames.
+    if (behind <= 0) {
+      return;
+    }
 
     if (behind > engineFps) {
       // Stalled (window suspended, heavy hitch): skip ahead rather than
@@ -1757,15 +1775,9 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       _previewFramesDone++;
     }
 
-    // Fire the bed the moment the terminal engine starts consuming script.
-    // With preroll that is after the wipe completes; without it that is the
-    // first frame. One test, both paths, no preroll-length arithmetic.
-    //
-    // Preview sync is wall-clock on both sides: the frame counter above is
-    // derived from Ticker elapsed and the sink runs on its own clock, so the
-    // two stay together without either driving the other. Drift is bounded
-    // by clock accuracy, which is well under a frame over a preview-length
-    // run. Export does not use this path at all.
+    // Audio remains the existing ffmpeg -> paplay/aplay path for now.
+    // AUDIO clock authority comes later when the native sink reports played
+    // samples and device latency.
     if (!_bedStartedThisRun &&
         _bedPlayer != null &&
         (_usableBedPath != null || _usableMusicPath != null) &&
@@ -1779,7 +1791,9 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
           .catchError((e) => _logError('Bed playback failed: $e')));
     }
 
-    setState(() {}); // Triggers repaint of the CustomPaint
+    // The preview subtree listens to ProjectClock directly. No whole-home
+    // setState is needed just to paint the next evaluated scene frame.
+    _projectClock.signalRepaint();
   }
 
   // --- WIDGET BUILDERS ---
@@ -2686,14 +2700,19 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       child: Stack(
         children: [
           // The Actual Scene Render (terminal fullscreen, or desktop + windows)
-          LayoutBuilder(
-            builder: (ctx, constraints) {
-              return CustomPaint(
-                size: Size.infinite,
-                painter: ScenePainter(
-                  scene: _scene,
-                  fontFamily: _activeFont,
-                ),
+          ListenableBuilder(
+            listenable: _projectClock,
+            builder: (context, _) {
+              return LayoutBuilder(
+                builder: (ctx, constraints) {
+                  return CustomPaint(
+                    size: Size.infinite,
+                    painter: ScenePainter(
+                      scene: _scene,
+                      fontFamily: _activeFont,
+                    ),
+                  );
+                },
               );
             },
           ),
