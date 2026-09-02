@@ -273,12 +273,38 @@ class _ActiveSprite {
   });
 }
 
+/// A terminal BAR animation evaluated from explicit terminal-frame age.
+///
+/// [startFrame] is the first visible terminal frame after the BAR tag commits.
+/// At that frame the bar is empty, exactly as the legacy counter was at
+/// elapsed == 0. Later frames derive progress from frame distance rather than
+/// mutating an elapsed counter. Terminal time already freezes while desktop
+/// presentations own the scene, so this preserves the existing suspension
+/// behavior without giving BAR a second clock.
 class BarState {
   final int frames;
-  int elapsed;
+  final int startFrame;
   final int width;
 
-  BarState({required this.frames, this.elapsed = 0, required this.width});
+  BarState({
+    required this.frames,
+    required this.startFrame,
+    required this.width,
+  });
+
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    final int stop = math.max(frames, 1);
+    return elapsed >= stop ? stop : elapsed;
+  }
+
+  double progressAt(int terminalFrame) {
+    final int denominator = frames > 0 ? frames : 1;
+    return elapsedAt(terminalFrame) / denominator;
+  }
+
+  bool completesAt(int terminalFrame) => elapsedAt(terminalFrame) >= frames;
 }
 
 class BarInfo {

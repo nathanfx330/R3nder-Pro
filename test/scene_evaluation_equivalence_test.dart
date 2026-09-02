@@ -40,6 +40,7 @@ void main() {
 [SPEED:MAX]
 SYSTEM
 [PAUSE:2]
+[BAR:6:8]
 [GALLERY:gallery:4:FADE:Gallery]
 [VIDEO:video:3:Video:24]
 [APP:gallery:30:App:MOSAIC:3:1@1;1;1]
@@ -325,7 +326,7 @@ Map<String, Object?> _fingerprint(SceneEngine scene) {
       'penBg': _color(t.penBg),
       'flash': t.flashStyle,
       'pending': t.pendingPresentation?.runtimeType.toString(),
-      'bar': _bar(t.activeBar),
+      'bar': _bar(t.activeBar, t.frameCount),
       'imgBand': _imgBand(t.activeImgBand),
       'svg': _svg(t.activeSvg),
       'photos': <Object?>[
@@ -340,8 +341,9 @@ Map<String, Object?> _fingerprint(SceneEngine scene) {
             'reveal': _q(photo.revealProgress),
           },
       ],
-      'rendered': t.renderedLines.map(_line).toList(),
-      'current': t.currentLine.map(_char).toList(),
+      'rendered':
+          t.renderedLines.map((line) => _line(line, t.frameCount)).toList(),
+      'current': t.currentLine.map((c) => _char(c, t.frameCount)).toList(),
     },
   };
 }
@@ -359,11 +361,12 @@ Map<String, Object?> _motion(PaneMotion m) => <String, Object?>{
       'fit': m.fit.name,
     };
 
-Map<String, Object?> _line(LineData line) => <String, Object?>{
+Map<String, Object?> _line(LineData line, int terminalFrame) =>
+    <String, Object?>{
       'align': line.align,
       'spacing': _q(line.spacing),
       'width': _q(line.width),
-      'chars': line.chars.map(_char).toList(),
+      'chars': line.chars.map((c) => _char(c, terminalFrame)).toList(),
       'imgBand': line.imgBand == null
           ? null
           : <String, Object?>{
@@ -375,7 +378,8 @@ Map<String, Object?> _line(LineData line) => <String, Object?>{
             },
     };
 
-Map<String, Object?> _char(CharData c) => <String, Object?>{
+Map<String, Object?> _char(CharData c, int terminalFrame) =>
+    <String, Object?>{
       'char': c.char,
       'fg': _color(c.fgColor),
       'bg': _color(c.bgColor),
@@ -389,15 +393,17 @@ Map<String, Object?> _char(CharData c) => <String, Object?>{
               'index': c.barInfo!.index,
               'fill': c.barInfo!.fill,
               'empty': c.barInfo!.empty,
-              'state': _bar(c.barInfo!.state),
+              'state': _bar(c.barInfo!.state, terminalFrame),
             },
     };
 
-Map<String, Object?>? _bar(BarState? bar) => bar == null
+Map<String, Object?>? _bar(BarState? bar, int terminalFrame) => bar == null
     ? null
     : <String, Object?>{
         'frames': bar.frames,
-        'elapsed': bar.elapsed,
+        'startFrame': bar.startFrame,
+        'elapsed': bar.elapsedAt(terminalFrame),
+        'progress': _q(bar.progressAt(terminalFrame)),
         'width': bar.width,
       };
 
