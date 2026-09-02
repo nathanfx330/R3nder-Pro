@@ -8,6 +8,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'scene_engine.dart';
+import 'project_clock.dart';
+import 'scene_evaluator.dart';
 import 'compositor.dart';
 import 'motion.dart';
 import 'diag.dart';
@@ -223,10 +225,10 @@ class SceneExporter {
     //
     // The dry run also reports where the bed starts. Rather than hardcoding a
     // preroll length (which would silently desync the day preroll timing
-    // changes), watch for the frame on which the terminal engine first ticks.
-    // That instant is after the wipe with preroll on and frame 0 without it,
-    // and it is the identical test the live preview uses to fire playback, so
-    // the two cannot drift apart.
+    // changes), watch for the project frame on which the terminal engine first
+    // ticks. Preview uses the identical condition after evaluating ProjectTime,
+    // so export must keep that project-frame number instead of subtracting one
+    // for the old tick-before-paint render loop.
     scene.reset();
     int totalFrames = 0;
     int audioStartFrame = 0;
@@ -236,7 +238,7 @@ class SceneExporter {
       totalFrames++;
       if (!terminalHasStarted && scene.terminal.frameCount > 0) {
         terminalHasStarted = true;
-        audioStartFrame = totalFrames - 1;
+        audioStartFrame = scene.frameCount;
       }
     }
 
@@ -621,14 +623,20 @@ class SceneExporter {
         if (procDead) throw Exception('FFmpeg died during encode (at frame $i)\n${errBuf.toString().trim()}');
         if (writerError != null) throw Exception('Frame writer failed: $writerError\n${errBuf.toString().trim()}');
 
-        // Advance Scene. totalFrames came from an identical deterministic
-        // dry run, so the scene finishes on exactly the last iteration —
-        // the guard is belt-and-suspenders only.
-        if (!scene.isFinished) {
-          scene.tick();
+        // Frame i means ProjectTime(frame: i), exactly as it does in preview.
+        // The dry run counted a duration of totalFrames ticks, so the file
+        // contains project frames 0 through totalFrames - 1: same duration as
+        // before, with no hidden one-frame offset at either end.
+        final SceneEvaluationResult evaluation = scene.evaluate(
+          ProjectTime(frame: i, mode: ProjectClockMode.scrub),
+        );
+        if (!evaluation.exact) {
+          throw Exception(
+              'Scene could not evaluate export frame $i '
+              '(reached ${evaluation.reachedFrame}).');
         }
 
-        // Render Frame
+        // Render the exact selected project frame.
         final ui.Image frame = await compositor.advanceExportAsync(scene, fontFamily);
         final Future<ByteData?> bytesF = frame.toByteData(format: ui.ImageByteFormat.rawRgba);
 
