@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -327,7 +328,9 @@ const R3AudioSinkStats* r3_audio_sink_read(void* handle) {
 int32_t r3_audio_sink_copy_last_error(void* handle, char* buffer,
                                       int32_t capacity) {
   AudioSinkState* state = static_cast<AudioSinkState*>(handle);
-  if (state == nullptr) return CopyString("Invalid audio sink handle.", buffer, capacity);
+  if (state == nullptr) {
+    return CopyString("Invalid audio sink handle.", buffer, capacity);
+  }
 
   std::string value;
   {
