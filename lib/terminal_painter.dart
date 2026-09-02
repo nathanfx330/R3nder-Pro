@@ -74,9 +74,8 @@ class TerminalPainter extends CustomPainter {
     // same box); differently-proportioned layers each center to their own
     // aspect, as a single photo always has.
     //
-    // DETERMINISM: each layer's revealProgress is a pure function of its
-    // frame-counted elapsed, so the whole stack renders identically live,
-    // scrubbed, and baked.
+    // DETERMINISM: each layer derives reveal progress directly from its
+    // terminal start frame and the current terminal frame.
     if (engine.hasPhotos) {
       for (final layer in engine.photoStack) {
         final ImgStencil? stencil = engine.photoStencilFor(layer);
@@ -290,12 +289,11 @@ class TerminalPainter extends CustomPainter {
   ///  - Copies butt together edge to edge (seamless repeating pattern) and
   ///    reveal left to right on the engine's frame-counted cadence.
   ///
-  /// DETERMINISM: revealedCopies is a pure function of the shared state's
-  /// elapsed counter, which the engine advances tick by tick — the same
-  /// frame renders the same copies live, scrubbed, or baked.
+  /// DETERMINISM: reveal count and scan progress are derived from the band's
+  /// explicit terminal start frame and the current terminal frame.
   void _drawImgBand(
       Canvas canvas, ImgBandData band, double startX, double yPos) {
-    final int revealed = band.state.revealedCopies;
+    final int revealed = band.state.revealedCopiesAt(engine.frameCount);
     if (revealed <= 0) return;
 
     final Paint fill = Paint()
@@ -309,7 +307,7 @@ class TerminalPainter extends CustomPainter {
     // already animating and a clip on top would be two competing reveals on
     // one element. One tile has nothing to stagger, so the scanline is what
     // its framesPer buys.
-    final double progress = band.state.scanProgress;
+    final double progress = band.state.scanProgressAt(engine.frameCount);
     if (progress <= 0.0) return;
 
     canvas.save();
@@ -393,8 +391,8 @@ class TerminalPainter extends CustomPainter {
 
     canvas.save();
 
-    // SCANLINE REVEAL: Clip the canvas top-to-bottom based on elapsed frames.
-    final double progress = photo.revealProgress;
+    // SCANLINE REVEAL: clip top-to-bottom from explicit terminal-frame age.
+    final double progress = photo.revealProgressAt(engine.frameCount);
     if (progress < 1.0) {
       canvas.clipRect(Rect.fromLTWH(dx, dy, drawW, drawH * progress));
     }
