@@ -78,14 +78,19 @@ extension _TerminalEngineTicking on TerminalEngine {
     // Advance Sprites regardless of pause/scramble state.
     _advanceSprites();
 
-    if (pauseFrames > 0) {
-      pauseFrames--;
+    // PAUSE / END HOLD: no countdown mutates. The pause was anchored to its
+    // first visible terminal frame when it was created; advancing frameCount
+    // is enough to derive the remaining duration and completion point.
+    if (activePause != null) {
+      final PauseState pause = activePause!;
       frameCount++;
-      // The end hold rides the pause machinery: frameCount keeps advancing
-      // (so blink/flash animate to the last frame), and only when the hold
-      // fully expires does the engine report finished.
-      if (pauseFrames == 0 && _endHoldStarted) {
-        isFinished = true;
+      if (pause.completesAt(frameCount)) {
+        activePause = null;
+        // The end hold shares the same explicit-age state. Only after its
+        // authored/audio-extended duration expires does the engine finish.
+        if (_endHoldStarted) {
+          isFinished = true;
+        }
       }
       return;
     }
@@ -135,7 +140,7 @@ extension _TerminalEngineTicking on TerminalEngine {
     for (int step = 0; step < charsPerFrame; step++) {
       if (charIndex >= text.length) {
         // Script exhausted: enter the engine-owned end hold. This tick counts
-        // as the first hold frame; the pause branch above plays out the rest.
+        // as the first hold frame; the explicit pause state plays out the rest.
         if (!_endHoldStarted) {
           _endHoldStarted = true;
 
@@ -148,8 +153,8 @@ extension _TerminalEngineTicking on TerminalEngine {
           // preroll wipe when preroll is on), so both sides of this
           // subtraction are in the same timebase and preroll cancels out.
           final int bedRemaining = bedTargetFrames - frameCount;
-          pauseFrames =
-              bedRemaining > kEndHoldFrames ? bedRemaining : kEndHoldFrames;
+          _startPause(
+              bedRemaining > kEndHoldFrames ? bedRemaining : kEndHoldFrames);
         }
         frameCount++;
         return;
@@ -180,8 +185,8 @@ extension _TerminalEngineTicking on TerminalEngine {
               activeSvg = show;
             } else {
               // Dud (missing/unparsable asset, warned at setup): burn the
-              // scripted duration as a pause so the piece's timing holds.
-              pauseFrames += _svgDudFrames(match);
+              // scripted duration so the piece's timing holds.
+              _startPause(_svgDudFrames(match));
             }
             break;
           } else if (match.namedGroup('photoFile') != null) {
@@ -208,7 +213,7 @@ extension _TerminalEngineTicking on TerminalEngine {
                 _photoGate = show;
               }
             } else {
-              pauseFrames += _photoDudFrames(match);
+              _startPause(_photoDudFrames(match));
             }
             break;
           } else if (match.namedGroup('imgFile') != null) {
@@ -233,10 +238,10 @@ extension _TerminalEngineTicking on TerminalEngine {
               _commitImgBand(stencil, repeat, framesPer, releasePct);
             } else {
               // Dud (missing/undecodable file, warned at setup): burn only
-              // the GATED portion as a pause, so the following content lands
-              // on the same frame whether or not the tile loaded.
-              pauseFrames += ImgBandState.gateFrames(
-                  math.max(repeat, 1), math.max(framesPer, 1), releasePct);
+              // the GATED portion so the following content lands on the same
+              // frame whether or not the tile loaded.
+              _startPause(ImgBandState.gateFrames(
+                  math.max(repeat, 1), math.max(framesPer, 1), releasePct));
             }
             break;
           } else if (match.namedGroup('spritePath') != null) {
@@ -289,7 +294,7 @@ extension _TerminalEngineTicking on TerminalEngine {
             _activeSprites.remove(path); // Freezes it in place
             break;
           } else if (match.namedGroup('pause') != null) {
-            pauseFrames = int.parse(match.namedGroup('pause')!);
+            _startPause(int.parse(match.namedGroup('pause')!));
             break;
           } else if (match.namedGroup('speed') != null) {
             final spd = match.namedGroup('speed')!;
