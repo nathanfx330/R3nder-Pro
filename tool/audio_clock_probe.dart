@@ -45,6 +45,7 @@ Future<void> main(List<String> args) async {
     '-v', 'error',
     '-f', 'lavfi',
     '-i', 'sine=frequency=440:sample_rate=$_sampleRate',
+    '-filter:a', 'volume=0.05',
     '-f', 's16le',
     '-acodec', 'pcm_s16le',
     '-ac', '$_channels',
