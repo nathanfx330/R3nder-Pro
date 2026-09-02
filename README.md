@@ -32,7 +32,7 @@ The migration was not accepted because it compiled. It was checked against reset
 
 This is the point where determinism stopped being only a discipline of advancing the same counters in the same order. The public contract became explicit time: ask for project frame N, and preview, scrub, replay, and export agree on what R3nder should show.
 
-Closing commit: `deb2f7e` — `Evaluate terminal sprites from frame age`.
+Closing commit: `deb2f7e`, `Evaluate terminal sprites from frame age`.
 
 ---
 
@@ -337,6 +337,7 @@ builds, which matters because R3nder is normally built rather than run. Two
   layout, wallpaper, folder decode, SVG parse, stencil build, sprites, total.
 * `kProfileWarm` in `editor_warmup.dart` reports every warm-up build and the
   editor's adopt-or-discard decision, with both keys when they disagree.
+
 They are kept rather than deleted for a specific reason. Reading this code
 produced three confident and wrong answers about where a slow editor open was
 going: a layout shift, a duplicated simulation pass, a cold warm-up. Switching
