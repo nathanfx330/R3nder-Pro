@@ -153,7 +153,6 @@ extension _SceneEngineTicking on SceneEngine {
           } else {
             // Animated page turn (FADE / FLIP).
             g.imageIndex++;
-            g.framesIntoPhase = 0;
             _enterPhase(ScenePhase.viewerTransition);
           }
         }
@@ -161,7 +160,6 @@ extension _SceneEngineTicking on SceneEngine {
 
       case ScenePhase.viewerTransition:
         if (_phaseEndsThisTick(kGalleryTransitionFrames)) {
-          _activeGallery!.framesIntoPhase = 0;
           _enterPhase(ScenePhase.viewerShowing);
         }
         break;
