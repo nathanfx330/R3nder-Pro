@@ -36,6 +36,8 @@ constexpr int kChunkFrames = 480;  // 10 ms at 48 kHz.
 constexpr double kToneHz = 440.0;
 constexpr double kToneGain = 0.01;
 constexpr double kPi = 3.14159265358979323846;
+constexpr pa_usec_t kUsecPerMsec = 1000;
+constexpr double kUsecPerSec = 1000000.0;
 
 struct Options {
   int seconds = 20;
@@ -116,7 +118,7 @@ int main(int argc, char** argv) {
   pa_buffer_attr attr{};
   attr.maxlength = std::numeric_limits<uint32_t>::max();
   attr.tlength = pa_usec_to_bytes(
-      static_cast<pa_usec_t>(options.latency_ms) * PA_USEC_PER_MSEC, &spec);
+      static_cast<pa_usec_t>(options.latency_ms) * kUsecPerMsec, &spec);
   attr.prebuf = std::numeric_limits<uint32_t>::max();
   attr.minreq = std::numeric_limits<uint32_t>::max();
   attr.fragsize = std::numeric_limits<uint32_t>::max();
@@ -198,7 +200,7 @@ int main(int argc, char** argv) {
     const double submitted_sec =
         static_cast<double>(submitted_frames) / kSampleRate;
     const double audible_sec =
-        submitted_sec - static_cast<double>(latency_usec) / PA_USEC_PER_SEC;
+        submitted_sec - static_cast<double>(latency_usec) / kUsecPerSec;
     const double audible_error_ms = (audible_sec - wall_sec) * 1000.0;
 
     if (wall_sec >= 3.0) {
