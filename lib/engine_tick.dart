@@ -276,21 +276,6 @@ extension _TerminalEngineTicking on TerminalEngine {
             _activeSprites.remove(path); // Freezes it in place
             break;
           } else if (match.namedGroup('pause') != null) {
-            // A stack PHOTO can release its typing gate before its 30-frame
-            // scan has finished. PAUSE is a hold on the completed picture, so
-            // leave the tag unread until every visible PHOTO layer has reached
-            // the bottom of its scan. The bottom-of-tick frame increment keeps
-            // advancing those derived scan ages without introducing another
-            // PHOTO clock or pending-pause counter.
-            final bool photoStillScanning = _photoStack.any(
-              (photo) =>
-                  photo.elapsedAt(frameCount) < ActivePhotoShow.scanDuration,
-            );
-            if (photoStillScanning) {
-              charIndex -= match.end - match.start;
-              break;
-            }
-
             pauseFrames = int.parse(match.namedGroup('pause')!);
             break;
           } else if (match.namedGroup('speed') != null) {
