@@ -175,7 +175,7 @@ class ImgBandState {
   /// 0..1 scanline progress for a single-tile band, top to bottom.
   ///
   /// Always 1 for a repeating band: those reveal by copy and clipping them
-  /// as well would be two competing reveals on one element.
+  /// as well would be two competing animations on one element.
   ///
   /// COSTS NOTHING IN TIMING. A single-copy band already burned
   /// `1 * framesPer` frames on its gate while showing the finished tile the
