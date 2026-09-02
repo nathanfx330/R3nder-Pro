@@ -14,6 +14,26 @@ Everything past the terminal (the desktop window manager, the image and SVG sten
 
 R3nder is **language-first**. The script is the project state and the GUI is a set of authoring views over that state, not a second project format living beside it. A star, divider, dropdown, drag, or form edit in the node workspace is valuable only when it writes an equivalent instruction back into the script; reopening the text must be enough to reconstruct the same authored intent. Untouched source remains untouched. This is the design rule to keep in mind when adding editor features.
 
+## ⏱️ September 2, 2026: explicit time became the architecture
+
+On September 2, 2026, commit `deb2f7e` closed the major state/evaluation migration that began with `ProjectClock`.
+
+```text
+ProjectClock
+    ↓
+ProjectTime
+    ↓
+scene at frame N
+```
+
+Preview, scrubbing, dry runs, and export now share that timing contract. Presentation timing is evaluated from scene phase age, and the terminal systems that once carried their own mutable timing counters now derive visible state from authored timing plus terminal frame age: BAR, IMG, PHOTO, SVG, SVGFLASH, SCRAMBLE, PAUSE and the end hold, and SPRITES.
+
+The migration was not accepted because it compiled. It was checked against reset plus deterministic ticks with evaluation equivalence tests, then exercised at runtime through the semantics that were easiest to break: PHOTO Hold and layering, SVG chaining, SVGFLASH cadence, SCRAMBLE's zero left frame, the audio extended end hold, sprite animation through pauses, PHOTO gate freeze and resume, and exact `SPRITE_OFF` freezing.
+
+This is the point where determinism stopped being only a discipline of advancing the same counters in the same order. The public contract became explicit time: ask for project frame N, and preview, scrub, replay, and export agree on what R3nder should show.
+
+Closing commit: `deb2f7e` — `Evaluate terminal sprites from frame age`.
+
 ---
 
 ---
@@ -317,7 +337,6 @@ builds, which matters because R3nder is normally built rather than run. Two
   layout, wallpaper, folder decode, SVG parse, stencil build, sprites, total.
 * `kProfileWarm` in `editor_warmup.dart` reports every warm-up build and the
   editor's adopt-or-discard decision, with both keys when they disagree.
-
 They are kept rather than deleted for a specific reason. Reading this code
 produced three confident and wrong answers about where a slow editor open was
 going: a layout shift, a duplicated simulation pass, a cold warm-up. Switching
