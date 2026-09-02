@@ -26,6 +26,11 @@ class SvgStep {
 /// A single [SVG] tag is one step; an [SVGFLASH] is the folder's files
 /// repeated `cycles` times at `framesPer` each. Chained SVG/SVGFLASH tags
 /// CUT between shows: the exit wipe only plays when no chain is ahead.
+///
+/// Timing is evaluated from the terminal frame rather than carried as mutable
+/// `stepIdx` / `framesLeft` counters. The public names remain as read-only
+/// getters so existing painter, test, and debugging call sites keep the same
+/// surface while the timing state itself is explicit.
 class ActiveSvgShow {
   final List<SvgStep> steps;
 
@@ -33,13 +38,85 @@ class ActiveSvgShow {
   /// color snapshotted when the tag fired (so [RED][SVG:logo.svg] works).
   final Color color;
 
-  int stepIdx = 0;
-  int framesLeft;
+  int _startFrame = 0;
+  int Function() _terminalFrame = _zeroTerminalFrame;
 
-  ActiveSvgShow({required this.steps, required this.color})
-      : framesLeft = steps.isNotEmpty ? steps[0].frames : 0;
+  ActiveSvgShow({required this.steps, required this.color});
 
-  String get currentKey => steps[stepIdx.clamp(0, steps.length - 1)].key;
+  static int _zeroTerminalFrame() => 0;
+
+  /// Binds this authored show to the terminal timebase at the instant it
+  /// becomes visible. This is initialization metadata, not a per-tick clock:
+  /// no field changes again while the show plays.
+  void bindFrameClock({
+    required int startFrame,
+    required int Function() terminalFrame,
+  }) {
+    _startFrame = startFrame;
+    _terminalFrame = terminalFrame;
+  }
+
+  /// First terminal frame on which this show is visible at age zero.
+  int get startFrame => _startFrame;
+
+  /// Total visible duration of all authored steps.
+  int get totalFrames {
+    int total = 0;
+    for (final SvgStep step in steps) {
+      total += math.max(step.frames, 1);
+    }
+    return total;
+  }
+
+  /// Frames since this show became visible, clamped at the authored end.
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - _startFrame;
+    if (elapsed <= 0) return 0;
+    final int total = totalFrames;
+    return elapsed >= total ? total : elapsed;
+  }
+
+  /// Authored step visible at [terminalFrame].
+  int stepIndexAt(int terminalFrame) {
+    if (steps.isEmpty) return 0;
+
+    int remaining = elapsedAt(terminalFrame);
+    for (int i = 0; i < steps.length; i++) {
+      final int span = math.max(steps[i].frames, 1);
+      if (remaining < span) return i;
+      remaining -= span;
+    }
+    return steps.length - 1;
+  }
+
+  /// Remaining frames in the currently visible step, matching the old
+  /// counter's observable values: a fresh step reports its full authored
+  /// duration, then counts down to 1 on its final visible frame.
+  int framesLeftAt(int terminalFrame) {
+    if (steps.isEmpty) return 0;
+
+    final int index = stepIndexAt(terminalFrame);
+    int stepStart = 0;
+    for (int i = 0; i < index; i++) {
+      stepStart += math.max(steps[i].frames, 1);
+    }
+
+    final int localAge = math.max(elapsedAt(terminalFrame) - stepStart, 0);
+    return math.max(math.max(steps[index].frames, 1) - localAge, 0);
+  }
+
+  String? currentKeyAt(int terminalFrame) {
+    if (steps.isEmpty) return null;
+    return steps[stepIndexAt(terminalFrame)].key;
+  }
+
+  bool completesAt(int terminalFrame) =>
+      terminalFrame - _startFrame >= totalFrames;
+
+  /// Back-compatible read-only views, now derived from terminal frame age.
+  int get stepIdx => stepIndexAt(_terminalFrame());
+  int get framesLeft => framesLeftAt(_terminalFrame());
+  String get currentKey => currentKeyAt(_terminalFrame()) ?? '';
 }
 
 /// An in-terminal slow-scan photo LAYER in flight. Reuses the ImgStencil
