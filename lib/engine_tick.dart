@@ -96,11 +96,11 @@ extension _TerminalEngineTicking on TerminalEngine {
     }
 
     if (activeBar != null) {
-      activeBar!.elapsed++;
-      if (activeBar!.elapsed >= activeBar!.frames) {
+      final BarState bar = activeBar!;
+      frameCount++;
+      if (bar.completesAt(frameCount)) {
         activeBar = null;
       }
-      frameCount++;
       return;
     }
 
@@ -321,7 +321,11 @@ extension _TerminalEngineTicking on TerminalEngine {
 
             if (bBrackets.toUpperCase() == "NONE") bBrackets = "";
 
-            final barState = BarState(frames: bFrames, width: bWidth);
+            final barState = BarState(
+              frames: bFrames,
+              startFrame: frameCount + 1,
+              width: bWidth,
+            );
             activeBar = barState;
 
             if (bBrackets.isNotEmpty) {
