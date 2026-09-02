@@ -66,7 +66,28 @@ class TerminalEngine {
   double currentLineSpacing = 30.0;
 
   int charsPerFrame = 1;
-  int pauseFrames = 0;
+
+  /// The currently active terminal pause, or null while script execution is
+  /// free to continue. Ordinary PAUSE tags, missing-asset timing duds, and the
+  /// final engine-owned hold all share this one explicit-age state.
+  PauseState? activePause;
+
+  /// Back-compatible pause view used by diagnostics and existing callers.
+  /// Reads are derived from terminal-frame age. Writes retain the historical
+  /// public-field behavior for callers outside the tick loop; engine-owned
+  /// pauses use [_startPause] so parser entry is anchored to the next visible
+  /// terminal frame exactly as before.
+  int get pauseFrames => activePause?.framesLeftAt(frameCount) ?? 0;
+  set pauseFrames(int value) {
+    if (value <= 0) {
+      activePause = null;
+      return;
+    }
+    activePause = PauseState(
+      durationFrames: value,
+      startFrame: frameCount,
+    );
+  }
 
   bool isRedacting = false;
   bool isScrambling = false;
@@ -266,6 +287,21 @@ class TerminalEngine {
         (frameCount * 31 + globalCharIndex * 7 + scrambleFramesLeft * 13) %
             scrambleChars.length;
     return scrambleChars[idx];
+  }
+
+  /// Starts one engine-owned pause whose first visible frame is the frame
+  /// produced by the current parser/end-hold tick. This is intentionally
+  /// separate from the compatibility setter above: internal pause creation
+  /// always happens before the current tick increments [frameCount].
+  void _startPause(int frames) {
+    if (frames <= 0) {
+      activePause = null;
+      return;
+    }
+    activePause = PauseState(
+      durationFrames: frames,
+      startFrame: frameCount + 1,
+    );
   }
   
   void setSpriteLibrary(Map<String, List<List<String>>> library) {
@@ -527,7 +563,7 @@ class TerminalEngine {
     currentLineSpacing = baseLineSpacing;
 
     charsPerFrame = 1;
-    pauseFrames = 0;
+    activePause = null;
 
     isRedacting = false;
     isScrambling = false;
