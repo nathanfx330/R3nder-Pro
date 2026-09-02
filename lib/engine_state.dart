@@ -232,6 +232,35 @@ class ScrambleState {
       terminalFrame - startFrame >= durationFrames;
 }
 
+/// One terminal pause evaluated from explicit terminal-frame age.
+///
+/// [startFrame] is the first frame on which the authored pause is visible with
+/// its full [durationFrames] remaining. The tick loop advances terminal time
+/// and asks [completesAt] rather than decrementing a counter. This same state
+/// carries ordinary [PAUSE] tags, missing-asset timing duds, and the final
+/// engine-owned hold after the script exhausts.
+class PauseState {
+  final int durationFrames;
+  final int startFrame;
+
+  PauseState({
+    required this.durationFrames,
+    required this.startFrame,
+  });
+
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    return elapsed >= durationFrames ? durationFrames : elapsed;
+  }
+
+  int framesLeftAt(int terminalFrame) =>
+      math.max(durationFrames - elapsedAt(terminalFrame), 0);
+
+  bool completesAt(int terminalFrame) =>
+      terminalFrame - startFrame >= durationFrames;
+}
+
 /// A preloaded [IMG] raster stencil: IBM 3279 Programmed Symbols emulation.
 ///
 /// Built once by the SceneEngine at setup(): the scripted channel is read
