@@ -52,7 +52,9 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_check_modules(PULSE_SIMPLE REQUIRED IMPORTED_TARGET libpulse-simple)
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -71,7 +73,7 @@ set_target_properties(${BINARY_NAME}
 
 
 # Generated plugin build rules, which manage building the plugins and adding
-# them to the application.
+# their dependencies to the application target.
 include(flutter/generated_plugins.cmake)
 
 
