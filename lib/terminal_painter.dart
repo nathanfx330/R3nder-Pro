@@ -367,10 +367,15 @@ class TerminalPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// Draws ONE [PHOTO] layer's stencil fit-and-centered inside the
-  /// terminal's margin box. Uses the same ImgStencil path as IMG bands, but
-  /// scales it uniformly and applies a top-to-bottom clipping rect to
-  /// simulate a slow wirephoto scanline reveal.
+  /// Draws ONE [PHOTO] layer's stencil fit-and-centered inside a dedicated
+  /// terminal media box. PHOTO is a fullscreen terminal effect rather than
+  /// text, so its vertical fit is intentionally less constrained than the
+  /// normal text margins: at 1080p it gets 1020px of height, centered with
+  /// 30px above and below. Horizontal text margins remain unchanged.
+  ///
+  /// Uses the same ImgStencil path as IMG bands, scales it uniformly, and
+  /// applies a top-to-bottom clipping rect to simulate a slow wirephoto
+  /// scanline reveal.
   ///
   /// Called once per stack layer, bottom-to-top. Each call is fully
   /// self-contained (its own save/clip/transform/restore), so layers
@@ -378,9 +383,14 @@ class TerminalPainter extends CustomPainter {
   /// is empty the ones beneath show through — that's the onion.
   void _drawPhotoStencil(Canvas canvas, ImgStencil stencil, ActivePhotoShow photo) {
     final double boxLeft = engine.marginX;
-    final double boxTop = engine.marginY;
     final double boxW = math.max(engine.width - engine.marginX * 2, 1.0);
-    final double boxH = math.max(engine.height - engine.marginY * 2, 1.0);
+
+    // 30px top/bottom at 1080p, proportional at other terminal heights.
+    // The native PHOTO source cap is already 1024px on either axis; this is
+    // only the on-screen contain box, not a decode or thresholding limit.
+    final double verticalInset = engine.height / 36.0;
+    final double boxTop = verticalInset;
+    final double boxH = math.max(engine.height - verticalInset * 2.0, 1.0);
 
     // Uniform contain-fit
     final double fit = math.min(boxW / stencil.pxWidth, boxH / stencil.pxHeight);
