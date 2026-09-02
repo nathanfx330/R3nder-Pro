@@ -112,19 +112,11 @@ class TerminalEngine {
   BarState? activeBar;
   String? currentRegion;
 
-  /// Non-null while an [IMG] band is still gating typing. The band blocks the
-  /// engine only until its release point (its full reveal by default, or an
-  /// earlier scripted %). Once released it is nulled, and the band finishes
-  /// revealing on its own via [_liveImgBands] — that split is what lets a
-  /// later tag or typed text begin while the band is still drawing.
+  /// Non-null only while an [IMG] band is gating typing. The rendered
+  /// [LineData] owns the band's start-frame state after release, so reveal
+  /// progress can continue from terminal age without a second live timing
+  /// list or a mutable elapsed counter.
   ImgBandState? activeImgBand;
-
-  /// Every committed [IMG] band that has not finished revealing. Advanced
-  /// once per tick (alongside sprites, through pauses), independent of the
-  /// typing gate: a released band keeps revealing here behind whatever came
-  /// after it, so multiple bands can be mid-reveal at once. Bands drop out
-  /// on completion; wipeScreen()/reset() clear the list wholesale.
-  final List<ImgBandState> _liveImgBands = [];
 
   late Color penColor;
   Color? penBg;
@@ -221,15 +213,14 @@ class TerminalEngine {
   /// The live [PHOTO] onion stack, painted bottom-to-top. Empty when no
   /// photo is on screen. A classic (no-release) photo is a stack of one
   /// that tears down at the end of its hold; stack (release%) layers persist
-  /// here until an explicit wipe. See ActivePhotoShow.
+  /// here until an explicit wipe. Each layer derives its reveal from its
+  /// authored terminal start frame.
   final List<ActivePhotoShow> _photoStack = [];
 
   /// The layer currently blocking typing, or null once it has released.
-  /// Analogous to [activeImgBand]: while set, tick() counts the layer's scan
-  /// and returns; once its [ActivePhotoShow.elapsed] reaches its releaseAt,
-  /// the gate opens (classic layers tear down here; stack layers just clear
-  /// the gate and persist), and tick() falls through to typing / the next
-  /// PHOTO tag.
+  /// While set, tick() advances terminal frame time and checks the layer's
+  /// derived age against releaseAt. Stack layers remain in [_photoStack]
+  /// after release; classic layers tear down or chain at release.
   ActivePhotoShow? _photoGate;
 
   final Map<String, double> _charWidthCache = {};
@@ -540,7 +531,6 @@ class TerminalEngine {
     currentRegion = null;
 
     activeImgBand = null;
-    _liveImgBands.clear();
 
     _pendingPresentation = null;
 
@@ -593,10 +583,9 @@ class TerminalEngine {
     _activeSprites.clear(); // Screen cleared, stop cycling
 
     // Any revealing [IMG] band whose line just got wiped has nothing left to
-    // reveal into — cancel the gate AND drop every live band so the engine
-    // doesn't keep advancing bands that no longer exist on screen.
+    // reveal into. Clearing the gate is sufficient because the line itself
+    // was the only owner of its explicit start-frame reveal state.
     activeImgBand = null;
-    _liveImgBands.clear();
 
     // The [PHOTO] onion stack is part of the terminal canvas: an explicit
     // [WIPE] (or a scroll-off / overflow wipe, or an SVG takeover, all of
@@ -669,37 +658,6 @@ class TerminalEngine {
         sprite.currentFrame = (sprite.currentFrame + 1) % sprite.frames.length;
         _rewriteSpriteLines(sprite);
       }
-    }
-  }
-
-  /// Advances every live [IMG] band by one frame and drops any that have
-  /// finished revealing. Runs alongside _advanceSprites (i.e. through pauses
-  /// and while another band gates typing), which is exactly what makes bands
-  /// reveal concurrently: a released band is no longer the activeImgBand but
-  /// stays here until its last copy lands.
-  ///
-  /// DETERMINISM: pure frame counting — the same frame N reveals the same
-  /// copies live, scrubbed, or baked.
-  void _advanceLiveImgBands() {
-    if (_liveImgBands.isEmpty) return;
-    for (final b in _liveImgBands) {
-      if (b.elapsed < b.totalFrames) b.elapsed++;
-    }
-    _liveImgBands.removeWhere((b) => b.isDone);
-  }
-
-  /// Advances every live [PHOTO] layer's scanline by one frame. Each layer
-  /// counts up to its settle frame (scan done AND gate open) and then holds
-  /// — layers are NEVER dropped here; they persist until an explicit wipe.
-  /// Runs alongside sprites and IMG bands, so a stack layer that released
-  /// its gate early keeps scanning in behind whatever content follows.
-  ///
-  /// DETERMINISM: pure frame counting — the same frame N reveals the same
-  /// scanline position live, scrubbed, or baked.
-  void _advanceLivePhotos() {
-    if (_photoStack.isEmpty) return;
-    for (final p in _photoStack) {
-      if (p.elapsed < p.settleFrame) p.elapsed++;
     }
   }
 
@@ -832,7 +790,15 @@ class TerminalEngine {
   /// without it the layer is CLASSIC (block the full hold, then tear down) —
   /// byte-identical to the pre-stack behavior. Tint = the tag's rgb override
   /// or the pen color at fire time, same rule as SVG/IMG.
-  ActivePhotoShow? _buildPhotoShow(RegExpMatch match) {
+  ///
+  /// [startFrame] is explicit because normal parser entry becomes visible on
+  /// the next terminal frame, while classic chaining creates the next PHOTO
+  /// after the current tick has already advanced and therefore CUTs in at the
+  /// current terminal frame.
+  ActivePhotoShow? _buildPhotoShow(
+    RegExpMatch match, {
+    required int startFrame,
+  }) {
     final String? file = match.namedGroup('photoFile');
     if (file == null) return null;
 
@@ -859,6 +825,7 @@ class TerminalEngine {
       key: key,
       holdFrames: math.max(hold, 1),
       color: c,
+      startFrame: startFrame,
       persist: stack,
       releasePercent: releasePercent,
     );
@@ -916,7 +883,10 @@ class TerminalEngine {
       }
 
       if (match.namedGroup('photoFile') != null) {
-        final ActivePhotoShow? next = _buildPhotoShow(match);
+        final ActivePhotoShow? next = _buildPhotoShow(
+          match,
+          startFrame: frameCount,
+        );
         if (next == null) return false;
         charIndex = i + (match.end - match.start);
         currentRawLine = pendingRawLine;
@@ -943,13 +913,14 @@ class TerminalEngine {
   /// Commits an [IMG] band into the line flow. Forces a newline if
   /// mid-typing (same as SPRITE), clamps the repeat count so the band fits
   /// inside the margins (min 1 copy), advances the cursor by the band's
-  /// drawn height, and installs the reveal state.
+  /// drawn height, and installs reveal state anchored to the first visible
+  /// terminal frame.
   ///
   /// [releasePercent] is the % of this band's reveal at which the typing
   /// gate opens so the content AFTER the tag can begin — 100 (default) means
-  /// block the whole reveal, exactly as bands behaved before. The band is
-  /// registered in _liveImgBands regardless, so an early-released band keeps
-  /// revealing behind the following content until its last copy lands.
+  /// block the whole reveal, exactly as bands behaved before. After early
+  /// release the rendered line itself retains the start frame, so reveal
+  /// continues without a separate live timing list.
   void _commitImgBand(
       ImgStencil stencil, int repeat, int framesPer, int releasePercent) {
     // Force newline if mid-typing.
@@ -982,6 +953,7 @@ class TerminalEngine {
     final ImgBandState state = ImgBandState(
       framesPer: math.max(framesPer, 1),
       copies: copies,
+      startFrame: frameCount + 1,
       releasePercent: releasePercent,
     );
 
@@ -1003,13 +975,11 @@ class TerminalEngine {
     cursorY += tileH;
     if (cursorY > height - marginY) wipeScreen();
 
-    // Register the band as gating typing (until its release point) AND as a
-    // live reveal. If the overflow check above just wiped the screen, the
-    // wipe already cancelled the state we were about to install, so only
-    // install it if the band's line survived.
+    // Register only the typing gate. If the overflow check above just wiped
+    // the screen, the band's line did not survive and there is nothing to
+    // gate or reveal. Otherwise LineData owns the reveal state from here on.
     if (renderedLines.isNotEmpty && renderedLines.last.imgBand?.state == state) {
       activeImgBand = state;
-      _liveImgBands.add(state);
     }
   }
 
