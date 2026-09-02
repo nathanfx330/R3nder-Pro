@@ -161,11 +161,11 @@ class TerminalPainter extends CustomPainter {
       for (var cd in chars) {
         String drawChar = cd.char;
 
-        // Resolve Bar progress
+        // Resolve Bar progress directly from terminal-frame age.
         if (cd.barInfo != null) {
           final state = cd.barInfo!.state;
-          double progressRatio = state.elapsed / (state.frames > 0 ? state.frames : 1);
-          int fillCount = (progressRatio * state.width).toInt();
+          final double progressRatio = state.progressAt(engine.frameCount);
+          final int fillCount = (progressRatio * state.width).toInt();
           drawChar = (cd.barInfo!.index < fillCount) ? cd.barInfo!.fill : cd.barInfo!.empty;
         }
 
