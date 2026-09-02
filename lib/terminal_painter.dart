@@ -74,9 +74,8 @@ class TerminalPainter extends CustomPainter {
     // same box); differently-proportioned layers each center to their own
     // aspect, as a single photo always has.
     //
-    // DETERMINISM: each layer's revealProgress is a pure function of its
-    // frame-counted elapsed, so the whole stack renders identically live,
-    // scrubbed, and baked.
+    // DETERMINISM: each layer derives reveal progress directly from its
+    // terminal start frame and the current terminal frame.
     if (engine.hasPhotos) {
       for (final layer in engine.photoStack) {
         final ImgStencil? stencil = engine.photoStencilFor(layer);
@@ -290,12 +289,11 @@ class TerminalPainter extends CustomPainter {
   ///  - Copies butt together edge to edge (seamless repeating pattern) and
   ///    reveal left to right on the engine's frame-counted cadence.
   ///
-  /// DETERMINISM: revealedCopies is a pure function of the shared state's
-  /// elapsed counter, which the engine advances tick by tick — the same
-  /// frame renders the same copies live, scrubbed, or baked.
+  /// DETERMINISM: reveal count and scan progress are derived from the band's
+  /// explicit terminal start frame and the current terminal frame.
   void _drawImgBand(
       Canvas canvas, ImgBandData band, double startX, double yPos) {
-    final int revealed = band.state.revealedCopies;
+    final int revealed = band.state.revealedCopiesAt(engine.frameCount);
     if (revealed <= 0) return;
 
     final Paint fill = Paint()
@@ -309,7 +307,7 @@ class TerminalPainter extends CustomPainter {
     // already animating and a clip on top would be two competing reveals on
     // one element. One tile has nothing to stagger, so the scanline is what
     // its framesPer buys.
-    final double progress = band.state.scanProgress;
+    final double progress = band.state.scanProgressAt(engine.frameCount);
     if (progress <= 0.0) return;
 
     canvas.save();
@@ -369,10 +367,15 @@ class TerminalPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// Draws ONE [PHOTO] layer's stencil fit-and-centered inside the
-  /// terminal's margin box. Uses the same ImgStencil path as IMG bands, but
-  /// scales it uniformly and applies a top-to-bottom clipping rect to
-  /// simulate a slow wirephoto scanline reveal.
+  /// Draws ONE [PHOTO] layer's stencil fit-and-centered inside a dedicated
+  /// terminal media box. PHOTO is a fullscreen terminal effect rather than
+  /// text, so its vertical fit is intentionally less constrained than the
+  /// normal text margins: at 1080p it gets 1020px of height, centered with
+  /// 30px above and below. Horizontal text margins remain unchanged.
+  ///
+  /// Uses the same ImgStencil path as IMG bands, scales it uniformly, and
+  /// applies a top-to-bottom clipping rect to simulate a slow wirephoto
+  /// scanline reveal.
   ///
   /// Called once per stack layer, bottom-to-top. Each call is fully
   /// self-contained (its own save/clip/transform/restore), so layers
@@ -380,9 +383,14 @@ class TerminalPainter extends CustomPainter {
   /// is empty the ones beneath show through — that's the onion.
   void _drawPhotoStencil(Canvas canvas, ImgStencil stencil, ActivePhotoShow photo) {
     final double boxLeft = engine.marginX;
-    final double boxTop = engine.marginY;
     final double boxW = math.max(engine.width - engine.marginX * 2, 1.0);
-    final double boxH = math.max(engine.height - engine.marginY * 2, 1.0);
+
+    // 30px top/bottom at 1080p, proportional at other terminal heights.
+    // The native PHOTO source cap is already 1024px on either axis; this is
+    // only the on-screen contain box, not a decode or thresholding limit.
+    final double verticalInset = engine.height / 36.0;
+    final double boxTop = verticalInset;
+    final double boxH = math.max(engine.height - verticalInset * 2.0, 1.0);
 
     // Uniform contain-fit
     final double fit = math.min(boxW / stencil.pxWidth, boxH / stencil.pxHeight);
@@ -393,8 +401,8 @@ class TerminalPainter extends CustomPainter {
 
     canvas.save();
 
-    // SCANLINE REVEAL: Clip the canvas top-to-bottom based on elapsed frames.
-    final double progress = photo.revealProgress;
+    // SCANLINE REVEAL: clip top-to-bottom from explicit terminal-frame age.
+    final double progress = photo.revealProgressAt(engine.frameCount);
     if (progress < 1.0) {
       canvas.clipRect(Rect.fromLTWH(dx, dy, drawW, drawH * progress));
     }

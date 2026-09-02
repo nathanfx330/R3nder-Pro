@@ -35,12 +35,28 @@ void main() {
       File('${video.path}/${i.toString().padLeft(2, '0')}.png')
           .writeAsBytesSync(pngBytes);
     }
+    for (final String name in <String>[
+      'tile.png',
+      'photo_a.png',
+      'photo_b.png',
+    ]) {
+      File('${images.path}/$name').writeAsBytesSync(pngBytes);
+    }
 
     const String script = '''
 [SPEED:MAX]
 SYSTEM
 [PAUSE:2]
 [BAR:6:8]
+[IMG:tile.png:3:R:2:50]
+[PAUSE:4]
+[PHOTO:photo_a.png:5]
+[PHOTO:photo_b.png:5]
+[PAUSE:1]
+[PHOTO:photo_a.png:30:R:0,255,0:50]
+[PHOTO:photo_b.png:30:R:0,255,0:50]
+[PAUSE:4]
+[WIPE]
 [GALLERY:gallery:4:FADE:Gallery]
 [VIDEO:video:3:Video:24]
 [APP:gallery:30:App:MOSAIC:3:1@1;1;1]
@@ -155,6 +171,22 @@ List<int> _collectProbeFrames(SceneEngine scene) {
     // Regular samples make long holds and VIDEO playback observable instead
     // of checking only phase boundaries.
     if (scene.frameCount % 11 == 0) probes.add(scene.frameCount);
+
+    // Terminal animation migrations are deliberately sampled frame by frame
+    // while active. This catches short BAR/IMG gates, IMG reveal continuing
+    // after early release, classic PHOTO cuts, overlapping PHOTO scans, and
+    // a PAUSE that begins only after the current PHOTO stack has settled.
+    final TerminalEngine terminal = scene.terminal;
+    final bool imgStillRevealing = terminal.renderedLines.any((line) {
+      final ImgBandState? band = line.imgBand?.state;
+      return band != null && !band.isDoneAt(terminal.frameCount);
+    });
+    if (terminal.activeBar != null ||
+        terminal.activeImgBand != null ||
+        terminal.hasPhotos ||
+        imgStillRevealing) {
+      probes.add(scene.frameCount);
+    }
 
     if (scene.phase != phase) {
       _addIntervalProbes(probes, phaseStart, scene.frameCount - 1);
@@ -327,7 +359,7 @@ Map<String, Object?> _fingerprint(SceneEngine scene) {
       'flash': t.flashStyle,
       'pending': t.pendingPresentation?.runtimeType.toString(),
       'bar': _bar(t.activeBar, t.frameCount),
-      'imgBand': _imgBand(t.activeImgBand),
+      'imgBand': _imgBand(t.activeImgBand, t.frameCount),
       'svg': _svg(t.activeSvg),
       'photos': <Object?>[
         for (final photo in t.photoStack)
@@ -335,10 +367,11 @@ Map<String, Object?> _fingerprint(SceneEngine scene) {
             'key': photo.key,
             'hold': photo.holdFrames,
             'color': _color(photo.color),
+            'startFrame': photo.startFrame,
             'persist': photo.persist,
             'release': photo.releaseAt,
-            'elapsed': photo.elapsed,
-            'reveal': _q(photo.revealProgress),
+            'elapsed': photo.elapsedAt(t.frameCount),
+            'reveal': _q(photo.revealProgressAt(t.frameCount)),
           },
       ],
       'rendered':
@@ -374,7 +407,7 @@ Map<String, Object?> _line(LineData line, int terminalFrame) =>
               'h': line.imgBand!.stencil.pxHeight,
               'color': _color(line.imgBand!.color),
               'scale': _q(line.imgBand!.drawScale),
-              'state': _imgBand(line.imgBand!.state),
+              'state': _imgBand(line.imgBand!.state, terminalFrame),
             },
     };
 
@@ -407,18 +440,20 @@ Map<String, Object?>? _bar(BarState? bar, int terminalFrame) => bar == null
         'width': bar.width,
       };
 
-Map<String, Object?>? _imgBand(ImgBandState? band) => band == null
-    ? null
-    : <String, Object?>{
-        'framesPer': band.framesPer,
-        'copies': band.copies,
-        'release': band.releaseAt,
-        'elapsed': band.elapsed,
-        'revealed': band.revealedCopies,
-        'scan': _q(band.scanProgress),
-        'total': band.totalFrames,
-        'done': band.isDone,
-      };
+Map<String, Object?>? _imgBand(ImgBandState? band, int terminalFrame) =>
+    band == null
+        ? null
+        : <String, Object?>{
+            'framesPer': band.framesPer,
+            'copies': band.copies,
+            'startFrame': band.startFrame,
+            'release': band.releaseAt,
+            'elapsed': band.elapsedAt(terminalFrame),
+            'revealed': band.revealedCopiesAt(terminalFrame),
+            'scan': _q(band.scanProgressAt(terminalFrame)),
+            'total': band.totalFrames,
+            'done': band.isDoneAt(terminalFrame),
+          };
 
 Map<String, Object?>? _svg(ActiveSvgShow? svg) => svg == null
     ? null
