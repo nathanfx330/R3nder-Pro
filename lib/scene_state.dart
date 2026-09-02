@@ -19,9 +19,6 @@ class _ActiveGallery {
   final int videoFpsDenominator;
 
   int imageIndex = 0;
-  int framesIntoPhase = 0;
-  bool videoPlaybackStarted = false;
-  int videoFrameAccumulator = 0;
 
   _ActiveGallery({
     required this.images,
