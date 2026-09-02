@@ -70,8 +70,17 @@ class TerminalEngine {
 
   bool isRedacting = false;
   bool isScrambling = false;
-  int scrambleFramesLeft = 0;
-  String scrambleTargetChar = "";
+
+  /// The character currently passing through SCRAMBLE, or null between
+  /// characters. Its duration is chosen once by the seeded RNG and all
+  /// visible timing derives from terminal-frame distance after that.
+  ScrambleState? activeScramble;
+
+  /// Back-compatible read-only views used by the painter and diagnostics.
+  /// They are no longer mutable timing state.
+  int get scrambleFramesLeft =>
+      activeScramble?.framesLeftAt(frameCount) ?? 0;
+  String get scrambleTargetChar => activeScramble?.targetChar ?? "";
 
   /// True once the script text has fully exhausted and the engine has entered
   /// its final hold. While the hold plays, frameCount keeps advancing (cursor
@@ -522,8 +531,7 @@ class TerminalEngine {
 
     isRedacting = false;
     isScrambling = false;
-    scrambleFramesLeft = 0;
-    scrambleTargetChar = "";
+    activeScramble = null;
 
     _endHoldStarted = false;
 
