@@ -15,26 +15,25 @@ extension _TerminalEngineTicking on TerminalEngine {
     // the SceneEngine until it clears.
     if (_pendingPresentation != null) return;
 
-    // SVG SHOW: the terminal screen is displaying a stencil. The engine owns
-    // this hold completely (no SceneEngine involvement): count down the
-    // current step, advance to the next step (SVGFLASH flicker), and on
-    // expiry either CUT into a chained SVG/SVGFLASH tag or wipe and resume.
+    // SVG SHOW: the terminal screen is displaying a stencil. The show owns no
+    // mutable timing counters: its visible step and completion are derived
+    // from terminal frame age. On expiry either CUT into a chained SVG/PHOTO
+    // show or wipe and resume.
     if (activeSvg != null) {
       final ActiveSvgShow a = activeSvg!;
-      a.framesLeft--;
       frameCount++;
 
-      if (a.framesLeft <= 0) {
-        a.stepIdx++;
-        if (a.stepIdx < a.steps.length) {
-          // Next flicker step, CUT.
-          a.framesLeft = a.steps[a.stepIdx].frames;
+      if (a.completesAt(frameCount)) {
+        if (_tryConsumeChainedShow()) {
+          // A chained SVG becomes visible on the frame we just advanced to.
+          // PHOTO chaining already carries its own explicit start frame.
+          activeSvg?.bindFrameClock(
+            startFrame: frameCount,
+            terminalFrame: () => frameCount,
+          );
         } else {
-          // Show over: chain or exit.
-          if (!_tryConsumeChainedShow()) {
-            activeSvg = null;
-            wipeScreen(); // Exit wipe: clean screen for the resuming script.
-          }
+          activeSvg = null;
+          wipeScreen(); // Exit wipe: clean screen for the resuming script.
         }
       }
       return;
@@ -59,7 +58,14 @@ extension _TerminalEngineTicking on TerminalEngine {
         _photoGate = null; // Gate opens either way.
         if (!g.persist) {
           // Classic teardown.
-          if (!_tryConsumeChainedShow()) {
+          if (_tryConsumeChainedShow()) {
+            // If the chain target is SVG, it CUTs in on the already-advanced
+            // current frame. A PHOTO target was given that frame in engine.dart.
+            activeSvg?.bindFrameClock(
+              startFrame: frameCount,
+              terminalFrame: () => frameCount,
+            );
+          } else {
             wipeScreen(); // clears the (single classic) layer + resumes typing
           }
         }
@@ -159,10 +165,13 @@ extension _TerminalEngineTicking on TerminalEngine {
               match.namedGroup('svgfFolder') != null) {
             // In-terminal SVG show: wipe, hold the stencil, wipe, resume.
             // The entry wipe happens HERE; the exit wipe (or a CUT into a
-            // chained SVG tag) happens when the hold expires in the
-            // activeSvg branch at the top of tick().
+            // chained SVG tag) happens when the explicit show age completes.
             final ActiveSvgShow? show = _buildSvgShow(match);
             if (show != null) {
+              show.bindFrameClock(
+                startFrame: frameCount + 1,
+                terminalFrame: () => frameCount,
+              );
               wipeScreen();
               activeSvg = show;
             } else {
