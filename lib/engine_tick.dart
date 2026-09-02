@@ -75,7 +75,10 @@ extension _TerminalEngineTicking on TerminalEngine {
       return;
     }
 
-    // Advance Sprites regardless of pause/scramble state.
+    // Materialize each live sprite for the terminal frame this tick is about
+    // to produce. `_advanceSprites()` still owns the line-buffer rewrite, but
+    // its state accessors now derive the target frame from explicit age rather
+    // than incrementing `currentFrame` / `framesSinceLast` counters.
     _advanceSprites();
 
     // PAUSE / END HOLD: no countdown mutates. The pause was anchored to its
@@ -205,6 +208,15 @@ extension _TerminalEngineTicking on TerminalEngine {
               if (show.persist) {
                 if (_photoStack.isEmpty) {
                   wipeScreen(); // first onion layer: clear the text canvas
+                } else {
+                  // A later onion layer gates over the existing terminal
+                  // canvas without wiping it. Legacy sprites froze during
+                  // that gate because the PHOTO branch returned before their
+                  // update. Record the whole known gate span once so future
+                  // sprite frames derive the same active age directly.
+                  for (final _ActiveSprite sprite in _activeSprites.values) {
+                    sprite.freezeForPhotoGate(show);
+                  }
                 }
                 _pushPhoto(show);
               } else {
@@ -268,6 +280,8 @@ extension _TerminalEngineTicking on TerminalEngine {
                 path: path,
                 frames: frames,
                 holdFrames: holdFrames,
+                startFrame: frameCount + 1,
+                terminalFrame: () => frameCount,
                 startLineIdx: renderedLines.length,
                 lineCount: frames[0].length,
                 startGlobalCharIndex: globalCharIndex,
@@ -280,7 +294,8 @@ extension _TerminalEngineTicking on TerminalEngine {
                 flashStyle: flashStyle,
               );
 
-              // Commit frame 0 immediately
+              // Commit frame 0 immediately. Every later frame is materialized
+              // from explicit sprite age at the start of an eligible tick.
               final initialLines = _buildSpriteLines(sprite, 0);
               renderedLines.addAll(initialLines);
               _activeSprites[path] = sprite;
@@ -291,7 +306,10 @@ extension _TerminalEngineTicking on TerminalEngine {
             break;
           } else if (match.namedGroup('spriteOff') != null) {
             final path = match.namedGroup('spriteOff')!;
-            _activeSprites.remove(path); // Freezes it in place
+            // `_advanceSprites()` already materialized the frame produced by
+            // this tick. Removing the live state therefore freezes exactly
+            // that visible frame in the line buffer, matching legacy behavior.
+            _activeSprites.remove(path);
             break;
           } else if (match.namedGroup('pause') != null) {
             _startPause(int.parse(match.namedGroup('pause')!));
