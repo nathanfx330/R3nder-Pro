@@ -276,7 +276,26 @@ extension _TerminalEngineTicking on TerminalEngine {
             _activeSprites.remove(path); // Freezes it in place
             break;
           } else if (match.namedGroup('pause') != null) {
-            pauseFrames = int.parse(match.namedGroup('pause')!);
+            final int authoredPause = int.parse(match.namedGroup('pause')!);
+
+            // A stack PHOTO can release its typing gate before its 30-frame
+            // scan has finished. If PAUSE follows immediately, authors expect
+            // the requested hold to begin AFTER the visible scan completes,
+            // not to be consumed while the last layer is still drawing.
+            //
+            // Do not freeze or add a PHOTO clock. Instead extend this pause by
+            // the largest remaining derived scan age in the current stack.
+            // That is equivalent to waiting until the stack settles and then
+            // parsing the same PAUSE, while keeping PHOTO evaluation tied only
+            // to terminal frame age.
+            int photoTail = 0;
+            for (final ActivePhotoShow photo in _photoStack) {
+              final int remaining =
+                  photo.settleFrame - photo.elapsedAt(frameCount);
+              if (remaining > photoTail) photoTail = remaining;
+            }
+
+            pauseFrames = authoredPause + photoTail;
             break;
           } else if (match.namedGroup('speed') != null) {
             final spd = match.namedGroup('speed')!;
