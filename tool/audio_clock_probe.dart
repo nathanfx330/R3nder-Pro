@@ -55,10 +55,10 @@ Future<void> main(List<String> args) async {
   final Process sink = await Process.start(backend.name, backend.args);
 
   unawaited(decoder.stderr
-      .transform(const SystemEncoding().decoder)
+      .transform(systemEncoding.decoder)
       .forEach((String line) => stderr.write(line)));
   unawaited(sink.stderr
-      .transform(const SystemEncoding().decoder)
+      .transform(systemEncoding.decoder)
       .forEach((String line) => stderr.write(line)));
   unawaited(sink.stdout.drain<void>().catchError((_) {}));
 
@@ -130,7 +130,7 @@ Future<void> main(List<String> args) async {
   wall.stop();
 
   stdout.writeln('');
-  stdout.writeln('QUiescence: ${counterStopped ? 'PASS' : 'FAIL'}');
+  stdout.writeln('quiescence: ${counterStopped ? 'PASS' : 'FAIL'}');
   stdout.writeln(
       'final submitted sample frames: ${submittedBytes ~/ _bytesPerSampleFrame}');
 
