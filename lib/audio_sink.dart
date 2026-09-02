@@ -62,6 +62,11 @@ class NativeAudioSink {
     try {
       if (device != null && device.isNotEmpty) {
         devicePtr = _native.copyUtf8(device);
+        if (devicePtr == nullptr) {
+          throw const AudioSinkException(
+            'Could not allocate the selected audio device name.',
+          );
+        }
       }
       _handle = _native.create(
         devicePtr,
