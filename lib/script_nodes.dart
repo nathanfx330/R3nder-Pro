@@ -166,6 +166,12 @@ class ScriptNode {
   int startLine = 0;
   int endLine = 0;
 
+  /// Exact character span in the current emitted document. [startOffset] is
+  /// inclusive and [endOffset] is exclusive, matching String.substring.
+  /// These are recomputed metadata, never serialization state.
+  int startOffset = 0;
+  int endOffset = 0;
+
   ScriptNode({required this.type, required this.rawText});
 
   bool get isSpacer => type == kSpacer;
@@ -736,5 +742,23 @@ void assignNodeLineSpans(List<ScriptNode> nodes) {
     n.endLine = line + (endsOnBreak ? total - 1 : total);
 
     line += total;
+  }
+}
+
+/// Stamps every node with its exact character range in the current emitted
+/// document. The spans tile the document with no gaps or overlaps and use the
+/// same start-inclusive, end-exclusive convention as String.substring.
+///
+/// This deliberately derives from [toMarkup] after edits instead of retaining
+/// stale parse offsets. Changing one node's authored length therefore shifts
+/// every following node to its new exact source position without rewriting
+/// any of them.
+void assignNodeSourceSpans(List<ScriptNode> nodes) {
+  int offset = 0;
+  for (final ScriptNode node in nodes) {
+    final String markup = node.toMarkup();
+    node.startOffset = offset;
+    offset += markup.length;
+    node.endOffset = offset;
   }
 }
