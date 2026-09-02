@@ -15,6 +15,48 @@ extension _SceneEngineTicking on SceneEngine {
   bool _phaseEndsThisTick(int duration) =>
       _phaseVisualFrames + 1 >= duration;
 
+  /// Source image selected by VIDEO at explicit age inside viewerShowing.
+  ///
+  /// This is the closed-form version of the old integer accumulator. The
+  /// first source frame owns the scripted hold, with a minimum of one visible
+  /// showing frame even when hold=0. After that, source time advances by the
+  /// exact rational source-rate / engine-rate ratio. Integer division gives
+  /// the same repeats below engine FPS and skips above it that the accumulator
+  /// produced, without carrying any playback state from the previous tick.
+  int _videoFrameIndexAt(_ActiveGallery g, int showingFrames) {
+    if (g.images.length <= 1) return 0;
+
+    final int playbackStartTick = g.holdFrames < 1 ? 1 : g.holdFrames;
+    if (showingFrames < playbackStartTick) return 0;
+
+    final int playbackTicks = showingFrames - playbackStartTick + 1;
+    final int threshold = engineFps * g.videoFpsDenominator;
+    final int advanced =
+        (playbackTicks * g.videoFpsNumerator) ~/ threshold;
+    final int last = g.images.length - 1;
+    return advanced > last ? last : advanced;
+  }
+
+  /// Total viewerShowing duration for VIDEO.
+  ///
+  /// The final source frame always owns one R3nder second after the exact
+  /// rational tick on which it first arrives. One-frame videos keep the
+  /// legacy rule that the opening hold is the entire presentation and do not
+  /// receive a second final-frame hold.
+  int _videoShowingFrames(_ActiveGallery g) {
+    final int playbackStartTick = g.holdFrames < 1 ? 1 : g.holdFrames;
+    if (g.images.length <= 1) return playbackStartTick;
+
+    final int last = g.images.length - 1;
+    final int threshold = engineFps * g.videoFpsDenominator;
+    final int ticksToLast =
+        (last * threshold + g.videoFpsNumerator - 1) ~/
+            g.videoFpsNumerator;
+    final int lastArrivalFrame =
+        playbackStartTick + ticksToLast - 1;
+    return lastArrivalFrame + engineFps;
+  }
+
   void _tickDeterministic() {
     if (isFinished) return;
 
@@ -83,49 +125,14 @@ extension _SceneEngineTicking on SceneEngine {
         final g = _activeGallery!;
 
         if (g.isVideo) {
-          g.framesIntoPhase++;
+          // Derive the next visible source frame from absolute phase age.
+          // _tickDeterministic() runs before frameCount increments, so +1 is
+          // the viewerShowing age the painter will see after this tick.
+          g.imageIndex = _videoFrameIndexAt(g, _phaseVisualFrames + 1);
 
-          // VIDEO starts with the scripted hold on source frame zero. On the
-          // threshold tick we immediately enter playback, which preserves the
-          // old 30-fps behavior exactly: frame 1 appears on hold tick 60 when
-          // hold=60, rather than one engine tick later.
-          if (!g.videoPlaybackStarted) {
-            if (g.framesIntoPhase < g.holdFrames) break;
-
-            // Legacy one-frame sequence behavior: the first-frame hold is the
-            // entire presentation; there is no second final-frame hold.
-            if (g.images.length == 1) {
-              _chainClosing = terminal.peekNextPresentation();
-              _enterPhase(ScenePhase.viewerClosing);
-              break;
-            }
-
-            g.videoPlaybackStarted = true;
-            g.framesIntoPhase = 0;
-          } else if (g.imageIndex >= g.images.length - 1) {
-            // Final source frame always sits for one R3nder second, regardless
-            // of source FPS. This is scene timing, not source-video timing.
-            if (g.framesIntoPhase >= engineFps) {
-              _chainClosing = terminal.peekNextPresentation();
-              _enterPhase(ScenePhase.viewerClosing);
-            }
-            break;
-          }
-
-          // Integer/rational frame-rate conversion. Each R3nder output tick
-          // contributes sourceFps / engineFps source frames. Rates below 30
-          // naturally repeat source images; rates above 30 naturally skip
-          // them. No wall clock or floating-point time is involved.
-          g.videoFrameAccumulator += g.videoFpsNumerator;
-          final int threshold = engineFps * g.videoFpsDenominator;
-          final int advance = g.videoFrameAccumulator ~/ threshold;
-          g.videoFrameAccumulator %= threshold;
-
-          if (advance > 0) {
-            final int last = g.images.length - 1;
-            final int next = g.imageIndex + advance;
-            g.imageIndex = next > last ? last : next;
-            g.framesIntoPhase = 0;
+          if (_phaseEndsThisTick(_videoShowingFrames(g))) {
+            _chainClosing = terminal.peekNextPresentation();
+            _enterPhase(ScenePhase.viewerClosing);
           }
           break;
         }
