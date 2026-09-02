@@ -19,6 +19,7 @@ class _ActiveGallery {
   final int videoFpsDenominator;
 
   int imageIndex = 0;
+  int framesIntoPhase = 0;
 
   _ActiveGallery({
     required this.images,
