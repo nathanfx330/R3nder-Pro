@@ -55,6 +55,7 @@ SYSTEM
 [PAUSE:1]
 [PHOTO:photo_a.png:30:R:0,255,0:50]
 [PHOTO:photo_b.png:30:R:0,255,0:50]
+[PAUSE:4]
 [WIPE]
 [GALLERY:gallery:4:FADE:Gallery]
 [VIDEO:video:3:Video:24]
@@ -173,7 +174,8 @@ List<int> _collectProbeFrames(SceneEngine scene) {
 
     // Terminal animation migrations are deliberately sampled frame by frame
     // while active. This catches short BAR/IMG gates, IMG reveal continuing
-    // after early release, classic PHOTO cuts, and overlapping PHOTO scans.
+    // after early release, classic PHOTO cuts, overlapping PHOTO scans, and
+    // a PAUSE that begins only after the current PHOTO stack has settled.
     final TerminalEngine terminal = scene.terminal;
     final bool imgStillRevealing = terminal.renderedLines.any((line) {
       final ImgBandState? band = line.imgBand?.state;
