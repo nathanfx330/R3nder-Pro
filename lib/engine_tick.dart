@@ -114,16 +114,20 @@ extension _TerminalEngineTicking on TerminalEngine {
       return;
     }
 
-    if (isScrambling && scrambleFramesLeft > 0) {
-      scrambleFramesLeft--;
-      frameCount++;
-      return;
-    }
+    // SCRAMBLE CHARACTER: duration is chosen once when the character is
+    // encountered; after that the visible glyph and zero-left transition are
+    // derived entirely from terminal-frame age. The real target commits on
+    // the tick AFTER the legacy zero-left frame, preserving exact cadence.
+    if (isScrambling && activeScramble != null) {
+      final ScrambleState scramble = activeScramble!;
+      if (scramble.commitReadyAt(frameCount)) {
+        _commitChar(scramble.targetChar);
+        charIndex++;
+        activeScramble = null;
+        frameCount++;
+        return;
+      }
 
-    if (isScrambling && scrambleFramesLeft == 0 && scrambleTargetChar.isNotEmpty) {
-      _commitChar(scrambleTargetChar);
-      charIndex++;
-      scrambleTargetChar = "";
       frameCount++;
       return;
     }
@@ -438,8 +442,11 @@ extension _TerminalEngineTicking on TerminalEngine {
       }
 
       if (isScrambling && char != ' ' && char != '\n') {
-        scrambleFramesLeft = _random.nextInt(5) + 2;
-        scrambleTargetChar = char;
+        activeScramble = ScrambleState(
+          targetChar: char,
+          durationFrames: _random.nextInt(5) + 2,
+          startFrame: frameCount + 1,
+        );
         frameCount++;
         return;
       }

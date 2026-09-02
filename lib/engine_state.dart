@@ -197,6 +197,41 @@ class ActivePhotoShow {
       elapsedAt(terminalFrame) >= releaseAt;
 }
 
+/// One in-flight SCRAMBLE character evaluated from terminal-frame age.
+///
+/// The RNG still chooses [durationFrames] sequentially when the character is
+/// encountered, preserving the authored pseudo-random cadence. After that,
+/// no countdown mutates. [startFrame] is the first frame on which the hacker
+/// glyph is visible. The legacy transition deliberately includes one frame at
+/// `framesLeft == 0` before the real character commits on the following tick.
+class ScrambleState {
+  final String targetChar;
+  final int durationFrames;
+  final int startFrame;
+
+  ScrambleState({
+    required this.targetChar,
+    required this.durationFrames,
+    required this.startFrame,
+  });
+
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    return elapsed >= durationFrames ? durationFrames : elapsed;
+  }
+
+  int framesLeftAt(int terminalFrame) =>
+      math.max(durationFrames - elapsedAt(terminalFrame), 0);
+
+  bool glyphVisibleAt(int terminalFrame) => framesLeftAt(terminalFrame) > 0;
+
+  /// True on the legacy zero-left frame. The engine commits [targetChar] on
+  /// the NEXT tick, so that zero state remains visible for one complete frame.
+  bool commitReadyAt(int terminalFrame) =>
+      terminalFrame - startFrame >= durationFrames;
+}
+
 /// A preloaded [IMG] raster stencil: IBM 3279 Programmed Symbols emulation.
 ///
 /// Built once by the SceneEngine at setup(): the scripted channel is read
