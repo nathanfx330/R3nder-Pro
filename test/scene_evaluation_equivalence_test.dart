@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/engine.dart';
+import 'package:r3nder/motion.dart';
 import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
 import 'package:r3nder/scene_evaluator.dart';
