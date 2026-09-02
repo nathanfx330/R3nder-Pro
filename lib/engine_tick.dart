@@ -40,24 +40,22 @@ extension _TerminalEngineTicking on TerminalEngine {
       return;
     }
 
-    // PHOTO GATE: a photo layer is currently blocking typing. Every live
-    // layer advances its scanline this frame (via _advanceLivePhotos), then
-    // we check whether the gating layer has reached its release point.
+    // PHOTO GATE: a photo layer is currently blocking typing. PHOTO age is
+    // derived from terminal frame distance, so this branch only advances the
+    // terminal frame and asks whether the authored release point has arrived.
     //
     //  - CLASSIC layer (persist == false): releaseAt is the full hold, so
     //    this blocks the whole hold and then tears down — CUT into a chained
     //    SVG/PHOTO if one immediately follows, otherwise wipe (clearing the
     //    stack) and resume typing. Byte-identical to the pre-stack path.
     //  - STACK layer (persist == true): releaseAt is a % of the scan; the
-    //    gate opens early, the layer STAYS on the stack (keeps scanning via
-    //    _advanceLivePhotos), and tick() falls through next frame so the
-    //    next PHOTO tag can push over it. The stack only clears on a wipe.
+    //    gate opens early, the layer STAYS on the stack and its scan keeps
+    //    deriving from terminal age while following content runs.
     if (_photoGate != null) {
-      _advanceLivePhotos();
+      final ActivePhotoShow g = _photoGate!;
       frameCount++;
 
-      final ActivePhotoShow g = _photoGate!;
-      if (g.elapsed >= g.releaseAt) {
+      if (g.gateReleasedAt(frameCount)) {
         _photoGate = null; // Gate opens either way.
         if (!g.persist) {
           // Classic teardown.
@@ -71,17 +69,8 @@ extension _TerminalEngineTicking on TerminalEngine {
       return;
     }
 
-    // Advance Sprites regardless of pause/scramble state
+    // Advance Sprites regardless of pause/scramble state.
     _advanceSprites();
-
-    // Advance every live [IMG] band regardless of pause/scramble/gate state,
-    // so a released band keeps revealing while the following content plays.
-    // (Placed alongside sprites for the same "animate through pauses" reason.)
-    _advanceLiveImgBands();
-
-    // Advance every live [PHOTO] layer for the same reason: a stack layer
-    // that already released its gate keeps scanning in under the new content.
-    _advanceLivePhotos();
 
     if (pauseFrames > 0) {
       pauseFrames--;
@@ -104,19 +93,18 @@ extension _TerminalEngineTicking on TerminalEngine {
       return;
     }
 
-    // IMG BAND GATE: block typing until the gating band reaches its release
-    // point (its full reveal by default, or an earlier scripted %). The
-    // band's `elapsed` was already advanced by _advanceLiveImgBands above,
-    // and the band keeps revealing there after the gate opens — this branch
-    // only decides WHEN the content after the tag is allowed to start.
+    // IMG BAND GATE: block typing until the authored release point. The
+    // band's rendered line owns its start frame, so reveal progress continues
+    // directly from terminal age after this gate pointer is cleared.
     if (activeImgBand != null) {
-      if (activeImgBand!.elapsed >= activeImgBand!.releaseAt) {
-        activeImgBand = null; // gate released; band finishes revealing behind us
-      }
+      final ImgBandState band = activeImgBand!;
       // Consume this frame either way — releasing on the threshold frame
       // costs one dead tick, matching the pre-overlap block-to-completion
       // timing so existing (full-block) scripts stay frame-identical.
       frameCount++;
+      if (band.gateReleasedAt(frameCount)) {
+        activeImgBand = null;
+      }
       return;
     }
 
@@ -191,7 +179,10 @@ extension _TerminalEngineTicking on TerminalEngine {
             // the very first layer wipes the text canvas (to build the onion
             // on clean phosphor); subsequent layers push without wiping so
             // they scan in over the layers already there.
-            final ActivePhotoShow? show = _buildPhotoShow(match);
+            final ActivePhotoShow? show = _buildPhotoShow(
+              match,
+              startFrame: frameCount + 1,
+            );
             if (show != null) {
               if (show.persist) {
                 if (_photoStack.isEmpty) {
