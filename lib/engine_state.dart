@@ -63,6 +63,12 @@ class ActivePhotoShow {
   final int holdFrames;
   final Color color;
 
+  /// First terminal frame on which this layer is visible at scan age zero.
+  /// Normal parser entry uses the next terminal frame; a classic chained
+  /// PHOTO can CUT into another PHOTO after the frame has already advanced,
+  /// so that path intentionally uses the current terminal frame instead.
+  final int startFrame;
+
   /// Stack layer (true): persists until wipe, releases the gate early.
   /// Classic layer (false): blocks its whole hold, then tears down.
   final bool persist;
@@ -71,11 +77,6 @@ class ActivePhotoShow {
   /// 30-frame scan. Classic: the full holdFrames (block until hold ends).
   final int releaseAt;
 
-  /// Frames since this layer committed. Drives BOTH the scanline reveal and
-  /// the gate. Pure counter, advanced tick-by-tick by the engine, so the
-  /// same frame N renders identically live, scrubbed, or baked.
-  int elapsed = 0;
-
   /// Number of frames the scanline takes to reach the bottom.
   static const int scanDuration = 30; // 1 second at 30fps
 
@@ -83,6 +84,7 @@ class ActivePhotoShow {
     required this.key,
     required this.holdFrames,
     required this.color,
+    required this.startFrame,
     this.persist = false,
     int releasePercent = 100,
   }) : releaseAt =
@@ -97,13 +99,25 @@ class ActivePhotoShow {
     return r.clamp(1, scanDuration);
   }
 
-  /// 0..1 progress of the scanline reveal.
-  double get revealProgress => (elapsed / scanDuration).clamp(0.0, 1.0);
-
   /// The frame past which nothing about this layer changes: the scan is
-  /// done AND the gate has opened. The engine stops advancing [elapsed]
-  /// here so a persisting layer doesn't count upward forever.
+  /// done AND the gate has opened. Persisting layers remain on the onion
+  /// stack after this point, but their derived age clamps here.
   int get settleFrame => math.max(releaseAt, scanDuration);
+
+  /// Frames since this layer became visible, clamped once both reveal and
+  /// gate timing have settled. No per-tick PHOTO counter is carried.
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    return elapsed >= settleFrame ? settleFrame : elapsed;
+  }
+
+  /// 0..1 progress of the scanline reveal at an explicit terminal frame.
+  double revealProgressAt(int terminalFrame) =>
+      (elapsedAt(terminalFrame) / scanDuration).clamp(0.0, 1.0);
+
+  bool gateReleasedAt(int terminalFrame) =>
+      elapsedAt(terminalFrame) >= releaseAt;
 }
 
 /// A preloaded [IMG] raster stencil: IBM 3279 Programmed Symbols emulation.
@@ -134,10 +148,12 @@ class ImgStencil {
   });
 }
 
-/// Live reveal state for an [IMG] band, shared-object style exactly like
-/// BarState: the engine mutates `elapsed` each tick while the band is live
-/// (see TerminalEngine._liveImgBands), and the painter derives the revealed
-/// copy count from it — pure function of frames elapsed, fully deterministic.
+/// Reveal state for an [IMG] band evaluated from explicit terminal-frame age.
+///
+/// The rendered line owns this object for as long as the band remains on
+/// screen. Early gate release therefore needs no separate live timing list:
+/// the painter can keep deriving reveal progress from [startFrame] while
+/// later terminal content runs.
 class ImgBandState {
   /// Frames between each copy revealing.
   final int framesPer;
@@ -145,24 +161,36 @@ class ImgBandState {
   /// Total copies in the band (already clamped to the margins).
   final int copies;
 
+  /// First terminal frame on which the band is visible at reveal age zero.
+  final int startFrame;
+
   /// Elapsed frame at which the TYPING GATE releases, letting the content
   /// after this tag begin while the band keeps revealing behind it. Equal
   /// to [totalFrames] for a full block (the classic behavior); smaller when
   /// the tag scripts an early-release percentage. Always >= 1.
   final int releaseAt;
 
-  int elapsed = 0;
-
   ImgBandState({
     required this.framesPer,
     required this.copies,
+    required this.startFrame,
     int releasePercent = 100,
   }) : releaseAt = gateFrames(copies, framesPer, releasePercent);
 
+  /// The band reveals fully over this many frames.
+  int get totalFrames => copies * math.max(framesPer, 1);
+
+  int elapsedAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    return elapsed >= totalFrames ? totalFrames : elapsed;
+  }
+
   /// Copy 0 is visible the frame the band commits; copy k appears at
   /// elapsed >= k * framesPer. Sequential, left to right.
-  int get revealedCopies =>
-      math.min(copies, (elapsed ~/ math.max(framesPer, 1)) + 1);
+  int revealedCopiesAt(int terminalFrame) => math.min(
+      copies,
+      (elapsedAt(terminalFrame) ~/ math.max(framesPer, 1)) + 1);
 
   /// True when this band is a single tile rather than a repeating pattern.
   ///
@@ -182,17 +210,17 @@ class ImgBandState {
   /// whole time, so the frames were being spent either way. This spends them
   /// drawing. Every existing script keeps its exact frame count and the tag
   /// after it lands on the same frame as before.
-  double get scanProgress {
+  double scanProgressAt(int terminalFrame) {
     if (!isSingle) return 1.0;
     final int span = math.max(framesPer, 1);
-    return (elapsed / span).clamp(0.0, 1.0);
+    return (elapsedAt(terminalFrame) / span).clamp(0.0, 1.0);
   }
 
-  /// The band reveals fully over this many frames.
-  int get totalFrames => copies * math.max(framesPer, 1);
+  bool isDoneAt(int terminalFrame) =>
+      elapsedAt(terminalFrame) >= totalFrames;
 
-  /// True once the last copy has landed.
-  bool get isDone => elapsed >= totalFrames;
+  bool gateReleasedAt(int terminalFrame) =>
+      elapsedAt(terminalFrame) >= releaseAt;
 
   /// Frames the typing gate should hold for a band of [copies] x [framesPer]
   /// at the given release [percent] (0..100 = fraction of the full reveal).
@@ -221,7 +249,7 @@ class ImgBandData {
   /// Engine scale at commit (native px * this = drawn px).
   final double drawScale;
 
-  /// Live reveal state (shared object, mutated by the engine's tick).
+  /// Reveal state anchored to an explicit terminal start frame.
   final ImgBandState state;
 
   ImgBandData({
