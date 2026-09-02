@@ -306,7 +306,7 @@ class ImgBandState {
   final int startFrame;
 
   /// Elapsed frame at which the TYPING GATE releases, letting the content
-  /// after this tag begin while the band keeps revealing behind it. Equal
+  /// after this tag begin while this band keeps revealing behind it. Equal
   /// to [totalFrames] for a full block (the classic behavior); smaller when
   /// the tag scripts an early-release percentage. Always >= 1.
   final int releaseAt;
@@ -404,13 +404,40 @@ class ImgBandData {
   double get tileDrawH => stencil.pxHeight * drawScale;
 }
 
+/// One fixed span of terminal time during which an already-visible sprite
+/// must not advance. The only surviving case is a later persisting PHOTO
+/// layer gating over a sprite: classic PHOTO/SVG takeovers wipe sprites, and
+/// desktop presentations freeze terminal frameCount itself.
+class _SpriteFreezeWindow {
+  final int startFrame;
+  final int durationFrames;
+
+  _SpriteFreezeWindow({
+    required this.startFrame,
+    required this.durationFrames,
+  });
+
+  int frozenFramesAt(int terminalFrame) {
+    final int elapsed = terminalFrame - startFrame;
+    if (elapsed <= 0) return 0;
+    return elapsed >= durationFrames ? durationFrames : elapsed;
+  }
+}
+
+/// A live terminal sprite whose animation frame is derived from explicit
+/// terminal age rather than `currentFrame` / `framesSinceLast` counters.
+///
+/// Frame 0 is committed immediately on [startFrame]. Each later visible frame
+/// is `activeAge ~/ holdFrames`, wrapping through the authored frame list.
+/// Persisting PHOTO gates append fixed freeze windows at tag-fire time; those
+/// spans are subtracted from age so the sprite resumes exactly where it froze.
 class _ActiveSprite {
   final String path;
   final List<List<String>> frames;
   final int holdFrames;
-
-  int currentFrame = 0;
-  int framesSinceLast = 0;
+  final int startFrame;
+  final int Function() _terminalFrame;
+  final List<_SpriteFreezeWindow> _freezeWindows = [];
 
   final int startLineIdx;
   final int lineCount;
@@ -429,6 +456,8 @@ class _ActiveSprite {
     required this.path,
     required this.frames,
     required this.holdFrames,
+    required this.startFrame,
+    required int Function() terminalFrame,
     required this.startLineIdx,
     required this.lineCount,
     required this.startGlobalCharIndex,
@@ -439,7 +468,44 @@ class _ActiveSprite {
     required this.fgColor,
     this.bgColor,
     this.flashStyle,
-  });
+  }) : _terminalFrame = terminalFrame;
+
+  int activeAgeAt(int terminalFrame) {
+    int age = math.max(terminalFrame - startFrame, 0);
+    for (final _SpriteFreezeWindow window in _freezeWindows) {
+      age -= window.frozenFramesAt(terminalFrame);
+    }
+    return math.max(age, 0);
+  }
+
+  int frameIndexAt(int terminalFrame) {
+    if (frames.isEmpty) return 0;
+    final int span = math.max(holdFrames, 1);
+    return (activeAgeAt(terminalFrame) ~/ span) % frames.length;
+  }
+
+  void freezeForPhotoGate(ActivePhotoShow show) {
+    if (show.releaseAt <= 0) return;
+    _freezeWindows.add(_SpriteFreezeWindow(
+      startFrame: show.startFrame,
+      durationFrames: show.releaseAt,
+    ));
+  }
+
+  /// Compatibility surface for the existing line-materialization helper in
+  /// engine.dart. `_advanceSprites()` no longer advances mutable state: these
+  /// accessors make it rewrite lines only when the derived frame for the next
+  /// terminal output crosses an authored frame boundary.
+  int get currentFrame => frameIndexAt(_terminalFrame() + 1);
+  set currentFrame(int value) {}
+
+  int get framesSinceLast {
+    if (holdFrames <= 0) return holdFrames;
+    final int now = frameIndexAt(_terminalFrame());
+    final int next = frameIndexAt(_terminalFrame() + 1);
+    return now == next ? 0 : holdFrames;
+  }
+  set framesSinceLast(int value) {}
 }
 
 /// A terminal BAR animation evaluated from explicit terminal-frame age.
