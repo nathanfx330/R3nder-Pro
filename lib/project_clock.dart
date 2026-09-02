@@ -215,15 +215,19 @@ class ExportProjectClock implements ProjectClock {
 /// cadence. It is never the time source.
 class NativeRealtimeProjectClock extends ChangeNotifier
     implements ProjectClock {
+  RationalFrameRate _rate;
+
   @override
-  final RationalFrameRate rate;
+  RationalFrameRate get rate => _rate;
 
   final _NativeClockBindings _native;
   late final Pointer<Void> _handle;
   ProjectTime _current = ProjectTime.zero();
   bool _disposed = false;
 
-  NativeRealtimeProjectClock(this.rate) : _native = _NativeClockBindings.open() {
+  NativeRealtimeProjectClock(RationalFrameRate rate)
+      : _rate = rate,
+        _native = _NativeClockBindings.open() {
     _handle = _native.create(rate.numerator, rate.denominator);
     if (_handle == nullptr) {
       throw StateError('Native ProjectClock allocation failed.');
@@ -278,8 +282,41 @@ class NativeRealtimeProjectClock extends ChangeNotifier
     sample();
   }
 
-  /// Reserved for the future native PCM sink. The audio backend will set the
-  /// sample origin once, then update only the standalone played_samples
+  /// Changes the native frame rate without changing the sampled project
+  /// position. Re-anchoring through the active non-audio mode also advances
+  /// epoch, because a rate change invalidates asynchronous work just like a
+  /// seek. AUDIO is refused until its handoff owns enough sample-origin state
+  /// to preserve the same audible position under a new project rate.
+  void setRate(RationalFrameRate value) {
+    _checkAlive();
+    final ProjectTime anchor = sample();
+    if (anchor.mode == ProjectClockMode.audio) {
+      throw StateError('Cannot change ProjectClock rate while AUDIO is active.');
+    }
+
+    _native.setRate(_handle, value.numerator, value.denominator);
+    _rate = value;
+
+    if (anchor.mode == ProjectClockMode.scrub) {
+      _native.seekScrub(
+        _handle,
+        anchor.frame,
+        anchor.phaseNumerator,
+        anchor.phaseDenominator,
+      );
+    } else {
+      _native.seekMonotonic(
+        _handle,
+        anchor.frame,
+        anchor.phaseNumerator,
+        anchor.phaseDenominator,
+      );
+    }
+    sample();
+  }
+
+  /// Reserved for the future PCM-backed audio clock. The audio backend sets
+  /// the sample origin once, then updates only the standalone played_samples
   /// atomic. Latency is subtracted before samples are converted to project
   /// time, so the clock represents audible playout rather than queued audio.
   void seekAudio(
@@ -383,6 +420,16 @@ typedef _CreateNative = Pointer<Void> Function(Int64 fpsNum, Int64 fpsDen);
 typedef _CreateDart = Pointer<Void> Function(int fpsNum, int fpsDen);
 typedef _DestroyNative = Void Function(Pointer<Void> handle);
 typedef _DestroyDart = void Function(Pointer<Void> handle);
+typedef _SetRateNative = Void Function(
+  Pointer<Void> handle,
+  Int64 fpsNum,
+  Int64 fpsDen,
+);
+typedef _SetRateDart = void Function(
+  Pointer<Void> handle,
+  int fpsNum,
+  int fpsDen,
+);
 typedef _SeekNative = Void Function(
   Pointer<Void> handle,
   Int64 frame,
@@ -425,6 +472,8 @@ class _NativeClockBindings {
       _library.lookupFunction<_CreateNative, _CreateDart>('r3_clock_create');
   late final _DestroyDart destroy =
       _library.lookupFunction<_DestroyNative, _DestroyDart>('r3_clock_destroy');
+  late final _SetRateDart setRate =
+      _library.lookupFunction<_SetRateNative, _SetRateDart>('r3_clock_set_rate');
   late final _SeekDart seekMonotonic =
       _library.lookupFunction<_SeekNative, _SeekDart>('r3_clock_seek_monotonic');
   late final _SeekDart seekScrub =

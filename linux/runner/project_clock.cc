@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <mutex>
 
 namespace {
 
@@ -22,6 +23,10 @@ enum ClockMode : int32_t {
 };
 
 struct ClockState {
+  // Seqlocks require one writer at a time. Control writes are rare, so a
+  // mutex on the write side is effectively free and lets reads stay lock-free.
+  // played_samples deliberately remains outside both the mutex and seqlock.
+  std::mutex write_mutex;
   std::atomic<uint32_t> seq{0};
 
   std::atomic<int32_t> mode{kMonotonic};
@@ -61,13 +66,24 @@ int64_t MonotonicNs() {
       .count();
 }
 
-void WriteBegin(ClockState* clock) {
-  clock->seq.fetch_add(1u, std::memory_order_acq_rel);
-}
+class ControlWriteGuard {
+ public:
+  explicit ControlWriteGuard(ClockState* clock)
+      : clock_(clock), lock_(clock->write_mutex) {
+    clock_->seq.fetch_add(1u, std::memory_order_acq_rel);
+  }
 
-void WriteEnd(ClockState* clock) {
-  clock->seq.fetch_add(1u, std::memory_order_release);
-}
+  ~ControlWriteGuard() {
+    clock_->seq.fetch_add(1u, std::memory_order_release);
+  }
+
+  ControlWriteGuard(const ControlWriteGuard&) = delete;
+  ControlWriteGuard& operator=(const ControlWriteGuard&) = delete;
+
+ private:
+  ClockState* clock_;
+  std::lock_guard<std::mutex> lock_;
+};
 
 ControlSnapshot ReadControl(const ClockState* clock) {
   for (;;) {
@@ -88,7 +104,11 @@ ControlSnapshot ReadControl(const ClockState* clock) {
         clock->fps_den.load(std::memory_order_relaxed),
     };
 
-    const uint32_t after = clock->seq.load(std::memory_order_acquire);
+    // The acquire fence prevents any body load above from being reordered
+    // after the sequence recheck. The recheck itself can then be relaxed.
+    // This is the reader half of the seqlock contract on weak memory models.
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const uint32_t after = clock->seq.load(std::memory_order_relaxed);
     if (before == after && (after & 1u) == 0u) return out;
   }
 }
@@ -177,17 +197,16 @@ void r3_clock_destroy(void* handle) {
 void r3_clock_set_rate(void* handle, int64_t fps_num, int64_t fps_den) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr || fps_num <= 0 || fps_den <= 0) return;
-  WriteBegin(clock);
+  const ControlWriteGuard write(clock);
   clock->fps_num.store(fps_num, std::memory_order_relaxed);
   clock->fps_den.store(fps_den, std::memory_order_relaxed);
-  WriteEnd(clock);
 }
 
 void r3_clock_seek_monotonic(void* handle, int64_t frame,
                              int64_t phase_num, int64_t phase_den) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr || phase_den <= 0) return;
-  WriteBegin(clock);
+  const ControlWriteGuard write(clock);
   clock->epoch.store(clock->epoch.load(std::memory_order_relaxed) + 1,
                      std::memory_order_relaxed);
   clock->mode.store(kMonotonic, std::memory_order_relaxed);
@@ -195,21 +214,19 @@ void r3_clock_seek_monotonic(void* handle, int64_t frame,
   clock->base_phase_num.store(phase_num, std::memory_order_relaxed);
   clock->base_phase_den.store(phase_den, std::memory_order_relaxed);
   clock->origin_monotonic_ns.store(MonotonicNs(), std::memory_order_relaxed);
-  WriteEnd(clock);
 }
 
 void r3_clock_seek_scrub(void* handle, int64_t frame, int64_t phase_num,
                          int64_t phase_den) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr || phase_den <= 0) return;
-  WriteBegin(clock);
+  const ControlWriteGuard write(clock);
   clock->epoch.store(clock->epoch.load(std::memory_order_relaxed) + 1,
                      std::memory_order_relaxed);
   clock->mode.store(kScrub, std::memory_order_relaxed);
   clock->base_frame.store(frame, std::memory_order_relaxed);
   clock->base_phase_num.store(phase_num, std::memory_order_relaxed);
   clock->base_phase_den.store(phase_den, std::memory_order_relaxed);
-  WriteEnd(clock);
 }
 
 void r3_clock_seek_audio(void* handle, int64_t frame, int64_t phase_num,
@@ -217,7 +234,7 @@ void r3_clock_seek_audio(void* handle, int64_t frame, int64_t phase_num,
                          int64_t sample_rate, int64_t latency_samples) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr || phase_den <= 0 || sample_rate <= 0) return;
-  WriteBegin(clock);
+  const ControlWriteGuard write(clock);
   clock->epoch.store(clock->epoch.load(std::memory_order_relaxed) + 1,
                      std::memory_order_relaxed);
   clock->mode.store(kAudio, std::memory_order_relaxed);
@@ -227,15 +244,13 @@ void r3_clock_seek_audio(void* handle, int64_t frame, int64_t phase_num,
   clock->origin_sample.store(origin_sample, std::memory_order_relaxed);
   clock->sample_rate.store(sample_rate, std::memory_order_relaxed);
   clock->latency_samples.store(latency_samples, std::memory_order_relaxed);
-  WriteEnd(clock);
 }
 
 void r3_clock_set_latency_samples(void* handle, int64_t latency_samples) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr) return;
-  WriteBegin(clock);
+  const ControlWriteGuard write(clock);
   clock->latency_samples.store(latency_samples, std::memory_order_relaxed);
-  WriteEnd(clock);
 }
 
 void r3_clock_set_played_samples(void* handle, int64_t played_samples) {
