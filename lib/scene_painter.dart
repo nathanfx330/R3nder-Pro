@@ -1653,8 +1653,7 @@ class ScenePainter extends CustomPainter {
   /// off the right edge, 1 = seated with a small gap off the right edge.
   /// The card is a rounded rect inset from the top and bottom of the screen
   /// — a card, not a side panel. Title image COVER-cropped into the top
-  /// portion, programmable color block below carrying the H1 heading and
-  /// word-wrapped body copy. Everything clips to the rounded rect.
+  /// portion, programmable color block below carrying the H1 heading + body copy. Everything clips to the rounded rect.
   ///
   /// Pure presentation: no window chrome, no controls.
   void _drawCardPanel(Canvas canvas, double engineW, double engineH, double s,
@@ -1915,7 +1914,7 @@ class ScenePainter extends CustomPainter {
 
     final int local = frames % cycle;
     if (local < _kDossierScrollHoldFrames) {
-      return completed.toDouble(); // Resting on this three-up view.
+      return completed.toDouble(); // Resting on this two-and-a-half-up view.
     }
     final double t =
         (local - _kDossierScrollHoldFrames) / _kDossierScrollAnimFrames;
@@ -1924,11 +1923,11 @@ class ScenePainter extends CustomPainter {
 
   /// Draws the dossier gallery window.
   ///
-  /// SPLIT MODE (transitionT = 0): a single-column strip showing THREE large
-  /// tiles at a time in the window left of the info card. All tiles are laid
-  /// out in one vertical strip; a paged scroll offset slides the strip upward
-  /// one tile at a time. Off-strip tiles are clipped by the window — the point
-  /// is browsing, not seeing everything at once.
+  /// SPLIT MODE (transitionT = 0): a single-column strip showing two full
+  /// large tiles plus roughly half of the next tile as a continuation cue.
+  /// The strip scrolls upward one tile at a time, so even three images create
+  /// one visible browse move before the final two settle fully into view.
+  /// Off-strip tiles are clipped by the window.
   ///
   /// TRANSITION (0 < transitionT < 1): the window bounds lerp to the full
   /// app-window rect while every tile lerps from its scrolled strip position
@@ -1981,11 +1980,10 @@ class ScenePainter extends CustomPainter {
       final double gap = engineW * _kAppTileGapFrac;
 
       // ---------------------------------------------------------------
-      // STATE A LAYOUT: the browsing strip. One column, three tiles visible;
-      // every tile gets a strip position, shifted by the paged scroll.
-      // Off-screen positions are perfectly valid rects — the content clip
-      // hides them in split mode, and the transition lerp launches them
-      // from those positions when the window goes full.
+      // STATE A LAYOUT: the browsing strip. One column, two full tiles plus
+      // half of the next visible as a continuation cue. Every tile gets a
+      // strip position, shifted by the paged scroll. Off-screen positions
+      // are valid rects and become the launch points for the center morph.
       // ---------------------------------------------------------------
       final Rect contentA = Rect.fromLTRB(
           rectA.left, rectA.top + barH, rectA.right, rectA.bottom);
@@ -1993,14 +1991,15 @@ class ScenePainter extends CustomPainter {
       final double stripPadT = contentA.top + pad;
       final double stripW = contentA.width - pad * 2;
       final double stripVisH = contentA.height - pad * 2;
-      // Three tiles + two gaps fill the visible strip exactly.
+      // Two and a half tiles plus the two intervening gaps fill the viewport.
       final double stripTileH =
-          math.max((stripVisH - gap * 2.0) / 3.0, 1.0);
+          math.max((stripVisH - gap * 2.0) / 2.5, 1.0);
       final double stripStep = stripTileH + gap;
 
-      // Paged scroll: monotonic, clamped so the strip rests with the last
-      // tile seated in the bottom slot (count - 3 steps; 0 for <= 3 tiles).
-      final int maxSteps = math.max(count - 3, 0);
+      // The partial third tile is a continuation cue, not a final slot. Stop
+      // with the last two images fully seated so the sequence never ends on
+      // a clipped final image. Three images therefore guarantee one scroll.
+      final int maxSteps = math.max(count - 2, 0);
       final double scroll = _dossierScrollOffset(
           scene.dossierFramesIntoPhase, maxSteps);
 
@@ -2779,7 +2778,7 @@ class ScenePainter extends CustomPainter {
   // --------------------------------------------------------------------
 
   /// Ubuntu-style header bar: warm dark grey, centered title, and the three
-  // window controls on the RIGHT as grey circles with ─ □ ✕ glyphs.
+  /// window controls on the RIGHT as grey circles with ─ □ ✕ glyphs.
   /// [textOnly] draws the title and window controls without the bar behind
   /// them, for the second pass of a title crossfade. Painting the plate
   /// twice at complementary alphas would leave a visible dip in the bar
