@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -246,6 +247,34 @@ int main() {
     return 20;
   }
 
+#ifdef R3_AUDIO_SINK_EXPECT_FLUSH_TIMEOUT
+  const auto flush_started = std::chrono::steady_clock::now();
+  if (r3_audio_sink_flush(sink) != -1) {
+    std::fprintf(stderr, "fault-injected flush did not time out.\n");
+    DestroyBoth(sink, clock);
+    return 21;
+  }
+  const auto flush_elapsed = std::chrono::steady_clock::now() - flush_started;
+  if (flush_elapsed > std::chrono::milliseconds(250)) {
+    std::fprintf(stderr, "flush timeout did not bound the caller wait.\n");
+    DestroyBoth(sink, clock);
+    return 22;
+  }
+
+  char timeout_error[512] = {};
+  r3_audio_sink_copy_last_error(sink, timeout_error, sizeof(timeout_error));
+  if (std::strstr(timeout_error, "timed out") == nullptr) {
+    std::fprintf(stderr, "flush timeout did not report a useful error.\n");
+    DestroyBoth(sink, clock);
+    return 23;
+  }
+
+  // The worker is intentionally still finishing the injected stall. Destroy
+  // may wait for it here; M3.1.4b separately hardens that join path.
+  DestroyBoth(sink, clock);
+  std::printf("audio_sink_test: PASS flush timeout\n");
+  return 0;
+#else
   if (r3_audio_sink_flush(sink) != 1) {
     PrintSinkError(sink, "flush failed");
     DestroyBoth(sink, clock);
@@ -280,4 +309,5 @@ int main() {
   DestroyBoth(sink, clock);
   std::printf("audio_sink_test: PASS\n");
   return 0;
+#endif
 }

@@ -26,6 +26,17 @@ constexpr int64_t kUsecPerSecond = 1000000LL;
 constexpr auto kDrainPollInterval = std::chrono::milliseconds(2);
 constexpr auto kDrainPollTimeout = std::chrono::seconds(2);
 
+#ifndef R3_AUDIO_SINK_FLUSH_TIMEOUT_MS
+#define R3_AUDIO_SINK_FLUSH_TIMEOUT_MS 2000
+#endif
+constexpr auto kFlushWaitTimeout =
+    std::chrono::milliseconds(R3_AUDIO_SINK_FLUSH_TIMEOUT_MS);
+
+#ifdef R3_AUDIO_SINK_TEST_FLUSH_STALL_MS
+constexpr auto kTestFlushStall =
+    std::chrono::milliseconds(R3_AUDIO_SINK_TEST_FLUSH_STALL_MS);
+#endif
+
 thread_local std::string g_create_error;
 
 // Each native sink object is one ProjectClock binding generation. Creating a
@@ -257,6 +268,13 @@ void WorkerMain(AudioSinkState* state) {
     }
 
     if (flush_id != 0) {
+#ifdef R3_AUDIO_SINK_TEST_FLUSH_STALL_MS
+      // Test-only fault injection. Production builds never define this macro.
+      // It lets the regression harness prove that the caller's wait is bounded
+      // without depending on a real PulseAudio server becoming unresponsive.
+      std::this_thread::sleep_for(kTestFlushStall);
+#endif
+
       // Preserve the audible ProjectTime before discarding anything still
       // buffered by the server. A later sink generation can start from that
       // point with a new sample origin.
@@ -552,9 +570,14 @@ int32_t r3_audio_sink_flush(void* handle) {
   state->cv.notify_all();
 
   std::unique_lock<std::mutex> lock(state->mutex);
-  state->cv.wait(lock, [&]() {
+  const bool completed = state->cv.wait_for(lock, kFlushWaitTimeout, [&]() {
     return state->failed || state->closing || state->flush_complete >= request;
   });
+  if (!completed) {
+    state->last_error =
+        "Audio sink flush timed out waiting for the native worker.";
+    return -1;
+  }
   return (!state->failed && state->flush_complete >= request) ? 1 : -1;
 }
 

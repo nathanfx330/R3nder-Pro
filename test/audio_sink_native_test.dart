@@ -4,9 +4,58 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+Future<void> _compileAndRunAudioSinkTest({
+  required Directory temp,
+  required List<String> pkgArgs,
+  required String suffix,
+  List<String> defines = const <String>[],
+}) async {
+  final String binary = '${temp.path}/audio_sink_test_$suffix';
+
+  final ProcessResult compile = await Process.run('g++', <String>[
+    '-std=c++14',
+    '-O2',
+    '-pthread',
+    '-Wall',
+    '-Wextra',
+    '-Werror',
+    ...defines,
+    'linux/runner/project_clock.cc',
+    'linux/runner/audio_sink.cc',
+    'linux/runner/audio_sink_test.cc',
+    ...pkgArgs,
+    '-o',
+    binary,
+  ]);
+
+  expect(
+    compile.exitCode,
+    0,
+    reason: 'Native audio clock test ($suffix) failed to compile.\n'
+        'stdout:\n${compile.stdout}\n'
+        'stderr:\n${compile.stderr}',
+  );
+
+  final ProcessResult run = await Process.run(binary, const <String>[]);
+  expect(
+    run.exitCode,
+    0,
+    reason: 'Native audio clock regression ($suffix) failed.\n'
+        'stdout:\n${run.stdout}\n'
+        'stderr:\n${run.stderr}',
+  );
+  expect(
+    '${run.stdout}',
+    anyOf(
+      contains('audio_sink_test: PASS'),
+      contains('audio_sink_test: SKIP'),
+    ),
+  );
+}
+
 void main() {
   test(
-    'native audio sink drives ProjectClock and preserves cumulative samples',
+    'native audio sink drives ProjectClock and bounds flush waits',
     () async {
       final ProcessResult pkg = await Process.run(
         'pkg-config',
@@ -20,7 +69,6 @@ void main() {
 
       final Directory temp =
           await Directory.systemTemp.createTemp('r3nder_audio_sink_');
-      final String binary = '${temp.path}/audio_sink_test';
 
       try {
         final List<String> pkgArgs = '${pkg.stdout}'
@@ -29,43 +77,25 @@ void main() {
             .where((String part) => part.isNotEmpty)
             .toList();
 
-        final ProcessResult compile = await Process.run('g++', <String>[
-          '-std=c++14',
-          '-O2',
-          '-pthread',
-          '-Wall',
-          '-Wextra',
-          '-Werror',
-          'linux/runner/project_clock.cc',
-          'linux/runner/audio_sink.cc',
-          'linux/runner/audio_sink_test.cc',
-          ...pkgArgs,
-          '-o',
-          binary,
-        ]);
-
-        expect(
-          compile.exitCode,
-          0,
-          reason: 'Native audio clock test failed to compile.\n'
-              'stdout:\n${compile.stdout}\n'
-              'stderr:\n${compile.stderr}',
+        await _compileAndRunAudioSinkTest(
+          temp: temp,
+          pkgArgs: pkgArgs,
+          suffix: 'normal',
         );
 
-        final ProcessResult run = await Process.run(binary, const <String>[]);
-        expect(
-          run.exitCode,
-          0,
-          reason: 'Native audio clock regression failed.\n'
-              'stdout:\n${run.stdout}\n'
-              'stderr:\n${run.stderr}',
-        );
-        expect(
-          '${run.stdout}',
-          anyOf(
-            contains('audio_sink_test: PASS'),
-            contains('audio_sink_test: SKIP'),
-          ),
+        // Deterministic fault injection for the caller-side timeout only. The
+        // production default remains 2000 ms. Here the worker deliberately
+        // stalls for 100 ms while the test caller is allowed to wait only 25
+        // ms, proving flush returns an error instead of waiting indefinitely.
+        await _compileAndRunAudioSinkTest(
+          temp: temp,
+          pkgArgs: pkgArgs,
+          suffix: 'flush_timeout',
+          defines: const <String>[
+            '-DR3_AUDIO_SINK_FLUSH_TIMEOUT_MS=25',
+            '-DR3_AUDIO_SINK_TEST_FLUSH_STALL_MS=100',
+            '-DR3_AUDIO_SINK_EXPECT_FLUSH_TIMEOUT=1',
+          ],
         );
       } finally {
         if (temp.existsSync()) {
