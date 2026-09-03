@@ -216,7 +216,10 @@ class EditVideoCompositor {
     if (mask.width != source.width || mask.height != source.height) return false;
 
     final Uint8List pixels = source.rgba!;
-    final int threshold = (progress * 255.0).floor().clamp(0, 255);
+    final int threshold = math.min(
+      255,
+      math.max(0, (progress * 255.0).floor()),
+    );
     bool contributed = false;
 
     for (int y = 0; y < source.height; y++) {
@@ -262,9 +265,15 @@ class EditVideoCompositor {
           (sourceValue * sourceAlpha +
                   destinationValue * destinationAlpha * (1.0 - sourceAlpha)) /
               outAlpha;
-      destination[dst + channel] = value.round().clamp(0, 255);
+      destination[dst + channel] = math.min(
+        255,
+        math.max(0, value.round()),
+      );
     }
-    destination[dst + 3] = (outAlpha * 255.0).round().clamp(0, 255);
+    destination[dst + 3] = math.min(
+      255,
+      math.max(0, (outAlpha * 255.0).round()),
+    );
     return true;
   }
 
