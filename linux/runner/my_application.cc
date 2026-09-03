@@ -1,3 +1,5 @@
+// ./linux/runner/my_application.cc
+
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
@@ -5,6 +7,7 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "edit_preview_texture.h"
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
@@ -28,6 +31,23 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
+  (void)self;
+
+  // Flutter's external texture registrar is not reliably ready during early
+  // runner construction. MLT Player solved this startup race by registering
+  // its native video texture after Flutter has produced its first frame. Use
+  // the same lifecycle here.
+  FlEngine* engine = fl_view_get_engine(view);
+  if (engine != nullptr) {
+    FlTextureRegistrar* registrar = fl_engine_get_texture_registrar(engine);
+    if (registrar == nullptr ||
+        r3_edit_preview_register_flutter_texture(registrar) <= 0) {
+      g_warning("R3nder: failed to register EDIT preview texture.");
+    }
+  } else {
+    g_warning("R3nder: Flutter engine unavailable for EDIT preview texture.");
+  }
+
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
@@ -84,6 +104,7 @@ static FlMethodResponse* pick_video(MyApplication* self) {
 static void native_file_method_call_handler(FlMethodChannel* channel,
                                             FlMethodCall* method_call,
                                             gpointer user_data) {
+  (void)channel;
   MyApplication* self = MY_APPLICATION(user_data);
   g_autoptr(FlMethodResponse) response = nullptr;
 
@@ -167,6 +188,9 @@ static gboolean on_drag_motion(GtkWidget* widget,
                                gint y,
                                guint time,
                                gpointer user_data) {
+  (void)widget;
+  (void)context;
+  (void)time;
   MyApplication* self = MY_APPLICATION(user_data);
 
   if (self->drop_channel != nullptr) {
@@ -203,6 +227,9 @@ static void on_drag_leave(GtkWidget* widget,
                           GdkDragContext* context,
                           guint time,
                           gpointer user_data) {
+  (void)widget;
+  (void)context;
+  (void)time;
   MyApplication* self = MY_APPLICATION(user_data);
   self->motion_sent = FALSE;
 
@@ -220,6 +247,8 @@ static void on_drag_data_received(GtkWidget* widget,
                                   guint info,
                                   guint time,
                                   gpointer user_data) {
+  (void)widget;
+  (void)info;
   MyApplication* self = MY_APPLICATION(user_data);
 
   // The drag is over either way. Clearing here means the next drag always
@@ -362,8 +391,8 @@ static void my_application_activate(GApplication* application) {
 
 // Implements GApplication::local_command_line.
 static gboolean my_application_local_command_line(GApplication* application,
-                                                  gchar*** arguments,
-                                                  int* exit_status) {
+                                                   gchar*** arguments,
+                                                   int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
   // Strip out the first argument as it is the binary name.
   self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
@@ -383,18 +412,16 @@ static gboolean my_application_local_command_line(GApplication* application,
 
 // Implements GApplication::startup.
 static void my_application_startup(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application startup.
-
   G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
 }
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application shutdown.
+  // The external texture must be detached before Flutter destroys its texture
+  // registrar. Stop MLT first so no consumer callback can publish another
+  // frame while the registrar is disappearing.
+  r3_edit_preview_close();
+  r3_edit_preview_unregister_flutter_texture();
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
