@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_media_import.dart';
+import 'package:r3nder/native_media_probe.dart';
 
 void main() {
   test('external video is copied into workspace video folder and probed', () {
@@ -26,9 +27,38 @@ void main() {
       expect(imported.authoredSource, 'video/My Shot.mp4');
       expect(imported.clipBaseId, 'My_Shot');
       expect(imported.durationFrames, 87);
+      expect(imported.speedNumerator, 1);
+      expect(imported.speedDenominator, 1);
       expect(File(imported.resolvedPath).existsSync(), isTrue);
       expect(File(imported.resolvedPath).readAsBytesSync(), <int>[1, 2, 3, 4]);
       expect(probed, imported.resolvedPath);
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
+
+  test('24 fps source is conformed to 30 fps project without speedup', () {
+    final Directory temp = Directory.systemTemp.createTempSync('r3nder_import_');
+    try {
+      final Directory workspace = Directory('${temp.path}/workspace')..createSync();
+      final File external = File('${temp.path}/Spring.webm')
+        ..writeAsBytesSync(<int>[1, 2, 3, 4]);
+
+      final ImportedEditVideo imported = importVideoToWorkspace(
+        external.path,
+        workspaceRoot: workspace.path,
+        probeMedia: (_) => const NativeMediaProbeResult(
+          lengthFrames: 11140,
+          fpsNumerator: 24,
+          fpsDenominator: 1,
+        ),
+      );
+
+      expect(imported.durationFrames, 13925);
+      expect(imported.speedNumerator, 4);
+      expect(imported.speedDenominator, 5);
+      expect(imported.sourceFpsNumerator, 24);
+      expect(imported.sourceFpsDenominator, 1);
     } finally {
       temp.deleteSync(recursive: true);
     }
