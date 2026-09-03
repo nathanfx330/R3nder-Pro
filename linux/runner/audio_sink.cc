@@ -25,6 +25,7 @@ namespace {
 constexpr int64_t kUsecPerSecond = 1000000LL;
 constexpr auto kDrainPollInterval = std::chrono::milliseconds(2);
 constexpr auto kDrainPollTimeout = std::chrono::seconds(2);
+constexpr int64_t kLatencyRefreshesPerSecond = 100;
 
 #ifndef R3_AUDIO_SINK_FLUSH_TIMEOUT_MS
 #define R3_AUDIO_SINK_FLUSH_TIMEOUT_MS 2000
@@ -83,6 +84,10 @@ struct AudioSinkState {
   std::atomic<int64_t> submitted_samples{0};
   std::atomic<int64_t> latency_samples{0};
   std::atomic<int64_t> queued_samples{0};
+
+#ifdef R3_AUDIO_SINK_TEST_LATENCY_COUNTER
+  std::atomic<int64_t> latency_refresh_count{0};
+#endif
 
   // ProjectClock binding. The sink object is short lived, but ProjectClock's
   // played_samples counter is cumulative for the lifetime of the preview
@@ -249,6 +254,10 @@ void SetFailure(AudioSinkState* state, const std::string& message) {
 }
 
 bool RefreshLatency(AudioSinkState* state) {
+#ifdef R3_AUDIO_SINK_TEST_LATENCY_COUNTER
+  state->latency_refresh_count.fetch_add(1, std::memory_order_acq_rel);
+#endif
+
   int error = 0;
   const pa_usec_t usec = pa_simple_get_latency(state->stream, &error);
   if (usec == static_cast<pa_usec_t>(-1)) {
@@ -270,6 +279,13 @@ bool DrainWasSuperseded(AudioSinkState* state) {
 }
 
 void WorkerMain(AudioSinkState* state) {
+  const int64_t latency_refresh_interval_samples =
+      state->sample_rate >= kLatencyRefreshesPerSecond
+          ? state->sample_rate / kLatencyRefreshesPerSecond
+          : 1;
+  int64_t latency_refresh_progress = 0;
+  bool latency_refresh_started = false;
+
   for (;;) {
     std::vector<uint8_t> chunk;
     uint64_t drain_id = 0;
@@ -330,6 +346,8 @@ void WorkerMain(AudioSinkState* state) {
         break;
       }
       state->latency_samples.store(0, std::memory_order_release);
+      latency_refresh_progress = 0;
+      latency_refresh_started = false;
       {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->flush_complete = flush_id;
@@ -394,6 +412,8 @@ void WorkerMain(AudioSinkState* state) {
         ReleaseProjectClock(state, true);
       }
 
+      latency_refresh_progress = 0;
+      latency_refresh_started = false;
       {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->drain_complete = drain_id;
@@ -416,7 +436,19 @@ void WorkerMain(AudioSinkState* state) {
         static_cast<int64_t>(chunk.size()) / state->bytes_per_frame;
     state->submitted_samples.fetch_add(submitted, std::memory_order_acq_rel);
     AddProjectClockSamples(state, submitted);
-    if (!RefreshLatency(state)) break;
+
+    // Steady playback refreshes latency in sample time rather than once per
+    // packet. The first write refreshes immediately, then subsequent queries
+    // are spaced at 10 ms of submitted audio. Today's 480-frame packets at
+    // 48 kHz therefore behave exactly as before, while smaller future packet
+    // sizes cannot accidentally multiply libpulse query cadence.
+    latency_refresh_progress += submitted;
+    if (!latency_refresh_started ||
+        latency_refresh_progress >= latency_refresh_interval_samples) {
+      latency_refresh_started = true;
+      latency_refresh_progress %= latency_refresh_interval_samples;
+      if (!RefreshLatency(state)) break;
+    }
   }
 
 #ifdef R3_AUDIO_SINK_TEST_DESTROY_STALL_MS
@@ -704,5 +736,13 @@ int32_t r3_audio_sink_copy_last_error(void* handle, char* buffer,
 int32_t r3_audio_sink_copy_create_error(char* buffer, int32_t capacity) {
   return CopyString(g_create_error, buffer, capacity);
 }
+
+#ifdef R3_AUDIO_SINK_TEST_LATENCY_COUNTER
+int64_t r3_audio_sink_test_latency_refresh_count(void* handle) {
+  AudioSinkState* state = static_cast<AudioSinkState*>(handle);
+  if (state == nullptr) return 0;
+  return state->latency_refresh_count.load(std::memory_order_acquire);
+}
+#endif
 
 }  // extern "C"

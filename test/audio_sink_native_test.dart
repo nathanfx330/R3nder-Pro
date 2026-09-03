@@ -55,7 +55,7 @@ Future<void> _compileAndRunAudioSinkTest({
 
 void main() {
   test(
-    'native audio sink drives ProjectClock and bounds flush/destroy waits',
+    'native audio sink drives ProjectClock with bounded native cadence/waits',
     () async {
       final ProcessResult pkg = await Process.run(
         'pkg-config',
@@ -81,6 +81,20 @@ void main() {
           temp: temp,
           pkgArgs: pkgArgs,
           suffix: 'normal',
+        );
+
+        // Packetization must not define how often libpulse latency is queried.
+        // This build instruments the query count and feeds 2.5 ms packets. At
+        // the production 100 Hz cadence, 20 ms of audio produces exactly three
+        // measurements: immediate, 10 ms, and 20 ms.
+        await _compileAndRunAudioSinkTest(
+          temp: temp,
+          pkgArgs: pkgArgs,
+          suffix: 'latency_cadence',
+          defines: const <String>[
+            '-DR3_AUDIO_SINK_TEST_LATENCY_COUNTER=1',
+            '-DR3_AUDIO_SINK_EXPECT_LATENCY_CADENCE=1',
+          ],
         );
 
         // Deterministic fault injection for the caller-side flush timeout only.

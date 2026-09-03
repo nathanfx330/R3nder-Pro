@@ -10,6 +10,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef R3_AUDIO_SINK_EXPECT_LATENCY_CADENCE
+extern "C" int64_t r3_audio_sink_test_latency_refresh_count(void* handle);
+#endif
+
 namespace {
 
 constexpr int32_t kSampleRate = 48000;
@@ -105,6 +109,76 @@ int main() {
     DestroyBoth(sink, clock);
     return 2;
   }
+
+#ifdef R3_AUDIO_SINK_EXPECT_LATENCY_CADENCE
+  // The production cadence is 100 Hz in submitted sample time. Feed 2.5 ms
+  // packets to prove the native worker does not query PulseAudio once per
+  // packet. Eight 120-frame writes span 20 ms, so the expected measurements
+  // are the immediate first query plus the 10 ms and 20 ms boundaries.
+  constexpr int32_t kCadenceFrames = 120;
+  constexpr int32_t kCadenceBytes = kCadenceFrames * kChannels * 2;
+  constexpr int32_t kCadenceChunks = 8;
+  constexpr int64_t kCadenceSamples =
+      static_cast<int64_t>(kCadenceFrames) * kCadenceChunks;
+  constexpr int64_t kExpectedRefreshes = 3;
+  const std::vector<uint8_t> cadence_silence(kCadenceBytes, 0);
+
+  int64_t accepted_samples = 0;
+  for (int chunk = 0; chunk < kCadenceChunks; ++chunk) {
+    for (;;) {
+      const int32_t result = r3_audio_sink_enqueue(
+          sink, cadence_silence.data(), cadence_silence.size());
+      if (result == 1) {
+        accepted_samples += kCadenceFrames;
+        break;
+      }
+      if (result < 0) {
+        PrintSinkError(sink, "cadence enqueue failed");
+        DestroyBoth(sink, clock);
+        return 3;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+
+  if (accepted_samples != kCadenceSamples ||
+      !WaitForSubmitted(sink, kCadenceSamples)) {
+    PrintSinkError(sink, "cadence submitted counter did not reach target");
+    DestroyBoth(sink, clock);
+    return 4;
+  }
+
+  const auto cadence_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (r3_audio_sink_test_latency_refresh_count(sink) <
+             kExpectedRefreshes &&
+         std::chrono::steady_clock::now() < cadence_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  const int64_t refreshes =
+      r3_audio_sink_test_latency_refresh_count(sink);
+  if (refreshes != kExpectedRefreshes) {
+    std::fprintf(stderr,
+                 "latency refresh cadence followed packet count: got %lld, "
+                 "expected %lld.\n",
+                 static_cast<long long>(refreshes),
+                 static_cast<long long>(kExpectedRefreshes));
+    DestroyBoth(sink, clock);
+    return 5;
+  }
+
+  if (r3_clock_get_played_samples(clock) != kCadenceSamples) {
+    std::fprintf(stderr,
+                 "cadence test lost cumulative ProjectClock samples.\n");
+    DestroyBoth(sink, clock);
+    return 6;
+  }
+
+  DestroyBoth(sink, clock);
+  std::printf("audio_sink_test: PASS latency cadence\n");
+  return 0;
+#endif
 
 #ifdef R3_AUDIO_SINK_EXPECT_DESTROY_TIMEOUT
   // The worker is fault-injected to remain alive after close longer than the
