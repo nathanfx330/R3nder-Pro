@@ -197,7 +197,7 @@ class EditVideoCompositor {
   DecodedMediaFrame? _decodeMask(String source, int width, int height) {
     try {
       final String resolved = resolveSource(source);
-      final String key = '$resolved@$width'x'$height';
+      final String key = '$resolved@${width}x$height';
       final DecodedMediaFrame? cached = _maskFrames[key];
       if (cached != null) return cached;
 
