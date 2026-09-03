@@ -55,6 +55,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(PULSE_SIMPLE REQUIRED IMPORTED_TARGET libpulse-simple)
+pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 
 # M8 selected MLT as R3nder's persistent video decoder backend. Prefer the MLT
 # 7 pkg-config name used by current distributions, while retaining the generic
