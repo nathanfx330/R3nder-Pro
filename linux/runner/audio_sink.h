@@ -12,13 +12,15 @@ struct R3AudioSinkStats {
   int32_t sample_rate;
   int32_t channels;
   int32_t healthy;
+  int32_t draining;
   int32_t padding;
 };
 
 // Creates a PulseAudio-compatible playback sink for signed 16-bit little-endian
 // interleaved PCM. The returned handle owns a worker thread. PCM enqueued from
 // Dart is copied into a bounded native queue, so feeding audio never blocks the
-// UI isolate on pa_simple_write().
+// UI isolate on pa_simple_write(). When a realtime ProjectClock is active, the
+// sink also owns its AUDIO authority handoff and cumulative sample updates.
 void* r3_audio_sink_create(const char* device, int32_t sample_rate,
                            int32_t channels, int32_t latency_ms,
                            int32_t max_queue_ms);
@@ -32,8 +34,16 @@ void r3_audio_sink_destroy(void* handle);
 int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
                               int64_t byte_count);
 
-// Drops queued and server-buffered audio while keeping the monotonic submitted
-// sample counter intact. Returns 1 on success, -1 on sink failure.
+// Requests natural audible drain after every already-accepted PCM packet. The
+// worker tracks falling device latency and hands ProjectClock back to monotonic
+// at audible EOF. Dart observes completion through R3AudioSinkStats::draining,
+// so the UI isolate never waits inside FFI.
+// Returns 1 when requested/already pending, -1 on sink failure.
+int32_t r3_audio_sink_request_drain(void* handle);
+
+// Drops queued and server-buffered audio. If AUDIO authority is active, the
+// current audible ProjectTime is reanchored onto monotonic before the discard.
+// The cumulative ProjectClock played-sample counter is never reset.
 int32_t r3_audio_sink_flush(void* handle);
 
 // Returns a thread-local snapshot. Callers must consume its fields before the

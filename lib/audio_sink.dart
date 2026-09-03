@@ -1,12 +1,13 @@
 // ./lib/audio_sink.dart
 //
-// Linux native PCM sink foundation for the future AUDIO ProjectClock.
+// Linux native PCM sink for preview playback and AUDIO ProjectClock authority.
 //
-// This file is intentionally not wired into AudioBedPlayer yet. The existing
-// ffmpeg -> paplay/aplay preview path remains unchanged while this surface is
-// validated in isolation. The native sink owns the blocking PulseAudio writes
-// on its own worker thread and exposes only a bounded enqueue plus monotonic
-// submitted-sample and measured-latency counters to Dart.
+// FFmpeg remains the decoder/mixer. This sink owns blocking PulseAudio writes
+// on its own worker thread and exposes bounded enqueue plus drain/flush state
+// to Dart. The native worker also advances ProjectClock's cumulative submitted
+// sample counter, supplies measured device latency, and performs the
+// SCRUB -> AUDIO -> MONOTONIC handoffs without making Flutter's ticker the
+// time source.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -28,6 +29,7 @@ class AudioSinkStats {
   final int sampleRate;
   final int channels;
   final bool healthy;
+  final bool draining;
 
   const AudioSinkStats({
     required this.submittedSamples,
@@ -36,6 +38,7 @@ class AudioSinkStats {
     required this.sampleRate,
     required this.channels,
     required this.healthy,
+    required this.draining,
   });
 }
 
@@ -94,6 +97,7 @@ class NativeAudioSink {
       sampleRate: raw.sampleRate,
       channels: raw.channels,
       healthy: raw.healthy != 0,
+      draining: raw.draining != 0,
     );
   }
 
@@ -129,8 +133,19 @@ class NativeAudioSink {
     }
   }
 
-  /// Drops queued and server-buffered audio. The native submitted-sample
-  /// counter deliberately remains monotonic across this operation.
+  /// Requests natural audible completion after all already accepted PCM. The
+  /// worker performs the blocking drain and ProjectClock tail handoff; callers
+  /// poll [stats].draining rather than blocking Flutter inside an FFI call.
+  void requestDrain() {
+    _checkAlive();
+    if (_native.requestDrain(_handle) < 0) {
+      throw AudioSinkException(lastError);
+    }
+  }
+
+  /// Drops queued and server-buffered audio. The native ProjectClock sample
+  /// counter remains cumulative, and active AUDIO authority is first reanchored
+  /// onto the current audible ProjectTime.
   void flush() {
     _checkAlive();
     if (_native.flush(_handle) < 0) {
@@ -174,6 +189,9 @@ final class _NativeAudioSinkStats extends Struct {
   external int healthy;
 
   @Int32()
+  external int draining;
+
+  @Int32()
   external int padding;
 }
 
@@ -203,8 +221,8 @@ typedef _EnqueueDart = int Function(
   Pointer<Uint8> data,
   int byteCount,
 );
-typedef _FlushNative = Int32 Function(Pointer<Void> handle);
-typedef _FlushDart = int Function(Pointer<Void> handle);
+typedef _SinkActionNative = Int32 Function(Pointer<Void> handle);
+typedef _SinkActionDart = int Function(Pointer<Void> handle);
 typedef _ReadNative = Pointer<_NativeAudioSinkStats> Function(
   Pointer<Void> handle,
 );
@@ -244,8 +262,11 @@ class _NativeAudioSinkBindings {
       _DestroyDart>('r3_audio_sink_destroy');
   late final _EnqueueDart enqueue = _runner.lookupFunction<_EnqueueNative,
       _EnqueueDart>('r3_audio_sink_enqueue');
-  late final _FlushDart flush = _runner.lookupFunction<_FlushNative,
-      _FlushDart>('r3_audio_sink_flush');
+  late final _SinkActionDart requestDrain = _runner.lookupFunction<
+      _SinkActionNative,
+      _SinkActionDart>('r3_audio_sink_request_drain');
+  late final _SinkActionDart flush = _runner.lookupFunction<_SinkActionNative,
+      _SinkActionDart>('r3_audio_sink_flush');
   late final _ReadDart read = _runner.lookupFunction<_ReadNative,
       _ReadDart>('r3_audio_sink_read');
   late final _CopyErrorDart copyLastError = _runner.lookupFunction<
