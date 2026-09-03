@@ -1,6 +1,7 @@
 // ./lib/script_pipeline.dart
 
 import 'parser.dart';
+import 'script_cst.dart';
 
 // =====================================================================
 // WHY THIS EXISTS
@@ -92,6 +93,12 @@ class CompiledScript {
 
 /// Compiles [rawText] into engine-ready text.
 ///
+/// EDIT / TRACK / CLIP are authored project structure, not terminal content.
+/// They remain byte-for-byte in [rawText], but the engine projection replaces
+/// each complete EDIT block with only its newline characters. Keeping those
+/// newlines is what lets editor [LINE:n] markers continue to refer to the raw
+/// document line numbers even though the edit structure itself does not run.
+///
 /// [lineMarkers] injects an editor-only `[LINE:n]` at the head of each
 /// document line so the engine reports its read position back as a line
 /// number. Preview and bake pass false; the editor passes true.
@@ -101,8 +108,9 @@ class CompiledScript {
 /// expansion rewrites line structure. Injecting after would number lines
 /// that do not exist in the document the author is looking at.
 CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
+  final String projected = _engineProjectionSource(rawText);
   final String marked =
-      lineMarkers ? injectLineMarkers(rawText) : rawText;
+      lineMarkers ? injectLineMarkers(projected) : projected;
 
   final TemplateData data = ScriptParser.parseTemplateData(marked);
 
@@ -129,6 +137,33 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
     menuStates: data.menuStatesFound,
     menuSettings: menuSettings,
   );
+}
+
+/// Builds the terminal engine projection while preserving authored line
+/// coordinates.
+///
+/// Source spans come from the nested CST, so this removes structural roots
+/// rather than trying to match nested blocks with a regular expression. Roots
+/// are replaced from right to left so every original offset remains valid.
+String _engineProjectionSource(String rawText) {
+  if (!RegExp(r'\[(?:EDIT|TRACK|CLIP)(?::[^\]\r\n]*)?\]').hasMatch(rawText)) {
+    return rawText;
+  }
+
+  final ScriptCstDocument cst = ScriptCstDocument.parse(rawText);
+  if (cst.roots.isEmpty) return rawText;
+
+  String projected = rawText;
+  for (final ScriptCstBlock root in cst.roots.reversed) {
+    final String owned = rawText.substring(root.startOffset, root.endOffset);
+    final String blankLines = owned.replaceAll(RegExp(r'[^\r\n]'), '');
+    projected = projected.replaceRange(
+      root.startOffset,
+      root.endOffset,
+      blankLines,
+    );
+  }
+  return projected;
 }
 
 /// Prefixes each line with `[LINE:n]`, n being its 0-based index.

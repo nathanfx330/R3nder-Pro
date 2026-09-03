@@ -20,6 +20,8 @@ import 'diag.dart';
 import 'editor_text_controller.dart';
 import 'editor_tag_menu.dart'; // Added import for the tag menu
 import 'script_lint.dart';
+import 'edit_model.dart';
+import 'edit_surface.dart';
 
 /// Wraps ScenePainter for the editor preview. ScenePainter already always
 /// repaints, but the editor keeps its own delegate so preview-specific
@@ -64,7 +66,7 @@ class EditorScreen extends StatefulWidget {
 
   /// Absolute path of the project's images/ folder (wallpapers + galleries).
   final String imagesDir;
-  
+
   /// Absolute path of the project's sprites/ folder.
   final String spritesDir;
 
@@ -177,6 +179,7 @@ class EditorScreen extends StatefulWidget {
 class _EditorScreenState extends State<EditorScreen> {
   late final EditorTextController _textController;
   final ScrollController _scrollController = ScrollController();
+
   /// Either freshly constructed or adopted from a warm bundle, which is
   /// why it is not final. Assigned exactly once, in initState.
   late final SceneEngine _scene;
@@ -211,8 +214,17 @@ class _EditorScreenState extends State<EditorScreen> {
   bool _isSimulating = false;
   String? _saveFlash; // Transient "Saved" / error message
 
-  // --- Node Graph Mode State ---
+  // --- Editor view state ---
   bool _isNodeMode = false;
+  bool _isEditMode = false;
+
+  /// The EDIT surface needs a playhead even before its media layer is wired
+  /// into the terminal preview transport. This is transient authoring state,
+  /// never project state, and it is deliberately not clamped to the terminal
+  /// engine's [_totalFrames].
+  int _editFrame = 0;
+
+  bool get _isTextMode => !_isNodeMode && !_isEditMode;
 
   /// Preview fills the workspace, script pane hidden. Text mode only.
   ///
@@ -321,7 +333,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _assets = NodeAssetLibrary.scan(widget.imagesDir, widget.spritesDir);
     _textController = EditorTextController(text: widget.initialText);
     _lastText = widget.initialText;
-    
+
     _textController.addListener(_onControllerChanged);
 
     // ADOPT OR DISCARD. Main handed ownership over and dropped its own
@@ -610,7 +622,7 @@ class _EditorScreenState extends State<EditorScreen> {
   /// screen. Focus is handed over explicitly in both directions: see
   /// [_previewFocusNode].
   void _togglePreviewFull() {
-    if (_isNodeMode) return;
+    if (!_isTextMode) return;
 
     final bool goingFull = !_isPreviewFull;
 
@@ -693,10 +705,10 @@ class _EditorScreenState extends State<EditorScreen> {
     final matches = RegExp(RegExp.escape(_searchQuery), caseSensitive: false)
         .allMatches(_textController.text)
         .toList();
-        
+
     if (_currentSearchIndex < matches.length) {
       final m = matches[_currentSearchIndex];
-      
+
       // Select the text (this would auto-scroll if the TextField had focus)
       _textController.selection = TextSelection(
         baseOffset: m.start,
@@ -707,11 +719,11 @@ class _EditorScreenState extends State<EditorScreen> {
       if (_scrollController.hasClients) {
         // Find which line the match is on
         final int line = _lineOfOffset(_textController.text, m.start);
-        
+
         // Uses the SAME metrics the TextField is styled with, so the
         // computed offset stays exact at any uiScale.
         final double lineHeight = _editorFontSize * _editorLineHeightMult;
-        
+
         // Calculate raw offset, minus a bit of padding to keep it near the top
         double targetOffset = (line * lineHeight) - sc(80);
         if (targetOffset < 0) targetOffset = 0;
@@ -758,14 +770,14 @@ class _EditorScreenState extends State<EditorScreen> {
 
     final text = _textController.text;
     final selection = _textController.selection;
-    
+
     // Determine bounds for replacement
     final int start = selection.isValid && selection.start >= 0 ? selection.start : text.length;
     final int end = selection.isValid && selection.end >= 0 ? selection.end : text.length;
-    
+
     // Replace current selection (or insert at cursor) with the snippet
     final String newText = text.replaceRange(start, end, snippet.insertText);
-    
+
     // Default: cursor placed at the very end of the newly inserted text
     int nextCursor = start + snippet.insertText.length;
     TextSelection nextSelection = TextSelection.collapsed(offset: nextCursor);
@@ -785,7 +797,7 @@ class _EditorScreenState extends State<EditorScreen> {
       text: newText,
       selection: nextSelection,
     );
-    
+
     _closeTagMenu();
   }
 
@@ -1171,7 +1183,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (_isSimulating || _rawLineAtFrame.isEmpty) return;
 
     int targetFrame = -1;
-    
+
     // Exact match: First frame where this line is active
     for (int i = 0; i < _rawLineAtFrame.length; i++) {
       if (_rawLineAtFrame[i] == lineIdx) {
@@ -1180,7 +1192,7 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     }
 
-    // Fallback: If this line was 0 frames long (just tags/comments), find 
+    // Fallback: If this line was 0 frames long (just tags/comments), find
     // the very next line that DID take up time.
     if (targetFrame == -1) {
       for (int i = 0; i < _rawLineAtFrame.length; i++) {
@@ -1379,6 +1391,8 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       _ribbonSelectedNodeIndex = nodeIndex;
       _isNodeMode = true;
+      _isEditMode = false;
+      _isPreviewFull = false;
     });
   }
 
@@ -1445,24 +1459,112 @@ class _EditorScreenState extends State<EditorScreen> {
   // Build (View Toggle Logic)
   // ---------------------------------------------------------------------
 
+  void _setEditorView(String label) {
+    final bool nodeMode = label == 'NODES';
+    final bool editMode = label == 'EDIT';
+    final bool alreadyActive =
+        (label == 'TEXT' && _isTextMode) ||
+        (nodeMode && _isNodeMode) ||
+        (editMode && _isEditMode);
+    if (alreadyActive) return;
+
+    _stopPlayback();
+    final bool clearSearch = _isSearching;
+
+    setState(() {
+      _isNodeMode = nodeMode;
+      _isEditMode = editMode;
+      _isPreviewFull = false;
+      _isTagMenuOpen = false;
+      if (_isSearching) {
+        _isSearching = false;
+        _searchQuery = '';
+        _matchCount = 0;
+        _currentSearchIndex = 0;
+      }
+    });
+
+    if (clearSearch) _textController.updateSearch('', 0);
+
+    if (label == 'TEXT') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _editorFocusNode.requestFocus();
+      });
+    }
+  }
+
   Widget _buildViewToggle(String label, bool isActive) {
     return InkWell(
-      onTap: () {
-        if (label == "NODES" && !_isNodeMode) {
+      onTap: () => _setEditorView(label),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: sc(12), vertical: sc(4)),
+        color: isActive ? _t.accentDim : Colors.transparent,
+        child: Text(
+          label,
+          style: _t.micro.copyWith(
+            color: isActive ? _t.accent : R3Theme.textDim,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEditWorkspace() {
+    final EditDocumentModel model;
+    try {
+      model = EditDocumentModel.parse(_textController.text);
+    } catch (error) {
+      return _buildEditMessage(
+        'EDIT LANGUAGE ERROR\n$error',
+        color: R3Theme.danger,
+      );
+    }
+
+    if (model.edits.isEmpty) {
+      return _buildEditMessage(
+        'NO EDIT SEQUENCE\nAdd [EDIT:name] with TRACK and CLIP blocks in TEXT mode.',
+      );
+    }
+
+    final EditSequence edit = model.edits.first;
+    final int frame = _editFrame.clamp(0, edit.projectFrameCount);
+
+    return EditSurface(
+      key: ValueKey('edit:${edit.id}'),
+      source: _textController.text,
+      editId: edit.id,
+      currentFrame: frame,
+      voiceFrames: widget.bedTargetFrames,
+      musicFrames: widget.musicFrames,
+      musicLoops: widget.musicLoop,
+      theme: _t,
+      onSourceChanged: (String newText) {
+        if (_textController.text == newText) return;
+        _textController.text = newText;
+        if (mounted) {
           setState(() {
-            _isNodeMode = true;
-          });
-        } else if (label == "TEXT" && _isNodeMode) {
-          setState(() {
-            _isNodeMode = false;
+            _isDirty = true;
+            _saveFlash = null;
           });
         }
       },
-      child: Container(
-         padding: EdgeInsets.symmetric(horizontal: sc(12), vertical: sc(4)),
-         color: isActive ? _t.accentDim : Colors.transparent,
-         child: Text(label, style: _t.micro.copyWith(color: isActive ? _t.accent : R3Theme.textDim)),
-      )
+      onSeek: (int frame) {
+        if (!mounted) return;
+        setState(() => _editFrame = frame);
+      },
+    );
+  }
+
+  Widget _buildEditMessage(String message, {Color? color}) {
+    return Container(
+      color: R3Theme.bg,
+      alignment: Alignment.center,
+      padding: EdgeInsets.all(sc(30)),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: _t.value.copyWith(color: color ?? R3Theme.textMid),
+      ),
     );
   }
 
@@ -1486,15 +1588,15 @@ class _EditorScreenState extends State<EditorScreen> {
           // Not while full frame: the palette draws into the script pane,
           // so opening it there would set the flag with nothing on screen.
           if (event.logicalKey == LogicalKeyboardKey.tab &&
-              !_isNodeMode &&
+              _isTextMode &&
               !_isPreviewFull) {
-             if (!_isTagMenuOpen) {
-                _openTagMenu();
-             } else {
-                // Cycle down if already open
-                _tagMenuKey.currentState?.cycleSelection();
-             }
-             return KeyEventResult.handled;
+            if (!_isTagMenuOpen) {
+              _openTagMenu();
+            } else {
+              // Cycle down if already open
+              _tagMenuKey.currentState?.cycleSelection();
+            }
+            return KeyEventResult.handled;
           }
 
           // Close editor or close search/menu on ESC.
@@ -1522,9 +1624,9 @@ class _EditorScreenState extends State<EditorScreen> {
             // setting a flag with no visible field, which reads as the
             // shortcut being broken.
             if (_isPreviewFull) _togglePreviewFull();
-            if (!_isSearching && !_isNodeMode) {
+            if (_isTextMode && !_isSearching) {
               _toggleSearch();
-            } else if (!_isNodeMode) {
+            } else if (_isTextMode) {
               _searchFocusNode.requestFocus();
             }
             return KeyEventResult.handled;
@@ -1552,7 +1654,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   SizedBox(width: sc(8)),
                   const R3Tally(state: R3TallyState.warn),
                 ],
-                
+
                 SizedBox(width: sc(20)),
                 // Mode Toggle
                 Container(
@@ -1563,10 +1665,11 @@ class _EditorScreenState extends State<EditorScreen> {
                   ),
                   child: Row(
                     children: [
-                      _buildViewToggle("TEXT", !_isNodeMode),
+                      _buildViewToggle("TEXT", _isTextMode),
                       _buildViewToggle("NODES", _isNodeMode),
-                    ]
-                  )
+                      _buildViewToggle("EDIT", _isEditMode),
+                    ],
+                  ),
                 ),
 
                 SizedBox(width: sc(14)),
@@ -1577,7 +1680,7 @@ class _EditorScreenState extends State<EditorScreen> {
                       color: _saveFlash == 'Saved' ? R3Theme.okGreen : R3Theme.danger,
                     ),
                   ),
-                
+
                 if (_saveFlash == null &&
                     (_lintFindings.isNotEmpty || _scene.warnings.isNotEmpty))
                   Expanded(
@@ -1604,8 +1707,8 @@ class _EditorScreenState extends State<EditorScreen> {
                       );
 
                       // A line number you cannot navigate to is not much
-                      // help, so clicking the message goes there.
-                      if (!isLint || _isNodeMode) return label;
+                      // help, so clicking the message goes there in TEXT.
+                      if (!isLint || !_isTextMode) return label;
                       return MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: GestureDetector(
@@ -1618,21 +1721,25 @@ class _EditorScreenState extends State<EditorScreen> {
                       );
                     }),
                   ),
-                
+
                 if (_saveFlash != null ||
                     (_lintFindings.isEmpty && _scene.warnings.isEmpty))
                   const Spacer(),
-                
-                if (_isSimulating && !_isNodeMode)
+
+                if (_isSimulating && _isTextMode)
                   Padding(
                     padding: EdgeInsets.only(right: sc(14)),
                     child: SizedBox(
-                      width: sc(13), height: sc(13),
-                      child: CircularProgressIndicator(strokeWidth: 2, color: t.accentDim),
+                      width: sc(13),
+                      height: sc(13),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: t.accentDim,
+                      ),
                     ),
                   ),
-                
-                if (!_isNodeMode && !_isPreviewFull)
+
+                if (_isTextMode && !_isPreviewFull)
                   InkWell(
                     onTap: _toggleSearch,
                     borderRadius: BorderRadius.circular(3),
@@ -1647,7 +1754,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
                 // A shortcut nobody can see is a shortcut nobody finds, and
                 // this one has no menu entry anywhere else.
-                if (!_isNodeMode)
+                if (_isTextMode)
                   InkWell(
                     onTap: _togglePreviewFull,
                     borderRadius: BorderRadius.circular(3),
@@ -1667,10 +1774,15 @@ class _EditorScreenState extends State<EditorScreen> {
                       ),
                     ),
                   ),
-                
+
                 SizedBox(width: sc(8)),
-                R3Button("Save", theme: t, compact: true, kind: R3ButtonKind.primary,
-                    onPressed: _isDirty ? _save : null),
+                R3Button(
+                  "Save",
+                  theme: t,
+                  compact: true,
+                  kind: R3ButtonKind.primary,
+                  onPressed: _isDirty ? _save : null,
+                ),
                 SizedBox(width: sc(8)),
                 R3Button("Back (Esc)", theme: t, compact: true, onPressed: _close),
               ],
@@ -1679,28 +1791,30 @@ class _EditorScreenState extends State<EditorScreen> {
 
           // --- Main Application Area ---
           Expanded(
-            child: _isNodeMode 
-                ? EditorNodeWorkspace(
-                    initialText: _textController.text,
-                    theme: t,
-                    highlightedLine: _textController.highlightedLine,
-                    imagesDir: widget.imagesDir,
-                    spritesDir: widget.spritesDir,
-                    availableFonts: widget.availableFonts,
-                    onAssetsChanged: _onAssetsChanged,
-                    initialSelectedNodeIndex: _ribbonSelectedNodeIndex,
-                    onTextChanged: (newText) {
-                      if (_textController.text != newText) {
-                        _textController.text = newText;
-                        _isDirty = true;
-                      }
-                    },
-                  )
-                : _buildTextWorkspace(),
+            child: _isEditMode
+                ? _buildEditWorkspace()
+                : _isNodeMode
+                    ? EditorNodeWorkspace(
+                        initialText: _textController.text,
+                        theme: t,
+                        highlightedLine: _textController.highlightedLine,
+                        imagesDir: widget.imagesDir,
+                        spritesDir: widget.spritesDir,
+                        availableFonts: widget.availableFonts,
+                        onAssetsChanged: _onAssetsChanged,
+                        initialSelectedNodeIndex: _ribbonSelectedNodeIndex,
+                        onTextChanged: (newText) {
+                          if (_textController.text != newText) {
+                            _textController.text = newText;
+                            _isDirty = true;
+                          }
+                        },
+                      )
+                    : _buildTextWorkspace(),
           ),
 
-          // --- Transport bar (Only in Text Mode) ---
-          if (!_isNodeMode)
+          // --- Transport bar (Text mode only) ---
+          if (_isTextMode)
             Container(
               padding: EdgeInsets.symmetric(horizontal: sc(14), vertical: sc(8)),
               decoration: const BoxDecoration(
@@ -1755,7 +1869,9 @@ class _EditorScreenState extends State<EditorScreen> {
                           padding: EdgeInsets.all(sc(5)),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(3),
-                            border: Border.all(color: _isPlaying ? t.accentDim : R3Theme.hairline),
+                            border: Border.all(
+                              color: _isPlaying ? t.accentDim : R3Theme.hairline,
+                            ),
                             color: _isPlaying ? t.accentFaint : Colors.transparent,
                           ),
                           child: Icon(
@@ -1775,7 +1891,10 @@ class _EditorScreenState extends State<EditorScreen> {
                       _buildBedReadout(t),
                       Text("$_currentFrame / $_totalFrames", style: t.value),
                       SizedBox(width: sc(8)),
-                      Text("${(_currentFrame / engineFps).toStringAsFixed(1)}S", style: t.micro),
+                      Text(
+                        "${(_currentFrame / engineFps).toStringAsFixed(1)}S",
+                        style: t.micro,
+                      ),
                     ],
                   ),
                 ],
@@ -1843,33 +1962,61 @@ class _EditorScreenState extends State<EditorScreen> {
                             focusNode: _searchFocusNode,
                             onChanged: _onSearchChanged,
                             decoration: const InputDecoration(
-                              isDense: true, border: InputBorder.none,
-                              enabledBorder: InputBorder.none, focusedBorder: InputBorder.none,
-                              filled: false, hintText: "Search...",
+                              isDense: true,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
+                              hintText: "Search...",
                             ),
                             style: t.value,
                           ),
                         ),
                         if (_searchQuery.isNotEmpty)
-                          Text(_matchCount == 0 ? "NO RESULTS" : "${_currentSearchIndex + 1} OF $_matchCount",
-                            style: t.micro),
+                          Text(
+                            _matchCount == 0
+                                ? "NO RESULTS"
+                                : "${_currentSearchIndex + 1} OF $_matchCount",
+                            style: t.micro,
+                          ),
                         SizedBox(width: sc(4)),
                         InkWell(
                           onTap: _prevSearchMatch,
-                          child: Padding(padding: EdgeInsets.all(sc(4)), child: Icon(Icons.keyboard_arrow_up, size: sc(17), color: R3Theme.textMid)),
+                          child: Padding(
+                            padding: EdgeInsets.all(sc(4)),
+                            child: Icon(
+                              Icons.keyboard_arrow_up,
+                              size: sc(17),
+                              color: R3Theme.textMid,
+                            ),
+                          ),
                         ),
                         InkWell(
                           onTap: _nextSearchMatch,
-                          child: Padding(padding: EdgeInsets.all(sc(4)), child: Icon(Icons.keyboard_arrow_down, size: sc(17), color: R3Theme.textMid)),
+                          child: Padding(
+                            padding: EdgeInsets.all(sc(4)),
+                            child: Icon(
+                              Icons.keyboard_arrow_down,
+                              size: sc(17),
+                              color: R3Theme.textMid,
+                            ),
+                          ),
                         ),
                         InkWell(
                           onTap: _toggleSearch,
-                          child: Padding(padding: EdgeInsets.all(sc(4)), child: Icon(Icons.close, size: sc(15), color: R3Theme.textMid)),
+                          child: Padding(
+                            padding: EdgeInsets.all(sc(4)),
+                            child: Icon(
+                              Icons.close,
+                              size: sc(15),
+                              color: R3Theme.textMid,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                
+
                 Expanded(
                   child: Stack(
                     children: [
@@ -1997,7 +2144,7 @@ class _EditorScreenState extends State<EditorScreen> {
                               alignment: Alignment.topCenter,
                               padding: EdgeInsets.only(top: sc(30)),
                               child: GestureDetector(
-                                onTap: () {}, 
+                                onTap: () {},
                                 child: EditorTagMenu(
                                   key: _tagMenuKey,
                                   theme: t,
@@ -2148,7 +2295,9 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Widget _buildScrubber(R3Theme t) {
     final bool enabled = _totalFrames > 0 && !_isSimulating;
-    final double frac = _totalFrames > 0 ? (_currentFrame / _totalFrames).clamp(0.0, 1.0) : 0.0;
+    final double frac = _totalFrames > 0
+        ? (_currentFrame / _totalFrames).clamp(0.0, 1.0)
+        : 0.0;
 
     return LayoutBuilder(builder: (ctx, constraints) {
       final double w = constraints.maxWidth;
@@ -2157,6 +2306,7 @@ class _EditorScreenState extends State<EditorScreen> {
         final double nt = (dx / w).clamp(0.0, 1.0);
         _seek((nt * _totalFrames).round());
       }
+
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: (d) {
@@ -2174,7 +2324,10 @@ class _EditorScreenState extends State<EditorScreen> {
                 Container(height: 2, color: R3Theme.hairline),
                 FractionallySizedBox(
                   widthFactor: frac == 0 ? 0.001 : frac,
-                  child: Container(height: 2, color: enabled ? t.accentDim : R3Theme.hairline),
+                  child: Container(
+                    height: 2,
+                    color: enabled ? t.accentDim : R3Theme.hairline,
+                  ),
                 ),
                 // PLAYHEAD.
                 //
@@ -2317,7 +2470,7 @@ class _GutterPainter extends CustomPainter {
     for (int i = 0; i < layout.lineCount; i++) {
       final double y = layout.yForLine(i) - scrollOffset;
 
-      if (y > size.height) break;      // Past the bottom.
+      if (y > size.height) break; // Past the bottom.
       if (y + lineHeight < 0) continue; // Scrolled off the top.
 
       final bool isActive = i == activeLine;
