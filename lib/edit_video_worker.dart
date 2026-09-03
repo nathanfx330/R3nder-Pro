@@ -126,7 +126,8 @@ class EditVideoWorker {
   SendPort? _commands;
   Map<String, Object?>? _pendingBeforeReady;
   Timer? _killTimer;
-  bool _disposed = false;
+  bool _disposeRequested = false;
+  bool _finished = false;
   String? _fatalError;
   int _latestSerial = 0;
   int _latestEpoch = 0;
@@ -154,15 +155,19 @@ class EditVideoWorker {
         },
         debugName: 'r3nder-edit-video',
       );
-      if (_disposed) {
+      if (_finished) {
         isolate.kill(priority: Isolate.immediate);
         return;
       }
       _isolate = isolate;
     } catch (error) {
-      if (_disposed) return;
+      if (_finished) return;
       _fatalError = '$error';
-      _emitFatalIfRequested();
+      if (_disposeRequested) {
+        _finish();
+      } else {
+        _emitFatalIfRequested();
+      }
     }
   }
 
@@ -173,7 +178,7 @@ class EditVideoWorker {
     required int width,
     required int height,
   }) {
-    if (_disposed) return;
+    if (_disposeRequested || _finished) return;
     _latestSerial = serial;
     _latestEpoch = epoch;
     _latestFrame = projectFrame;
@@ -215,7 +220,7 @@ class EditVideoWorker {
   }
 
   void _handleMessage(dynamic raw) {
-    if (_disposed || raw is! Map) return;
+    if (_finished || raw is! Map) return;
     final Map<Object?, Object?> message = raw.cast<Object?, Object?>();
     final String? type = message['type'] as String?;
 
@@ -224,16 +229,26 @@ class EditVideoWorker {
         final SendPort? port = message['port'] as SendPort?;
         if (port == null) return;
         _commands = port;
+        if (_disposeRequested) {
+          port.send(const <String, Object?>{'type': 'dispose'});
+          return;
+        }
         final Map<String, Object?>? pending = _pendingBeforeReady;
         _pendingBeforeReady = null;
         if (pending != null) port.send(pending);
         break;
       case 'frame':
-        onResult(EditVideoWorkerResult.fromMessage(message));
+        if (!_disposeRequested) {
+          onResult(EditVideoWorkerResult.fromMessage(message));
+        }
         break;
       case 'fatal':
         _fatalError = message['error'] as String? ?? 'Edit video worker failed.';
-        _emitFatalIfRequested();
+        if (_disposeRequested) {
+          _finish();
+        } else {
+          _emitFatalIfRequested();
+        }
         break;
       case 'disposed':
         _finish();
@@ -243,7 +258,9 @@ class EditVideoWorker {
 
   void _emitFatalIfRequested() {
     final String? fatal = _fatalError;
-    if (fatal == null || _latestSerial == 0 || _disposed) return;
+    if (fatal == null || _latestSerial == 0 || _disposeRequested || _finished) {
+      return;
+    }
     onResult(
       EditVideoWorkerResult(
         serial: _latestSerial,
@@ -262,19 +279,16 @@ class EditVideoWorker {
   }
 
   void dispose() {
-    if (_disposed) return;
-    _disposed = true;
-    final SendPort? commands = _commands;
-    if (commands == null) {
-      _finish();
-      return;
-    }
-
-    commands.send(const <String, Object?>{'type': 'dispose'});
+    if (_disposeRequested || _finished) return;
+    _disposeRequested = true;
+    _pendingBeforeReady = null;
+    _commands?.send(const <String, Object?>{'type': 'dispose'});
     _killTimer = Timer(const Duration(seconds: 1), _finish);
   }
 
   void _finish() {
+    if (_finished) return;
+    _finished = true;
     _killTimer?.cancel();
     _killTimer = null;
     _commands = null;
@@ -343,10 +357,9 @@ void _editVideoWorkerEntry(Map<String, Object?> bootstrap) {
           'error': '$error',
         });
       }
-      // Do not immediately start another render here. Any requests that
-      // arrived while MLT was blocked are queued as isolate messages. Their
-      // handlers run first, overwrite pendingRender, and schedule one new
-      // Timer event. That is what gives this worker latest-wins semantics.
+      // Requests that arrived while MLT was blocked are queued as isolate
+      // messages. Their handlers run before the next Timer event, overwrite
+      // pendingRender, and therefore collapse to one newest-frame decode.
     });
   }
 
@@ -376,41 +389,32 @@ void _editVideoWorkerEntry(Map<String, Object?> bootstrap) {
 
 class _EditVideoWorkerState {
   final String editId;
-  final String workspaceRoot;
-  final MediaLayer layer;
-  final EditVideoCompositor compositor;
+  late final MediaDecoderBackend backend;
+  late final MediaLayer layer;
+  late final EditVideoCompositor compositor;
   bool _disposed = false;
 
   _EditVideoWorkerState({
     required String source,
     required this.editId,
-    required this.workspaceRoot,
-  })  : layer = MediaLayer(
-          editDocument: EditDocumentModel.parse(source),
-          backend: NativeMltMediaBackend(),
-          resolveSource: (String authored) =>
-              _resolveWorkerMediaSource(workspaceRoot, authored),
-        ),
-        compositor = _createCompositor(source, editId, workspaceRoot);
+    required String workspaceRoot,
+  }) {
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final EditSurfaceDocument surface = EditSurfaceDocument.parse(source, editId);
+    String resolver(String authored) =>
+        _resolveWorkerMediaSource(workspaceRoot, authored);
 
-  static EditVideoCompositor _createCompositor(
-    String source,
-    String editId,
-    String workspaceRoot,
-  ) {
-    final MediaDecoderBackend backend = NativeMltMediaBackend();
-    final MediaLayer mediaLayer = MediaLayer(
-      editDocument: EditDocumentModel.parse(source),
+    backend = NativeMltMediaBackend();
+    layer = MediaLayer(
+      editDocument: model,
       backend: backend,
-      resolveSource: (String authored) =>
-          _resolveWorkerMediaSource(workspaceRoot, authored),
+      resolveSource: resolver,
     );
-    return EditVideoCompositor(
-      document: EditSurfaceDocument.parse(source, editId),
-      mediaLayer: mediaLayer,
+    compositor = EditVideoCompositor(
+      document: surface,
+      mediaLayer: layer,
       backend: backend,
-      resolveSource: (String authored) =>
-          _resolveWorkerMediaSource(workspaceRoot, authored),
+      resolveSource: resolver,
     );
   }
 
@@ -456,9 +460,6 @@ class _EditVideoWorkerState {
     if (_disposed) return;
     _disposed = true;
     compositor.dispose();
-    // compositor owns a distinct MediaLayer internally. The field above is
-    // retained only to make ownership explicit if worker construction fails
-    // before compositor creation. It has no decoded frames in normal use.
     layer.dispose();
   }
 }
