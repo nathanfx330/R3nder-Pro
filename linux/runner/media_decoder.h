@@ -33,6 +33,11 @@ void r3_media_decoder_destroy(void* handle);
 // changes project duration or advances the producer.
 int64_t r3_media_decoder_length(void* handle);
 
+// Returns the exact source-profile frame-rate rational, or -1 when unavailable.
+// Import uses this only once to conform source time to R3nder project time.
+int64_t r3_media_decoder_fps_num(void* handle);
+int64_t r3_media_decoder_fps_den(void* handle);
+
 // Returns 0 on success and -1 on failure. The caller owns out_frame->rgba on
 // success and must release it through r3_media_decoded_frame_release().
 int r3_media_decoder_render(
