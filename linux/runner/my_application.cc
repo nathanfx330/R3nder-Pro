@@ -6,6 +6,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "media_texture.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -26,8 +27,33 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
-// Called when first Flutter frame received.
+// Called when first Flutter frame received. This is the same lifecycle point
+// used by MLT Player for external texture registration: the engine is rendering
+// and its texture registrar is valid.
 static void first_frame_cb(MyApplication* self, FlView* view) {
+  (void)self;
+
+  if (r3_media_texture_id() <= 0) {
+    FlEngine* engine = fl_view_get_engine(view);
+    if (engine != nullptr) {
+      FlTextureRegistrar* registrar = fl_engine_get_texture_registrar(engine);
+      if (registrar != nullptr) {
+        const int64_t texture_id =
+            r3_media_texture_register_flutter_texture(registrar);
+        if (texture_id <= 0) {
+          g_warning("r3nder: failed to register media preview texture.");
+        } else {
+          g_print("R3nder media texture registered: %" G_GINT64_FORMAT "\n",
+                  texture_id);
+        }
+      } else {
+        g_warning("r3nder: Flutter texture registrar is NULL.");
+      }
+    } else {
+      g_warning("r3nder: Flutter engine is NULL during first frame.");
+    }
+  }
+
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
@@ -392,9 +418,10 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application shutdown.
+  // Detach Flutter's external texture before the engine tears down its raster
+  // context. Decoder objects are Dart-owned and detach themselves individually
+  // as well, so this is idempotent at application shutdown.
+  r3_media_texture_unregister_flutter_texture();
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
