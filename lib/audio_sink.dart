@@ -28,6 +28,7 @@ class AudioSinkStats {
   final int sampleRate;
   final int channels;
   final bool healthy;
+  final bool draining;
 
   const AudioSinkStats({
     required this.submittedSamples,
@@ -36,6 +37,7 @@ class AudioSinkStats {
     required this.sampleRate,
     required this.channels,
     required this.healthy,
+    required this.draining,
   });
 }
 
@@ -94,6 +96,7 @@ class NativeAudioSink {
       sampleRate: raw.sampleRate,
       channels: raw.channels,
       healthy: raw.healthy != 0,
+      draining: raw.draining != 0,
     );
   }
 
@@ -129,11 +132,12 @@ class NativeAudioSink {
     }
   }
 
-  /// Waits for every accepted PCM sample to reach audible completion. This is
-  /// the natural-end operation; unlike [flush] it does not discard a tail.
-  void drain() {
+  /// Requests natural audible completion after all already accepted PCM. The
+  /// worker performs the blocking drain; callers poll [stats].draining rather
+  /// than blocking Flutter inside an FFI call.
+  void requestDrain() {
     _checkAlive();
-    if (_native.drain(_handle) < 0) {
+    if (_native.requestDrain(_handle) < 0) {
       throw AudioSinkException(lastError);
     }
   }
@@ -183,7 +187,7 @@ final class _NativeAudioSinkStats extends Struct {
   external int healthy;
 
   @Int32()
-  external int padding;
+  external int draining;
 }
 
 typedef _CreateNative = Pointer<Void> Function(
@@ -253,8 +257,9 @@ class _NativeAudioSinkBindings {
       _DestroyDart>('r3_audio_sink_destroy');
   late final _EnqueueDart enqueue = _runner.lookupFunction<_EnqueueNative,
       _EnqueueDart>('r3_audio_sink_enqueue');
-  late final _SinkActionDart drain = _runner.lookupFunction<_SinkActionNative,
-      _SinkActionDart>('r3_audio_sink_drain');
+  late final _SinkActionDart requestDrain = _runner.lookupFunction<
+      _SinkActionNative,
+      _SinkActionDart>('r3_audio_sink_request_drain');
   late final _SinkActionDart flush = _runner.lookupFunction<_SinkActionNative,
       _SinkActionDart>('r3_audio_sink_flush');
   late final _ReadDart read = _runner.lookupFunction<_ReadNative,
