@@ -6,7 +6,8 @@
 // lifetime. Dart may publish target frames and poll completed RGBA frames, but
 // it never performs seek/decode work on the UI isolate. Exact parked-frame
 // render remains available and waits on the same worker instead of touching the
-// producer from a second thread.
+// producer from a second thread. Native presentation can subscribe to exact
+// target frames through a callback while the decoder itself stays Flutter-free.
 
 #include "media_decoder.h"
 
@@ -68,6 +69,12 @@ struct MediaDecoderState {
   int64_t next_decode_frame = -1;
   int32_t decode_width = 0;
   int32_t decode_height = 0;
+
+  // Optional native presentation subscriber. The sink is invoked while this
+  // state's mutex is held, so it must only copy/consume the borrowed pixels and
+  // must never call back into this decoder.
+  R3MediaDecodedFrameSink frame_sink = nullptr;
+  void* frame_sink_user_data = nullptr;
 
   std::string last_error;
   std::thread worker;
@@ -167,6 +174,31 @@ bool CopyCachedFrame(
   out_frame->byte_length = byte_length;
   out_frame->rgba = copy;
   return true;
+}
+
+void PublishFrameToSinkLocked(
+    MediaDecoderState* state,
+    const CachedFrame& frame) {
+  if (state->frame_sink == nullptr || !state->target_valid) return;
+  if (!FrameMatches(
+          frame,
+          state->target_frame,
+          state->target_width,
+          state->target_height)) {
+    return;
+  }
+  if (frame.rgba.empty()) return;
+
+  state->frame_sink(
+      state,
+      frame.requested_frame,
+      frame.actual_frame,
+      frame.width,
+      frame.height,
+      frame.stride,
+      frame.rgba.data(),
+      static_cast<int64_t>(frame.rgba.size()),
+      state->frame_sink_user_data);
 }
 
 bool ValidRequestLocked(
@@ -468,6 +500,12 @@ void WorkerMain(MediaDecoderState* state) {
       // pixels, but not the decoder. Drop them and let the next loop honor the
       // new target dimensions.
       if (width == state->target_width && height == state->target_height) {
+        // Native presentation receives only the exact target, never read-ahead
+        // frames. A target that changed while decode was in flight therefore
+        // cannot flash late on screen.
+        if (requested_frame == state->target_frame) {
+          PublishFrameToSinkLocked(state, decoded);
+        }
         StoreFrameLocked(state, std::move(decoded));
         state->next_decode_frame = requested_frame + 1;
         state->decode_width = width;
@@ -572,6 +610,8 @@ extern "C" void r3_media_decoder_destroy(void* handle) {
   {
     std::lock_guard<std::mutex> lock(state->mutex);
     state->closing = true;
+    state->frame_sink = nullptr;
+    state->frame_sink_user_data = nullptr;
   }
   state->cv.notify_all();
 
@@ -622,6 +662,15 @@ extern "C" int r3_media_decoder_request(
     std::lock_guard<std::mutex> lock(state->mutex);
     if (!PublishRequestLocked(state, requested_frame, width, height)) {
       return -1;
+    }
+
+    // A read-ahead cache hit can be presented immediately without waking the
+    // worker. This matters for rate-conformed clips where adjacent project
+    // frames may map to the same source frame.
+    const CachedFrame* cached =
+        FindFrameLocked(state, requested_frame, width, height);
+    if (cached != nullptr) {
+      PublishFrameToSinkLocked(state, *cached);
     }
   }
   state->cv.notify_all();
@@ -688,6 +737,39 @@ extern "C" int r3_media_decoder_render(
     state->last_error = "Could not allocate decoded RGBA frame copy.";
     return -1;
   }
+  state->last_error.clear();
+  return 0;
+}
+
+extern "C" int r3_media_decoder_set_frame_sink(
+    void* handle,
+    R3MediaDecodedFrameSink sink,
+    void* user_data) {
+  MediaDecoderState* state = static_cast<MediaDecoderState*>(handle);
+  if (state == nullptr) return -1;
+
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->closing && sink != nullptr) {
+    state->last_error = "Media decoder is closing.";
+    return -1;
+  }
+
+  state->frame_sink = sink;
+  state->frame_sink_user_data = user_data;
+
+  // Binding a sink after a frame was decoded should not force another decode.
+  // If the exact current target is already cached, publish it immediately.
+  if (sink != nullptr && state->target_valid) {
+    const CachedFrame* cached = FindFrameLocked(
+        state,
+        state->target_frame,
+        state->target_width,
+        state->target_height);
+    if (cached != nullptr) {
+      PublishFrameToSinkLocked(state, *cached);
+    }
+  }
+
   state->last_error.clear();
   return 0;
 }
