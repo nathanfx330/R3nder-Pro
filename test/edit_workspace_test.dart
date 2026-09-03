@@ -171,7 +171,7 @@ void main() {
   });
 
   testWidgets(
-      'PLAY polls ProjectClock locally and PAUSE publishes exact parked frame',
+      'PLAY samples ProjectClock locally and PAUSE publishes exact parked frame',
       (WidgetTester tester) async {
     const String source = '''[EDIT:main]
   [TRACK:V1]
@@ -208,15 +208,14 @@ void main() {
     await tester.pump();
     expect(find.text('PAUSE'), findsOneWidget);
 
-    // Match the production transport cadence. The native video texture keeps
-    // rendering continuously between these polls; only the lightweight local
-    // playhead is refreshed here.
+    // ProjectClock is sampled at project cadence for the local EDIT playhead.
+    // Those updates must still stay inside EditWorkspace instead of bubbling
+    // every playback frame through EditorScreen.
     await tester.pump(const Duration(milliseconds: 110));
     expect(fake, isNotNull);
-    expect(fake!.samples, greaterThan(0));
-    expect(find.textContaining('F1 / 120'), findsOneWidget);
+    expect(fake!.samples, greaterThanOrEqualTo(2));
+    expect(find.textContaining('EDIT main   F'), findsOneWidget);
 
-    // Advancing playback must not bubble every frame into EditorScreen.
     expect(lastSeek, 0);
 
     await tester.tap(find.text('PAUSE'));
