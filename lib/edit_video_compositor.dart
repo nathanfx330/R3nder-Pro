@@ -138,6 +138,34 @@ class EditVideoCompositor {
     final int width = layers.first.frame.width;
     final int height = layers.first.frame.height;
     final int stride = width * 4;
+
+    // The overwhelmingly common playback case is one decoded video layer with
+    // no active transition. The native decoder has already produced the final
+    // RGBA pixels for that picture, so allocating another buffer and running a
+    // Dart alpha blend over every pixel only burns presentation time. A fully
+    // completed transition is equivalent and can use the same direct path.
+    if (layers.length == 1) {
+      final _ActiveLayer only = layers.single;
+      final MediaFrame frame = only.frame;
+      final EditTransition transition = only.clip.transition;
+      final int projectOffset = time.frame - only.clip.atFrame;
+      final double progress = _transitionProgress(
+        projectOffset,
+        transition.frames,
+      );
+      if (transition.kind == EditTransitionKind.none || progress >= 1.0) {
+        return EditVideoCompositeResult(
+          width: frame.width,
+          height: frame.height,
+          stride: frame.stride,
+          rgba: frame.rgba,
+          topFrame: frame,
+          contributors: List<MediaFrame>.unmodifiable(<MediaFrame>[frame]),
+          mediaFrames: media.frames,
+        );
+      }
+    }
+
     final Uint8List output = Uint8List(stride * height);
     final List<MediaFrame> contributors = <MediaFrame>[];
     MediaFrame? topFrame;
