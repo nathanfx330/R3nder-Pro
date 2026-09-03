@@ -46,6 +46,15 @@ struct ClockState {
   // Separate by design. The audio sink writes this without entering the
   // control seqlock; readers combine it with one coherent control snapshot.
   std::atomic<int64_t> played_samples{0};
+
+  // Absolute audible sample position in the same cumulative coordinate as
+  // played_samples. Measured device latency may rise between samples, but an
+  // AUDIO clock is not allowed to move backward because of that measurement.
+  // The floor therefore advances lock-free and never resets between sink
+  // generations. New generations use a later cumulative origin_sample, so an
+  // old floor cannot push them forward unless the cumulative-sample invariant
+  // itself has been violated.
+  std::atomic<int64_t> audible_sample_floor{0};
 };
 
 // There is one native realtime preview clock in the application. Export uses
@@ -172,6 +181,16 @@ void EvaluateDelta(const ControlSnapshot& control, __int128 delta_num,
   NormalizeTime(numerator, denominator, out);
 }
 
+int64_t ClampAudibleSample(ClockState* clock, int64_t candidate) {
+  int64_t floor = clock->audible_sample_floor.load(std::memory_order_acquire);
+  while (candidate > floor &&
+         !clock->audible_sample_floor.compare_exchange_weak(
+             floor, candidate, std::memory_order_acq_rel,
+             std::memory_order_acquire)) {
+  }
+  return candidate > floor ? candidate : floor;
+}
+
 }  // namespace
 
 extern "C" {
@@ -281,7 +300,7 @@ const R3ClockSnapshot* r3_clock_read(void* handle) {
   static thread_local R3ClockSnapshot out;
   out = R3ClockSnapshot{0, 0, 1, 0, kMonotonic, 0};
 
-  const auto* clock = static_cast<const ClockState*>(handle);
+  auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr) return &out;
 
   const ControlSnapshot control = ReadControl(clock);
@@ -299,8 +318,13 @@ const R3ClockSnapshot* r3_clock_read(void* handle) {
 
   if (control.mode == kAudio) {
     const int64_t played = clock->played_samples.load(std::memory_order_acquire);
-    const int64_t audible =
-        played - control.origin_sample - control.latency_samples;
+    int64_t audible_absolute = played - control.latency_samples;
+    if (audible_absolute < control.origin_sample) {
+      audible_absolute = control.origin_sample;
+    }
+    const int64_t clamped_absolute =
+        ClampAudibleSample(clock, audible_absolute);
+    const int64_t audible = clamped_absolute - control.origin_sample;
     const __int128 raw_num =
         static_cast<__int128>(audible) * control.fps_num;
     const __int128 raw_den =

@@ -87,10 +87,31 @@ int main() {
   Require(s.frame == 35 && s.phase_num == 1 && s.phase_den == 2,
           "audio sample origin arithmetic is wrong");
 
+  // Measured latency can rise from one query to the next. That measurement
+  // must never make AUDIO ProjectTime run backward.
   r3_clock_set_latency_samples(clock, 9600);
   s = *r3_clock_read(clock);
-  Require(s.frame == 32 && s.phase_num == 1 && s.phase_den == 2,
-          "audio latency subtraction is wrong");
+  Require(s.frame == 35 && s.phase_num == 1 && s.phase_den == 2,
+          "audio clock rewound when measured latency increased");
+
+  // A lower latency measurement may advance audible time normally.
+  r3_clock_set_latency_samples(clock, 2400);
+  s = *r3_clock_read(clock);
+  Require(s.frame == 37 && s.phase_num == 0 && s.phase_den == 1,
+          "audio clock did not advance when audible sample position advanced");
+
+  // A later latency spike is clamped at that new audible high-water mark.
+  r3_clock_set_latency_samples(clock, 7200);
+  s = *r3_clock_read(clock);
+  Require(s.frame == 37 && s.phase_num == 0 && s.phase_den == 1,
+          "audio clock rewound after establishing a later audible floor");
+
+  // Once cumulative playback moves beyond the floor, AUDIO time advances
+  // again even with the higher latency measurement still in force.
+  r3_clock_set_played_samples(clock, 60200);
+  s = *r3_clock_read(clock);
+  Require(s.frame == 38 && s.phase_num == 0 && s.phase_den == 1,
+          "audio clock did not resume after playback passed the clamp floor");
 
   // The control seqlock is intentionally multi-reader but must be
   // single-writer. Two writers race here while this thread continuously
