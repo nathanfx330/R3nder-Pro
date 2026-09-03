@@ -25,6 +25,7 @@ import 'edit_surface.dart';
 import 'edit_surface_model.dart';
 import 'engine.dart';
 import 'native_file_dialog.dart';
+import 'playback_trace.dart';
 import 'project_clock.dart';
 import 'ui_theme.dart';
 
@@ -80,6 +81,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
   int? _lastPolledPlaybackFrame;
   String? _error;
 
+  bool get _traceProductionPlayback => widget.playbackClockFactory == null;
+
   @override
   void initState() {
     super.initState();
@@ -109,7 +112,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _workingSource = widget.source;
       _error = null;
       _refreshEditEndCache();
-      _stopPlaybackAt(widget.currentFrame, publish: false);
+      _stopPlaybackAt(
+        widget.currentFrame,
+        publish: false,
+        traceReason: 'source_change',
+      );
       return;
     }
 
@@ -123,6 +130,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   @override
   void dispose() {
+    PlaybackTrace.instance.stop(reason: 'workspace_dispose');
     _playTicker.stop();
     _playTicker.dispose();
     _playbackFrame.dispose();
@@ -139,6 +147,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     );
     if (_playbackFrame.value != next) {
       _playbackFrame.value = next;
+      PlaybackTrace.instance.recordIntegerPublish(frame, playing);
     }
   }
 
@@ -151,6 +160,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     );
     if (_playbackExact.value != next) {
       _playbackExact.value = next;
+      PlaybackTrace.instance.recordExactPublish(time, playing);
     }
   }
 
@@ -211,6 +221,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
       );
       clock.playFrom(startTime);
 
+      if (_traceProductionPlayback) {
+        PlaybackTrace.instance.start(
+          projectFps: engineFps,
+          editId: edit.id,
+          startFrame: start,
+        );
+      }
+
       _playTicker.stop();
       _lastPolledPlaybackFrame = start;
       _displayFrame = start;
@@ -226,6 +244,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       setState(() {});
     } catch (error) {
       _playTicker.stop();
+      PlaybackTrace.instance.stop(reason: 'play_error');
       setState(() {
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
@@ -235,12 +254,12 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
-  void _onPlaybackTick(Duration _) {
+  void _onPlaybackTick(Duration elapsed) {
     if (!_playing || !mounted) return;
 
     final int end = _editEndFrame();
     if (end <= 0) {
-      _stopPlaybackAt(0, publish: true);
+      _stopPlaybackAt(0, publish: true, traceReason: 'empty_edit');
       return;
     }
 
@@ -250,8 +269,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final ProjectTime sampled;
     try {
       sampled = clock.sample();
+      PlaybackTrace.instance.recordTick(elapsed, sampled);
     } catch (error) {
       _playTicker.stop();
+      PlaybackTrace.instance.stop(reason: 'clock_error');
       setState(() {
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
@@ -263,7 +284,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
     final int frame = sampled.frame.clamp(0, end);
     if (frame >= end) {
-      _stopPlaybackAt(end, publish: true);
+      _stopPlaybackAt(end, publish: true, traceReason: 'end');
       return;
     }
 
@@ -297,10 +318,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
         // sampling fails.
       }
     }
-    _stopPlaybackAt(frame, publish: true);
+    _stopPlaybackAt(frame, publish: true, traceReason: 'pause');
   }
 
-  void _stopPlaybackAt(int frame, {required bool publish}) {
+  void _stopPlaybackAt(
+    int frame, {
+    required bool publish,
+    String traceReason = 'stop',
+  }) {
     _playTicker.stop();
 
     final int safeFrame = frame.clamp(0, _editEndFrame());
@@ -324,6 +349,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _displayFrame = safeFrame;
     _publishPlaybackFrame(safeFrame, playing: false);
     _publishPlaybackExactFrame(safeFrame, playing: false);
+    PlaybackTrace.instance.stop(reason: traceReason);
 
     if (publish && safeFrame != widget.currentFrame) {
       widget.onSeek(safeFrame);
@@ -334,7 +360,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
   void _seekFromEdit(int frame) {
     final int safeFrame = frame.clamp(0, _editEndFrame());
     if (_playing) {
-      _stopPlaybackAt(safeFrame, publish: false);
+      _stopPlaybackAt(
+        safeFrame,
+        publish: false,
+        traceReason: 'seek_during_play',
+      );
     } else {
       final EditPlaybackClock? clock = _playClock;
       if (clock != null) {
