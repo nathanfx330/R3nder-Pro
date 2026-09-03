@@ -80,6 +80,11 @@ class EditVideoPreview extends StatefulWidget {
   final int currentFrame;
   final R3Theme theme;
 
+  /// True while the playhead is moving continuously. Realtime preview trades
+  /// decode resolution for responsiveness, then redraws the parked frame at
+  /// full resolution when motion stops. Project frame selection is unchanged.
+  final bool fastPreview;
+
   /// Optional seams for widget tests and non-native experiments.
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
@@ -90,6 +95,7 @@ class EditVideoPreview extends StatefulWidget {
     required this.editId,
     required this.currentFrame,
     required this.theme,
+    this.fastPreview = false,
     this.backend,
     this.resolveSource,
   });
@@ -99,7 +105,8 @@ class EditVideoPreview extends StatefulWidget {
 }
 
 class _EditVideoPreviewState extends State<EditVideoPreview> {
-  static const ui.Size _decodeSize = ui.Size(960, 540);
+  static const ui.Size _fullDecodeSize = ui.Size(960, 540);
+  static const ui.Size _fastDecodeSize = ui.Size(480, 270);
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -129,10 +136,10 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (sourceChanged) {
       _disposeLayer();
       _epoch++;
-    } else if (oldWidget.currentFrame != widget.currentFrame) {
-      // Scrubbing invalidates presentation without discarding persistent
-      // source decoders. The decoder cache therefore survives both forward
-      // and backward ProjectTime requests.
+    } else if (oldWidget.currentFrame != widget.currentFrame ||
+        oldWidget.fastPreview != widget.fastPreview) {
+      // Presentation changes never discard persistent source decoders. The
+      // same MLT producer survives scrub, playback, pause, and quality switch.
       _epoch++;
     }
     _scheduleRender();
@@ -213,10 +220,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       epoch: requestEpoch,
       mode: ProjectClockMode.scrub,
     );
+    final ui.Size decodeSize =
+        widget.fastPreview ? _fastDecodeSize : _fullDecodeSize;
 
     EditVideoCompositeResult result;
     try {
-      result = _ensureCompositor().render(widget.editId, time, _decodeSize);
+      result = _ensureCompositor().render(widget.editId, time, decodeSize);
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
@@ -344,7 +353,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                         'P${widget.currentFrame}   '
                         'SRC ${frame.requestedSourceFrame}'
                         '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
-                        'LAYERS $_contributorCount',
+                        'LAYERS $_contributorCount'
+                        '${widget.fastPreview ? '   FAST' : ''}',
                 style: widget.theme.micro.copyWith(color: R3Theme.textMid),
               ),
             ),
