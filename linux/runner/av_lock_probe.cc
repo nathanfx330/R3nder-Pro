@@ -11,8 +11,8 @@
 //   1. Does AUDIO ProjectClock agree with submitted samples minus measured
 //      device latency?
 //   2. Does adding sustained MLT decode load perturb that clock?
-//   3. How far behind the audio-owned project time is the latest exact video
-//      frame actually available for presentation?
+//   3. After decoder cold start, is the exact integer frame selected by the
+//      audio-owned ProjectClock available without holding a previous frame?
 //
 // The probe feeds silence. Audible content is irrelevant to the clock and a
 // sustained tone would only make a diagnostic run unpleasant.
@@ -48,6 +48,7 @@ constexpr int32_t kSinkQueueMs = 100;
 constexpr int32_t kDecodeWidth = 960;
 constexpr int32_t kDecodeHeight = 540;
 constexpr int32_t kClockAudioMode = 2;
+constexpr double kMaxClockErrorUs = 1000.0;
 constexpr auto kPresentationStep = std::chrono::microseconds(16667);
 
 struct Metrics {
@@ -55,10 +56,11 @@ struct Metrics {
   int64_t audio_samples = 0;
   int64_t video_ready = 0;
   int64_t video_holds = 0;
+  int64_t video_frame_mismatches = 0;
   int64_t mode_transitions = 0;
   int32_t last_mode = -1;
   std::vector<double> clock_abs_error_us;
-  std::vector<double> visual_lag_frames;
+  std::vector<double> frame_phase_frames;
 };
 
 double ExactFrame(const R3ClockSnapshot& snapshot) {
@@ -266,8 +268,8 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
 
     int64_t requested_frame = -1;
     int poll_result = 0;
-    double visual_lag_frames = 0.0;
-    bool has_visual_lag = false;
+    double frame_phase_frames = 0.0;
+    bool has_frame_phase = false;
 
     if (with_video) {
       requested_frame = snapshot.frame;
@@ -295,6 +297,9 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
       }
       if (poll_result > 0) {
         presented_frame = frame.actual_frame;
+        if (presented_frame != requested_frame) {
+          metrics.video_frame_mismatches += 1;
+        }
         r3_media_decoded_frame_release(&frame);
         metrics.video_ready += 1;
       } else if (presented_frame >= 0) {
@@ -302,9 +307,13 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
       }
 
       if (snapshot.mode == kClockAudioMode && presented_frame >= 0) {
-        visual_lag_frames = exact_frame - static_cast<double>(presented_frame);
-        metrics.visual_lag_frames.push_back(visual_lag_frames);
-        has_visual_lag = true;
+        // This is deliberately frame phase, not decoder lag. If exact project
+        // time is 231.944 and the requested/presented integer frame is 231,
+        // 0.944 means the correct frame is 94.4% through its display interval.
+        frame_phase_frames =
+            exact_frame - static_cast<double>(requested_frame);
+        metrics.frame_phase_frames.push_back(frame_phase_frames);
+        has_frame_phase = true;
       }
     }
 
@@ -333,10 +342,16 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
       std::cout << " requested_frame=" << requested_frame
                 << " poll=" << poll_result
                 << " presented_frame=" << presented_frame;
-      if (has_visual_lag) {
-        std::cout << " visual_lag_frames=" << visual_lag_frames;
+      if (presented_frame >= 0) {
+        std::cout << " frame_match="
+                  << (presented_frame == requested_frame ? 1 : 0);
       } else {
-        std::cout << " visual_lag_frames=na";
+        std::cout << " frame_match=na";
+      }
+      if (has_frame_phase) {
+        std::cout << " frame_phase_frames=" << frame_phase_frames;
+      } else {
+        std::cout << " frame_phase_frames=na";
       }
     }
     std::cout << "\n";
@@ -360,6 +375,8 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
     run_failed = true;
   }
 
+  const double clock_error_max = Maximum(metrics.clock_abs_error_us);
+
   std::cout << std::fixed << std::setprecision(3)
             << "SUMMARY mode=" << mode
             << " samples=" << metrics.samples
@@ -369,17 +386,41 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
             << Percentile(metrics.clock_abs_error_us, 0.50)
             << " clock_abs_error_us_p95="
             << Percentile(metrics.clock_abs_error_us, 0.95)
-            << " clock_abs_error_us_max="
-            << Maximum(metrics.clock_abs_error_us)
+            << " clock_abs_error_us_max=" << clock_error_max
             << " video_ready=" << metrics.video_ready
             << " video_holds=" << metrics.video_holds
-            << " visual_lag_frames_p50="
-            << Percentile(metrics.visual_lag_frames, 0.50)
-            << " visual_lag_frames_p95="
-            << Percentile(metrics.visual_lag_frames, 0.95)
-            << " visual_lag_frames_max="
-            << Maximum(metrics.visual_lag_frames)
+            << " video_frame_mismatches=" << metrics.video_frame_mismatches
+            << " frame_phase_frames_p50="
+            << Percentile(metrics.frame_phase_frames, 0.50)
+            << " frame_phase_frames_p95="
+            << Percentile(metrics.frame_phase_frames, 0.95)
+            << " frame_phase_frames_max="
+            << Maximum(metrics.frame_phase_frames)
             << "\n";
+
+  if (!run_failed) {
+    if (metrics.samples <= 0 || metrics.audio_samples < metrics.samples - 2 ||
+        metrics.mode_transitions != 1 || clock_error_max > kMaxClockErrorUs) {
+      std::cerr << "AV_LOCK_FAIL stage=clock_acceptance"
+                << " samples=" << metrics.samples
+                << " audio_samples=" << metrics.audio_samples
+                << " mode_transitions=" << metrics.mode_transitions
+                << " clock_abs_error_us_max=" << clock_error_max << "\n";
+      run_failed = true;
+    }
+  }
+
+  if (!run_failed && with_video) {
+    if (metrics.video_ready <= 0 || metrics.video_holds != 0 ||
+        metrics.video_frame_mismatches != 0) {
+      std::cerr << "AV_LOCK_FAIL stage=video_acceptance"
+                << " video_ready=" << metrics.video_ready
+                << " video_holds=" << metrics.video_holds
+                << " video_frame_mismatches="
+                << metrics.video_frame_mismatches << "\n";
+      run_failed = true;
+    }
+  }
 
   if (decoder != nullptr) r3_media_decoder_destroy(decoder);
   r3_audio_sink_destroy(sink);
