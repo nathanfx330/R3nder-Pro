@@ -311,23 +311,19 @@ int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
   return 1;
 }
 
-int32_t r3_audio_sink_drain(void* handle) {
+int32_t r3_audio_sink_request_drain(void* handle) {
   AudioSinkState* state = static_cast<AudioSinkState*>(handle);
   if (state == nullptr) return -1;
 
-  uint64_t request = 0;
   {
     std::lock_guard<std::mutex> lock(state->mutex);
     if (state->closing || state->failed) return -1;
-    request = ++state->drain_request;
+    if (state->drain_request == state->drain_complete) {
+      ++state->drain_request;
+    }
   }
   state->cv.notify_all();
-
-  std::unique_lock<std::mutex> lock(state->mutex);
-  state->cv.wait(lock, [&]() {
-    return state->failed || state->closing || state->drain_complete >= request;
-  });
-  return (!state->failed && state->drain_complete >= request) ? 1 : -1;
+  return 1;
 }
 
 int32_t r3_audio_sink_flush(void* handle) {
@@ -369,6 +365,8 @@ const R3AudioSinkStats* r3_audio_sink_read(void* handle) {
   {
     std::lock_guard<std::mutex> lock(state->mutex);
     out.healthy = (!state->failed && !state->closing) ? 1 : 0;
+    out.draining =
+        state->drain_request != state->drain_complete ? 1 : 0;
   }
   return &out;
 }
