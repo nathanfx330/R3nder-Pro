@@ -239,9 +239,7 @@ class _EditSurfaceState extends State<EditSurface> {
   @override
   Widget build(BuildContext context) {
     final EditSurfaceDocument? document = _parse();
-    if (document == null) {
-      return _buildErrorOnly();
-    }
+    if (document == null) return _buildErrorOnly();
 
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
     final EditSurfaceClip? selected = _selected(document);
@@ -278,10 +276,7 @@ class _EditSurfaceState extends State<EditSurface> {
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SizedBox(
-                    width: _kLabelWidth,
-                    child: _buildLabels(tracks),
-                  ),
+                  SizedBox(width: _kLabelWidth, child: _buildLabels(tracks)),
                   Expanded(
                     child: Scrollbar(
                       controller: _horizontal,
@@ -306,17 +301,15 @@ class _EditSurfaceState extends State<EditSurface> {
                                   children: [
                                     _buildRuler(timelineWidth, contentFrames),
                                     for (final EditSurfaceTrack track in tracks)
-                                      _buildTrackLane(track, timelineWidth),
+                                      _buildTrackLane(track),
                                     if (widget.voiceFrames > 0)
                                       _buildAudioLane(
-                                        timelineWidth,
                                         widget.voiceFrames,
                                         'VOICE',
                                         R3Theme.ribbonWindow,
                                       ),
                                     if (widget.musicFrames > 0)
                                       _buildAudioLane(
-                                        timelineWidth,
                                         math.min(
                                           widget.musicFrames,
                                           document.projectFrameCount,
@@ -382,110 +375,127 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceClip? selected,
   ) {
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
       decoration: const BoxDecoration(
         color: R3Theme.panel,
         border: Border(bottom: BorderSide(color: R3Theme.hairline)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          R3MicroLabel('EDIT ${widget.editId}', theme: widget.theme, accent: true),
-          SizedBox(width: sc(12)),
-          if (selected == null)
-            Text('SELECT A CLIP', style: widget.theme.micro)
-          else ...[
-            Text('${selected.trackId}  ${selected.id}', style: widget.theme.value),
-            SizedBox(width: sc(10)),
-            Text(
-              'AT ${selected.atFrame}   IN ${selected.inFrame}   '
-              'DUR ${selected.durationFrames}   ${selected.speed}X',
-              style: widget.theme.micro,
-            ),
-            SizedBox(width: sc(10)),
-            _toolButton(
-              'SPLIT',
-              onPressed: widget.currentFrame > selected.atFrame &&
-                      widget.currentFrame < selected.endFrameExclusive
-                  ? () => _splitSelected(document)
-                  : null,
-            ),
-            SizedBox(width: sc(4)),
-            _toolButton(
-              'SLIP 1',
-              onPressed: selected.inFrame > 0
-                  ? () => _commit((EditSurfaceDocument current) {
-                        return current.slipClip(
-                          selected.trackId,
-                          selected.id,
-                          -1,
-                        );
-                      })
-                  : null,
-            ),
-            SizedBox(width: sc(4)),
-            _toolButton(
-              'SLIP +1',
-              onPressed: () => _commit((EditSurfaceDocument current) {
-                return current.slipClip(selected.trackId, selected.id, 1);
-              }),
-            ),
-            SizedBox(width: sc(4)),
-            PopupMenuButton<String>(
-              tooltip: 'Speed',
-              color: R3Theme.panelHi,
-              onSelected: (String value) {
-                _commit((EditSurfaceDocument current) {
-                  return current.setSpeed(
-                    selected.trackId,
-                    selected.id,
-                    ExactClipSpeed.parse(value),
-                  );
-                });
-              },
-              itemBuilder: (_) => const <String>['1/4', '1/2', '1', '2', '4']
-                  .map(
-                    (String value) => PopupMenuItem<String>(
-                      value: value,
-                      child: Text('$value X'),
-                    ),
-                  )
-                  .toList(),
-              child: _toolFace('SPEED'),
-            ),
-            SizedBox(width: sc(4)),
-            PopupMenuButton<int>(
-              tooltip: 'Crossfade',
-              color: R3Theme.panelHi,
-              onSelected: (int frames) => _setCrossfade(document, frames),
-              itemBuilder: (_) => const <int>[0, 6, 12, 24]
-                  .map(
-                    (int frames) => PopupMenuItem<int>(
-                      value: frames,
-                      child: Text(frames == 0 ? 'No crossfade' : '$frames frames'),
-                    ),
-                  )
-                  .toList(),
-              child: _toolFace('XFADE'),
-            ),
-            SizedBox(width: sc(4)),
-            _toolButton('LUMA', onPressed: () => _setLuma(document)),
-          ],
-          const Spacer(),
-          Text('ZOOM', style: widget.theme.micro),
-          SizedBox(
-            width: sc(120),
-            child: Slider(
-              min: 0.35,
-              max: 8.0,
-              value: _pixelsPerFrame,
-              onChanged: (double value) {
-                setState(() => _pixelsPerFrame = value);
-              },
-            ),
+          Row(
+            children: [
+              R3MicroLabel(
+                'EDIT ${widget.editId}',
+                theme: widget.theme,
+                accent: true,
+              ),
+              SizedBox(width: sc(12)),
+              Expanded(
+                child: Text(
+                  selected == null
+                      ? 'SELECT A CLIP'
+                      : '${selected.trackId}  ${selected.id}    '
+                          'AT ${selected.atFrame}   IN ${selected.inFrame}   '
+                          'DUR ${selected.durationFrames}   ${selected.speed}X',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: selected == null
+                      ? widget.theme.micro
+                      : widget.theme.value,
+                ),
+              ),
+              SizedBox(width: sc(10)),
+              Text('${document.projectFrameCount}F', style: widget.theme.micro),
+            ],
           ),
-          Text(
-            '${document.projectFrameCount}F',
-            style: widget.theme.micro,
+          SizedBox(height: sc(6)),
+          Wrap(
+            spacing: sc(4),
+            runSpacing: sc(4),
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (selected != null) ...[
+                _toolButton(
+                  'SPLIT',
+                  onPressed: widget.currentFrame > selected.atFrame &&
+                          widget.currentFrame < selected.endFrameExclusive
+                      ? () => _splitSelected(document)
+                      : null,
+                ),
+                _toolButton(
+                  'SLIP 1',
+                  onPressed: selected.inFrame > 0
+                      ? () => _commit((EditSurfaceDocument current) {
+                            return current.slipClip(
+                              selected.trackId,
+                              selected.id,
+                              -1,
+                            );
+                          })
+                      : null,
+                ),
+                _toolButton(
+                  'SLIP +1',
+                  onPressed: () => _commit((EditSurfaceDocument current) {
+                    return current.slipClip(selected.trackId, selected.id, 1);
+                  }),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Speed',
+                  color: R3Theme.panelHi,
+                  onSelected: (String value) {
+                    _commit((EditSurfaceDocument current) {
+                      return current.setSpeed(
+                        selected.trackId,
+                        selected.id,
+                        ExactClipSpeed.parse(value),
+                      );
+                    });
+                  },
+                  itemBuilder: (_) => const <String>['1/4', '1/2', '1', '2', '4']
+                      .map(
+                        (String value) => PopupMenuItem<String>(
+                          value: value,
+                          child: Text('$value X'),
+                        ),
+                      )
+                      .toList(),
+                  child: _toolFace('SPEED'),
+                ),
+                PopupMenuButton<int>(
+                  tooltip: 'Crossfade',
+                  color: R3Theme.panelHi,
+                  onSelected: (int frames) => _setCrossfade(document, frames),
+                  itemBuilder: (_) => const <int>[0, 6, 12, 24]
+                      .map(
+                        (int frames) => PopupMenuItem<int>(
+                          value: frames,
+                          child: Text(
+                            frames == 0 ? 'No crossfade' : '$frames frames',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  child: _toolFace('XFADE'),
+                ),
+                _toolButton('LUMA', onPressed: () => _setLuma(document)),
+              ],
+              SizedBox(width: sc(6)),
+              Text('ZOOM', style: widget.theme.micro),
+              SizedBox(
+                width: sc(120),
+                child: Slider(
+                  min: 0.35,
+                  max: 8.0,
+                  value: _pixelsPerFrame,
+                  onChanged: (double value) {
+                    setState(() => _pixelsPerFrame = value);
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -533,10 +543,8 @@ class _EditSurfaceState extends State<EditSurface> {
               ),
               child: Text(track.id, style: widget.theme.value),
             ),
-          if (widget.voiceFrames > 0)
-            _audioLabel('A1'),
-          if (widget.musicFrames > 0)
-            _audioLabel('A2'),
+          if (widget.voiceFrames > 0) _audioLabel('A1'),
+          if (widget.musicFrames > 0) _audioLabel('A2'),
         ],
       ),
     );
@@ -567,7 +575,7 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _buildTrackLane(EditSurfaceTrack track, double width) {
+  Widget _buildTrackLane(EditSurfaceTrack track) {
     return Container(
       height: _kTrackHeight,
       decoration: const BoxDecoration(
@@ -582,8 +590,10 @@ class _EditSurfaceState extends State<EditSurface> {
               left: clip.atFrame * _pixelsPerFrame,
               top: sc(7),
               child: _EditableClipBlock(
-                key: ValueKey('${track.id}:${clip.id}:${clip.atFrame}:'
-                    '${clip.inFrame}:${clip.durationFrames}:${clip.speed}'),
+                key: ValueKey(
+                  '${track.id}:${clip.id}:${clip.atFrame}:'
+                  '${clip.inFrame}:${clip.durationFrames}:${clip.speed}',
+                ),
                 clip: clip,
                 pixelsPerFrame: _pixelsPerFrame,
                 selected: _selectedTrackId == track.id &&
@@ -612,12 +622,7 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _buildAudioLane(
-    double width,
-    int frames,
-    String label,
-    Color color,
-  ) {
+  Widget _buildAudioLane(int frames, String label, Color color) {
     return Container(
       height: _kAudioHeight,
       decoration: const BoxDecoration(
@@ -676,8 +681,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
   _ClipDragMode _mode = _ClipDragMode.none;
   double _dragPixels = 0.0;
 
-  int get _deltaFrames =>
-      (_dragPixels / widget.pixelsPerFrame).round();
+  int get _deltaFrames => (_dragPixels / widget.pixelsPerFrame).round();
 
   int get _previewAt {
     switch (_mode) {
@@ -750,9 +754,8 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         math.max(sc(18), _previewDuration * widget.pixelsPerFrame);
     final double moveOffset =
         (_previewAt - widget.clip.atFrame) * widget.pixelsPerFrame;
-    final Color border = widget.selected
-        ? widget.theme.accent
-        : R3Theme.ribbonMedia;
+    final Color border =
+        widget.selected ? widget.theme.accent : R3Theme.ribbonMedia;
     final Color fill = widget.selected
         ? widget.theme.accentFaint
         : R3Theme.ribbonMedia.withValues(alpha: 0.22);
@@ -821,7 +824,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                   onHorizontalDragEnd: (_) => _end(),
                   onHorizontalDragCancel: _end,
                   child: Container(
-                    color: border.withValues(alpha: widget.selected ? 0.55 : 0.25),
+                    color: border.withValues(
+                      alpha: widget.selected ? 0.55 : 0.25,
+                    ),
                   ),
                 ),
               ),
@@ -840,7 +845,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                   onHorizontalDragEnd: (_) => _end(),
                   onHorizontalDragCancel: _end,
                   child: Container(
-                    color: border.withValues(alpha: widget.selected ? 0.55 : 0.25),
+                    color: border.withValues(
+                      alpha: widget.selected ? 0.55 : 0.25,
+                    ),
                   ),
                 ),
               ),
@@ -912,10 +919,7 @@ class _EditRulerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = R3Theme.panel,
-    );
+    canvas.drawRect(Offset.zero & size, Paint()..color = R3Theme.panel);
 
     final int major = _majorStep(pixelsPerFrame);
     final int minor = math.max(1, major ~/ 5);
