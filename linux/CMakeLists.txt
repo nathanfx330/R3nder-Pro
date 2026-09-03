@@ -55,6 +55,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(PULSE_SIMPLE REQUIRED IMPORTED_TARGET libpulse-simple)
+pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 
 # M8 selected MLT as R3nder's persistent video decoder backend. Prefer the MLT
 # 7 pkg-config name used by current distributions, while retaining the generic
@@ -129,9 +130,9 @@ install(DIRECTORY "${NATIVE_ASSETS_DIR}"
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")
 install(CODE "
-  file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
+  file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DIR}/\")
   " COMPONENT Runtime)
-install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
+install(DIRECTORY "${FLUTTER_ASSET_DIR}"
    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
 # Install the AOT library on non-Debug builds only.
