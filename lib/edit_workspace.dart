@@ -9,11 +9,10 @@
 // here. Durable state remains authored source; playback state is transient.
 //
 // Playback follows the same timing rule as the terminal renderer: Flutter
-// vsync asks ProjectClock what project frame is current. A Ticker does not
-// advance time itself. Each sampled frame is published through one stable
-// ValueNotifier. The monitor, playhead, and small transport readout listen to
-// that channel directly; the workspace and authored timeline do not rebuild on
-// every playback frame.
+// vsync asks ProjectClock what project time is current. A Ticker does not
+// advance time itself. Integer project frames are published only when they
+// change for authored/edit semantics, while exact rational position is
+// published every vsync for smooth presentation paint.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -73,6 +72,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   late int _displayFrame;
   late final Ticker _playTicker;
   late final ValueNotifier<EditPlaybackFrameState> _playbackFrame;
+  late final ValueNotifier<EditPlaybackExactState> _playbackExact;
   EditPlaybackClock? _playClock;
   bool _importing = false;
   bool _playing = false;
@@ -89,6 +89,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
     _playbackFrame = ValueNotifier<EditPlaybackFrameState>(
       EditPlaybackFrameState(frame: _displayFrame, isPlaying: false),
+    );
+    _playbackExact = ValueNotifier<EditPlaybackExactState>(
+      EditPlaybackExactState(
+        frame: _displayFrame,
+        phaseNumerator: 0,
+        phaseDenominator: 1,
+        isPlaying: false,
+      ),
     );
     _playTicker = createTicker(_onPlaybackTick);
   }
@@ -109,6 +117,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _displayFrame = widget.currentFrame.clamp(0, _cachedEditEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
       _publishPlaybackFrame(_displayFrame, playing: false);
+      _publishPlaybackExactFrame(_displayFrame, playing: false);
     }
   }
 
@@ -117,6 +126,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _playTicker.stop();
     _playTicker.dispose();
     _playbackFrame.dispose();
+    _playbackExact.dispose();
     _playClock?.dispose();
     _playClock = null;
     super.dispose();
@@ -130,6 +140,28 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (_playbackFrame.value != next) {
       _playbackFrame.value = next;
     }
+  }
+
+  void _publishPlaybackExact(ProjectTime time, {required bool playing}) {
+    final EditPlaybackExactState next = EditPlaybackExactState(
+      frame: time.frame,
+      phaseNumerator: time.phaseNumerator,
+      phaseDenominator: time.phaseDenominator,
+      isPlaying: playing,
+    );
+    if (_playbackExact.value != next) {
+      _playbackExact.value = next;
+    }
+  }
+
+  void _publishPlaybackExactFrame(int frame, {required bool playing}) {
+    _publishPlaybackExact(
+      ProjectTime(
+        frame: frame,
+        mode: playing ? ProjectClockMode.monotonic : ProjectClockMode.scrub,
+      ),
+      playing: playing,
+    );
   }
 
   EditPlaybackClock _ensurePlaybackClock() {
@@ -173,12 +205,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
     try {
       final EditPlaybackClock clock = _ensurePlaybackClock();
-      clock.playFrom(
-        ProjectTime(
-          frame: start,
-          mode: ProjectClockMode.monotonic,
-        ),
+      final ProjectTime startTime = ProjectTime(
+        frame: start,
+        mode: ProjectClockMode.monotonic,
       );
+      clock.playFrom(startTime);
 
       _playTicker.stop();
       _lastPolledPlaybackFrame = start;
@@ -186,6 +217,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _playing = true;
       _error = null;
       _publishPlaybackFrame(start, playing: true);
+      _publishPlaybackExact(startTime, playing: true);
       _playTicker.start();
 
       // PLAY/PAUSE controls and EditSurface's static editing affordances change
@@ -197,6 +229,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       setState(() {
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
+        _publishPlaybackExactFrame(_displayFrame, playing: false);
         _error = 'EDIT PLAYBACK UNAVAILABLE\n$error';
       });
     }
@@ -222,6 +255,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       setState(() {
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
+        _publishPlaybackExactFrame(_displayFrame, playing: false);
         _error = 'EDIT PLAYBACK CLOCK FAILED\n$error';
       });
       return;
@@ -233,13 +267,22 @@ class _EditWorkspaceState extends State<EditWorkspace>
       return;
     }
 
+    // Exact presentation position is published every vsync, even while the
+    // integer project frame is unchanged. This is the continuous clock signal
+    // used by paint-only consumers such as the timeline playhead.
+    if (sampled.frame < 0) {
+      _publishPlaybackExactFrame(0, playing: true);
+    } else {
+      _publishPlaybackExact(sampled, playing: true);
+    }
+
     if (frame == _lastPolledPlaybackFrame) return;
     _lastPolledPlaybackFrame = frame;
     _displayFrame = frame;
 
-    // This notifier is the only per-frame Dart presentation signal. It reaches
-    // EditVideoPreview, the isolated timeline playhead, and the tiny readout.
-    // No authored edit model is reparsed and no workspace setState occurs here.
+    // Integer frame state remains quantized deliberately. Authored edit
+    // operations, readouts, and the current video selection path continue to
+    // receive only real project-frame changes during this diagnostic step.
     _publishPlaybackFrame(frame, playing: true);
   }
 
@@ -280,6 +323,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _playing = false;
     _displayFrame = safeFrame;
     _publishPlaybackFrame(safeFrame, playing: false);
+    _publishPlaybackExactFrame(safeFrame, playing: false);
 
     if (publish && safeFrame != widget.currentFrame) {
       widget.onSeek(safeFrame);
@@ -307,6 +351,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       }
       _displayFrame = safeFrame;
       _publishPlaybackFrame(safeFrame, playing: false);
+      _publishPlaybackExactFrame(safeFrame, playing: false);
       if (mounted) setState(() {});
     }
 
@@ -379,6 +424,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         _refreshEditEndCache();
         _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
         _publishPlaybackFrame(_displayFrame, playing: false);
+        _publishPlaybackExactFrame(_displayFrame, playing: false);
       });
       widget.onSourceChanged(next);
     } catch (error) {
@@ -432,6 +478,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                       )
                     : EditPlaybackFrameScope(
                         listenable: _playbackFrame,
+                        exactListenable: _playbackExact,
                         child: EditSurface(
                           key: ValueKey('edit:${edit.id}'),
                           source: _workingSource,
@@ -454,6 +501,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
                               _displayFrame =
                                   _displayFrame.clamp(0, _cachedEditEndFrame);
                               _publishPlaybackFrame(
+                                _displayFrame,
+                                playing: false,
+                              );
+                              _publishPlaybackExactFrame(
                                 _displayFrame,
                                 playing: false,
                               );
