@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.13)
 project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
-# the on-disk name of your application.
+# the on-disk name of the application.
 set(BINARY_NAME "r3nder")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
@@ -56,6 +56,17 @@ find_package(Threads REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(PULSE_SIMPLE REQUIRED IMPORTED_TARGET libpulse-simple)
 
+# M8 selected MLT as R3nder's persistent video decoder backend. Prefer the MLT
+# 7 pkg-config name used by current distributions, while retaining the generic
+# module name for installations that expose it without a major suffix.
+pkg_check_modules(MLT7 QUIET IMPORTED_TARGET mlt-framework-7)
+if(MLT7_FOUND)
+  set(R3_MLT_TARGET PkgConfig::MLT7)
+else()
+  pkg_check_modules(MLT REQUIRED IMPORTED_TARGET mlt-framework)
+  set(R3_MLT_TARGET PkgConfig::MLT)
+endif()
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
@@ -73,7 +84,7 @@ set_target_properties(${BINARY_NAME}
 
 
 # Generated plugin build rules, which manage building the plugins and adding
-# them to the application.
+# their dependencies to the application.
 include(flutter/generated_plugins.cmake)
 
 
@@ -121,7 +132,7 @@ install(CODE "
   file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
   " COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
-  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
 # Install the AOT library on non-Debug builds only.
 if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")

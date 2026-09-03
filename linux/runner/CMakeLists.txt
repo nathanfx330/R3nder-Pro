@@ -11,6 +11,7 @@ add_executable(${BINARY_NAME}
   "my_application.cc"
   "project_clock.cc"
   "audio_sink.cc"
+  "media_decoder.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
@@ -18,10 +19,10 @@ add_executable(${BINARY_NAME}
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
-# project_clock.cc and audio_sink.cc are reached from Dart through
-# DynamicLibrary.process(). Export the runner's C symbols into the dynamic
-# symbol table so FFI lookup is identical in flutter run and the installed
-# portable bundle.
+# project_clock.cc, audio_sink.cc, and media_decoder.cc are reached from Dart
+# through DynamicLibrary.process(). Export the runner's C symbols into the
+# dynamic symbol table so FFI lookup is identical in flutter run and the
+# installed portable bundle.
 target_link_options(${BINARY_NAME} PRIVATE "-Wl,--export-dynamic")
 
 # Add preprocessor definitions for the application ID.
@@ -31,6 +32,7 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::PULSE_SIMPLE)
+target_link_libraries(${BINARY_NAME} PRIVATE ${R3_MLT_TARGET})
 target_link_libraries(${BINARY_NAME} PRIVATE Threads::Threads)
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
