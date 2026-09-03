@@ -312,30 +312,46 @@ class _EditWorkspaceState extends State<EditWorkspace> {
       final ImportedEditVideo imported =
           (widget.importVideo ?? importVideoToWorkspace)(picked);
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
+      final ExactClipSpeed importedSpeed = ExactClipSpeed(
+        imported.speedNumerator,
+        imported.speedDenominator,
+      );
 
-      late final String next;
+      late String next;
+      late String targetEditId;
+      late String targetClipId;
+
       if (model.edits.isEmpty) {
+        targetEditId = 'main';
+        targetClipId = imported.clipBaseId;
         next = createEditWithClip(
           source: _workingSource,
-          editId: 'main',
+          editId: targetEditId,
           trackId: trackId,
-          clipId: imported.clipBaseId,
+          clipId: targetClipId,
           mediaSource: imported.authoredSource,
           atFrame: _displayFrame,
           durationFrames: imported.durationFrames,
         );
       } else {
-        final String editId = model.edits.first.id;
+        targetEditId = model.edits.first.id;
         final EditSurfaceDocument document =
-            EditSurfaceDocument.parse(_workingSource, editId);
-        final String clipId =
-            document.nextClipId(trackId, imported.clipBaseId);
+            EditSurfaceDocument.parse(_workingSource, targetEditId);
+        targetClipId = document.nextClipId(trackId, imported.clipBaseId);
         next = document.addClip(
           trackId: trackId,
-          clipId: clipId,
+          clipId: targetClipId,
           mediaSource: imported.authoredSource,
           atFrame: _displayFrame,
           durationFrames: imported.durationFrames,
+        );
+      }
+
+      if (importedSpeed != ExactClipSpeed(1)) {
+        next = EditSurfaceDocument.parse(next, targetEditId).setSpeed(
+          trackId,
+          targetClipId,
+          importedSpeed,
         );
       }
 
