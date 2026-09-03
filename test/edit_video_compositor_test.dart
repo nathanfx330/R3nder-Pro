@@ -70,26 +70,6 @@ class _ColorDecoder implements MediaDecoder {
   void dispose() {}
 }
 
-EditVideoCompositor _compositor(
-  String source,
-  _ColorBackend backend,
-  MediaLayer Function(EditDocumentModel model) rememberLayer,
-) {
-  final EditDocumentModel model = EditDocumentModel.parse(source);
-  final MediaLayer layer = MediaLayer(
-    editDocument: model,
-    backend: backend,
-    resolveSource: (String value) => value,
-  );
-  rememberLayer(model);
-  return EditVideoCompositor(
-    document: EditSurfaceDocument.parse(source, 'main'),
-    mediaLayer: layer,
-    backend: backend,
-    resolveSource: (String value) => value,
-  );
-}
-
 void main() {
   const ui.Size size = ui.Size(2, 1);
 
