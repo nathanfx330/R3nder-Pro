@@ -770,6 +770,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
                 onTap: widget.onSelect,
                 onHorizontalDragStart: (_) => _start(_ClipDragMode.move),
                 onHorizontalDragUpdate: _update,
@@ -819,6 +820,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  dragStartBehavior: DragStartBehavior.down,
                   onHorizontalDragStart: (_) => _start(_ClipDragMode.trimStart),
                   onHorizontalDragUpdate: _update,
                   onHorizontalDragEnd: (_) => _end(),
@@ -840,6 +842,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  dragStartBehavior: DragStartBehavior.down,
                   onHorizontalDragStart: (_) => _start(_ClipDragMode.trimEnd),
                   onHorizontalDragUpdate: _update,
                   onHorizontalDragEnd: (_) => _end(),
