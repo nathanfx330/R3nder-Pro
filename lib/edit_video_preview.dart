@@ -2,11 +2,11 @@
 //
 // Live MLT frame preview for the source-backed EDIT surface.
 //
-// The script remains canonical. This widget reparses authored EDIT geometry
-// when source changes, then keeps one MediaLayer alive while the playhead
-// scrubs so persistent MLT producers survive forwards and backwards seeks.
-// MLT decodes source frames. EditVideoCompositor owns track order and pixels.
-// Project time is supplied explicitly. No decoder owns the playhead.
+// The script remains canonical. Production preview rendering runs in a
+// persistent worker isolate so MLT seek/decode and R3nder compositing never
+// block Flutter pointer handling. Tests with injected decoder seams retain the
+// synchronous path. MLT still decodes source frames only. Project time is
+// supplied explicitly and no decoder owns the playhead.
 
 import 'dart:async';
 import 'dart:io';
@@ -15,9 +15,11 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'edit_media_import.dart';
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
+import 'edit_video_worker.dart';
 import 'media_layer.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
@@ -85,7 +87,9 @@ class EditVideoPreview extends StatefulWidget {
   /// full resolution when motion stops. Project frame selection is unchanged.
   final bool fastPreview;
 
-  /// Optional seams for widget tests and non-native experiments.
+  /// Optional seams for widget tests and non-native experiments. Supplying
+  /// either seam keeps rendering on the current isolate so fake decoder state
+  /// remains directly observable by tests.
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
@@ -112,13 +116,24 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   EditVideoCompositor? _compositor;
   String? _layerSource;
   String? _layerEditId;
+
+  EditVideoWorker? _worker;
+  String? _workerSource;
+  String? _workerEditId;
+  int _workerGeneration = 0;
+
   ui.Image? _image;
-  MediaFrame? _frame;
+  EditVideoWorkerFrameInfo? _frame;
   int _contributorCount = 0;
   String _status = 'NO VIDEO AT THIS FRAME';
   int _epoch = 0;
   int _requestSerial = 0;
   bool _scheduled = false;
+
+  bool get _useWorker =>
+      widget.backend == null &&
+      widget.resolveSource == null &&
+      Platform.isLinux;
 
   @override
   void initState() {
@@ -134,7 +149,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
     if (sourceChanged) {
-      _disposeLayer();
+      _disposePipeline();
       _epoch++;
     } else if (oldWidget.currentFrame != widget.currentFrame ||
         oldWidget.fastPreview != widget.fastPreview) {
@@ -148,12 +163,18 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   @override
   void dispose() {
     _requestSerial++;
-    _disposeLayer();
+    _disposePipeline();
     _replaceImage(null);
     super.dispose();
   }
 
-  void _disposeLayer() {
+  void _disposePipeline() {
+    _workerGeneration++;
+    _worker?.dispose();
+    _worker = null;
+    _workerSource = null;
+    _workerEditId = null;
+
     _compositor?.dispose();
     _compositor = null;
     _layer?.dispose();
@@ -168,7 +189,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (old != null && !identical(old, next)) old.dispose();
   }
 
-  EditVideoCompositor _ensureCompositor() {
+  EditVideoCompositor _ensureSynchronousCompositor() {
     final EditVideoCompositor? existing = _compositor;
     if (existing != null &&
         _layerSource == widget.source &&
@@ -176,7 +197,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return existing;
     }
 
-    _disposeLayer();
+    _compositor?.dispose();
+    _compositor = null;
+    _layer?.dispose();
+    _layer = null;
+
     final EditDocumentModel model = EditDocumentModel.parse(widget.source);
     final EditSurfaceDocument surface =
         EditSurfaceDocument.parse(widget.source, widget.editId);
@@ -202,17 +227,140 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     return compositor;
   }
 
+  EditVideoWorker _ensureWorker() {
+    final EditVideoWorker? existing = _worker;
+    if (existing != null &&
+        _workerSource == widget.source &&
+        _workerEditId == widget.editId) {
+      return existing;
+    }
+
+    _workerGeneration++;
+    _worker?.dispose();
+    final int generation = _workerGeneration;
+    final String workspaceRoot = resolveActiveWorkspaceRoot();
+    final EditVideoWorker worker = EditVideoWorker(
+      source: widget.source,
+      editId: widget.editId,
+      workspaceRoot: workspaceRoot,
+      onResult: (EditVideoWorkerResult result) {
+        if (!mounted || generation != _workerGeneration) return;
+        unawaited(_presentWorkerResult(result));
+      },
+    );
+
+    _worker = worker;
+    _workerSource = widget.source;
+    _workerEditId = widget.editId;
+    return worker;
+  }
+
   void _scheduleRender() {
     if (_scheduled) return;
     _scheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduled = false;
       if (!mounted) return;
-      unawaited(_renderCurrent());
+      if (_useWorker) {
+        _requestWorkerRender();
+      } else {
+        unawaited(_renderCurrentSynchronously());
+      }
     });
   }
 
-  Future<void> _renderCurrent() async {
+  ui.Size get _decodeSize =>
+      widget.fastPreview ? _fastDecodeSize : _fullDecodeSize;
+
+  void _requestWorkerRender() {
+    final int serial = ++_requestSerial;
+    final int requestEpoch = _epoch;
+    final ui.Size size = _decodeSize;
+
+    try {
+      _ensureWorker().request(
+        serial: serial,
+        epoch: requestEpoch,
+        projectFrame: widget.currentFrame,
+        width: size.width.round(),
+        height: size.height.round(),
+      );
+    } catch (error) {
+      if (!mounted || serial != _requestSerial) return;
+      setState(() {
+        _replaceImage(null);
+        _frame = null;
+        _contributorCount = 0;
+        _status = 'VIDEO PREVIEW UNAVAILABLE\n$error';
+      });
+    }
+  }
+
+  Future<void> _presentWorkerResult(EditVideoWorkerResult result) async {
+    if (!mounted ||
+        result.serial != _requestSerial ||
+        result.epoch != _epoch ||
+        result.projectFrame != widget.currentFrame) {
+      return;
+    }
+
+    final String? workerError = result.error;
+    if (workerError != null) {
+      setState(() {
+        _replaceImage(null);
+        _frame = null;
+        _contributorCount = 0;
+        _status = 'VIDEO PREVIEW UNAVAILABLE\n$workerError';
+      });
+      return;
+    }
+
+    if (!result.hasImage || result.rgba == null) {
+      _presentNoImage(result.problemFrame);
+      return;
+    }
+
+    setState(() {
+      _frame = result.topFrame;
+      _contributorCount = result.contributorCount;
+      _status = 'COMPOSITING FRAME';
+    });
+
+    final ui.Image decoded;
+    try {
+      decoded = await _decodeRgba(
+        result.rgba!,
+        result.width,
+        result.height,
+        result.stride,
+      );
+    } catch (error) {
+      if (!mounted || result.serial != _requestSerial) return;
+      setState(() {
+        _replaceImage(null);
+        _frame = result.topFrame;
+        _status = 'FRAME CONVERSION FAILED\n$error';
+      });
+      return;
+    }
+
+    if (!mounted ||
+        result.serial != _requestSerial ||
+        result.epoch != _epoch ||
+        result.projectFrame != widget.currentFrame) {
+      decoded.dispose();
+      return;
+    }
+
+    setState(() {
+      _replaceImage(decoded);
+      _frame = result.topFrame;
+      _contributorCount = result.contributorCount;
+      _status = '';
+    });
+  }
+
+  Future<void> _renderCurrentSynchronously() async {
     final int serial = ++_requestSerial;
     final int requestEpoch = _epoch;
     final ProjectTime time = ProjectTime(
@@ -220,12 +368,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       epoch: requestEpoch,
       mode: ProjectClockMode.scrub,
     );
-    final ui.Size decodeSize =
-        widget.fastPreview ? _fastDecodeSize : _fullDecodeSize;
 
     EditVideoCompositeResult result;
     try {
-      result = _ensureCompositor().render(widget.editId, time, decodeSize);
+      result = _ensureSynchronousCompositor().render(
+        widget.editId,
+        time,
+        _decodeSize,
+      );
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
@@ -242,22 +392,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (!result.hasImage || result.rgba == null) {
       final MediaFrame? problem =
           result.mediaFrames.isEmpty ? null : result.mediaFrames.last;
-      setState(() {
-        _replaceImage(null);
-        _frame = problem;
-        _contributorCount = 0;
-        if (problem == null) {
-          _status = 'NO VIDEO AT FRAME ${widget.currentFrame}';
-        } else if (problem.status == MediaFrameStatus.nestedEditPending) {
-          _status = 'NESTED EDIT PREVIEW PENDING\n${problem.source}';
-        } else {
-          _status = 'OFFLINE\n${problem.source}\n${problem.error ?? ''}';
-        }
-      });
+      _presentNoImage(_frameInfo(problem));
       return;
     }
 
-    final MediaFrame? top = result.topFrame;
+    final EditVideoWorkerFrameInfo? top = _frameInfo(result.topFrame);
     setState(() {
       _frame = top;
       _contributorCount = result.contributors.length;
@@ -295,6 +434,35 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     });
   }
 
+  void _presentNoImage(EditVideoWorkerFrameInfo? problem) {
+    if (!mounted) return;
+    setState(() {
+      _replaceImage(null);
+      _frame = problem;
+      _contributorCount = 0;
+      if (problem == null || problem.status == MediaFrameStatus.decoded) {
+        _status = 'NO VIDEO AT FRAME ${widget.currentFrame}';
+      } else if (problem.status == MediaFrameStatus.nestedEditPending) {
+        _status = 'NESTED EDIT PREVIEW PENDING\n${problem.source}';
+      } else {
+        _status = 'OFFLINE\n${problem.source}\n${problem.error ?? ''}';
+      }
+    });
+  }
+
+  EditVideoWorkerFrameInfo? _frameInfo(MediaFrame? frame) {
+    if (frame == null) return null;
+    return EditVideoWorkerFrameInfo(
+      trackId: frame.trackId,
+      clipId: frame.clipId,
+      source: frame.source,
+      requestedSourceFrame: frame.requestedSourceFrame,
+      actualSourceFrame: frame.actualSourceFrame,
+      status: frame.status,
+      error: frame.error,
+    );
+  }
+
   Future<ui.Image> _decodeRgba(
     Uint8List rgba,
     int width,
@@ -316,7 +484,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   @override
   Widget build(BuildContext context) {
     final ui.Image? image = _image;
-    final MediaFrame? frame = _frame;
+    final EditVideoWorkerFrameInfo? frame = _frame;
 
     return Container(
       color: Colors.black,
@@ -354,7 +522,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                         'SRC ${frame.requestedSourceFrame}'
                         '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
                         'LAYERS $_contributorCount'
-                        '${widget.fastPreview ? '   FAST' : ''}',
+                        '${widget.fastPreview ? '   FAST' : ''}'
+                        '${_useWorker ? '   BG' : ''}',
                 style: widget.theme.micro.copyWith(color: R3Theme.textMid),
               ),
             ),
