@@ -134,49 +134,61 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     final EditSequence? edit =
         model == null || model.edits.isEmpty ? null : model.edits.first;
 
-    return Column(
-      children: [
-        _buildImportBar(edit),
-        if (_error != null)
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(horizontal: sc(12), vertical: sc(6)),
-            color: R3Theme.danger.withValues(alpha: 0.12),
-            child: Text(
-              _error!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: widget.theme.fine.copyWith(color: R3Theme.danger),
+    // EditWorkspace is intentionally safe to mount as a complete workspace,
+    // not only underneath EditorScreen. R3Button and EditSurface use InkWell
+    // and Slider, both of which require a Material sheet. MaterialApp provides
+    // theme/navigation but does not itself promise a Material ancestor around
+    // arbitrary home content, so the workspace supplies its own transparent
+    // sheet here.
+    return Material(
+      type: MaterialType.transparency,
+      child: Column(
+        children: [
+          _buildImportBar(edit),
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: sc(12),
+                vertical: sc(6),
+              ),
+              color: R3Theme.danger.withValues(alpha: 0.12),
+              child: Text(
+                _error!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: widget.theme.fine.copyWith(color: R3Theme.danger),
+              ),
             ),
-          ),
-        Expanded(
-          child: model == null
-              ? _message('EDIT LANGUAGE ERROR')
-              : edit == null
-                  ? _message(
-                      'NO VIDEO EDIT YET\n\nADD VIDEO creates the first V1 clip.',
-                    )
-                  : EditSurface(
-                      key: ValueKey('edit:${edit.id}'),
-                      source: _workingSource,
-                      editId: edit.id,
-                      currentFrame: widget.currentFrame.clamp(
-                        0,
-                        edit.projectFrameCount,
+          Expanded(
+            child: model == null
+                ? _message('EDIT LANGUAGE ERROR')
+                : edit == null
+                    ? _message(
+                        'NO VIDEO EDIT YET\n\nADD VIDEO creates the first V1 clip.',
+                      )
+                    : EditSurface(
+                        key: ValueKey('edit:${edit.id}'),
+                        source: _workingSource,
+                        editId: edit.id,
+                        currentFrame: widget.currentFrame.clamp(
+                          0,
+                          edit.projectFrameCount,
+                        ),
+                        voiceFrames: widget.voiceFrames,
+                        musicFrames: widget.musicFrames,
+                        musicLoops: widget.musicLoops,
+                        theme: widget.theme,
+                        onSourceChanged: (String next) {
+                          if (_workingSource == next) return;
+                          setState(() => _workingSource = next);
+                          widget.onSourceChanged(next);
+                        },
+                        onSeek: widget.onSeek,
                       ),
-                      voiceFrames: widget.voiceFrames,
-                      musicFrames: widget.musicFrames,
-                      musicLoops: widget.musicLoops,
-                      theme: widget.theme,
-                      onSourceChanged: (String next) {
-                        if (_workingSource == next) return;
-                        setState(() => _workingSource = next);
-                        widget.onSourceChanged(next);
-                      },
-                      onSeek: widget.onSeek,
-                    ),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -190,6 +202,42 @@ class _EditWorkspaceState extends State<EditWorkspace> {
   }
 
   Widget _buildImportBar(EditSequence? edit) {
+    final List<Widget> controls = <Widget>[
+      R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
+      R3Button(
+        'ADD VIDEO',
+        theme: widget.theme,
+        compact: true,
+        kind: R3ButtonKind.primary,
+        onPressed: _importing ? null : () => _addVideo('V1'),
+      ),
+      R3Button(
+        'ADD OVERLAY',
+        theme: widget.theme,
+        compact: true,
+        onPressed: _importing ? null : () => _addVideo('V2'),
+      ),
+      Text(
+        'VIDEO = V1   OVERLAY = V2',
+        style: widget.theme.micro,
+      ),
+      if (_importing) ...[
+        SizedBox(
+          width: sc(13),
+          height: sc(13),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: widget.theme.accentDim,
+          ),
+        ),
+        Text('IMPORTING', style: widget.theme.micro),
+      ] else if (edit != null)
+        Text(
+          'EDIT ${edit.id}   F${widget.currentFrame}',
+          style: widget.theme.micro,
+        ),
+    ];
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
@@ -197,47 +245,11 @@ class _EditWorkspaceState extends State<EditWorkspace> {
         color: R3Theme.panel,
         border: Border(bottom: BorderSide(color: R3Theme.hairline)),
       ),
-      child: Row(
-        children: [
-          R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
-          SizedBox(width: sc(10)),
-          R3Button(
-            'ADD VIDEO',
-            theme: widget.theme,
-            compact: true,
-            kind: R3ButtonKind.primary,
-            onPressed: _importing ? null : () => _addVideo('V1'),
-          ),
-          SizedBox(width: sc(6)),
-          R3Button(
-            'ADD OVERLAY',
-            theme: widget.theme,
-            compact: true,
-            onPressed: _importing ? null : () => _addVideo('V2'),
-          ),
-          SizedBox(width: sc(10)),
-          Text(
-            'VIDEO = V1   OVERLAY = V2',
-            style: widget.theme.micro,
-          ),
-          const Spacer(),
-          if (_importing) ...[
-            SizedBox(
-              width: sc(13),
-              height: sc(13),
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: widget.theme.accentDim,
-              ),
-            ),
-            SizedBox(width: sc(7)),
-            Text('IMPORTING', style: widget.theme.micro),
-          ] else if (edit != null)
-            Text(
-              'EDIT ${edit.id}   F${widget.currentFrame}',
-              style: widget.theme.micro,
-            ),
-        ],
+      child: Wrap(
+        spacing: sc(8),
+        runSpacing: sc(6),
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: controls,
       ),
     );
   }
