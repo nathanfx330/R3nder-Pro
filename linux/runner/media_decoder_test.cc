@@ -144,16 +144,19 @@ bool CheckAsyncFrame(void* decoder, int64_t source_frame) {
 }
 
 bool CheckFrameSink(void* decoder, int64_t source_frame) {
-  SinkProbe probe;
-  if (r3_media_decoder_set_frame_sink(decoder, ProbeSink, &probe) != 0) {
-    std::cerr << "frame sink bind failed: " << DecoderError(decoder) << "\n";
-    return false;
-  }
-
+  // Establish the desired target before attaching the sink. set_frame_sink()
+  // intentionally publishes an already-cached current target immediately, so
+  // binding first would allow the previous test target to satisfy the probe and
+  // make this regression measure the wrong frame.
   if (r3_media_decoder_request(decoder, source_frame, 320, 180) != 0) {
     std::cerr << "sink request failed at frame " << source_frame << ": "
               << DecoderError(decoder) << "\n";
-    r3_media_decoder_set_frame_sink(decoder, nullptr, nullptr);
+    return false;
+  }
+
+  SinkProbe probe;
+  if (r3_media_decoder_set_frame_sink(decoder, ProbeSink, &probe) != 0) {
+    std::cerr << "frame sink bind failed: " << DecoderError(decoder) << "\n";
     return false;
   }
 
