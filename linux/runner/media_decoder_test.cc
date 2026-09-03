@@ -83,8 +83,14 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  const std::vector<int64_t> requests = {0, 40, 10, 35, 1, 50};
   bool ok = true;
+  const int64_t length = r3_media_decoder_length(decoder);
+  if (length != 60) {
+    std::cerr << "source length mismatch: expected 60, got " << length << "\n";
+    ok = false;
+  }
+
+  const std::vector<int64_t> requests = {0, 40, 10, 35, 1, 50};
   for (const int64_t frame : requests) {
     if (!CheckFrame(decoder, frame)) {
       ok = false;
