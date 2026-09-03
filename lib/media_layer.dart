@@ -3,9 +3,11 @@
 // Reentrant project-time to media-frame layer.
 //
 // The edit model owns clip geometry. ProjectTime owns the playhead. MLT owns
-// only persistent source decoders. A render request maps the current project
-// frame into one or more source-frame requests and returns immutable frame
-// results. No decoder is allowed to advance project time or decide duration.
+// only persistent source decoders. Exact parked-frame work may wait for decode,
+// while live preview publishes targets to native workers and polls completed
+// frames without blocking Dart. A native external-texture capability can also
+// consume the same decoder worker directly, keeping RGBA out of Dart entirely.
+// No decoder advances project time or decides project duration.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -18,6 +20,7 @@ import 'project_clock.dart';
 
 enum MediaFrameStatus {
   decoded,
+  pending,
   offline,
   nestedEditPending,
 }
@@ -70,6 +73,27 @@ class MediaFrame {
     );
   }
 
+  factory MediaFrame.pending({
+    required String trackId,
+    required String clipId,
+    required String source,
+    required int requestedSourceFrame,
+  }) {
+    return MediaFrame._(
+      trackId: trackId,
+      clipId: clipId,
+      source: source,
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: null,
+      width: 0,
+      height: 0,
+      stride: 0,
+      rgba: null,
+      status: MediaFrameStatus.pending,
+      error: null,
+    );
+  }
+
   factory MediaFrame.offline({
     required String trackId,
     required String clipId,
@@ -114,6 +138,7 @@ class MediaFrame {
   }
 
   bool get isDecoded => status == MediaFrameStatus.decoded;
+  bool get isPending => status == MediaFrameStatus.pending;
 }
 
 class MediaRenderResult {
@@ -129,9 +154,12 @@ class MediaRenderResult {
     required this.frames,
   });
 
+  bool get hasPending => frames.any((MediaFrame frame) => frame.isPending);
+
   /// A decoded result may become the current composite only while the seek
   /// epoch and exact requested project position still match. Decoder objects
-  /// are deliberately not discarded when this returns false.
+  /// and their read-ahead caches are deliberately not discarded when this
+  /// returns false.
   bool canPresentAgainst(ProjectTime current) {
     return projectTime.epoch == current.epoch &&
         projectTime.frame == current.frame &&
@@ -172,6 +200,22 @@ abstract interface class MediaDecoder {
   void dispose();
 }
 
+/// Optional live-preview capability. Native MLT decoders implement this; test
+/// fakes and alternate backends can remain synchronous and need only implement
+/// [MediaDecoder].
+abstract interface class NonBlockingMediaDecoder implements MediaDecoder {
+  void request(int requestedSourceFrame, int width, int height);
+  DecodedMediaFrame? poll(int requestedSourceFrame, int width, int height);
+}
+
+/// Optional zero-Dart-pixel presentation capability. The decoder remains the
+/// same persistent MLT worker used by request/poll; this only changes where its
+/// exact target frame is delivered.
+abstract interface class TextureMediaDecoder implements NonBlockingMediaDecoder {
+  int get textureId;
+  void presentTexture(int requestedSourceFrame, int width, int height);
+}
+
 abstract interface class MediaDecoderBackend {
   MediaDecoder open(String resolvedPath);
 }
@@ -201,14 +245,58 @@ class MediaLayer {
     );
   }
 
-  /// Renders every CLIP active at [time] in script track order.
-  ///
-  /// This call is reentrant at the project-model level: all state required to
-  /// determine a frame comes from the arguments and canonical edit source.
-  /// Persistent decoder objects are only source caches and carry no project
-  /// playhead. Repeated or backwards requests therefore do not mutate project
-  /// timing semantics.
+  /// Exact render path used for parked frames, deterministic tests, and export
+  /// style work. A native decoder may wait for its worker here, but the source
+  /// frame returned is exact.
   MediaRenderResult render(String editId, ProjectTime time, ui.Size size) {
+    return _render(editId, time, size, nonBlocking: false);
+  }
+
+  /// Live preview path. Native decoders only publish the newest source target
+  /// and poll their read-ahead ring. When an exact requested frame is not ready
+  /// yet, the result carries [MediaFrameStatus.pending] instead of blocking the
+  /// caller. Synchronous test/alternate decoders keep their existing behavior.
+  MediaRenderResult renderAvailable(
+    String editId,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    return _render(editId, time, size, nonBlocking: true);
+  }
+
+  /// Hands one source-frame target to the Linux external texture while reusing
+  /// the exact same decoder object cached by normal render paths. Returns the
+  /// Flutter texture id when the backend supports native presentation, or null
+  /// for test/alternate backends so callers can fall back to CPU composition.
+  int? presentNativeTexture({
+    required String source,
+    required int requestedSourceFrame,
+    required int width,
+    required int height,
+  }) {
+    _checkAlive();
+    if (source.startsWith('EDIT.')) return null;
+    if (requestedSourceFrame < 0 || width <= 0 || height <= 0) {
+      throw ArgumentError('Native texture media request is invalid.');
+    }
+
+    final String resolved = resolveSource(source);
+    final MediaDecoder decoder =
+        _decoders.putIfAbsent(resolved, () => backend.open(resolved));
+    if (decoder is! TextureMediaDecoder) return null;
+
+    final int id = decoder.textureId;
+    if (id <= 0) return null;
+    decoder.presentTexture(requestedSourceFrame, width, height);
+    return id;
+  }
+
+  MediaRenderResult _render(
+    String editId,
+    ProjectTime time,
+    ui.Size size, {
+    required bool nonBlocking,
+  }) {
     _checkAlive();
     final int width = size.width.round();
     final int height = size.height.round();
@@ -216,7 +304,11 @@ class MediaLayer {
         !size.height.isFinite ||
         width <= 0 ||
         height <= 0) {
-      throw ArgumentError.value(size, 'size', 'Media render size must be positive.');
+      throw ArgumentError.value(
+        size,
+        'size',
+        'Media render size must be positive.',
+      );
     }
 
     final EditSequence edit = editDocument.edit(editId);
@@ -248,8 +340,26 @@ class MediaLayer {
           final String resolved = resolveSource(clip.source);
           final MediaDecoder decoder =
               _decoders.putIfAbsent(resolved, () => backend.open(resolved));
-          final DecodedMediaFrame decoded =
-              decoder.render(requestedSourceFrame, width, height);
+
+          DecodedMediaFrame? decoded;
+          if (nonBlocking && decoder is NonBlockingMediaDecoder) {
+            decoder.request(requestedSourceFrame, width, height);
+            decoded = decoder.poll(requestedSourceFrame, width, height);
+            if (decoded == null) {
+              result.add(
+                MediaFrame.pending(
+                  trackId: track.id,
+                  clipId: clip.id,
+                  source: clip.source,
+                  requestedSourceFrame: requestedSourceFrame,
+                ),
+              );
+              continue;
+            }
+          } else {
+            decoded = decoder.render(requestedSourceFrame, width, height);
+          }
+
           result.add(
             MediaFrame.decoded(
               trackId: track.id,
@@ -332,7 +442,7 @@ class NativeMltMediaBackend implements MediaDecoderBackend {
   }
 }
 
-class _NativeMltMediaDecoder implements MediaDecoder {
+class _NativeMltMediaDecoder implements TextureMediaDecoder {
   final _NativeMediaBindings _native;
   Pointer<Void> _handle;
   bool _disposed = false;
@@ -340,12 +450,82 @@ class _NativeMltMediaDecoder implements MediaDecoder {
   _NativeMltMediaDecoder(this._native, this._handle);
 
   @override
-  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+  int get textureId {
     _checkAlive();
-    if (requestedSourceFrame < 0) {
-      throw RangeError.value(requestedSourceFrame, 'requestedSourceFrame');
-    }
+    return _native.textureId();
+  }
 
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    _checkRequest(requestedSourceFrame, width, height);
+    return _readNativeFrame(
+      requestedSourceFrame,
+      width,
+      height,
+      (Pointer<_NativeMediaDecodedFrame> result) {
+        final int status =
+            _native.render(_handle, requestedSourceFrame, width, height, result);
+        if (status != 0) {
+          throw MediaDecodeException(_native.decoderError(_handle));
+        }
+        return true;
+      },
+    )!;
+  }
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {
+    _checkRequest(requestedSourceFrame, width, height);
+    final int status =
+        _native.request(_handle, requestedSourceFrame, width, height);
+    if (status != 0) {
+      throw MediaDecodeException(_native.decoderError(_handle));
+    }
+  }
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    _checkRequest(requestedSourceFrame, width, height);
+    return _readNativeFrame(
+      requestedSourceFrame,
+      width,
+      height,
+      (Pointer<_NativeMediaDecodedFrame> result) {
+        final int status =
+            _native.poll(_handle, requestedSourceFrame, width, height, result);
+        if (status < 0) {
+          throw MediaDecodeException(_native.decoderError(_handle));
+        }
+        return status == 1;
+      },
+    );
+  }
+
+  @override
+  void presentTexture(int requestedSourceFrame, int width, int height) {
+    _checkRequest(requestedSourceFrame, width, height);
+    if (_native.textureId() <= 0) {
+      throw const MediaDecodeException(
+        'Flutter media texture is not registered yet.',
+      );
+    }
+    final int status =
+        _native.textureRequest(_handle, requestedSourceFrame, width, height);
+    if (status != 0) {
+      throw MediaDecodeException(_native.decoderError(_handle));
+    }
+  }
+
+  DecodedMediaFrame? _readNativeFrame(
+    int requestedSourceFrame,
+    int width,
+    int height,
+    bool Function(Pointer<_NativeMediaDecodedFrame> result) invoke,
+  ) {
     final Pointer<_NativeMediaDecodedFrame> result = _native
         .malloc(sizeOf<_NativeMediaDecodedFrame>())
         .cast<_NativeMediaDecodedFrame>();
@@ -354,11 +534,7 @@ class _NativeMltMediaDecoder implements MediaDecoder {
     }
 
     try {
-      final int status =
-          _native.render(_handle, requestedSourceFrame, width, height, result);
-      if (status != 0) {
-        throw MediaDecodeException(_native.decoderError(_handle));
-      }
+      if (!invoke(result)) return null;
 
       final _NativeMediaDecodedFrame raw = result.ref;
       if (raw.rgba == nullptr || raw.byteLength <= 0) {
@@ -382,6 +558,16 @@ class _NativeMltMediaDecoder implements MediaDecoder {
     }
   }
 
+  void _checkRequest(int requestedSourceFrame, int width, int height) {
+    _checkAlive();
+    if (requestedSourceFrame < 0) {
+      throw RangeError.value(requestedSourceFrame, 'requestedSourceFrame');
+    }
+    if (width <= 0 || height <= 0) {
+      throw ArgumentError('Native media output size must be positive.');
+    }
+  }
+
   void _checkAlive() {
     if (_disposed || _handle == nullptr) {
       throw StateError('Native MLT media decoder has been disposed.');
@@ -392,6 +578,7 @@ class _NativeMltMediaDecoder implements MediaDecoder {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _native.textureDetach(_handle);
     _native.destroy(_handle);
     _handle = nullptr;
   }
@@ -426,6 +613,7 @@ typedef _CreateNative = Pointer<Void> Function(Pointer<Int8> path);
 typedef _CreateDart = Pointer<Void> Function(Pointer<Int8> path);
 typedef _DestroyNative = Void Function(Pointer<Void> handle);
 typedef _DestroyDart = void Function(Pointer<Void> handle);
+
 typedef _RenderNative = Int32 Function(
   Pointer<Void> handle,
   Int64 requestedFrame,
@@ -440,6 +628,25 @@ typedef _RenderDart = int Function(
   int height,
   Pointer<_NativeMediaDecodedFrame> result,
 );
+
+typedef _RequestNative = Int32 Function(
+  Pointer<Void> handle,
+  Int64 requestedFrame,
+  Int32 width,
+  Int32 height,
+);
+typedef _RequestDart = int Function(
+  Pointer<Void> handle,
+  int requestedFrame,
+  int width,
+  int height,
+);
+
+typedef _TextureIdNative = Int64 Function();
+typedef _TextureIdDart = int Function();
+typedef _TextureDetachNative = Void Function(Pointer<Void> handle);
+typedef _TextureDetachDart = void Function(Pointer<Void> handle);
+
 typedef _ReleaseFrameNative = Void Function(
   Pointer<_NativeMediaDecodedFrame> frame,
 );
@@ -470,15 +677,37 @@ class _NativeMediaBindings {
   final DynamicLibrary _runner;
   final DynamicLibrary _libc;
 
-  late final _CreateDart create = _runner.lookupFunction<_CreateNative, _CreateDart>(
+  late final _CreateDart create =
+      _runner.lookupFunction<_CreateNative, _CreateDart>(
     'r3_media_decoder_create',
   );
   late final _DestroyDart destroy =
       _runner.lookupFunction<_DestroyNative, _DestroyDart>(
     'r3_media_decoder_destroy',
   );
-  late final _RenderDart render = _runner.lookupFunction<_RenderNative, _RenderDart>(
+  late final _RenderDart render =
+      _runner.lookupFunction<_RenderNative, _RenderDart>(
     'r3_media_decoder_render',
+  );
+  late final _RequestDart request =
+      _runner.lookupFunction<_RequestNative, _RequestDart>(
+    'r3_media_decoder_request',
+  );
+  late final _RenderDart poll =
+      _runner.lookupFunction<_RenderNative, _RenderDart>(
+    'r3_media_decoder_poll',
+  );
+  late final _TextureIdDart textureId =
+      _runner.lookupFunction<_TextureIdNative, _TextureIdDart>(
+    'r3_media_texture_id',
+  );
+  late final _RequestDart textureRequest =
+      _runner.lookupFunction<_RequestNative, _RequestDart>(
+    'r3_media_texture_request',
+  );
+  late final _TextureDetachDart textureDetach =
+      _runner.lookupFunction<_TextureDetachNative, _TextureDetachDart>(
+    'r3_media_texture_detach_decoder',
   );
   late final _ReleaseFrameDart releaseFrame = _runner.lookupFunction<
       _ReleaseFrameNative,

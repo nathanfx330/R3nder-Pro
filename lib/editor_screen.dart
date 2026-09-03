@@ -20,8 +20,7 @@ import 'diag.dart';
 import 'editor_text_controller.dart';
 import 'editor_tag_menu.dart'; // Added import for the tag menu
 import 'script_lint.dart';
-import 'edit_model.dart';
-import 'edit_surface.dart';
+import 'edit_workspace.dart';
 
 /// Wraps ScenePainter for the editor preview. ScenePainter already always
 /// repaints, but the editor keeps its own delegate so preview-specific
@@ -1510,30 +1509,9 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Widget _buildEditWorkspace() {
-    final EditDocumentModel model;
-    try {
-      model = EditDocumentModel.parse(_textController.text);
-    } catch (error) {
-      return _buildEditMessage(
-        'EDIT LANGUAGE ERROR\n$error',
-        color: R3Theme.danger,
-      );
-    }
-
-    if (model.edits.isEmpty) {
-      return _buildEditMessage(
-        'NO EDIT SEQUENCE\nAdd [EDIT:name] with TRACK and CLIP blocks in TEXT mode.',
-      );
-    }
-
-    final EditSequence edit = model.edits.first;
-    final int frame = _editFrame.clamp(0, edit.projectFrameCount);
-
-    return EditSurface(
-      key: ValueKey('edit:${edit.id}'),
+    return EditWorkspace(
       source: _textController.text,
-      editId: edit.id,
-      currentFrame: frame,
+      currentFrame: _editFrame,
       voiceFrames: widget.bedTargetFrames,
       musicFrames: widget.musicFrames,
       musicLoops: widget.musicLoop,
@@ -1552,19 +1530,6 @@ class _EditorScreenState extends State<EditorScreen> {
         if (!mounted) return;
         setState(() => _editFrame = frame);
       },
-    );
-  }
-
-  Widget _buildEditMessage(String message, {Color? color}) {
-    return Container(
-      color: R3Theme.bg,
-      alignment: Alignment.center,
-      padding: EdgeInsets.all(sc(30)),
-      child: Text(
-        message,
-        textAlign: TextAlign.center,
-        style: _t.value.copyWith(color: color ?? R3Theme.textMid),
-      ),
     );
   }
 

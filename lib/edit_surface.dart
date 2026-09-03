@@ -5,14 +5,20 @@
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
 // through EditSurfaceDocument and returned to the caller as script text.
+// During playback, the static timeline document does not rebuild every frame.
+// Integer edit state stays quantized while the playhead paints directly from
+// the exact rational ProjectClock position published at display cadence.
 
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'
     show PointerCancelEvent, PointerDownEvent, PointerMoveEvent, PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
+import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
 import 'ui_theme.dart';
@@ -21,6 +27,7 @@ class EditSurface extends StatefulWidget {
   final String source;
   final String editId;
   final int currentFrame;
+  final bool isPlaying;
   final int voiceFrames;
   final int musicFrames;
   final bool musicLoops;
@@ -36,6 +43,7 @@ class EditSurface extends StatefulWidget {
     required this.theme,
     required this.onSourceChanged,
     required this.onSeek,
+    this.isPlaying = false,
     this.voiceFrames = 0,
     this.musicFrames = 0,
     this.musicLoops = false,
@@ -51,12 +59,19 @@ class _EditSurfaceState extends State<EditSurface> {
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
   static final double _kPreviewHeight = sc(230);
+  static const Duration _scrubInterval = Duration(milliseconds: 30);
 
   late String _workingSource;
   String? _selectedTrackId;
   String? _selectedClipId;
   String? _error;
   double _pixelsPerFrame = 2.0;
+  bool _scrubbing = false;
+  Timer? _scrubTimer;
+  int? _pendingScrubFrame;
+  int? _lastSeekSent;
+  ValueListenable<EditPlaybackFrameState>? _playbackFrames;
+  ValueListenable<EditPlaybackExactState>? _playbackExact;
 
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
@@ -65,6 +80,28 @@ class _EditSurfaceState extends State<EditSurface> {
   void initState() {
     super.initState();
     _workingSource = widget.source;
+    _lastSeekSent = widget.currentFrame;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final ValueListenable<EditPlaybackFrameState>? nextFrames =
+        EditPlaybackFrameScope.maybeOf(context);
+    if (!identical(nextFrames, _playbackFrames)) {
+      _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+      _playbackFrames = nextFrames;
+      nextFrames?.addListener(_onPlaybackFrameChanged);
+    }
+
+    final ValueListenable<EditPlaybackExactState>? nextExact =
+        EditPlaybackFrameScope.maybeExactOf(context);
+    if (!identical(nextExact, _playbackExact)) {
+      _playbackExact?.removeListener(_onPlaybackExactChanged);
+      _playbackExact = nextExact;
+      nextExact?.addListener(_onPlaybackExactChanged);
+    }
   }
 
   @override
@@ -74,13 +111,47 @@ class _EditSurfaceState extends State<EditSurface> {
       _workingSource = widget.source;
       _error = null;
     }
+    if (widget.currentFrame != oldWidget.currentFrame) {
+      _lastSeekSent = widget.currentFrame;
+      if (!widget.isPlaying) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _followPlayheadPosition(widget.currentFrame.toDouble()),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+    _playbackFrames = null;
+    _playbackExact?.removeListener(_onPlaybackExactChanged);
+    _playbackExact = null;
+    _scrubTimer?.cancel();
     _horizontal.dispose();
     _vertical.dispose();
     super.dispose();
+  }
+
+  int get _effectiveFrame =>
+      _playbackFrames?.value.frame ?? widget.currentFrame;
+
+  double get _effectiveExactFrame =>
+      _playbackExact?.value.exactFrame ?? _effectiveFrame.toDouble();
+
+  void _onPlaybackFrameChanged() {
+    final ValueListenable<EditPlaybackFrameState>? playback = _playbackFrames;
+    if (playback == null || !mounted) return;
+    _lastSeekSent = playback.value.frame;
+  }
+
+  void _onPlaybackExactChanged() {
+    final ValueListenable<EditPlaybackExactState>? playback = _playbackExact;
+    if (playback == null || !mounted) return;
+    final EditPlaybackExactState state = playback.value;
+    if (state.isPlaying) {
+      _followPlayheadPosition(state.exactFrame);
+    }
   }
 
   EditSurfaceDocument? _parse() {
@@ -134,8 +205,8 @@ class _EditSurfaceState extends State<EditSurface> {
   void _splitSelected(EditSurfaceDocument document) {
     final EditSurfaceClip? selected = _selected(document);
     if (selected == null) return;
-    if (widget.currentFrame <= selected.atFrame ||
-        widget.currentFrame >= selected.endFrameExclusive) {
+    final int frame = _effectiveFrame;
+    if (frame <= selected.atFrame || frame >= selected.endFrameExclusive) {
       setState(() {
         _error = 'Park the playhead inside the selected CLIP before splitting.';
       });
@@ -146,7 +217,7 @@ class _EditSurfaceState extends State<EditSurface> {
       return current.splitClip(
         selected.trackId,
         selected.id,
-        widget.currentFrame,
+        frame,
       );
     });
   }
@@ -242,6 +313,91 @@ class _EditSurfaceState extends State<EditSurface> {
     });
   }
 
+  int _frameFromDx(double dx, int frames) {
+    return (dx / _pixelsPerFrame).floor().clamp(0, math.max(0, frames));
+  }
+
+  void _publishPendingScrub() {
+    final int? frame = _pendingScrubFrame;
+    _pendingScrubFrame = null;
+    if (frame == null || frame == _lastSeekSent) return;
+    _lastSeekSent = frame;
+    widget.onSeek(frame);
+  }
+
+  void _scrubWindowElapsed() {
+    _scrubTimer = null;
+    if (_pendingScrubFrame == null) return;
+    _publishPendingScrub();
+    _scrubTimer = Timer(_scrubInterval, _scrubWindowElapsed);
+  }
+
+  void _queueScrub(int frame) {
+    _pendingScrubFrame = frame;
+    if (_scrubTimer != null) return;
+    _publishPendingScrub();
+    _scrubTimer = Timer(_scrubInterval, _scrubWindowElapsed);
+  }
+
+  void _startScrub(int frame) {
+    if (!_scrubbing) setState(() => _scrubbing = true);
+    _queueScrub(frame);
+  }
+
+  void _finishScrub(int frame) {
+    _pendingScrubFrame = frame;
+    _scrubTimer?.cancel();
+    _scrubTimer = null;
+    _publishPendingScrub();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrubbing) setState(() => _scrubbing = false);
+    });
+  }
+
+  void _seekOnce(int frame) {
+    _scrubTimer?.cancel();
+    _scrubTimer = null;
+    _pendingScrubFrame = null;
+    _lastSeekSent = frame;
+    widget.onSeek(frame);
+  }
+
+  void _followPlayheadPosition(double exactFrame) {
+    if (!mounted || !_horizontal.hasClients) return;
+    final ScrollPosition position = _horizontal.position;
+    final double viewport = position.viewportDimension;
+    if (viewport <= 0) return;
+
+    final double x = exactFrame * _pixelsPerFrame;
+    final double leftGuard = position.pixels + viewport * 0.12;
+    final double rightGuard = position.pixels + viewport * 0.82;
+    if (x >= leftGuard && x <= rightGuard) return;
+
+    final double target =
+        (x - viewport * 0.28).clamp(0.0, position.maxScrollExtent);
+    if ((target - position.pixels).abs() > 1.0) {
+      _horizontal.jumpTo(target);
+    }
+  }
+
+  Widget _playheadWidget() {
+    return Positioned.fill(
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _EditPlayheadPainter(
+              position: _playbackExact,
+              fallbackFrame: widget.currentFrame.toDouble(),
+              pixelsPerFrame: _pixelsPerFrame,
+              color: widget.theme.accent,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final EditSurfaceDocument? document = _parse();
@@ -282,6 +438,8 @@ class _EditSurfaceState extends State<EditSurface> {
             source: _workingSource,
             editId: widget.editId,
             currentFrame: widget.currentFrame,
+            isPlaying: widget.isPlaying,
+            fastPreview: _scrubbing || widget.isPlaying,
             theme: widget.theme,
           ),
         ),
@@ -317,25 +475,13 @@ class _EditSurfaceState extends State<EditSurface> {
                             child: SingleChildScrollView(
                               controller: _horizontal,
                               scrollDirection: Axis.horizontal,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent,
-                                onTapDown: (TapDownDetails details) {
-                                  final int frame =
-                                      (details.localPosition.dx /
-                                              _pixelsPerFrame)
-                                          .floor()
-                                          .clamp(
-                                            0,
-                                            math.max(0, contentFrames),
-                                          );
-                                  widget.onSeek(frame);
-                                },
-                                child: SizedBox(
-                                  width: timelineWidth,
-                                  height: timelineContentHeight,
-                                  child: Stack(
-                                    children: [
-                                      Column(
+                              child: SizedBox(
+                                width: timelineWidth,
+                                height: timelineContentHeight,
+                                child: Stack(
+                                  children: [
+                                    RepaintBoundary(
+                                      child: Column(
                                         children: [
                                           _buildRuler(
                                             timelineWidth,
@@ -363,20 +509,9 @@ class _EditSurfaceState extends State<EditSurface> {
                                             ),
                                         ],
                                       ),
-                                      Positioned(
-                                        left: widget.currentFrame *
-                                            _pixelsPerFrame,
-                                        top: 0,
-                                        bottom: 0,
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            width: 1,
-                                            color: widget.theme.accent,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                    ),
+                                    _playheadWidget(),
+                                  ],
                                 ),
                               ),
                             ),
@@ -422,6 +557,7 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceDocument document,
     EditSurfaceClip? selected,
   ) {
+    final int frame = _effectiveFrame;
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
@@ -467,8 +603,8 @@ class _EditSurfaceState extends State<EditSurface> {
               if (selected != null) ...[
                 _toolButton(
                   'SPLIT',
-                  onPressed: widget.currentFrame > selected.atFrame &&
-                          widget.currentFrame < selected.endFrameExclusive
+                  onPressed: frame > selected.atFrame &&
+                          frame < selected.endFrameExclusive
                       ? () => _splitSelected(document)
                       : null,
                 ),
@@ -540,6 +676,9 @@ class _EditSurfaceState extends State<EditSurface> {
                   value: _pixelsPerFrame,
                   onChanged: (double value) {
                     setState(() => _pixelsPerFrame = value);
+                    WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _followPlayheadPosition(_effectiveExactFrame),
+                    );
                   },
                 ),
               ),
@@ -610,14 +749,33 @@ class _EditSurfaceState extends State<EditSurface> {
   }
 
   Widget _buildRuler(double width, int frames) {
-    return SizedBox(
-      height: _kRulerHeight,
-      child: CustomPaint(
-        size: Size(width, _kRulerHeight),
-        painter: _EditRulerPainter(
-          pixelsPerFrame: _pixelsPerFrame,
-          frames: frames,
-          theme: widget.theme,
+    return GestureDetector(
+      key: const ValueKey<String>('edit-timeline-scrub'),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (TapDownDetails details) {
+        _seekOnce(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragStart: (DragStartDetails details) {
+        _startScrub(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragUpdate: (DragUpdateDetails details) {
+        _queueScrub(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragEnd: (_) {
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
+      },
+      onHorizontalDragCancel: () {
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
+      },
+      child: SizedBox(
+        height: _kRulerHeight,
+        child: CustomPaint(
+          size: Size(width, _kRulerHeight),
+          painter: _EditRulerPainter(
+            pixelsPerFrame: _pixelsPerFrame,
+            frames: frames,
+            theme: widget.theme,
+          ),
         ),
       ),
     );
@@ -950,6 +1108,50 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         ),
       ),
     );
+  }
+}
+
+class _EditPlayheadPainter extends CustomPainter {
+  final ValueListenable<EditPlaybackExactState>? position;
+  final double fallbackFrame;
+  final double pixelsPerFrame;
+  final Color color;
+
+  _EditPlayheadPainter({
+    required this.position,
+    required this.fallbackFrame,
+    required this.pixelsPerFrame,
+    required this.color,
+  }) : super(repaint: position);
+
+  double get _exactFrame => position?.value.exactFrame ?? fallbackFrame;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double x = _exactFrame * pixelsPerFrame;
+    final Paint line = Paint()
+      ..color = color
+      ..strokeWidth = 2;
+    canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+
+    final Rect head = Rect.fromLTWH(
+      x - sc(3.5),
+      0,
+      sc(7),
+      sc(7),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(head, const Radius.circular(1)),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _EditPlayheadPainter oldDelegate) {
+    return !identical(oldDelegate.position, position) ||
+        oldDelegate.fallbackFrame != fallbackFrame ||
+        oldDelegate.pixelsPerFrame != pixelsPerFrame ||
+        oldDelegate.color != color;
   }
 }
 

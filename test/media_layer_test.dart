@@ -42,20 +42,74 @@ class _FakeDecoder implements MediaDecoder {
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
     if (disposed) throw StateError('decoder disposed');
     requests.add(requestedSourceFrame);
-    return DecodedMediaFrame(
-      requestedSourceFrame: requestedSourceFrame,
-      actualSourceFrame: requestedSourceFrame + actualFrameDelta,
-      width: width,
-      height: height,
-      stride: width * 4,
-      rgba: Uint8List(width * height * 4),
-    );
+    return _frame(requestedSourceFrame, width, height, actualFrameDelta);
   }
 
   @override
   void dispose() {
     disposed = true;
   }
+}
+
+class _AsyncFakeBackend implements MediaDecoderBackend {
+  int openCount = 0;
+  _AsyncFakeDecoder? decoder;
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    openCount += 1;
+    return decoder = _AsyncFakeDecoder();
+  }
+}
+
+class _AsyncFakeDecoder implements NonBlockingMediaDecoder {
+  final List<int> requested = <int>[];
+  int? readyFrame;
+  bool disposed = false;
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {
+    if (disposed) throw StateError('decoder disposed');
+    requested.add(requestedSourceFrame);
+  }
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    if (disposed) throw StateError('decoder disposed');
+    if (readyFrame != requestedSourceFrame) return null;
+    return _frame(requestedSourceFrame, width, height, 0);
+  }
+
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    if (disposed) throw StateError('decoder disposed');
+    return _frame(requestedSourceFrame, width, height, 0);
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}
+
+DecodedMediaFrame _frame(
+  int requestedSourceFrame,
+  int width,
+  int height,
+  int actualFrameDelta,
+) {
+  return DecodedMediaFrame(
+    requestedSourceFrame: requestedSourceFrame,
+    actualSourceFrame: requestedSourceFrame + actualFrameDelta,
+    width: width,
+    height: height,
+    stride: width * 4,
+    rgba: Uint8List(width * height * 4),
+  );
 }
 
 EditDocumentModel _model() {
@@ -68,6 +122,16 @@ EditDocumentModel _model() {
   [/TRACK]
   [TRACK:V2]
     [CLIP:overlay:video/overlay.mp4:10:30:50:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''');
+}
+
+EditDocumentModel _singleModel() {
+  return EditDocumentModel.parse('''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/a.mp4:0:0:20:1]
     [/CLIP]
   [/TRACK]
 [/EDIT]
@@ -105,6 +169,42 @@ void main() {
     expect(result.frames[1].clipId, 'overlay');
     expect(result.frames[1].requestedSourceFrame, 32);
     expect(result.frames[1].actualSourceFrame, 33);
+
+    layer.dispose();
+  });
+
+  test('live render returns pending instead of blocking async decoder', () {
+    final _AsyncFakeBackend backend = _AsyncFakeBackend();
+    final MediaLayer layer = MediaLayer(
+      editDocument: _singleModel(),
+      backend: backend,
+      resolveSource: (String source) => '/workspace/$source',
+    );
+
+    final MediaRenderResult pending =
+        layer.renderAvailable('main', _time(3), const ui.Size(2, 2));
+
+    expect(backend.openCount, 1);
+    expect(pending.frames, hasLength(1));
+    expect(pending.frames.single.status, MediaFrameStatus.pending);
+    expect(pending.frames.single.requestedSourceFrame, 3);
+    expect(pending.hasPending, isTrue);
+    expect(backend.decoder!.requested, <int>[3]);
+
+    backend.decoder!.readyFrame = 3;
+    final MediaRenderResult ready =
+        layer.renderAvailable('main', _time(3), const ui.Size(2, 2));
+
+    expect(backend.openCount, 1);
+    expect(ready.frames.single.status, MediaFrameStatus.decoded);
+    expect(ready.frames.single.actualSourceFrame, 3);
+    expect(ready.hasPending, isFalse);
+
+    final MediaRenderResult next =
+        layer.renderAvailable('main', _time(4), const ui.Size(2, 2));
+    expect(next.frames.single.status, MediaFrameStatus.pending);
+    expect(backend.openCount, 1);
+    expect(backend.decoder!.requested, <int>[3, 3, 4]);
 
     layer.dispose();
   });
