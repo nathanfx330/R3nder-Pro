@@ -123,13 +123,13 @@ int main() {
   constexpr int64_t kExpectedRefreshes = 3;
   const std::vector<uint8_t> cadence_silence(kCadenceBytes, 0);
 
-  int64_t accepted_samples = 0;
+  int64_t cadence_accepted_samples = 0;
   for (int chunk = 0; chunk < kCadenceChunks; ++chunk) {
     for (;;) {
       const int32_t result = r3_audio_sink_enqueue(
           sink, cadence_silence.data(), cadence_silence.size());
       if (result == 1) {
-        accepted_samples += kCadenceFrames;
+        cadence_accepted_samples += kCadenceFrames;
         break;
       }
       if (result < 0) {
@@ -141,7 +141,7 @@ int main() {
     }
   }
 
-  if (accepted_samples != kCadenceSamples ||
+  if (cadence_accepted_samples != kCadenceSamples ||
       !WaitForSubmitted(sink, kCadenceSamples)) {
     PrintSinkError(sink, "cadence submitted counter did not reach target");
     DestroyBoth(sink, clock);
