@@ -33,6 +33,8 @@ class EditVideoCompositeResult {
   });
 
   bool get hasImage => rgba != null;
+  bool get hasPending =>
+      mediaFrames.any((MediaFrame frame) => frame.isPending);
 }
 
 class EditVideoCompositor {
@@ -42,6 +44,8 @@ class EditVideoCompositor {
   final String Function(String source) resolveSource;
 
   final Map<String, MediaDecoder> _maskDecoders = <String, MediaDecoder>{};
+  final Map<String, DecodedMediaFrame> _maskFrames =
+      <String, DecodedMediaFrame>{};
   bool _disposed = false;
 
   EditVideoCompositor({
@@ -51,13 +55,43 @@ class EditVideoCompositor {
     required this.resolveSource,
   });
 
+  /// Exact parked-frame composition. Source decoders may wait for their native
+  /// workers, so this is intentionally not the live playback path.
   EditVideoCompositeResult render(
     String editId,
     ProjectTime time,
     ui.Size size,
   ) {
     _checkAlive();
-    final MediaRenderResult media = mediaLayer.render(editId, time, size);
+    return _compose(
+      mediaLayer.render(editId, time, size),
+      time,
+      size,
+    );
+  }
+
+  /// Nonblocking live composition. Native source decoders only publish targets
+  /// and poll their read-ahead rings. A missing exact frame is represented as
+  /// pending, allowing the monitor to hold its last image instead of stalling
+  /// ProjectClock or the audio feeder.
+  EditVideoCompositeResult renderAvailable(
+    String editId,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    _checkAlive();
+    return _compose(
+      mediaLayer.renderAvailable(editId, time, size),
+      time,
+      size,
+    );
+  }
+
+  EditVideoCompositeResult _compose(
+    MediaRenderResult media,
+    ProjectTime time,
+    ui.Size size,
+  ) {
     final List<_ActiveLayer> layers = <_ActiveLayer>[];
 
     for (int index = 0; index < media.frames.length; index++) {
@@ -163,11 +197,17 @@ class EditVideoCompositor {
   DecodedMediaFrame? _decodeMask(String source, int width, int height) {
     try {
       final String resolved = resolveSource(source);
+      final String key = '$resolved@$width'x'$height';
+      final DecodedMediaFrame? cached = _maskFrames[key];
+      if (cached != null) return cached;
+
       final MediaDecoder decoder = _maskDecoders.putIfAbsent(
         resolved,
         () => backend.open(resolved),
       );
-      return decoder.render(0, width, height);
+      final DecodedMediaFrame decoded = decoder.render(0, width, height);
+      _maskFrames[key] = decoded;
+      return decoded;
     } catch (_) {
       return null;
     }
@@ -294,6 +334,7 @@ class EditVideoCompositor {
       decoder.dispose();
     }
     _maskDecoders.clear();
+    _maskFrames.clear();
   }
 }
 
