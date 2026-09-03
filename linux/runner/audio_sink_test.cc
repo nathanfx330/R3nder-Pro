@@ -15,6 +15,23 @@ constexpr int32_t kChannels = 2;
 constexpr int32_t kChunkFrames = 480;
 constexpr int32_t kChunkBytes = kChunkFrames * kChannels * 2;
 
+bool EnqueueChunks(void* sink, const std::vector<uint8_t>& bytes, int chunks,
+                   int64_t* accepted_samples) {
+  for (int chunk = 0; chunk < chunks; ++chunk) {
+    for (;;) {
+      const int32_t result =
+          r3_audio_sink_enqueue(sink, bytes.data(), bytes.size());
+      if (result == 1) {
+        *accepted_samples += kChunkFrames;
+        break;
+      }
+      if (result < 0) return false;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+  return true;
+}
+
 bool WaitForSubmitted(void* sink, int64_t target_samples) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(4);
@@ -25,6 +42,12 @@ bool WaitForSubmitted(void* sink, int64_t target_samples) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   return false;
+}
+
+void PrintSinkError(void* sink, const char* prefix) {
+  char error[512] = {};
+  r3_audio_sink_copy_last_error(sink, error, sizeof(error));
+  std::fprintf(stderr, "%s: %s\n", prefix, error);
 }
 
 }  // namespace
@@ -41,64 +64,76 @@ int main() {
   const std::vector<uint8_t> silence(kChunkBytes, 0);
   int64_t accepted_samples = 0;
 
-  for (int chunk = 0; chunk < 100; ++chunk) {
-    for (;;) {
-      const int32_t result =
-          r3_audio_sink_enqueue(sink, silence.data(), silence.size());
-      if (result == 1) {
-        accepted_samples += kChunkFrames;
-        break;
-      }
-      if (result < 0) {
-        char error[512] = {};
-        r3_audio_sink_copy_last_error(sink, error, sizeof(error));
-        std::fprintf(stderr, "enqueue failed: %s\n", error);
-        r3_audio_sink_destroy(sink);
-        return 2;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+  // One second of silence proves the worker queue is paced by the real device.
+  if (!EnqueueChunks(sink, silence, 100, &accepted_samples)) {
+    PrintSinkError(sink, "enqueue failed");
+    r3_audio_sink_destroy(sink);
+    return 2;
   }
 
-  if (!WaitForSubmitted(sink, accepted_samples)) {
-    char error[512] = {};
-    r3_audio_sink_copy_last_error(sink, error, sizeof(error));
-    std::fprintf(stderr, "submitted counter did not reach target: %s\n", error);
+  // Natural EOF must submit every accepted sample and wait until the server
+  // reports the stream drained. This is the native replacement for waiting on
+  // paplay's process exit.
+  if (r3_audio_sink_drain(sink) != 1) {
+    PrintSinkError(sink, "drain failed");
     r3_audio_sink_destroy(sink);
     return 3;
+  }
+
+  const R3AudioSinkStats after_drain = *r3_audio_sink_read(sink);
+  if (after_drain.submitted_samples != accepted_samples) {
+    std::fprintf(stderr, "drain returned before all accepted samples submitted.\n");
+    r3_audio_sink_destroy(sink);
+    return 4;
+  }
+  if (after_drain.queued_samples != 0 || after_drain.latency_samples != 0) {
+    std::fprintf(stderr, "drain did not finish queued/audible playback.\n");
+    r3_audio_sink_destroy(sink);
+    return 5;
+  }
+
+  // A drained sink is reusable. Submit another short segment, then prove a
+  // destructive flush still preserves the monotonic submitted counter.
+  if (!EnqueueChunks(sink, silence, 10, &accepted_samples)) {
+    PrintSinkError(sink, "enqueue after drain failed");
+    r3_audio_sink_destroy(sink);
+    return 6;
+  }
+  if (!WaitForSubmitted(sink, accepted_samples)) {
+    PrintSinkError(sink, "submitted counter did not reach target");
+    r3_audio_sink_destroy(sink);
+    return 7;
   }
 
   const R3AudioSinkStats before_flush = *r3_audio_sink_read(sink);
   if (before_flush.submitted_samples != accepted_samples) {
     std::fprintf(stderr, "submitted sample count mismatch.\n");
     r3_audio_sink_destroy(sink);
-    return 4;
+    return 8;
   }
   if (before_flush.latency_samples < 0 ||
       before_flush.latency_samples > kSampleRate) {
     std::fprintf(stderr, "measured latency outside sanity bound.\n");
     r3_audio_sink_destroy(sink);
-    return 5;
+    return 9;
   }
 
   if (r3_audio_sink_flush(sink) != 1) {
-    char error[512] = {};
-    r3_audio_sink_copy_last_error(sink, error, sizeof(error));
-    std::fprintf(stderr, "flush failed: %s\n", error);
+    PrintSinkError(sink, "flush failed");
     r3_audio_sink_destroy(sink);
-    return 6;
+    return 10;
   }
 
   const R3AudioSinkStats after_flush = *r3_audio_sink_read(sink);
   if (after_flush.submitted_samples != before_flush.submitted_samples) {
     std::fprintf(stderr, "flush reset monotonic submitted samples.\n");
     r3_audio_sink_destroy(sink);
-    return 7;
+    return 11;
   }
   if (after_flush.queued_samples != 0 || after_flush.latency_samples != 0) {
     std::fprintf(stderr, "flush did not clear queued/latency state.\n");
     r3_audio_sink_destroy(sink);
-    return 8;
+    return 12;
   }
 
   r3_audio_sink_destroy(sink);
