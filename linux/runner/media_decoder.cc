@@ -148,6 +148,26 @@ extern "C" void r3_media_decoder_destroy(void* handle) {
   delete state;
 }
 
+extern "C" int64_t r3_media_decoder_length(void* handle) {
+  MediaDecoderState* state = static_cast<MediaDecoderState*>(handle);
+  if (state == nullptr) return -1;
+
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->producer == nullptr) {
+    state->last_error = "Media decoder is closed.";
+    return -1;
+  }
+
+  const mlt_position length = mlt_producer_get_length(state->producer);
+  if (length <= 0) {
+    state->last_error = "MLT reported an invalid media length.";
+    return -1;
+  }
+
+  state->last_error.clear();
+  return static_cast<int64_t>(length);
+}
+
 extern "C" int r3_media_decoder_render(
     void* handle,
     int64_t requested_frame,
