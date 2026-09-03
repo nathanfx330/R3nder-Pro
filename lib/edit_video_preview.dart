@@ -138,6 +138,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         status: 'NO VIDEO AT THIS FRAME',
       ),
     );
+    _scheduleParkedRender();
   }
 
   @override
@@ -182,9 +183,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // Scoped playback supplies frame and play state directly at vsync. A
-    // fast-preview change still matters because scrubbing can change decode
-    // size without changing the project frame.
     if (oldWidget.fastPreview != widget.fastPreview) {
       _epoch++;
       _scheduleParkedRender();
@@ -282,9 +280,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _cancelParkedRender();
     _epoch++;
 
-    // This listener is invoked synchronously by EditWorkspace's Ticker before
-    // its setState. Submit the media request here so frame N is requested at the
-    // beginning of the same vsync that will move the project playhead to N.
     unawaited(
       _renderFrame(
         next.frame,
@@ -299,11 +294,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _parkedRenderScheduled = true;
     final int generation = ++_parkedScheduleGeneration;
 
-    // Initial, parked, and scrub-retry rendering is deliberately separate from
-    // the live playback path. A post-frame callback is reliable even when no
-    // Ticker is active yet, which matters for the first parked frame and for
-    // standalone preview widgets. Playback itself never comes through here:
-    // _onPlaybackFrameChanged submits directly from the vsync Ticker listener.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || generation != _parkedScheduleGeneration) return;
       _parkedRenderScheduled = false;
@@ -363,10 +353,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (!mounted || serial != _requestSerial || requestEpoch != _epoch) return;
 
     if (result.hasPending) {
-      // During playback, a missed exact frame is dropped. The next ProjectClock
-      // sample will request the next presentation frame. While parked or
-      // scrubbing, retry only on the next Flutter frame instead of a free-running
-      // millisecond timer.
       if (_image.value == null) {
         _publishMetadata(
           _PreviewMetadata(
@@ -409,9 +395,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     final MediaFrame? top = result.topFrame;
 
-    // Metadata is tiny and test-visible, so publish it immediately. It no
-    // longer calls setState or rebuilds the preview. The actual picture update
-    // is a separate repaint-only channel below.
     _publishMetadata(
       _PreviewMetadata(
         frame: top,
@@ -449,8 +432,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // CustomPainter listens directly to this notifier. No widget setState,
-    // layout, or subtree rebuild is required to put the new picture on screen.
     _replaceImage(decoded);
   }
 
