@@ -5,8 +5,9 @@
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
 // through EditSurfaceDocument and returned to the caller as script text.
-// During playback, the static timeline document does not rebuild every frame:
-// only the playhead and monitor listen to EditPlaybackFrameScope directly.
+// During playback, the static timeline document does not rebuild every frame.
+// Integer edit state stays quantized while the playhead paints directly from
+// the exact rational ProjectClock position published at display cadence.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -70,6 +71,7 @@ class _EditSurfaceState extends State<EditSurface> {
   int? _pendingScrubFrame;
   int? _lastSeekSent;
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
+  ValueListenable<EditPlaybackExactState>? _playbackExact;
 
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
@@ -84,13 +86,22 @@ class _EditSurfaceState extends State<EditSurface> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final ValueListenable<EditPlaybackFrameState>? next =
-        EditPlaybackFrameScope.maybeOf(context);
-    if (identical(next, _playbackFrames)) return;
 
-    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
-    _playbackFrames = next;
-    next?.addListener(_onPlaybackFrameChanged);
+    final ValueListenable<EditPlaybackFrameState>? nextFrames =
+        EditPlaybackFrameScope.maybeOf(context);
+    if (!identical(nextFrames, _playbackFrames)) {
+      _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+      _playbackFrames = nextFrames;
+      nextFrames?.addListener(_onPlaybackFrameChanged);
+    }
+
+    final ValueListenable<EditPlaybackExactState>? nextExact =
+        EditPlaybackFrameScope.maybeExactOf(context);
+    if (!identical(nextExact, _playbackExact)) {
+      _playbackExact?.removeListener(_onPlaybackExactChanged);
+      _playbackExact = nextExact;
+      nextExact?.addListener(_onPlaybackExactChanged);
+    }
   }
 
   @override
@@ -104,7 +115,7 @@ class _EditSurfaceState extends State<EditSurface> {
       _lastSeekSent = widget.currentFrame;
       if (!widget.isPlaying) {
         WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _followPlayheadFrame(widget.currentFrame),
+          (_) => _followPlayheadPosition(widget.currentFrame.toDouble()),
         );
       }
     }
@@ -114,6 +125,8 @@ class _EditSurfaceState extends State<EditSurface> {
   void dispose() {
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = null;
+    _playbackExact?.removeListener(_onPlaybackExactChanged);
+    _playbackExact = null;
     _scrubTimer?.cancel();
     _horizontal.dispose();
     _vertical.dispose();
@@ -123,13 +136,21 @@ class _EditSurfaceState extends State<EditSurface> {
   int get _effectiveFrame =>
       _playbackFrames?.value.frame ?? widget.currentFrame;
 
+  double get _effectiveExactFrame =>
+      _playbackExact?.value.exactFrame ?? _effectiveFrame.toDouble();
+
   void _onPlaybackFrameChanged() {
     final ValueListenable<EditPlaybackFrameState>? playback = _playbackFrames;
     if (playback == null || !mounted) return;
-    final EditPlaybackFrameState state = playback.value;
-    _lastSeekSent = state.frame;
+    _lastSeekSent = playback.value.frame;
+  }
+
+  void _onPlaybackExactChanged() {
+    final ValueListenable<EditPlaybackExactState>? playback = _playbackExact;
+    if (playback == null || !mounted) return;
+    final EditPlaybackExactState state = playback.value;
     if (state.isPlaying) {
-      _followPlayheadFrame(state.frame);
+      _followPlayheadPosition(state.exactFrame);
     }
   }
 
@@ -342,13 +363,13 @@ class _EditSurfaceState extends State<EditSurface> {
     widget.onSeek(frame);
   }
 
-  void _followPlayheadFrame(int frame) {
+  void _followPlayheadPosition(double exactFrame) {
     if (!mounted || !_horizontal.hasClients) return;
     final ScrollPosition position = _horizontal.position;
     final double viewport = position.viewportDimension;
     if (viewport <= 0) return;
 
-    final double x = frame * _pixelsPerFrame;
+    final double x = exactFrame * _pixelsPerFrame;
     final double leftGuard = position.pixels + viewport * 0.12;
     final double rightGuard = position.pixels + viewport * 0.82;
     if (x >= leftGuard && x <= rightGuard) return;
@@ -360,52 +381,18 @@ class _EditSurfaceState extends State<EditSurface> {
     }
   }
 
-  Widget _buildPlayhead(int frame) {
-    return Positioned(
-      left: frame * _pixelsPerFrame - sc(4),
-      top: 0,
-      bottom: 0,
+  Widget _playheadWidget() {
+    return Positioned.fill(
       child: IgnorePointer(
-        child: SizedBox(
-          width: sc(8),
-          child: Stack(
-            alignment: Alignment.topCenter,
-            children: [
-              Positioned(
-                top: 0,
-                bottom: 0,
-                child: Container(
-                  width: 2,
-                  color: widget.theme.accent,
-                ),
-              ),
-              Container(
-                width: sc(7),
-                height: sc(7),
-                decoration: BoxDecoration(
-                  color: widget.theme.accent,
-                  borderRadius: BorderRadius.circular(1),
-                ),
-              ),
-            ],
+        child: CustomPaint(
+          painter: _EditPlayheadPainter(
+            position: _playbackExact,
+            fallbackFrame: widget.currentFrame.toDouble(),
+            pixelsPerFrame: _pixelsPerFrame,
+            color: widget.theme.accent,
           ),
         ),
       ),
-    );
-  }
-
-  Widget _playheadWidget() {
-    final ValueListenable<EditPlaybackFrameState>? playback = _playbackFrames;
-    if (playback == null) return _buildPlayhead(widget.currentFrame);
-    return ValueListenableBuilder<EditPlaybackFrameState>(
-      valueListenable: playback,
-      builder: (
-        BuildContext context,
-        EditPlaybackFrameState state,
-        Widget? child,
-      ) {
-        return _buildPlayhead(state.frame);
-      },
     );
   }
 
@@ -686,7 +673,7 @@ class _EditSurfaceState extends State<EditSurface> {
                   onChanged: (double value) {
                     setState(() => _pixelsPerFrame = value);
                     WidgetsBinding.instance.addPostFrameCallback(
-                      (_) => _followPlayheadFrame(_effectiveFrame),
+                      (_) => _followPlayheadPosition(_effectiveExactFrame),
                     );
                   },
                 ),
@@ -1117,6 +1104,50 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         ),
       ),
     );
+  }
+}
+
+class _EditPlayheadPainter extends CustomPainter {
+  final ValueListenable<EditPlaybackExactState>? position;
+  final double fallbackFrame;
+  final double pixelsPerFrame;
+  final Color color;
+
+  _EditPlayheadPainter({
+    required this.position,
+    required this.fallbackFrame,
+    required this.pixelsPerFrame,
+    required this.color,
+  }) : super(repaint: position);
+
+  double get _exactFrame => position?.value.exactFrame ?? fallbackFrame;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double x = _exactFrame * pixelsPerFrame;
+    final Paint line = Paint()
+      ..color = color
+      ..strokeWidth = 2;
+    canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+
+    final Rect head = Rect.fromLTWH(
+      x - sc(3.5),
+      0,
+      sc(7),
+      sc(7),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(head, const Radius.circular(1)),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _EditPlayheadPainter oldDelegate) {
+    return !identical(oldDelegate.position, position) ||
+        oldDelegate.fallbackFrame != fallbackFrame ||
+        oldDelegate.pixelsPerFrame != pixelsPerFrame ||
+        oldDelegate.color != color;
   }
 }
 
