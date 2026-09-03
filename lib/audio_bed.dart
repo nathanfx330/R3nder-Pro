@@ -700,6 +700,21 @@ class _PipedPlayer implements AudioBedPlayer {
     return false;
   }
 
+  Future<bool> _waitForNativeDrain(
+    NativeAudioSink sink,
+    int gen,
+  ) async {
+    while (gen == _generation) {
+      final AudioSinkStats stats = sink.stats;
+      if (!stats.healthy) {
+        throw AudioBedException('Native audio sink failed: ${sink.lastError}');
+      }
+      if (!stats.draining) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    return false;
+  }
+
   Future<void> _finishNativePlayback(
     int gen,
     Process decoder,
@@ -712,9 +727,10 @@ class _PipedPlayer implements AudioBedPlayer {
       if (gen != _generation) return;
 
       // The feeder being done means every decoder byte was accepted by the
-      // native queue, not that the speaker has played it. Drain is the native
-      // equivalent of waiting for paplay/aplay to exit naturally.
-      sink.drain();
+      // native queue, not that the speaker has played it. Request drain on the
+      // worker and poll its state so natural EOF never blocks Flutter in FFI.
+      sink.requestDrain();
+      await _waitForNativeDrain(sink, gen);
     } catch (_) {
       // Playback already has no asynchronous error channel. A transport error
       // ends this generation, matching the previous subprocess behavior.
@@ -785,24 +801,29 @@ class _PipedPlayer implements AudioBedPlayer {
     if (_useNativePulse) {
       NativeAudioSink? sink;
       try {
-        sink = NativeAudioSink(
+        final NativeAudioSink activeSink = NativeAudioSink(
           device: device?.id,
           sampleRate: _kBedRate,
           channels: _kBedChannels,
         );
+        sink = activeSink;
         final Uint8List bytes =
             buf.buffer.asUint8List(0, buf.lengthInBytes);
         int offset = 0;
         while (offset < bytes.lengthInBytes && gen == _generation) {
-          final int end = math.min(
-            offset + _kNativePacketBytes,
-            bytes.lengthInBytes,
-          );
+          final int remaining = bytes.lengthInBytes - offset;
+          final int packetLength = remaining < _kNativePacketBytes
+              ? remaining
+              : _kNativePacketBytes;
+          final int end = offset + packetLength;
           final Uint8List packet = Uint8List.sublistView(bytes, offset, end);
-          if (!await _enqueueNativePacket(sink, packet, gen)) return;
+          if (!await _enqueueNativePacket(activeSink, packet, gen)) return;
           offset = end;
         }
-        if (gen == _generation) sink.drain();
+        if (gen == _generation) {
+          activeSink.requestDrain();
+          await _waitForNativeDrain(activeSink, gen);
+        }
       } catch (e) {
         throw AudioBedException('Test tone failed on this device: $e');
       } finally {
