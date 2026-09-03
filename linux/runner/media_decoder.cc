@@ -168,6 +168,34 @@ extern "C" int64_t r3_media_decoder_length(void* handle) {
   return static_cast<int64_t>(length);
 }
 
+extern "C" int64_t r3_media_decoder_fps_num(void* handle) {
+  MediaDecoderState* state = static_cast<MediaDecoderState*>(handle);
+  if (state == nullptr) return -1;
+
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->profile == nullptr || state->profile->frame_rate_num <= 0) {
+    state->last_error = "MLT reported an invalid source frame-rate numerator.";
+    return -1;
+  }
+
+  state->last_error.clear();
+  return static_cast<int64_t>(state->profile->frame_rate_num);
+}
+
+extern "C" int64_t r3_media_decoder_fps_den(void* handle) {
+  MediaDecoderState* state = static_cast<MediaDecoderState*>(handle);
+  if (state == nullptr) return -1;
+
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->profile == nullptr || state->profile->frame_rate_den <= 0) {
+    state->last_error = "MLT reported an invalid source frame-rate denominator.";
+    return -1;
+  }
+
+  state->last_error.clear();
+  return static_cast<int64_t>(state->profile->frame_rate_den);
+}
+
 extern "C" int r3_media_decoder_render(
     void* handle,
     int64_t requested_frame,
