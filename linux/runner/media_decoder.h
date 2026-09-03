@@ -6,6 +6,8 @@
 // The synchronous render entry point remains for exact parked-frame work. Live
 // preview uses request/poll so decode can run ahead on a native worker without
 // ever blocking the Dart isolate that feeds audio and paints the editor.
+// Native presentation may subscribe to exact target frames through a sink
+// callback without making the decoder depend on Flutter.
 
 #pragma once
 
@@ -25,6 +27,21 @@ typedef struct R3MediaDecodedFrame {
   int64_t byte_length;
   uint8_t* rgba;
 } R3MediaDecodedFrame;
+
+// Called on the decoder worker thread only for the exact current target frame.
+// The pixel pointer is borrowed and valid only for the duration of the call.
+// A sink must copy or consume the bytes before returning and must not call back
+// into the same decoder while the callback is running.
+typedef void (*R3MediaDecodedFrameSink)(
+    void* decoder_handle,
+    int64_t requested_frame,
+    int64_t actual_frame,
+    int32_t width,
+    int32_t height,
+    int32_t stride,
+    const uint8_t* rgba,
+    int64_t byte_length,
+    void* user_data);
 
 void* r3_media_decoder_create(const char* path);
 void r3_media_decoder_destroy(void* handle);
@@ -61,6 +78,14 @@ int r3_media_decoder_poll(
     int32_t width,
     int32_t height,
     R3MediaDecodedFrame* out_frame);
+
+// Optional native presentation hook. The decoder remains Flutter-agnostic: it
+// simply calls the supplied sink when the exact current target is decoded or
+// is already present in its cache. Passing a null sink detaches presentation.
+int r3_media_decoder_set_frame_sink(
+    void* handle,
+    R3MediaDecodedFrameSink sink,
+    void* user_data);
 
 void r3_media_decoded_frame_release(R3MediaDecodedFrame* frame);
 
