@@ -106,6 +106,39 @@ int main() {
     return 2;
   }
 
+#ifdef R3_AUDIO_SINK_EXPECT_DESTROY_TIMEOUT
+  // The worker is fault-injected to remain alive after close longer than the
+  // caller is allowed to wait. Destroy must return within the bound, hand the
+  // clock back before returning, and leave the detached worker safe even after
+  // ProjectClock itself is destroyed.
+  const auto destroy_started = std::chrono::steady_clock::now();
+  r3_audio_sink_destroy(sink);
+  const auto destroy_elapsed =
+      std::chrono::steady_clock::now() - destroy_started;
+  if (destroy_elapsed > std::chrono::milliseconds(250)) {
+    std::fprintf(stderr, "destroy timeout did not bound the caller wait.\n");
+    r3_clock_destroy(clock);
+    return 3;
+  }
+
+  clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kMonotonic || clock_state.frame < 12) {
+    std::fprintf(stderr,
+                 "timed-out destroy did not safely release ProjectClock.\n");
+    r3_clock_destroy(clock);
+    return 4;
+  }
+
+  r3_clock_destroy(clock);
+
+  // Let the detached worker finish its injected stall after ProjectClock has
+  // already been freed. Any stale clock access or state lifetime bug will make
+  // this fault-injected process fail instead of being hidden by process exit.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  std::printf("audio_sink_test: PASS destroy timeout\n");
+  return 0;
+#endif
+
   const std::vector<uint8_t> silence(kChunkBytes, 0);
 
   // Creating a replacement native stream must invalidate the old sink's clock
@@ -269,8 +302,6 @@ int main() {
     return 23;
   }
 
-  // The worker is intentionally still finishing the injected stall. Destroy
-  // may wait for it here; M3.1.4b separately hardens that join path.
   DestroyBoth(sink, clock);
   std::printf("audio_sink_test: PASS flush timeout\n");
   return 0;

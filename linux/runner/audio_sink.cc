@@ -32,9 +32,20 @@ constexpr auto kDrainPollTimeout = std::chrono::seconds(2);
 constexpr auto kFlushWaitTimeout =
     std::chrono::milliseconds(R3_AUDIO_SINK_FLUSH_TIMEOUT_MS);
 
+#ifndef R3_AUDIO_SINK_DESTROY_TIMEOUT_MS
+#define R3_AUDIO_SINK_DESTROY_TIMEOUT_MS 2000
+#endif
+constexpr auto kDestroyWaitTimeout =
+    std::chrono::milliseconds(R3_AUDIO_SINK_DESTROY_TIMEOUT_MS);
+
 #ifdef R3_AUDIO_SINK_TEST_FLUSH_STALL_MS
 constexpr auto kTestFlushStall =
     std::chrono::milliseconds(R3_AUDIO_SINK_TEST_FLUSH_STALL_MS);
+#endif
+
+#ifdef R3_AUDIO_SINK_TEST_DESTROY_STALL_MS
+constexpr auto kTestDestroyStall =
+    std::chrono::milliseconds(R3_AUDIO_SINK_TEST_DESTROY_STALL_MS);
 #endif
 
 thread_local std::string g_create_error;
@@ -59,6 +70,8 @@ struct AudioSinkState {
   int64_t queued_bytes = 0;
   bool closing = false;
   bool failed = false;
+  bool worker_exited = false;
+  bool worker_self_cleanup = false;
   uint64_t drain_request = 0;
   uint64_t drain_complete = 0;
   uint64_t flush_request = 0;
@@ -77,6 +90,7 @@ struct AudioSinkState {
   // clock_generation is fixed for the lifetime of this sink object; a drained
   // current sink may re-arm, but creation of any newer sink invalidates this
   // generation permanently.
+  std::mutex clock_mutex;
   uint64_t clock_generation = 0;
   void* clock_handle = nullptr;
   R3ClockSnapshot clock_anchor{0, 0, 1, 0, 0, 0};
@@ -92,13 +106,13 @@ int64_t UsecToSamples(pa_usec_t usec, int32_t sample_rate) {
                               kUsecPerSecond);
 }
 
-bool ClockStillBound(const AudioSinkState* state) {
+bool ClockStillBoundUnlocked(const AudioSinkState* state) {
   return state->clock_handle != nullptr && state->clock_generation != 0 &&
          g_clock_binding_generation.load(std::memory_order_acquire) ==
              state->clock_generation;
 }
 
-void ClearClockBinding(AudioSinkState* state) {
+void ClearClockBindingUnlocked(AudioSinkState* state) {
   state->clock_handle = nullptr;
   state->clock_origin_sample = 0;
   state->clock_armed = false;
@@ -106,6 +120,7 @@ void ClearClockBinding(AudioSinkState* state) {
 }
 
 void ArmProjectClock(AudioSinkState* state) {
+  std::lock_guard<std::mutex> clock_lock(state->clock_mutex);
   if (state->clock_armed) return;
 
   // A superseded sink must never steal ProjectClock ownership back merely
@@ -136,9 +151,10 @@ void ArmProjectClock(AudioSinkState* state) {
 }
 
 void UpdateProjectClockTiming(AudioSinkState* state) {
+  std::lock_guard<std::mutex> clock_lock(state->clock_mutex);
   if (!state->clock_armed) return;
-  if (!ClockStillBound(state)) {
-    ClearClockBinding(state);
+  if (!ClockStillBoundUnlocked(state)) {
+    ClearClockBindingUnlocked(state);
     return;
   }
 
@@ -162,18 +178,20 @@ void UpdateProjectClockTiming(AudioSinkState* state) {
 }
 
 void AddProjectClockSamples(AudioSinkState* state, int64_t samples) {
+  std::lock_guard<std::mutex> clock_lock(state->clock_mutex);
   if (!state->clock_armed) return;
-  if (!ClockStillBound(state)) {
-    ClearClockBinding(state);
+  if (!ClockStillBoundUnlocked(state)) {
+    ClearClockBindingUnlocked(state);
     return;
   }
   r3_clock_add_played_samples(state->clock_handle, samples);
 }
 
-void ReleaseProjectClock(AudioSinkState* state, bool complete_audio_tail) {
+void ReleaseProjectClockUnlocked(AudioSinkState* state,
+                                 bool complete_audio_tail) {
   if (!state->clock_armed) return;
-  if (!ClockStillBound(state)) {
-    ClearClockBinding(state);
+  if (!ClockStillBoundUnlocked(state)) {
+    ClearClockBindingUnlocked(state);
     return;
   }
 
@@ -192,7 +210,30 @@ void ReleaseProjectClock(AudioSinkState* state, bool complete_audio_tail) {
                             state->clock_anchor.phase_num,
                             state->clock_anchor.phase_den);
   }
-  ClearClockBinding(state);
+  ClearClockBindingUnlocked(state);
+}
+
+void ReleaseProjectClock(AudioSinkState* state, bool complete_audio_tail) {
+  std::lock_guard<std::mutex> clock_lock(state->clock_mutex);
+  ReleaseProjectClockUnlocked(state, complete_audio_tail);
+}
+
+void DetachProjectClockForDestroy(AudioSinkState* state) {
+  std::lock_guard<std::mutex> clock_lock(state->clock_mutex);
+
+  // A timed-out destroy may return while the worker is still blocked inside
+  // libpulse. Release clock authority on the caller before that can happen,
+  // then invalidate this generation so the eventual worker wakeup cannot touch
+  // a ProjectClock that the rest of the app may already have destroyed.
+  ReleaseProjectClockUnlocked(state, false);
+
+  if (state->clock_generation != 0) {
+    uint64_t expected = state->clock_generation;
+    g_clock_binding_generation.compare_exchange_strong(
+        expected, state->clock_generation + 1, std::memory_order_acq_rel,
+        std::memory_order_acquire);
+  }
+  ClearClockBindingUnlocked(state);
 }
 
 void SetFailure(AudioSinkState* state, const std::string& message) {
@@ -378,12 +419,32 @@ void WorkerMain(AudioSinkState* state) {
     if (!RefreshLatency(state)) break;
   }
 
+#ifdef R3_AUDIO_SINK_TEST_DESTROY_STALL_MS
+  // Test-only fault injection. Production builds never define this macro.
+  // Keep the worker alive after close long enough to prove destroy has a
+  // bounded wait and safe detached cleanup ownership.
+  std::this_thread::sleep_for(kTestDestroyStall);
+#endif
+
   // Closing or a native error must never strand ProjectClock in SCRUB/AUDIO.
   // Preserve the last audible position before the final destructive flush.
   ReleaseProjectClock(state, false);
   if (!state->failed && state->stream != nullptr) {
     int error = 0;
     pa_simple_flush(state->stream, &error);
+  }
+
+  bool self_cleanup = false;
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->worker_exited = true;
+    self_cleanup = state->worker_self_cleanup;
+  }
+  state->cv.notify_all();
+
+  if (self_cleanup) {
+    if (state->stream != nullptr) pa_simple_free(state->stream);
+    delete state;
   }
 }
 
@@ -501,6 +562,27 @@ void r3_audio_sink_destroy(void* handle) {
   }
   state->cv.notify_all();
 
+  // Destroy is allowed to return before a wedged libpulse call does. Ensure
+  // ProjectClock is already safe to destroy before beginning that bounded wait.
+  DetachProjectClockForDestroy(state);
+
+  std::unique_lock<std::mutex> lock(state->mutex);
+  const bool exited = state->cv.wait_for(lock, kDestroyWaitTimeout, [&]() {
+    return state->worker_exited;
+  });
+
+  if (!exited) {
+    // The worker still owns state and stream memory. Detach the std::thread and
+    // transfer final cleanup to WorkerMain so returning here cannot create a
+    // use-after-free. If libpulse never returns, those native resources remain
+    // intentionally quarantined rather than hanging application shutdown.
+    state->worker_self_cleanup = true;
+    if (state->worker.joinable()) state->worker.detach();
+    lock.unlock();
+    return;
+  }
+
+  lock.unlock();
   if (state->worker.joinable()) state->worker.join();
   if (state->stream != nullptr) pa_simple_free(state->stream);
   delete state;

@@ -55,7 +55,7 @@ Future<void> _compileAndRunAudioSinkTest({
 
 void main() {
   test(
-    'native audio sink drives ProjectClock and bounds flush waits',
+    'native audio sink drives ProjectClock and bounds flush/destroy waits',
     () async {
       final ProcessResult pkg = await Process.run(
         'pkg-config',
@@ -83,10 +83,9 @@ void main() {
           suffix: 'normal',
         );
 
-        // Deterministic fault injection for the caller-side timeout only. The
-        // production default remains 2000 ms. Here the worker deliberately
-        // stalls for 100 ms while the test caller is allowed to wait only 25
-        // ms, proving flush returns an error instead of waiting indefinitely.
+        // Deterministic fault injection for the caller-side flush timeout only.
+        // The production default remains 2000 ms. Here the worker deliberately
+        // stalls for 100 ms while the caller is allowed to wait only 25 ms.
         await _compileAndRunAudioSinkTest(
           temp: temp,
           pkgArgs: pkgArgs,
@@ -95,6 +94,21 @@ void main() {
             '-DR3_AUDIO_SINK_FLUSH_TIMEOUT_MS=25',
             '-DR3_AUDIO_SINK_TEST_FLUSH_STALL_MS=100',
             '-DR3_AUDIO_SINK_EXPECT_FLUSH_TIMEOUT=1',
+          ],
+        );
+
+        // The shutdown regression uses the same pattern. The worker remains
+        // alive for 100 ms after close, but destroy is allowed to wait only 25
+        // ms. It must return, release ProjectClock safely, and let the detached
+        // worker own its eventual native cleanup.
+        await _compileAndRunAudioSinkTest(
+          temp: temp,
+          pkgArgs: pkgArgs,
+          suffix: 'destroy_timeout',
+          defines: const <String>[
+            '-DR3_AUDIO_SINK_DESTROY_TIMEOUT_MS=25',
+            '-DR3_AUDIO_SINK_TEST_DESTROY_STALL_MS=100',
+            '-DR3_AUDIO_SINK_EXPECT_DESTROY_TIMEOUT=1',
           ],
         );
       } finally {
