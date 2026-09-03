@@ -7,9 +7,17 @@
 // workspace, serialize a real V1 or V2 CLIP into the same script document,
 // and drive EDIT playback from ProjectClock. There is no timeline database
 // here. Durable state remains authored source; playback state is transient.
+//
+// Playback intentionally does not publish every advancing frame back through
+// EditorScreen. The native MLT texture renders continuously on its own threads,
+// while this workspace polls ProjectClock at the same 100 ms cadence proven by
+// MLT Player. The local playhead can therefore move without rebuilding the
+// entire editor around every video frame. The parent receives the exact parked
+// frame when playback pauses, ends, or the user explicitly seeks.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'edit_media_import.dart';
 import 'edit_model.dart';
@@ -59,36 +67,50 @@ class EditWorkspace extends StatefulWidget {
   State<EditWorkspace> createState() => _EditWorkspaceState();
 }
 
-class _EditWorkspaceState extends State<EditWorkspace>
-    with SingleTickerProviderStateMixin {
+class _EditWorkspaceState extends State<EditWorkspace> {
+  static const Duration _playbackPollInterval = Duration(milliseconds: 100);
+
   late String _workingSource;
-  late final Ticker _playTicker;
+  late int _displayFrame;
+  Timer? _playPoll;
   EditPlaybackClock? _playClock;
   bool _importing = false;
   bool _playing = false;
-  int? _lastPublishedPlaybackFrame;
+  int _cachedEditEndFrame = 0;
+  int? _lastPolledPlaybackFrame;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _workingSource = widget.source;
-    _playTicker = createTicker(_onPlaybackTick);
+    _displayFrame = widget.currentFrame;
+    _refreshEditEndCache();
+    _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
   }
 
   @override
   void didUpdateWidget(covariant EditWorkspace oldWidget) {
     super.didUpdateWidget(oldWidget);
+
     if (widget.source != oldWidget.source && widget.source != _workingSource) {
       _workingSource = widget.source;
       _error = null;
+      _refreshEditEndCache();
       _stopPlaybackAt(widget.currentFrame, publish: false);
+      return;
+    }
+
+    if (!_playing && widget.currentFrame != oldWidget.currentFrame) {
+      _displayFrame = widget.currentFrame.clamp(0, _cachedEditEndFrame);
+      _lastPolledPlaybackFrame = _displayFrame;
     }
   }
 
   @override
   void dispose() {
-    _playTicker.dispose();
+    _playPoll?.cancel();
+    _playPoll = null;
     _playClock?.dispose();
     _playClock = null;
     super.dispose();
@@ -105,15 +127,17 @@ class _EditWorkspaceState extends State<EditWorkspace>
     return created;
   }
 
-  int _editEndFrame() {
+  void _refreshEditEndCache() {
     try {
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
-      if (model.edits.isEmpty) return 0;
-      return model.edits.first.projectFrameCount;
+      _cachedEditEndFrame =
+          model.edits.isEmpty ? 0 : model.edits.first.projectFrameCount;
     } catch (_) {
-      return 0;
+      _cachedEditEndFrame = 0;
     }
   }
+
+  int _editEndFrame() => _cachedEditEndFrame;
 
   void _togglePlayback(EditSequence edit) {
     if (_playing) {
@@ -124,9 +148,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final int end = edit.projectFrameCount;
     if (end <= 0) return;
 
-    int start = widget.currentFrame.clamp(0, end);
+    int start = _displayFrame.clamp(0, end);
     if (start >= end) {
       start = 0;
+      _displayFrame = 0;
       widget.onSeek(0);
     }
 
@@ -138,13 +163,19 @@ class _EditWorkspaceState extends State<EditWorkspace>
           mode: ProjectClockMode.monotonic,
         ),
       );
-      _lastPublishedPlaybackFrame = start;
-      _playTicker.start();
+
+      _playPoll?.cancel();
+      _playPoll = Timer.periodic(_playbackPollInterval, _onPlaybackPoll);
+      _lastPolledPlaybackFrame = start;
+
       setState(() {
+        _displayFrame = start;
         _playing = true;
         _error = null;
       });
     } catch (error) {
+      _playPoll?.cancel();
+      _playPoll = null;
       setState(() {
         _playing = false;
         _error = 'EDIT PLAYBACK UNAVAILABLE\n$error';
@@ -152,12 +183,12 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
-  void _onPlaybackTick(Duration _) {
+  void _onPlaybackPoll(Timer _) {
     if (!_playing || !mounted) return;
 
     final int end = _editEndFrame();
     if (end <= 0) {
-      _stopPlaybackAt(0, publish: false);
+      _stopPlaybackAt(0, publish: true);
       return;
     }
 
@@ -168,7 +199,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
     try {
       sampled = clock.sample();
     } catch (error) {
-      _playTicker.stop();
+      _playPoll?.cancel();
+      _playPoll = null;
       setState(() {
         _playing = false;
         _error = 'EDIT PLAYBACK CLOCK FAILED\n$error';
@@ -177,31 +209,39 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
 
     final int frame = sampled.frame.clamp(0, end);
-    if (frame != _lastPublishedPlaybackFrame) {
-      _lastPublishedPlaybackFrame = frame;
-      widget.onSeek(frame);
+    if (frame >= end) {
+      _stopPlaybackAt(end, publish: true);
+      return;
     }
 
-    if (frame >= end) {
-      _stopPlaybackAt(end, publish: false);
-    }
+    if (frame == _lastPolledPlaybackFrame) return;
+    _lastPolledPlaybackFrame = frame;
+
+    // Local only. This is the important separation from the old playback
+    // loop: EditorScreen is not told about every advancing frame, so the
+    // native texture is not competing with a full editor rebuild at video
+    // cadence.
+    setState(() => _displayFrame = frame);
   }
 
   void _pausePlayback() {
     final EditPlaybackClock? clock = _playClock;
-    int frame = widget.currentFrame.clamp(0, _editEndFrame());
+    int frame = _displayFrame.clamp(0, _editEndFrame());
     if (clock != null) {
       try {
         frame = clock.sample().frame.clamp(0, _editEndFrame());
       } catch (_) {
-        // Holding the last visible frame is a safe fallback if sampling fails.
+        // Holding the last locally visible frame is a safe fallback if
+        // sampling fails.
       }
     }
     _stopPlaybackAt(frame, publish: true);
   }
 
   void _stopPlaybackAt(int frame, {required bool publish}) {
-    _playTicker.stop();
+    _playPoll?.cancel();
+    _playPoll = null;
+
     final int safeFrame = frame.clamp(0, _editEndFrame());
     final EditPlaybackClock? clock = _playClock;
     if (clock != null) {
@@ -217,9 +257,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
       }
     }
 
-    _lastPublishedPlaybackFrame = safeFrame;
-    final bool changed = _playing;
+    _lastPolledPlaybackFrame = safeFrame;
+    final bool changed = _playing || _displayFrame != safeFrame;
     _playing = false;
+    _displayFrame = safeFrame;
+
     if (publish && safeFrame != widget.currentFrame) {
       widget.onSeek(safeFrame);
     }
@@ -244,8 +286,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
           // Seeking remains valid even if the optional realtime clock failed.
         }
       }
+      if (_displayFrame != safeFrame && mounted) {
+        setState(() => _displayFrame = safeFrame);
+      } else {
+        _displayFrame = safeFrame;
+      }
     }
-    _lastPublishedPlaybackFrame = safeFrame;
+
+    _lastPolledPlaybackFrame = safeFrame;
     widget.onSeek(safeFrame);
   }
 
@@ -273,7 +321,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           trackId: trackId,
           clipId: imported.clipBaseId,
           mediaSource: imported.authoredSource,
-          atFrame: widget.currentFrame,
+          atFrame: _displayFrame,
           durationFrames: imported.durationFrames,
         );
       } else {
@@ -286,7 +334,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           trackId: trackId,
           clipId: clipId,
           mediaSource: imported.authoredSource,
-          atFrame: widget.currentFrame,
+          atFrame: _displayFrame,
           durationFrames: imported.durationFrames,
         );
       }
@@ -295,6 +343,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
       setState(() {
         _workingSource = next;
         _error = null;
+        _refreshEditEndCache();
+        _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
       });
       widget.onSourceChanged(next);
     } catch (error) {
@@ -350,7 +400,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                         key: ValueKey('edit:${edit.id}'),
                         source: _workingSource,
                         editId: edit.id,
-                        currentFrame: widget.currentFrame.clamp(
+                        currentFrame: _displayFrame.clamp(
                           0,
                           edit.projectFrameCount,
                         ),
@@ -362,7 +412,12 @@ class _EditWorkspaceState extends State<EditWorkspace>
                         onSourceChanged: (String next) {
                           if (_workingSource == next) return;
                           if (_playing) _pausePlayback();
-                          setState(() => _workingSource = next);
+                          setState(() {
+                            _workingSource = next;
+                            _refreshEditEndCache();
+                            _displayFrame =
+                                _displayFrame.clamp(0, _cachedEditEndFrame);
+                          });
                           widget.onSourceChanged(next);
                         },
                         onSeek: _seekFromEdit,
@@ -375,7 +430,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   EditDocumentModel? _parseModel() {
     try {
-      return EditDocumentModel.parse(_workingSource);
+      final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
+      _cachedEditEndFrame =
+          model.edits.isEmpty ? 0 : model.edits.first.projectFrameCount;
+      return model;
     } catch (error) {
       _error ??= '$error';
       return null;
@@ -425,7 +483,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         Text('IMPORTING', style: widget.theme.micro),
       ] else if (edit != null)
         Text(
-          'EDIT ${edit.id}   F${widget.currentFrame} / ${edit.projectFrameCount}',
+          'EDIT ${edit.id}   F$_displayFrame / ${edit.projectFrameCount}',
           style: widget.theme.micro,
         ),
     ];
