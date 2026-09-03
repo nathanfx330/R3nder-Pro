@@ -110,8 +110,15 @@ String _basename(String path) {
 }
 
 String _safeFileName(String value) {
+  // CLIP fields live inside square-bracket structural markup and use colon
+  // as their field separator. Linux filenames may legally contain all three
+  // characters, so a media filename cannot be copied verbatim into authored
+  // source. In particular, a closing bracket would terminate [CLIP:...] early
+  // and make the parser report a phantom extra/missing field. Normalize those
+  // grammar delimiters at the workspace boundary before the path ever becomes
+  // script text.
   String safe = value
-      .replaceAll(RegExp(r'[:\r\n]'), '_')
+      .replaceAll(RegExp(r'[:\[\]\r\n]'), '_')
       .replaceAll(RegExp(r'[\x00-\x1F]'), '_')
       .trim();
   if (safe.isEmpty || safe == '.' || safe == '..') {
