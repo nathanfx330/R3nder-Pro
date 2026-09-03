@@ -7,6 +7,12 @@
 // stay in memory and are written once playback stops. Development runs resolve
 // the checked-out project root through resolvePortableBaseDir(), so the result
 // appears beside pubspec.yaml as r3nder_playback_session_NNN.log.
+//
+// Tracing is deliberately opt in. Start R3nder with
+// R3NDER_PLAYBACK_TRACE=1 when measuring playback. Ordinary launches pay no
+// trace allocation, scheduler timing callback, directory scan, or log write.
+// See docs/EDIT_PLAYBACK_PERFORMANCE.md for the session 001/002 investigation
+// that established the timeline repaint bottleneck and the working baseline.
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -22,6 +28,8 @@ class PlaybackTrace {
 
   static final PlaybackTrace instance = PlaybackTrace._();
 
+  static const String environmentFlag = 'R3NDER_PLAYBACK_TRACE';
+
   final List<String> _lines = <String>[];
   final Stopwatch _elapsed = Stopwatch();
 
@@ -32,6 +40,15 @@ class PlaybackTrace {
   int _tickCount = 0;
   int _flutterFrameCount = 0;
 
+  bool get enabled {
+    final String value =
+        (Platform.environment[environmentFlag] ?? '').trim().toLowerCase();
+    return value == '1' ||
+        value == 'true' ||
+        value == 'yes' ||
+        value == 'on';
+  }
+
   bool get isActive => _active;
   String? get path => _path;
 
@@ -40,6 +57,8 @@ class PlaybackTrace {
     required String editId,
     required int startFrame,
   }) {
+    if (!enabled) return null;
+
     if (_active) {
       stop(reason: 'restarted');
     }
@@ -68,9 +87,8 @@ class PlaybackTrace {
     _lines.add('# project_fps=$projectFps');
     _lines.add('# edit=$editId');
     _lines.add('# start_frame=$startFrame');
-    _lines.add(
-      '# fields: trace_us STAGE key=value ...',
-    );
+    _lines.add('# enabled_by=$environmentFlag');
+    _lines.add('# fields: trace_us STAGE key=value ...');
 
     SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     record(
