@@ -88,6 +88,8 @@ void main() {
 ''';
 
     final _FakeBackend backend = _FakeBackend();
+    final String Function(String) resolver =
+        (String value) => '/workspace/$value';
 
     Widget build(int frame) {
       return MaterialApp(
@@ -100,15 +102,14 @@ void main() {
             currentFrame: frame,
             theme: R3Theme.of(Colors.green),
             backend: backend,
-            resolveSource: (String value) => '/workspace/$value',
+            resolveSource: resolver,
           ),
         ),
       );
     }
 
     await tester.pumpWidget(build(5));
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(backend.openCount, 1);
     expect(backend.decoders.single.requested, contains(29));
@@ -116,8 +117,7 @@ void main() {
     expect(find.textContaining('SRC 29'), findsOneWidget);
 
     await tester.pumpWidget(build(8));
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(backend.openCount, 1);
     expect(backend.decoders.single.requested, containsAll(<int>[29, 32]));
