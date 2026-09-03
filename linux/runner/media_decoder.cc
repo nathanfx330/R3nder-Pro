@@ -94,6 +94,27 @@ extern "C" void* r3_media_decoder_create(const char* path) {
     return nullptr;
   }
 
+  // MLT constructs a producer against the profile that exists at creation
+  // time. Calling mlt_profile_from_producer() only after keeping that producer
+  // alive leaves the producer and profile in different frame-rate domains. In
+  // practice that can turn an exact source-frame seek into the adjacent frame.
+  //
+  // Open once only to discover the source-native profile, close that temporary
+  // producer, then create the persistent decoder against the matched profile.
+  // The M8 backend bakeoff used an already-correct profile before producer
+  // creation and returned every requested frame exactly; this two-stage open
+  // gives arbitrary source media the same invariant.
+  mlt_producer probe = mlt_factory_producer(state->profile, nullptr, path);
+  if (probe == nullptr) {
+    SetCreateError(std::string("MLT could not probe media: ") + path);
+    mlt_profile_close(state->profile);
+    delete state;
+    return nullptr;
+  }
+
+  mlt_profile_from_producer(state->profile, probe);
+  mlt_producer_close(probe);
+
   state->producer = mlt_factory_producer(state->profile, nullptr, path);
   if (state->producer == nullptr) {
     SetCreateError(std::string("MLT could not open media: ") + path);
@@ -102,10 +123,6 @@ extern "C" void* r3_media_decoder_create(const char* path) {
     return nullptr;
   }
 
-  // The source-frame domain belongs to the source, not the project. Let the
-  // profile adopt the producer's native frame rate and dimensions so position N
-  // means source frame N even when the project itself runs at another rate.
-  mlt_profile_from_producer(state->profile, state->producer);
   mlt_producer_set_speed(state->producer, 0.0);
   state->last_error.clear();
   SetCreateError("");
