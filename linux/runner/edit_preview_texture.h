@@ -38,6 +38,8 @@ int r3_edit_preview_pause_at(int64_t source_frame);
 int64_t r3_edit_preview_position_frame(void);
 double r3_edit_preview_source_fps(void);
 int r3_edit_preview_is_playing(void);
+int r3_edit_preview_width(void);
+int r3_edit_preview_height(void);
 
 int r3_edit_preview_set_output_size(int width, int height);
 int r3_edit_preview_copy_last_error(char* buffer, int capacity);
