@@ -118,4 +118,34 @@ void main() {
     expect(changed, isNotNull);
     expect(changed, contains('[#EDIT_TRANSITION:CROSSFADE:12]'));
   });
+
+  testWidgets('ruler drag coalesces a burst of scrub positions',
+      (WidgetTester tester) async {
+    final List<int> seeks = <int>[];
+    await tester.pumpWidget(
+      _host(
+        onSourceChanged: (_) {},
+        onSeek: seeks.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder ruler =
+        find.byKey(const ValueKey<String>('edit-timeline-scrub'));
+    expect(ruler, findsOneWidget);
+    final Rect rect = tester.getRect(ruler);
+    final TestGesture gesture = await tester.startGesture(
+      Offset(rect.left + 40, rect.center.dy),
+    );
+
+    for (int i = 0; i < 20; i++) {
+      await gesture.moveBy(const Offset(4, 0));
+    }
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 40));
+
+    expect(seeks, isNotEmpty);
+    expect(seeks.length, lessThan(10));
+    expect(seeks.last, greaterThan(seeks.first));
+  });
 }
