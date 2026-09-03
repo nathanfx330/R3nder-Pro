@@ -31,17 +31,19 @@
 // one, and BedTimeline is where it is stated.
 //
 // Two consumers, deliberately unrelated:
-//   1. Preview / editor. Wall-clock playback, authoring aid only. This file.
+//   1. Preview / editor. Realtime playback, authoring aid only. This file.
 //   2. Export. FFmpeg muxes the original file as a second input. Never
 //      touches this file. Frame-exactness is automatic because video is
 //      engine-locked and audio carries its own timebase.
 //
 // BACKEND
-// ffmpeg decodes and seeks, paplay (or aplay) sinks. The two are piped
-// process to process, so nothing is held in memory: a 30 minute voiceover
-// costs no RAM and starts instantly rather than blocking the UI on a decode.
-// ffmpeg owns the seek via -ss, which makes click-to-jump and scrubber drags
-// close to free.
+// ffmpeg decodes, seeks, applies gain, and mixes. On Linux its raw PCM goes
+// directly into NativeAudioSink, whose worker thread owns the blocking
+// libpulse writes and bounded backpressure. aplay remains the subprocess
+// fallback when the native PulseAudio-compatible sink cannot be opened.
+// Nothing is held in memory: a 30 minute voiceover costs no RAM and starts
+// instantly rather than blocking the UI on a decode. ffmpeg owns the seek via
+// -ss, which makes click-to-jump and scrubber drags close to free.
 //
 // Gain is applied by ffmpeg's volume filter rather than in Dart, so preview
 // level matches what the exporter will mux. Audio is deliberately NOT
@@ -74,12 +76,16 @@ import 'dart:typed_data';
 // paths and stay that way; this is the one fact both have to agree on, so it
 // is a registry rather than a copy in each. See audio_mix.dart.
 import 'audio_mix.dart';
+import 'audio_sink.dart';
 
 /// Wire format shared by the ffmpeg producer and the sink consumer.
 /// s16le stereo at 48k: standard voiceover territory, and half the pipe
 /// bandwidth of float32 for no audible cost on a preview bed.
 const int _kBedRate = 48000;
 const int _kBedChannels = 2;
+const int _kBedBytesPerFrame = _kBedChannels * 2;
+const int _kNativePacketFrames = 480;
+const int _kNativePacketBytes = _kNativePacketFrames * _kBedBytesPerFrame;
 
 /// An addressable output sink. [id] null means "let the backend decide".
 class PlaybackDevice {
@@ -283,10 +289,10 @@ class AudioBedProbe {
   }
 }
 
-/// Playback surface. Kept abstract so an ALSA FFI backend can replace the
-/// subprocess one later without any caller changing.
+/// Playback surface. Kept abstract so transport details never leak into the
+/// authoring callers.
 abstract class AudioBedPlayer {
-  /// Backend name for the UI ("paplay", "aplay").
+  /// Backend name for the UI ("libpulse", "aplay").
   String get backendName;
 
   Future<List<PlaybackDevice>> listDevices();
@@ -346,10 +352,23 @@ abstract class AudioBedPlayer {
   void dispose();
 }
 
-/// Returns null when no sink binary exists. Callers should disable the
-/// transport and say so, but keep export enabled: baking needs no sink.
+/// Prefers the in-process Linux libpulse sink. aplay remains a fallback for a
+/// Linux environment where the PulseAudio-compatible server cannot be opened.
+/// Export remains enabled even when neither preview backend is available.
 Future<AudioBedPlayer?> createAudioBedPlayer() async {
-  if (await _binaryExists('paplay')) return _PipedPlayer._paplay();
+  if (Platform.isLinux && NativeAudioSink.isSupported) {
+    try {
+      final NativeAudioSink probe = NativeAudioSink(
+        sampleRate: _kBedRate,
+        channels: _kBedChannels,
+      );
+      probe.dispose();
+      return _PipedPlayer._nativePulse();
+    } catch (_) {
+      // Fall through to aplay. A render-only machine may legitimately have no
+      // PulseAudio-compatible server even though the runner has libpulse.
+    }
+  }
   if (await _binaryExists('aplay')) return _PipedPlayer._aplay();
   return null;
 }
@@ -367,11 +386,14 @@ class _PipedPlayer implements AudioBedPlayer {
   @override
   final String backendName;
 
+  final bool _useNativePulse;
   final List<String> Function(String? deviceId) _sinkArgs;
   final Future<List<PlaybackDevice>> Function() _enumerate;
 
   Process? _decoder;
   Process? _sink;
+  NativeAudioSink? _nativeSink;
+  Future<void>? _feeder;
   bool _playing = false;
 
   /// Invalidates in-flight pipe plumbing when a newer play/stop supersedes
@@ -379,19 +401,19 @@ class _PipedPlayer implements AudioBedPlayer {
   /// to write into a sink that belongs to a later request.
   int _generation = 0;
 
-  _PipedPlayer._(this.backendName, this._sinkArgs, this._enumerate);
+  _PipedPlayer._(
+    this.backendName,
+    this._sinkArgs,
+    this._enumerate, {
+    bool useNativePulse = false,
+  }) : _useNativePulse = useNativePulse;
 
-  factory _PipedPlayer._paplay() {
+  factory _PipedPlayer._nativePulse() {
     return _PipedPlayer._(
-      'paplay',
-      (String? dev) => [
-        '--raw',
-        '--format=s16le',
-        '--rate=$_kBedRate',
-        '--channels=$_kBedChannels',
-        if (dev != null) '--device=$dev',
-      ],
+      'libpulse',
+      (_) => const <String>[],
       _enumeratePulseSinks,
+      useNativePulse: true,
     );
   }
 
@@ -521,16 +543,60 @@ class _PipedPlayer implements AudioBedPlayer {
     ];
 
     Process decoder;
-    Process sink;
     try {
       decoder = await Process.start('ffmpeg', decodeArgs);
+    } catch (e) {
+      _playing = false;
+      throw AudioBedException('Could not start playback decoder: $e');
+    }
+
+    if (_useNativePulse) {
+      NativeAudioSink nativeSink;
+      try {
+        nativeSink = NativeAudioSink(
+          device: device?.id,
+          sampleRate: _kBedRate,
+          channels: _kBedChannels,
+        );
+      } catch (e) {
+        _killQuietly(decoder);
+        _playing = false;
+        throw AudioBedException('Could not open native playback sink: $e');
+      }
+
+      // A newer request landed while either endpoint was opening. The new
+      // generation owns playback, so this one must not contribute a sample.
+      if (gen != _generation) {
+        _killQuietly(decoder);
+        nativeSink.dispose();
+        return;
+      }
+
+      _decoder = decoder;
+      _nativeSink = nativeSink;
+      _playing = true;
+
+      // A full ffmpeg stderr pipe can still deadlock the decoder even though
+      // stdout now feeds native memory rather than another process.
+      unawaited(decoder.stderr.drain<void>().catchError((_) {}));
+
+      final Future<void> feeder =
+          _feedNative(decoder.stdout, nativeSink, gen);
+      _feeder = feeder;
+      unawaited(_finishNativePlayback(gen, decoder, nativeSink, feeder));
+      return;
+    }
+
+    Process sink;
+    try {
       sink = await Process.start(
         backendName,
         _sinkArgs(device?.id),
       );
     } catch (e) {
+      _killQuietly(decoder);
       _playing = false;
-      throw AudioBedException('Could not start playback pipeline: $e');
+      throw AudioBedException('Could not start playback sink: $e');
     }
 
     // A newer request landed while we were spawning. Discard this one
@@ -551,14 +617,16 @@ class _PipedPlayer implements AudioBedPlayer {
     unawaited(sink.stdout.drain<void>().catchError((_) {}));
 
     // Stream pipe carries backpressure, so the decoder is paced by the
-    // sink rather than racing ahead and buffering the whole file.
-    unawaited(() async {
+    // sink rather than racing ahead and buffering the whole file. Retain the
+    // future so stop() can prove the old generation is quiescent.
+    final Future<void> feeder = () async {
       try {
         await decoder.stdout.pipe(sink.stdin);
       } catch (_) {
         // Broken pipe after a kill during scrub. Expected, not an error.
       }
-    }());
+    }();
+    _feeder = feeder;
 
     // Natural end of file: the decoder exits, the pipe closes, the sink
     // drains and exits. Only then is playback genuinely over.
@@ -567,8 +635,98 @@ class _PipedPlayer implements AudioBedPlayer {
         _playing = false;
         _decoder = null;
         _sink = null;
+        if (identical(_feeder, feeder)) _feeder = null;
       }
     }).catchError((_) {}));
+  }
+
+  Future<void> _feedNative(
+    Stream<List<int>> source,
+    NativeAudioSink sink,
+    int gen,
+  ) async {
+    final BytesBuilder pending = BytesBuilder(copy: false);
+
+    await for (final List<int> chunk in source) {
+      if (gen != _generation) return;
+      pending.add(chunk);
+      if (pending.length < _kNativePacketBytes) continue;
+
+      final Uint8List bytes = pending.takeBytes();
+      int offset = 0;
+      final int packetEnd =
+          bytes.lengthInBytes - (bytes.lengthInBytes % _kNativePacketBytes);
+      while (offset < packetEnd) {
+        final Uint8List packet = Uint8List.sublistView(
+          bytes,
+          offset,
+          offset + _kNativePacketBytes,
+        );
+        if (!await _enqueueNativePacket(sink, packet, gen)) return;
+        offset += _kNativePacketBytes;
+      }
+      if (offset < bytes.lengthInBytes) {
+        pending.add(Uint8List.sublistView(bytes, offset));
+      }
+    }
+
+    if (gen != _generation) return;
+    final Uint8List tail = pending.takeBytes();
+    if (tail.lengthInBytes % _kBedBytesPerFrame != 0) {
+      throw const AudioBedException(
+        'FFmpeg ended on a partial PCM sample frame.',
+      );
+    }
+    if (tail.isNotEmpty) {
+      await _enqueueNativePacket(sink, tail, gen);
+    }
+  }
+
+  Future<bool> _enqueueNativePacket(
+    NativeAudioSink sink,
+    Uint8List packet,
+    int gen,
+  ) async {
+    while (gen == _generation) {
+      try {
+        if (sink.tryEnqueue(packet)) return true;
+      } on AudioSinkException catch (e) {
+        throw AudioBedException('Native audio sink failed: ${e.message}');
+      }
+      // NativeAudioSink is deliberately bounded. Yield instead of letting
+      // ffmpeg race ahead into a Dart-side buffer when the worker is full.
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    return false;
+  }
+
+  Future<void> _finishNativePlayback(
+    int gen,
+    Process decoder,
+    NativeAudioSink sink,
+    Future<void> feeder,
+  ) async {
+    try {
+      await decoder.exitCode;
+      await feeder;
+      if (gen != _generation) return;
+
+      // The feeder being done means every decoder byte was accepted by the
+      // native queue, not that the speaker has played it. Drain is the native
+      // equivalent of waiting for paplay/aplay to exit naturally.
+      sink.drain();
+    } catch (_) {
+      // Playback already has no asynchronous error channel. A transport error
+      // ends this generation, matching the previous subprocess behavior.
+    } finally {
+      if (gen == _generation) {
+        _playing = false;
+        if (identical(_decoder, decoder)) _decoder = null;
+        if (identical(_nativeSink, sink)) _nativeSink = null;
+        if (identical(_feeder, feeder)) _feeder = null;
+        sink.dispose();
+      }
+    }
   }
 
   @override
@@ -576,14 +734,30 @@ class _PipedPlayer implements AudioBedPlayer {
     _generation++;
     final Process? d = _decoder;
     final Process? s = _sink;
+    final NativeAudioSink? native = _nativeSink;
+    final Future<void>? feeder = _feeder;
     _decoder = null;
     _sink = null;
+    _nativeSink = null;
+    _feeder = null;
     _playing = false;
 
-    // Decoder first: killing the sink first would leave ffmpeg blocked on
-    // a write to a dead pipe until the OS notices.
+    // Decoder first: that closes the producer side. The generation was already
+    // invalidated, so a native feeder will not enqueue another packet. Only
+    // after its future settles is it legal to flush/dispose the old sink.
     _killQuietly(d);
     _killQuietly(s);
+    if (feeder != null) {
+      try {
+        await feeder;
+      } catch (_) {}
+    }
+    if (native != null) {
+      try {
+        native.flush();
+      } catch (_) {}
+      native.dispose();
+    }
   }
 
   @override
@@ -608,6 +782,35 @@ class _PipedPlayer implements AudioBedPlayer {
       }
     }
 
+    if (_useNativePulse) {
+      NativeAudioSink? sink;
+      try {
+        sink = NativeAudioSink(
+          device: device?.id,
+          sampleRate: _kBedRate,
+          channels: _kBedChannels,
+        );
+        final Uint8List bytes =
+            buf.buffer.asUint8List(0, buf.lengthInBytes);
+        int offset = 0;
+        while (offset < bytes.lengthInBytes && gen == _generation) {
+          final int end = math.min(
+            offset + _kNativePacketBytes,
+            bytes.lengthInBytes,
+          );
+          final Uint8List packet = Uint8List.sublistView(bytes, offset, end);
+          if (!await _enqueueNativePacket(sink, packet, gen)) return;
+          offset = end;
+        }
+        if (gen == _generation) sink.drain();
+      } catch (e) {
+        throw AudioBedException('Test tone failed on this device: $e');
+      } finally {
+        sink?.dispose();
+      }
+      return;
+    }
+
     try {
       final Process sink =
           await Process.start(backendName, _sinkArgs(device?.id));
@@ -630,9 +833,18 @@ class _PipedPlayer implements AudioBedPlayer {
     _generation++;
     _killQuietly(_decoder);
     _killQuietly(_sink);
+    final NativeAudioSink? native = _nativeSink;
     _decoder = null;
     _sink = null;
+    _nativeSink = null;
+    _feeder = null;
     _playing = false;
+    if (native != null) {
+      try {
+        native.flush();
+      } catch (_) {}
+      native.dispose();
+    }
   }
 
   static void _killQuietly(Process? p) {
