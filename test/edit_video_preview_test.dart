@@ -69,7 +69,7 @@ MediaFrame _frame(String trackId, String clipId, int sourceFrame) {
 }
 
 void main() {
-  test('visible edit frame selects highest numbered V track', () {
+  test('visible edit frame helper selects highest numbered V track', () {
     final MediaFrame v1 = _frame('V1', 'base', 10);
     final MediaFrame v3 = _frame('V3', 'top', 10);
     final MediaFrame v2 = _frame('V2', 'middle', 10);
@@ -115,6 +115,7 @@ void main() {
     expect(backend.decoders.single.requested, contains(29));
     expect(find.textContaining('V1 / intro'), findsOneWidget);
     expect(find.textContaining('SRC 29'), findsOneWidget);
+    expect(find.textContaining('LAYERS 1'), findsOneWidget);
 
     await tester.pumpWidget(build(8));
     await tester.pumpAndSettle();
@@ -122,5 +123,48 @@ void main() {
     expect(backend.openCount, 1);
     expect(backend.decoders.single.requested, containsAll(<int>[29, 32]));
     expect(find.textContaining('SRC 32'), findsOneWidget);
+    expect(find.textContaining('LAYERS 1'), findsOneWidget);
+  });
+
+  testWidgets('monitor composites simultaneous V1 and V2 clips',
+      (WidgetTester tester) async {
+    const String source = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:base:video/base.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[TRACK:V2]
+[CLIP:top:video/top.mp4:0:10:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
+    final _FakeBackend backend = _FakeBackend();
+    final String Function(String) resolver =
+        (String value) => '/workspace/$value';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 640,
+          height: 360,
+          child: EditVideoPreview(
+            source: source,
+            editId: 'main',
+            currentFrame: 5,
+            theme: R3Theme.of(Colors.green),
+            backend: backend,
+            resolveSource: resolver,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(backend.openCount, 2);
+    expect(find.textContaining('V2 / top'), findsOneWidget);
+    expect(find.textContaining('SRC 15'), findsOneWidget);
+    expect(find.textContaining('LAYERS 2'), findsOneWidget);
   });
 }
