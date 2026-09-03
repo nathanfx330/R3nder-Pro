@@ -1,6 +1,7 @@
 // ./test/edit_compile_projection_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/script_lint.dart';
 import 'package:r3nder/script_pipeline.dart';
 
 void main() {
@@ -60,5 +61,20 @@ READY
     expect(compiled.configs['WINTITLE'], 'OUTSIDE');
     expect(compiled.engineText, isNot(contains('INSIDE')));
     expect(compiled.engineText, contains('READY'));
+  });
+
+  test('valid structural edit tags are not terminal lint errors', () {
+    const String source = '''READY
+[EDIT:master]
+  [TRACK:V1]
+    [CLIP:intro:video/intro.mp4:0:0:30:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    final List<LintFinding> findings = ScriptLinter.lint(source);
+
+    expect(findings, isEmpty);
   });
 }
