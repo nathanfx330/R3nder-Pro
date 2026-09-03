@@ -8,6 +8,8 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart'
+    show PointerCancelEvent, PointerDownEvent, PointerMoveEvent, PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
@@ -679,6 +681,8 @@ enum _ClipDragMode { none, move, trimStart, trimEnd }
 
 class _EditableClipBlockState extends State<_EditableClipBlock> {
   _ClipDragMode _mode = _ClipDragMode.none;
+  int? _activePointer;
+  double _pointerDownX = 0.0;
   double _dragPixels = 0.0;
 
   int get _deltaFrames => (_dragPixels / widget.pixelsPerFrame).round();
@@ -707,27 +711,47 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
-  void _start(_ClipDragMode mode) {
+  void _pointerDown(_ClipDragMode mode, PointerDownEvent event) {
+    if (_activePointer != null) return;
     widget.onSelect();
     setState(() {
       _mode = mode;
+      _activePointer = event.pointer;
+      _pointerDownX = event.position.dx;
       _dragPixels = 0.0;
     });
   }
 
-  void _update(DragUpdateDetails details) {
-    setState(() => _dragPixels += details.delta.dx);
+  void _pointerMove(PointerMoveEvent event) {
+    if (event.pointer != _activePointer || _mode == _ClipDragMode.none) return;
+    setState(() {
+      _dragPixels = event.position.dx - _pointerDownX;
+    });
   }
 
-  void _end() {
+  void _pointerUp(PointerUpEvent event) {
+    if (event.pointer != _activePointer || _mode == _ClipDragMode.none) return;
+    _finishPointer(commit: true);
+  }
+
+  void _pointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _activePointer) return;
+    _finishPointer(commit: false);
+  }
+
+  void _finishPointer({required bool commit}) {
     final int delta = _deltaFrames;
     final _ClipDragMode mode = _mode;
+
     setState(() {
       _mode = _ClipDragMode.none;
+      _activePointer = null;
+      _pointerDownX = 0.0;
       _dragPixels = 0.0;
     });
 
-    if (delta == 0) return;
+    if (!commit || delta == 0) return;
+
     switch (mode) {
       case _ClipDragMode.move:
         widget.onMove(math.max(0, widget.clip.atFrame + delta));
@@ -746,6 +770,20 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
       case _ClipDragMode.none:
         break;
     }
+  }
+
+  Widget _pointerRegion({
+    required _ClipDragMode mode,
+    required Widget child,
+  }) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (PointerDownEvent event) => _pointerDown(mode, event),
+      onPointerMove: _pointerMove,
+      onPointerUp: _pointerUp,
+      onPointerCancel: _pointerCancel,
+      child: child,
+    );
   }
 
   @override
@@ -768,14 +806,8 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                dragStartBehavior: DragStartBehavior.down,
-                onTap: widget.onSelect,
-                onHorizontalDragStart: (_) => _start(_ClipDragMode.move),
-                onHorizontalDragUpdate: _update,
-                onHorizontalDragEnd: (_) => _end(),
-                onHorizontalDragCancel: _end,
+              child: _pointerRegion(
+                mode: _ClipDragMode.move,
                 child: Container(
                   padding: EdgeInsets.fromLTRB(sc(9), sc(6), sc(9), sc(4)),
                   decoration: BoxDecoration(
@@ -818,13 +850,8 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
               width: sc(7),
               child: MouseRegion(
                 cursor: SystemMouseCursors.resizeLeftRight,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  dragStartBehavior: DragStartBehavior.down,
-                  onHorizontalDragStart: (_) => _start(_ClipDragMode.trimStart),
-                  onHorizontalDragUpdate: _update,
-                  onHorizontalDragEnd: (_) => _end(),
-                  onHorizontalDragCancel: _end,
+                child: _pointerRegion(
+                  mode: _ClipDragMode.trimStart,
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
@@ -840,13 +867,8 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
               width: sc(7),
               child: MouseRegion(
                 cursor: SystemMouseCursors.resizeLeftRight,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  dragStartBehavior: DragStartBehavior.down,
-                  onHorizontalDragStart: (_) => _start(_ClipDragMode.trimEnd),
-                  onHorizontalDragUpdate: _update,
-                  onHorizontalDragEnd: (_) => _end(),
-                  onHorizontalDragCancel: _end,
+                child: _pointerRegion(
+                  mode: _ClipDragMode.trimEnd,
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
