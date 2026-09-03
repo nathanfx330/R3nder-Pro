@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-    'native audio sink keeps submitted samples monotonic across flush',
+    'native audio sink drives ProjectClock and preserves cumulative samples',
     () async {
       final ProcessResult pkg = await Process.run(
         'pkg-config',
@@ -36,6 +36,7 @@ void main() {
           '-Wall',
           '-Wextra',
           '-Werror',
+          'linux/runner/project_clock.cc',
           'linux/runner/audio_sink.cc',
           'linux/runner/audio_sink_test.cc',
           ...pkgArgs,
@@ -46,7 +47,7 @@ void main() {
         expect(
           compile.exitCode,
           0,
-          reason: 'Native audio sink test failed to compile.\n'
+          reason: 'Native audio clock test failed to compile.\n'
               'stdout:\n${compile.stdout}\n'
               'stderr:\n${compile.stderr}',
         );
@@ -55,7 +56,7 @@ void main() {
         expect(
           run.exitCode,
           0,
-          reason: 'Native audio sink regression failed.\n'
+          reason: 'Native audio clock regression failed.\n'
               'stdout:\n${run.stdout}\n'
               'stderr:\n${run.stderr}',
         );
