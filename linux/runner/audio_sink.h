@@ -12,7 +12,7 @@ struct R3AudioSinkStats {
   int32_t sample_rate;
   int32_t channels;
   int32_t healthy;
-  int32_t padding;
+  int32_t draining;
 };
 
 // Creates a PulseAudio-compatible playback sink for signed 16-bit little-endian
@@ -32,10 +32,11 @@ void r3_audio_sink_destroy(void* handle);
 int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
                               int64_t byte_count);
 
-// Waits until all queued PCM has been submitted and audibly drained by the
-// server/device. The monotonic submitted sample counter remains intact. Returns
-// 1 on success, -1 on sink failure.
-int32_t r3_audio_sink_drain(void* handle);
+// Requests natural audible drain after every already-accepted PCM packet. The
+// worker performs pa_simple_drain(); Dart observes completion through the
+// draining field in R3AudioSinkStats, so the UI isolate never waits inside FFI.
+// Returns 1 when requested/already pending, -1 on sink failure.
+int32_t r3_audio_sink_request_drain(void* handle);
 
 // Drops queued and server-buffered audio while keeping the monotonic submitted
 // sample counter intact. Returns 1 on success, -1 on sink failure.
