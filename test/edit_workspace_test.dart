@@ -87,6 +87,48 @@ void main() {
     expect(find.text('V1'), findsOneWidget);
   });
 
+  testWidgets('ADD VIDEO authors source rate conform speed into CLIP',
+      (WidgetTester tester) async {
+    String latest = 'Hello\n';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1000,
+          height: 700,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 0,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+            pickVideo: () async => '/outside/spring.webm',
+            importVideo: (_) => const ImportedEditVideo(
+              authoredSource: 'video/spring.webm',
+              resolvedPath: '/workspace/video/spring.webm',
+              clipBaseId: 'spring',
+              durationFrames: 13925,
+              speedNumerator: 4,
+              speedDenominator: 5,
+              sourceFpsNumerator: 24,
+              sourceFpsDenominator: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('ADD VIDEO'));
+    await tester.pumpAndSettle();
+
+    final EditSurfaceDocument document = EditSurfaceDocument.parse(latest, 'main');
+    final clip = document.clip('V1', 'spring');
+    expect(clip.durationFrames, 13925);
+    expect(clip.speed.numerator, 4);
+    expect(clip.speed.denominator, 5);
+    expect(clip.clip.sourceFrameAtProjectOffset(30), 24);
+  });
+
   testWidgets('ADD OVERLAY creates V2 at current edit playhead',
       (WidgetTester tester) async {
     String latest = '''[EDIT:main]
