@@ -6,6 +6,7 @@
 // keeps only transient gesture state. Every completed edit is serialized back
 // through EditSurfaceDocument and returned to the caller as script text.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart'
@@ -21,6 +22,7 @@ class EditSurface extends StatefulWidget {
   final String source;
   final String editId;
   final int currentFrame;
+  final bool isPlaying;
   final int voiceFrames;
   final int musicFrames;
   final bool musicLoops;
@@ -36,6 +38,7 @@ class EditSurface extends StatefulWidget {
     required this.theme,
     required this.onSourceChanged,
     required this.onSeek,
+    this.isPlaying = false,
     this.voiceFrames = 0,
     this.musicFrames = 0,
     this.musicLoops = false,
@@ -51,12 +54,17 @@ class _EditSurfaceState extends State<EditSurface> {
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
   static final double _kPreviewHeight = sc(230);
+  static const Duration _scrubInterval = Duration(milliseconds: 30);
 
   late String _workingSource;
   String? _selectedTrackId;
   String? _selectedClipId;
   String? _error;
   double _pixelsPerFrame = 2.0;
+  bool _scrubbing = false;
+  Timer? _scrubTimer;
+  int? _pendingScrubFrame;
+  int? _lastSeekSent;
 
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
@@ -65,6 +73,7 @@ class _EditSurfaceState extends State<EditSurface> {
   void initState() {
     super.initState();
     _workingSource = widget.source;
+    _lastSeekSent = widget.currentFrame;
   }
 
   @override
@@ -74,10 +83,17 @@ class _EditSurfaceState extends State<EditSurface> {
       _workingSource = widget.source;
       _error = null;
     }
+    if (widget.currentFrame != oldWidget.currentFrame) {
+      _lastSeekSent = widget.currentFrame;
+      if (widget.isPlaying) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _followPlayhead());
+      }
+    }
   }
 
   @override
   void dispose() {
+    _scrubTimer?.cancel();
     _horizontal.dispose();
     _vertical.dispose();
     super.dispose();
@@ -242,6 +258,77 @@ class _EditSurfaceState extends State<EditSurface> {
     });
   }
 
+  int _frameFromDx(double dx, int frames) {
+    return (dx / _pixelsPerFrame).floor().clamp(0, math.max(0, frames));
+  }
+
+  void _publishPendingScrub() {
+    final int? frame = _pendingScrubFrame;
+    _pendingScrubFrame = null;
+    if (frame == null || frame == _lastSeekSent) return;
+    _lastSeekSent = frame;
+    widget.onSeek(frame);
+  }
+
+  void _scrubWindowElapsed() {
+    _scrubTimer = null;
+    if (_pendingScrubFrame == null) return;
+    _publishPendingScrub();
+    _scrubTimer = Timer(_scrubInterval, _scrubWindowElapsed);
+  }
+
+  void _queueScrub(int frame) {
+    _pendingScrubFrame = frame;
+    if (_scrubTimer != null) return;
+    _publishPendingScrub();
+    _scrubTimer = Timer(_scrubInterval, _scrubWindowElapsed);
+  }
+
+  void _startScrub(int frame) {
+    if (!_scrubbing) setState(() => _scrubbing = true);
+    _queueScrub(frame);
+  }
+
+  void _finishScrub(int frame) {
+    _pendingScrubFrame = frame;
+    _scrubTimer?.cancel();
+    _scrubTimer = null;
+    _publishPendingScrub();
+
+    // Let the parent first publish the final frame while FAST preview remains
+    // active. On the following frame we drop FAST and redraw that same parked
+    // project frame at full resolution.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrubbing) setState(() => _scrubbing = false);
+    });
+  }
+
+  void _seekOnce(int frame) {
+    _scrubTimer?.cancel();
+    _scrubTimer = null;
+    _pendingScrubFrame = null;
+    _lastSeekSent = frame;
+    widget.onSeek(frame);
+  }
+
+  void _followPlayhead() {
+    if (!mounted || !_horizontal.hasClients) return;
+    final ScrollPosition position = _horizontal.position;
+    final double viewport = position.viewportDimension;
+    if (viewport <= 0) return;
+
+    final double x = widget.currentFrame * _pixelsPerFrame;
+    final double leftGuard = position.pixels + viewport * 0.12;
+    final double rightGuard = position.pixels + viewport * 0.82;
+    if (x >= leftGuard && x <= rightGuard) return;
+
+    final double target =
+        (x - viewport * 0.28).clamp(0.0, position.maxScrollExtent);
+    if ((target - position.pixels).abs() > 1.0) {
+      _horizontal.jumpTo(target);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final EditSurfaceDocument? document = _parse();
@@ -282,6 +369,7 @@ class _EditSurfaceState extends State<EditSurface> {
             source: _workingSource,
             editId: widget.editId,
             currentFrame: widget.currentFrame,
+            fastPreview: _scrubbing || widget.isPlaying,
             theme: widget.theme,
           ),
         ),
@@ -317,66 +405,74 @@ class _EditSurfaceState extends State<EditSurface> {
                             child: SingleChildScrollView(
                               controller: _horizontal,
                               scrollDirection: Axis.horizontal,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent,
-                                onTapDown: (TapDownDetails details) {
-                                  final int frame =
-                                      (details.localPosition.dx /
-                                              _pixelsPerFrame)
-                                          .floor()
-                                          .clamp(
-                                            0,
-                                            math.max(0, contentFrames),
-                                          );
-                                  widget.onSeek(frame);
-                                },
-                                child: SizedBox(
-                                  width: timelineWidth,
-                                  height: timelineContentHeight,
-                                  child: Stack(
-                                    children: [
-                                      Column(
-                                        children: [
-                                          _buildRuler(
-                                            timelineWidth,
-                                            contentFrames,
+                              child: SizedBox(
+                                width: timelineWidth,
+                                height: timelineContentHeight,
+                                child: Stack(
+                                  children: [
+                                    Column(
+                                      children: [
+                                        _buildRuler(
+                                          timelineWidth,
+                                          contentFrames,
+                                        ),
+                                        for (final EditSurfaceTrack track
+                                            in tracks)
+                                          _buildTrackLane(track),
+                                        if (widget.voiceFrames > 0)
+                                          _buildAudioLane(
+                                            widget.voiceFrames,
+                                            'VOICE',
+                                            R3Theme.ribbonWindow,
                                           ),
-                                          for (final EditSurfaceTrack track
-                                              in tracks)
-                                            _buildTrackLane(track),
-                                          if (widget.voiceFrames > 0)
-                                            _buildAudioLane(
-                                              widget.voiceFrames,
-                                              'VOICE',
-                                              R3Theme.ribbonWindow,
+                                        if (widget.musicFrames > 0)
+                                          _buildAudioLane(
+                                            math.min(
+                                              widget.musicFrames,
+                                              document.projectFrameCount,
                                             ),
-                                          if (widget.musicFrames > 0)
-                                            _buildAudioLane(
-                                              math.min(
-                                                widget.musicFrames,
-                                                document.projectFrameCount,
+                                            widget.musicLoops
+                                                ? 'MUSIC LOOP'
+                                                : 'MUSIC',
+                                            R3Theme.ribbonMedia,
+                                          ),
+                                      ],
+                                    ),
+                                    Positioned(
+                                      left: widget.currentFrame *
+                                              _pixelsPerFrame -
+                                          sc(4),
+                                      top: 0,
+                                      bottom: 0,
+                                      child: IgnorePointer(
+                                        child: SizedBox(
+                                          width: sc(8),
+                                          child: Stack(
+                                            alignment: Alignment.topCenter,
+                                            children: [
+                                              Positioned(
+                                                top: 0,
+                                                bottom: 0,
+                                                child: Container(
+                                                  width: 2,
+                                                  color: widget.theme.accent,
+                                                ),
                                               ),
-                                              widget.musicLoops
-                                                  ? 'MUSIC LOOP'
-                                                  : 'MUSIC',
-                                              R3Theme.ribbonMedia,
-                                            ),
-                                        ],
-                                      ),
-                                      Positioned(
-                                        left: widget.currentFrame *
-                                            _pixelsPerFrame,
-                                        top: 0,
-                                        bottom: 0,
-                                        child: IgnorePointer(
-                                          child: Container(
-                                            width: 1,
-                                            color: widget.theme.accent,
+                                              Container(
+                                                width: sc(7),
+                                                height: sc(7),
+                                                decoration: BoxDecoration(
+                                                  color: widget.theme.accent,
+                                                  borderRadius:
+                                                      BorderRadius.circular(1),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -540,6 +636,8 @@ class _EditSurfaceState extends State<EditSurface> {
                   value: _pixelsPerFrame,
                   onChanged: (double value) {
                     setState(() => _pixelsPerFrame = value);
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _followPlayhead());
                   },
                 ),
               ),
@@ -610,14 +708,33 @@ class _EditSurfaceState extends State<EditSurface> {
   }
 
   Widget _buildRuler(double width, int frames) {
-    return SizedBox(
-      height: _kRulerHeight,
-      child: CustomPaint(
-        size: Size(width, _kRulerHeight),
-        painter: _EditRulerPainter(
-          pixelsPerFrame: _pixelsPerFrame,
-          frames: frames,
-          theme: widget.theme,
+    return GestureDetector(
+      key: const ValueKey<String>('edit-timeline-scrub'),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (TapDownDetails details) {
+        _seekOnce(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragStart: (DragStartDetails details) {
+        _startScrub(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragUpdate: (DragUpdateDetails details) {
+        _queueScrub(_frameFromDx(details.localPosition.dx, frames));
+      },
+      onHorizontalDragEnd: (_) {
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? widget.currentFrame);
+      },
+      onHorizontalDragCancel: () {
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? widget.currentFrame);
+      },
+      child: SizedBox(
+        height: _kRulerHeight,
+        child: CustomPaint(
+          size: Size(width, _kRulerHeight),
+          painter: _EditRulerPainter(
+            pixelsPerFrame: _pixelsPerFrame,
+            frames: frames,
+            theme: widget.theme,
+          ),
         ),
       ),
     );
