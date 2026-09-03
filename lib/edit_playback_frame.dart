@@ -1,11 +1,12 @@
 // ./lib/edit_playback_frame.dart
 //
-// Lightweight EDIT playback frame channel.
+// Lightweight EDIT playback presentation channels.
 //
-// ProjectClock remains the timing authority. EditWorkspace publishes the frame
-// sampled at Flutter vsync through this stable listenable so descendants that
-// need every presentation frame can listen directly without forcing the whole
-// workspace through setState first.
+// ProjectClock remains the timing authority. EditWorkspace publishes two
+// stable listenables sampled at Flutter vsync: an integer frame channel for
+// authored/edit semantics and small readouts, plus an exact rational position
+// channel for presentation that must remain smooth between project frames.
+// Neither channel forces the workspace itself through setState on every tick.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -31,28 +32,76 @@ class EditPlaybackFrameState {
   int get hashCode => Object.hash(frame, isPlaying);
 }
 
-/// Carries the stable playback listenable through EditSurface without making
-/// every value change an inherited-widget rebuild. Consumers attach directly
-/// to [listenable].
+/// Exact realtime presentation position. Canonical time remains rational; the
+/// derived double exists only for UI paint coordinates and is never fed back
+/// into ProjectClock, authored clip geometry, or export.
+@immutable
+class EditPlaybackExactState {
+  final int frame;
+  final int phaseNumerator;
+  final int phaseDenominator;
+  final bool isPlaying;
+
+  const EditPlaybackExactState({
+    required this.frame,
+    required this.phaseNumerator,
+    required this.phaseDenominator,
+    required this.isPlaying,
+  }) : assert(phaseDenominator > 0);
+
+  double get exactFrame => frame + phaseNumerator / phaseDenominator;
+
+  @override
+  bool operator ==(Object other) {
+    return other is EditPlaybackExactState &&
+        other.frame == frame &&
+        other.phaseNumerator == phaseNumerator &&
+        other.phaseDenominator == phaseDenominator &&
+        other.isPlaying == isPlaying;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        frame,
+        phaseNumerator,
+        phaseDenominator,
+        isPlaying,
+      );
+}
+
+/// Carries stable playback listenables through EditSurface without making
+/// value changes inherited-widget rebuilds. Consumers attach directly to the
+/// channel they need.
 class EditPlaybackFrameScope extends InheritedWidget {
   final ValueListenable<EditPlaybackFrameState> listenable;
+  final ValueListenable<EditPlaybackExactState> exactListenable;
 
   const EditPlaybackFrameScope({
     super.key,
     required this.listenable,
+    required this.exactListenable,
     required super.child,
   });
+
+  static EditPlaybackFrameScope? _scope(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<EditPlaybackFrameScope>();
+  }
 
   static ValueListenable<EditPlaybackFrameState>? maybeOf(
     BuildContext context,
   ) {
-    return context
-        .dependOnInheritedWidgetOfExactType<EditPlaybackFrameScope>()
-        ?.listenable;
+    return _scope(context)?.listenable;
+  }
+
+  static ValueListenable<EditPlaybackExactState>? maybeExactOf(
+    BuildContext context,
+  ) {
+    return _scope(context)?.exactListenable;
   }
 
   @override
   bool updateShouldNotify(EditPlaybackFrameScope oldWidget) {
-    return !identical(oldWidget.listenable, listenable);
+    return !identical(oldWidget.listenable, listenable) ||
+        !identical(oldWidget.exactListenable, exactListenable);
   }
 }
