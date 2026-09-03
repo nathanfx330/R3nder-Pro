@@ -1,14 +1,12 @@
 // ./lib/edit_video_preview.dart
 //
-// Live MLT preview for the source-backed EDIT surface.
+// Live MLT frame preview for the source-backed EDIT surface.
 //
-// The normal single-clip path follows the architecture already proven in
-// MLT Player: MLT renders continuously into a native external Flutter texture.
-// Dart does not pull RGBA frames through FFI while the playhead moves.
-//
-// R3nder still owns project time and edit geometry. The native preview is only
-// a display follower. Multi-layer overlaps remain on the deterministic CPU
-// compositor until that edit graph is moved to the same native texture path.
+// R3nder owns project time, edit geometry, layer order, and final pixels. MLT
+// owns persistent source decoders only. Parked frames use the exact render path.
+// While the playhead is moving, native decoders run ahead on worker threads and
+// this widget only polls completed frames. A pending decode holds the previous
+// complete image instead of blocking the UI isolate or audio feeder.
 
 import 'dart:async';
 import 'dart:io';
@@ -18,10 +16,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
-import 'edit_native_preview.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
-import 'engine.dart';
 import 'media_layer.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
@@ -83,12 +79,11 @@ class EditVideoPreview extends StatefulWidget {
   final R3Theme theme;
   final bool isPlaying;
 
-  /// Used only by the CPU fallback. Native texture playback stays on the
-  /// source-profile render path while moving.
+  /// Moving preview uses a fixed smaller decode size. It changes only pixel
+  /// cost, never project-time selection or source-frame mapping.
   final bool fastPreview;
 
-  /// Optional seams for deterministic widget tests. Supplying either one
-  /// deliberately selects the synchronous compositor path.
+  /// Optional seams for widget tests and alternate decoder experiments.
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
@@ -111,18 +106,7 @@ class EditVideoPreview extends StatefulWidget {
 class _EditVideoPreviewState extends State<EditVideoPreview> {
   static const ui.Size _fullDecodeSize = ui.Size(960, 540);
   static const ui.Size _fastDecodeSize = ui.Size(480, 270);
-  static const Duration _texturePollInterval = Duration(milliseconds: 50);
-
-  NativeEditPreview? _native;
-  Timer? _texturePoll;
-  int _textureId = -1;
-  String? _nativeResolvedSource;
-  String? _nativeClipKey;
-  int? _nativeSourceFrame;
-  bool _nativePlaying = false;
-  bool _showNative = false;
-  EditSurfaceClip? _nativeClip;
-  String? _nativeUnavailable;
+  static const Duration _pendingRetryDelay = Duration(milliseconds: 6);
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -135,104 +119,45 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   int _epoch = 0;
   int _requestSerial = 0;
   bool _scheduled = false;
-
-  bool get _hasTestSeam => widget.backend != null || widget.resolveSource != null;
+  Timer? _pendingRetry;
 
   @override
   void initState() {
     super.initState();
-    _initializeNativeIfAvailable();
     _scheduleRender();
   }
 
   @override
   void didUpdateWidget(covariant EditVideoPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    final bool pipelineChanged = oldWidget.backend != widget.backend ||
+    final bool sourceChanged = oldWidget.source != widget.source ||
+        oldWidget.editId != widget.editId ||
+        oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
-    final bool authoredEditChanged = oldWidget.source != widget.source ||
-        oldWidget.editId != widget.editId;
-
-    if (pipelineChanged) {
-      _disposeSynchronousLayer();
-      _closeNativeSource();
-      _native = null;
-      _nativeUnavailable = null;
-      _initializeNativeIfAvailable();
-      _epoch++;
-    } else if (authoredEditChanged) {
-      _disposeSynchronousLayer();
-      _nativeClipKey = null;
-      _nativeSourceFrame = null;
+    if (sourceChanged) {
+      _pendingRetry?.cancel();
+      _disposeLayer();
       _epoch++;
     } else if (oldWidget.currentFrame != widget.currentFrame ||
         oldWidget.fastPreview != widget.fastPreview ||
         oldWidget.isPlaying != widget.isPlaying) {
+      // Epoch invalidates late presentation, not the decoder or its read-ahead.
       _epoch++;
     }
-
     _scheduleRender();
   }
 
   @override
   void dispose() {
     _requestSerial++;
-    _texturePoll?.cancel();
-    _disposeSynchronousLayer();
+    _pendingRetry?.cancel();
+    _pendingRetry = null;
+    _disposeLayer();
     _replaceImage(null);
-    _native?.close();
-    _native = null;
     super.dispose();
   }
 
-  void _initializeNativeIfAvailable() {
-    if (_hasTestSeam || !NativeEditPreview.isSupported) return;
-    try {
-      _native = NativeEditPreview();
-      _refreshTextureId();
-    } catch (error) {
-      _native = null;
-      _nativeUnavailable = '$error';
-    }
-  }
-
-  void _refreshTextureId() {
-    _texturePoll?.cancel();
-    _texturePoll = null;
-    final NativeEditPreview? native = _native;
-    if (native == null || !mounted) return;
-
-    try {
-      final int next = native.textureId;
-      if (next > 0) {
-        if (_textureId != next) setState(() => _textureId = next);
-        return;
-      }
-    } catch (error) {
-      _nativeUnavailable = '$error';
-      return;
-    }
-
-    _texturePoll = Timer(_texturePollInterval, _refreshTextureId);
-  }
-
-  void _closeNativeSource() {
-    final NativeEditPreview? native = _native;
-    if (native != null && _nativeResolvedSource != null) {
-      try {
-        native.close();
-      } catch (_) {}
-    }
-    _nativeResolvedSource = null;
-    _nativeClipKey = null;
-    _nativeSourceFrame = null;
-    _nativePlaying = false;
-    _nativeClip = null;
-    _showNative = false;
-  }
-
-  void _disposeSynchronousLayer() {
+  void _disposeLayer() {
     _compositor?.dispose();
     _compositor = null;
     _layer?.dispose();
@@ -255,7 +180,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return existing;
     }
 
-    _disposeSynchronousLayer();
+    _disposeLayer();
     final EditDocumentModel model = EditDocumentModel.parse(widget.source);
     final EditSurfaceDocument surface =
         EditSurfaceDocument.parse(widget.source, widget.editId);
@@ -281,6 +206,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     return compositor;
   }
 
+  bool get _moving => widget.isPlaying || widget.fastPreview;
+
   void _scheduleRender() {
     if (_scheduled) return;
     _scheduled = true;
@@ -291,177 +218,56 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     });
   }
 
+  void _schedulePendingRetry() {
+    if (_pendingRetry != null || !mounted) return;
+    _pendingRetry = Timer(_pendingRetryDelay, () {
+      _pendingRetry = null;
+      if (mounted) _scheduleRender();
+    });
+  }
+
   Future<void> _renderCurrent() async {
-    if (!_hasTestSeam && _native != null) {
-      final EditSurfaceClip? nativeClip = _singleNativeClipAtCurrentFrame();
-      if (nativeClip != null) {
-        ++_requestSerial;
-        _disposeSynchronousLayer();
-        _replaceImage(null);
-        _driveNative(nativeClip);
-        return;
-      }
-    }
-
-    if (_showNative || _nativePlaying) {
-      final NativeEditPreview? native = _native;
-      if (native != null && _nativeSourceFrame != null) {
-        try {
-          native.pauseAt(_nativeSourceFrame!);
-        } catch (_) {}
-      }
-      _nativePlaying = false;
-      _showNative = false;
-      _nativeClip = null;
-    }
-
-    await _renderSynchronous();
-  }
-
-  EditSurfaceClip? _singleNativeClipAtCurrentFrame() {
-    try {
-      final EditSurfaceDocument document =
-          EditSurfaceDocument.parse(widget.source, widget.editId);
-      final List<EditSurfaceClip> active = <EditSurfaceClip>[];
-
-      for (final EditSurfaceTrack track in document.tracks) {
-        if (!RegExp(r'^V\d+$').hasMatch(track.id)) continue;
-        for (final EditSurfaceClip clip in track.clips) {
-          if (widget.currentFrame >= clip.atFrame &&
-              widget.currentFrame < clip.endFrameExclusive) {
-            active.add(clip);
-          }
-        }
-      }
-
-      if (active.length != 1) return null;
-      final EditSurfaceClip clip = active.single;
-      if (!clip.transition.isNone || clip.source.startsWith('EDIT.')) return null;
-      return clip;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  void _driveNative(EditSurfaceClip clip) {
-    final NativeEditPreview? native = _native;
-    if (native == null) return;
-
-    final String resolved;
-    try {
-      resolved = resolveWorkspaceMediaSource(clip.source);
-    } catch (error) {
-      _showNativeError('OFFLINE\n${clip.source}\n$error');
-      return;
-    }
-
-    final int projectOffset = widget.currentFrame - clip.atFrame;
-    final int sourceFrame = clip.clip.sourceFrameAtProjectOffset(projectOffset);
-    final String clipKey = '${clip.trackId}:${clip.id}:${clip.source}:'
-        '${clip.speed.numerator}/${clip.speed.denominator}';
-
-    try {
-      if (_nativeResolvedSource != resolved) {
-        native.close();
-        if (!native.open(resolved)) {
-          _showNativeError('VIDEO PREVIEW UNAVAILABLE\n${native.lastError}');
-          return;
-        }
-        _nativeResolvedSource = resolved;
-        _nativeClipKey = null;
-        _nativeSourceFrame = null;
-        _nativePlaying = false;
-        _refreshTextureId();
-      }
-
-      if (widget.isPlaying) {
-        // Once playback starts, do not seek on every ProjectClock tick. MLT's
-        // consumer renders and feeds the texture continuously. R3nder anchors
-        // it only at play start or a canonical clip/speed boundary.
-        if (!_nativePlaying || _nativeClipKey != clipKey) {
-          if (!native.playFrom(
-            sourceFrame: sourceFrame,
-            projectRate: RationalFrameRate(engineFps),
-            clipSpeed: clip.speed,
-          )) {
-            _showNativeError('VIDEO PLAYBACK UNAVAILABLE\n${native.lastError}');
-            return;
-          }
-          _nativePlaying = true;
-          _nativeClipKey = clipKey;
-          _nativeSourceFrame = sourceFrame;
-        }
-      } else {
-        final bool needsSeek = _nativePlaying ||
-            _nativeClipKey != clipKey ||
-            _nativeSourceFrame != sourceFrame;
-        if (needsSeek) {
-          final bool ok = _nativePlaying
-              ? native.pauseAt(sourceFrame)
-              : native.seekFrame(sourceFrame);
-          if (!ok) {
-            _showNativeError('VIDEO SEEK UNAVAILABLE\n${native.lastError}');
-            return;
-          }
-        }
-        _nativePlaying = false;
-        _nativeClipKey = clipKey;
-        _nativeSourceFrame = sourceFrame;
-      }
-    } catch (error) {
-      _showNativeError('VIDEO PREVIEW UNAVAILABLE\n$error');
-      return;
-    }
-
-    final bool changed = !_showNative ||
-        _nativeClip?.trackId != clip.trackId ||
-        _nativeClip?.id != clip.id ||
-        _status.isNotEmpty;
-    _showNative = true;
-    _nativeClip = clip;
-    _status = '';
-    _frame = null;
-    _contributorCount = 1;
-    if (changed && mounted) setState(() {});
-  }
-
-  void _showNativeError(String message) {
-    _nativePlaying = false;
-    _showNative = false;
-    _nativeClip = null;
-    _status = message;
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _renderSynchronous() async {
     final int serial = ++_requestSerial;
     final int requestEpoch = _epoch;
     final ProjectTime time = ProjectTime(
       frame: widget.currentFrame,
       epoch: requestEpoch,
-      mode: ProjectClockMode.scrub,
+      mode: widget.isPlaying
+          ? ProjectClockMode.monotonic
+          : ProjectClockMode.scrub,
     );
     final ui.Size decodeSize =
-        widget.fastPreview ? _fastDecodeSize : _fullDecodeSize;
+        _moving ? _fastDecodeSize : _fullDecodeSize;
 
     EditVideoCompositeResult result;
     try {
-      result = _ensureCompositor().render(widget.editId, time, decodeSize);
+      final EditVideoCompositor compositor = _ensureCompositor();
+      result = _moving
+          ? compositor.renderAvailable(widget.editId, time, decodeSize)
+          : compositor.render(widget.editId, time, decodeSize);
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
         _replaceImage(null);
         _frame = null;
         _contributorCount = 0;
-        final String nativeNote = _nativeUnavailable == null
-            ? ''
-            : '\nNATIVE TEXTURE UNAVAILABLE\n$_nativeUnavailable';
-        _status = 'VIDEO PREVIEW UNAVAILABLE\n$error$nativeNote';
+        _status = 'VIDEO PREVIEW UNAVAILABLE\n$error';
       });
       return;
     }
 
     if (!mounted || serial != _requestSerial || requestEpoch != _epoch) return;
+
+    if (result.hasPending) {
+      // Keep the last complete composite on screen. This is frame dropping, not
+      // clock slowing: ProjectClock continues and the worker receives the next
+      // target even if this exact picture misses its presentation deadline.
+      if (_image == null && _status != 'DECODE AHEAD') {
+        setState(() => _status = 'DECODE AHEAD');
+      }
+      _schedulePendingRetry();
+      return;
+    }
 
     if (!result.hasImage || result.rgba == null) {
       final MediaFrame? problem =
@@ -482,12 +288,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     }
 
     final MediaFrame? top = result.topFrame;
-    setState(() {
-      _frame = top;
-      _contributorCount = result.contributors.length;
-      _status = 'COMPOSITING FRAME';
-    });
-
     final ui.Image decoded;
     try {
       decoded = await _decodeRgba(
@@ -499,7 +299,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
-        _replaceImage(null);
         _frame = top;
         _status = 'FRAME CONVERSION FAILED\n$error';
       });
@@ -541,33 +340,13 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   Widget build(BuildContext context) {
     final ui.Image? image = _image;
     final MediaFrame? frame = _frame;
-    final EditSurfaceClip? nativeClip = _nativeClip;
-    final int? nativeExpectedSourceFrame = nativeClip == null
-        ? null
-        : nativeClip.clip.sourceFrameAtProjectOffset(
-            widget.currentFrame - nativeClip.atFrame,
-          );
 
     return Container(
       color: Colors.black,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (_showNative && _textureId > 0)
-            Center(
-              child: AspectRatio(
-                // The first native parity gate targets the same 16:9 source
-                // used to expose the playback regression. Native source-size
-                // getters are the next small presentation cleanup, not part of
-                // the transport path itself.
-                aspectRatio: 16 / 9,
-                child: Texture(
-                  textureId: _textureId,
-                  filterQuality: FilterQuality.low,
-                ),
-              ),
-            )
-          else if (image != null)
+          if (image != null)
             RawImage(
               image: image,
               fit: BoxFit.contain,
@@ -578,9 +357,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               child: Padding(
                 padding: EdgeInsets.all(sc(18)),
                 child: Text(
-                  _showNative && _textureId <= 0
-                      ? 'WAITING FOR NATIVE VIDEO TEXTURE'
-                      : _status,
+                  _status,
                   textAlign: TextAlign.center,
                   style: widget.theme.micro.copyWith(color: R3Theme.textDim),
                 ),
@@ -593,20 +370,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               padding: EdgeInsets.symmetric(horizontal: sc(6), vertical: sc(3)),
               color: Colors.black.withValues(alpha: 0.72),
               child: Text(
-                _showNative && nativeClip != null
-                    ? '${nativeClip.trackId} / ${nativeClip.id}   '
+                frame == null
+                    ? 'EDIT ${widget.editId}  F${widget.currentFrame}'
+                    : '${frame.trackId} / ${frame.clipId}   '
                         'P${widget.currentFrame}   '
-                        'SRC ${nativeExpectedSourceFrame ?? 0}   '
-                        'LAYERS 1   NATIVE'
-                        '${widget.isPlaying ? '   PLAY' : ''}'
-                    : frame == null
-                        ? 'EDIT ${widget.editId}  F${widget.currentFrame}'
-                        : '${frame.trackId} / ${frame.clipId}   '
-                            'P${widget.currentFrame}   '
-                            'SRC ${frame.requestedSourceFrame}'
-                            '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
-                            'LAYERS $_contributorCount   CPU'
-                            '${widget.fastPreview ? '   FAST' : ''}',
+                        'SRC ${frame.requestedSourceFrame}'
+                        '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
+                        'LAYERS $_contributorCount'
+                        '${_moving ? '   ASYNC' : ''}',
                 style: widget.theme.micro.copyWith(color: R3Theme.textMid),
               ),
             ),
