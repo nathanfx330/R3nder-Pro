@@ -5,15 +5,19 @@
 // The script remains canonical. This widget reparses authored EDIT geometry
 // when source changes, then keeps one MediaLayer alive while the playhead
 // scrubs so persistent MLT producers survive forwards and backwards seeks.
-// Project time is supplied explicitly. The decoder never owns the playhead.
+// MLT decodes source frames. EditVideoCompositor owns track order and pixels.
+// Project time is supplied explicitly. No decoder owns the playhead.
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
+import 'edit_surface_model.dart';
+import 'edit_video_compositor.dart';
 import 'media_layer.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
@@ -24,15 +28,11 @@ bool _isAbsolutePath(String path) {
   return RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path);
 }
 
-/// Resolves an authored CLIP source against the active R3nder workspace.
-///
-/// Relative paths are portable project paths. `video/intro.mp4` means
-/// `<workspace>/video/intro.mp4`. Absolute paths are accepted for diagnostic
-/// and development use, but portable scripts should stay workspace-relative.
+/// Resolves an authored CLIP or luma-mask source against the active workspace.
 String resolveWorkspaceMediaSource(String source) {
   final String trimmed = source.trim();
   if (trimmed.isEmpty) {
-    throw const FileSystemException('CLIP source path is empty.');
+    throw const FileSystemException('Media source path is empty.');
   }
   if (_isAbsolutePath(trimmed)) return trimmed;
 
@@ -41,7 +41,7 @@ String resolveWorkspaceMediaSource(String source) {
   final String? workspace = session.workspace;
   if (workspace == null || workspace.trim().isEmpty) {
     throw FileSystemException(
-      'No active workspace is available for this CLIP source.',
+      'No active workspace is available for this media source.',
       trimmed,
     );
   }
@@ -52,13 +52,9 @@ String resolveWorkspaceMediaSource(String source) {
   return File('$workspace${Platform.pathSeparator}$portable').path;
 }
 
-/// Chooses the opaque picture shown by the first live edit preview.
-///
-/// V tracks follow familiar compositor order: V2 is above V1, V3 above V2,
-/// and so on. Unknown track names fall back to authored result order. This is
-/// deliberately not transition compositing. Crossfades and luma are authored
-/// already, but combining two decoded pictures belongs to the compositor
-/// slice, not to decoder plumbing.
+/// Retained as a small public ordering helper for tests and diagnostics.
+/// Runtime presentation now uses EditVideoCompositor instead of discarding
+/// every active frame except this one.
 MediaFrame? selectVisibleEditFrame(List<MediaFrame> frames) {
   MediaFrame? selected;
   int selectedRank = -1;
@@ -106,10 +102,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   static const ui.Size _decodeSize = ui.Size(960, 540);
 
   MediaLayer? _layer;
+  EditVideoCompositor? _compositor;
   String? _layerSource;
   String? _layerEditId;
   ui.Image? _image;
   MediaFrame? _frame;
+  int _contributorCount = 0;
   String _status = 'NO VIDEO AT THIS FRAME';
   int _epoch = 0;
   int _requestSerial = 0;
@@ -132,8 +130,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       _disposeLayer();
       _epoch++;
     } else if (oldWidget.currentFrame != widget.currentFrame) {
-      // A scrub invalidates an in-flight presentation without throwing away
-      // persistent source decoders. This is the M9 epoch rule at the UI edge.
+      // Scrubbing invalidates presentation without discarding persistent
+      // source decoders. The decoder cache therefore survives both forward
+      // and backward ProjectTime requests.
       _epoch++;
     }
     _scheduleRender();
@@ -148,6 +147,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   }
 
   void _disposeLayer() {
+    _compositor?.dispose();
+    _compositor = null;
     _layer?.dispose();
     _layer = null;
     _layerSource = null;
@@ -160,8 +161,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (old != null && !identical(old, next)) old.dispose();
   }
 
-  MediaLayer _ensureLayer() {
-    final MediaLayer? existing = _layer;
+  EditVideoCompositor _ensureCompositor() {
+    final EditVideoCompositor? existing = _compositor;
     if (existing != null &&
         _layerSource == widget.source &&
         _layerEditId == widget.editId) {
@@ -170,15 +171,28 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     _disposeLayer();
     final EditDocumentModel model = EditDocumentModel.parse(widget.source);
-    final MediaLayer next = MediaLayer(
+    final EditSurfaceDocument surface =
+        EditSurfaceDocument.parse(widget.source, widget.editId);
+    final MediaDecoderBackend backend = widget.backend ?? NativeMltMediaBackend();
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final MediaLayer layer = MediaLayer(
       editDocument: model,
-      backend: widget.backend ?? NativeMltMediaBackend(),
-      resolveSource: widget.resolveSource ?? resolveWorkspaceMediaSource,
+      backend: backend,
+      resolveSource: resolver,
     );
-    _layer = next;
+    final EditVideoCompositor compositor = EditVideoCompositor(
+      document: surface,
+      mediaLayer: layer,
+      backend: backend,
+      resolveSource: resolver,
+    );
+
+    _layer = layer;
+    _compositor = compositor;
     _layerSource = widget.source;
     _layerEditId = widget.editId;
-    return next;
+    return compositor;
   }
 
   void _scheduleRender() {
@@ -200,15 +214,15 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       mode: ProjectClockMode.scrub,
     );
 
-    MediaRenderResult result;
+    EditVideoCompositeResult result;
     try {
-      final MediaLayer layer = _ensureLayer();
-      result = layer.render(widget.editId, time, _decodeSize);
+      result = _ensureCompositor().render(widget.editId, time, _decodeSize);
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
         _replaceImage(null);
         _frame = null;
+        _contributorCount = 0;
         _status = 'VIDEO PREVIEW UNAVAILABLE\n$error';
       });
       return;
@@ -216,12 +230,13 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     if (!mounted || serial != _requestSerial || requestEpoch != _epoch) return;
 
-    final MediaFrame? chosen = selectVisibleEditFrame(result.frames);
-    if (chosen == null || chosen.rgba == null) {
-      final MediaFrame? problem = result.frames.isEmpty ? null : result.frames.last;
+    if (!result.hasImage || result.rgba == null) {
+      final MediaFrame? problem =
+          result.mediaFrames.isEmpty ? null : result.mediaFrames.last;
       setState(() {
         _replaceImage(null);
         _frame = problem;
+        _contributorCount = 0;
         if (problem == null) {
           _status = 'NO VIDEO AT FRAME ${widget.currentFrame}';
         } else if (problem.status == MediaFrameStatus.nestedEditPending) {
@@ -233,23 +248,26 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // Publish the decoded frame identity immediately. Converting raw RGBA into
-    // a ui.Image is asynchronous, but the source mapping is already known and
-    // should not be hidden behind that presentation-only conversion. This also
-    // makes the preview metadata deterministic under fast scrubbing.
+    final MediaFrame? top = result.topFrame;
     setState(() {
-      _frame = chosen;
-      _status = 'DECODING FRAME';
+      _frame = top;
+      _contributorCount = result.contributors.length;
+      _status = 'COMPOSITING FRAME';
     });
 
     final ui.Image decoded;
     try {
-      decoded = await _decodeRgba(chosen);
+      decoded = await _decodeRgba(
+        result.rgba!,
+        result.width,
+        result.height,
+        result.stride,
+      );
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       setState(() {
         _replaceImage(null);
-        _frame = chosen;
+        _frame = top;
         _status = 'FRAME CONVERSION FAILED\n$error';
       });
       return;
@@ -262,20 +280,26 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     setState(() {
       _replaceImage(decoded);
-      _frame = chosen;
+      _frame = top;
+      _contributorCount = result.contributors.length;
       _status = '';
     });
   }
 
-  Future<ui.Image> _decodeRgba(MediaFrame frame) {
+  Future<ui.Image> _decodeRgba(
+    Uint8List rgba,
+    int width,
+    int height,
+    int stride,
+  ) {
     final Completer<ui.Image> completer = Completer<ui.Image>();
     ui.decodeImageFromPixels(
-      frame.rgba!,
-      frame.width,
-      frame.height,
+      rgba,
+      width,
+      height,
       ui.PixelFormat.rgba8888,
       completer.complete,
-      rowBytes: frame.stride,
+      rowBytes: stride,
     );
     return completer.future;
   }
@@ -319,7 +343,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                     : '${frame.trackId} / ${frame.clipId}   '
                         'P${widget.currentFrame}   '
                         'SRC ${frame.requestedSourceFrame}'
-                        '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}',
+                        '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
+                        'LAYERS $_contributorCount',
                 style: widget.theme.micro.copyWith(color: R3Theme.textMid),
               ),
             ),
