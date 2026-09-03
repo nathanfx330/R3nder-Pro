@@ -1,12 +1,13 @@
 // ./lib/audio_sink.dart
 //
-// Linux native PCM sink for preview playback and the future AUDIO ProjectClock.
+// Linux native PCM sink for preview playback and AUDIO ProjectClock authority.
 //
 // FFmpeg remains the decoder/mixer. This sink owns blocking PulseAudio writes
-// on its own worker thread and exposes only bounded enqueue, drain/flush, and
-// monotonic submitted-sample plus measured-latency counters to Dart. Project
-// time does not consume those counters yet; this transport migration is kept
-// separate from the later AUDIO authority handoff.
+// on its own worker thread and exposes bounded enqueue plus drain/flush state
+// to Dart. The native worker also advances ProjectClock's cumulative submitted
+// sample counter, supplies measured device latency, and performs the
+// SCRUB -> AUDIO -> MONOTONIC handoffs without making Flutter's ticker the
+// time source.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -133,8 +134,8 @@ class NativeAudioSink {
   }
 
   /// Requests natural audible completion after all already accepted PCM. The
-  /// worker performs the blocking drain; callers poll [stats].draining rather
-  /// than blocking Flutter inside an FFI call.
+  /// worker performs the blocking drain and ProjectClock tail handoff; callers
+  /// poll [stats].draining rather than blocking Flutter inside an FFI call.
   void requestDrain() {
     _checkAlive();
     if (_native.requestDrain(_handle) < 0) {
@@ -142,8 +143,9 @@ class NativeAudioSink {
     }
   }
 
-  /// Drops queued and server-buffered audio. The native submitted-sample
-  /// counter deliberately remains monotonic across this operation.
+  /// Drops queued and server-buffered audio. The native ProjectClock sample
+  /// counter remains cumulative, and active AUDIO authority is first reanchored
+  /// onto the current audible ProjectTime.
   void flush() {
     _checkAlive();
     if (_native.flush(_handle) < 0) {
@@ -188,6 +190,9 @@ final class _NativeAudioSinkStats extends Struct {
 
   @Int32()
   external int draining;
+
+  @Int32()
+  external int padding;
 }
 
 typedef _CreateNative = Pointer<Void> Function(
