@@ -8,12 +8,11 @@
 // and drive EDIT playback from ProjectClock. There is no timeline database
 // here. Durable state remains authored source; playback state is transient.
 //
-// Playback intentionally does not publish every advancing frame back through
-// EditorScreen. The native MLT texture renders continuously on its own threads,
-// while this workspace polls ProjectClock at the same 100 ms cadence proven by
-// MLT Player. The local playhead can therefore move without rebuilding the
-// entire editor around every video frame. The parent receives the exact parked
-// frame when playback pauses, ends, or the user explicitly seeks.
+// Playback samples ProjectClock at the project frame cadence, but those local
+// playhead updates are not republished through EditorScreen. The video preview
+// receives the exact current project frame and uses native nonblocking decoder
+// workers, while the parent receives only the parked frame on pause, end, or an
+// explicit seek.
 
 import 'dart:async';
 
@@ -68,7 +67,9 @@ class EditWorkspace extends StatefulWidget {
 }
 
 class _EditWorkspaceState extends State<EditWorkspace> {
-  static const Duration _playbackPollInterval = Duration(milliseconds: 100);
+  static const Duration _playbackPollInterval = Duration(
+    microseconds: 1000000 ~/ engineFps,
+  );
 
   late String _workingSource;
   late int _displayFrame;
@@ -217,10 +218,9 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     if (frame == _lastPolledPlaybackFrame) return;
     _lastPolledPlaybackFrame = frame;
 
-    // Local only. This is the important separation from the old playback
-    // loop: EditorScreen is not told about every advancing frame, so the
-    // native texture is not competing with a full editor rebuild at video
-    // cadence.
+    // Local only. EditorScreen is not told about every advancing frame, so the
+    // parent editor tree remains outside the playback hot path. EditSurface and
+    // its monitor still receive project frames at the real project cadence.
     setState(() => _displayFrame = frame);
   }
 
