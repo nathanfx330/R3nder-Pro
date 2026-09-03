@@ -3,11 +3,11 @@
 // Live MLT frame preview for the source-backed EDIT surface.
 //
 // R3nder owns project time, edit geometry, layer order, and final pixels. MLT
-// owns persistent source decoders only. Parked frames use the exact render path.
-// During playback, EditWorkspace publishes ProjectClock samples at Flutter
-// vsync. This widget listens to that channel directly, submits nonblocking media
-// requests before the surrounding workspace rebuild, and paints completed
-// images through a repaint listenable instead of rebuilding the widget tree.
+// owns persistent source decoders only. During playback, EditWorkspace publishes
+// ProjectClock samples at Flutter vsync. A single plain active video clip uses
+// the Linux external texture path, so its decoded RGBA never crosses into Dart.
+// Overlaps, transitions, test backends, and unsupported platforms retain the
+// deterministic CPU compositor fallback.
 
 import 'dart:async';
 import 'dart:io';
@@ -112,10 +112,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
+  EditSurfaceDocument? _surface;
   String? _layerSource;
   String? _layerEditId;
 
   late final ValueNotifier<ui.Image?> _image;
+  late final ValueNotifier<int?> _nativeTextureId;
   late final ValueNotifier<_PreviewMetadata> _metadata;
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
   EditPlaybackFrameState? _lastPlaybackState;
@@ -129,12 +131,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   void initState() {
     super.initState();
     _image = ValueNotifier<ui.Image?>(null);
+    _nativeTextureId = ValueNotifier<int?>(null);
     _metadata = ValueNotifier<_PreviewMetadata>(
       _PreviewMetadata(
         frame: null,
         contributorCount: 0,
         projectFrame: widget.currentFrame,
         moving: widget.isPlaying || widget.fastPreview,
+        nativeTexture: false,
         status: 'NO VIDEO AT THIS FRAME',
       ),
     );
@@ -166,6 +170,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     if (sourceChanged) {
       _cancelParkedRender();
+      _setNativeTexture(null);
       _disposeLayer();
       _replaceImage(null);
       _epoch++;
@@ -195,12 +200,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _cancelParkedRender();
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = null;
+    _setNativeTexture(null);
     _disposeLayer();
 
     final ui.Image? oldImage = _image.value;
     _image.value = null;
     oldImage?.dispose();
     _image.dispose();
+    _nativeTextureId.dispose();
     _metadata.dispose();
     super.dispose();
   }
@@ -208,6 +215,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   void _disposeLayer() {
     _compositor?.dispose();
     _compositor = null;
+    _surface = null;
     _layer?.dispose();
     _layer = null;
     _layerSource = null;
@@ -219,6 +227,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (identical(old, next)) return;
     _image.value = next;
     old?.dispose();
+  }
+
+  void _setNativeTexture(int? textureId) {
+    if (_nativeTextureId.value != textureId) {
+      _nativeTextureId.value = textureId;
+    }
   }
 
   void _publishMetadata(_PreviewMetadata next) {
@@ -256,9 +270,81 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
     _layer = layer;
     _compositor = compositor;
+    _surface = surface;
     _layerSource = widget.source;
     _layerEditId = widget.editId;
     return compositor;
+  }
+
+  _NativeTextureTarget? _singleNativeTextureTarget(int projectFrame) {
+    final EditSurfaceDocument? surface = _surface;
+    if (surface == null) return null;
+
+    _NativeTextureTarget? target;
+    int activeCount = 0;
+
+    for (final EditSurfaceTrack track in surface.tracks) {
+      if (!RegExp(r'^V\d+$').hasMatch(track.id)) continue;
+      for (final EditSurfaceClip clip in track.clips) {
+        if (projectFrame < clip.atFrame ||
+            projectFrame >= clip.endFrameExclusive) {
+          continue;
+        }
+
+        activeCount++;
+        if (activeCount > 1) return null;
+        if (!clip.transition.isNone || clip.source.startsWith('EDIT.')) {
+          return null;
+        }
+
+        final int projectOffset = projectFrame - clip.atFrame;
+        target = _NativeTextureTarget(
+          trackId: clip.trackId,
+          clipId: clip.id,
+          source: clip.source,
+          sourceFrame: clip.clip.sourceFrameAtProjectOffset(projectOffset),
+        );
+      }
+    }
+
+    return activeCount == 1 ? target : null;
+  }
+
+  void _publishNativeMetadata(
+    _NativeTextureTarget target,
+    int projectFrame,
+    bool moving,
+  ) {
+    final _PreviewMetadata current = _metadata.value;
+    final MediaFrame? currentFrame = current.frame;
+
+    // Do not rebuild the diagnostic overlay every playback frame. Once the
+    // monitor has entered TEXTURE mode for this clip, the external texture can
+    // advance independently at native presentation cadence.
+    if (current.nativeTexture &&
+        current.status.isEmpty &&
+        currentFrame?.trackId == target.trackId &&
+        currentFrame?.clipId == target.clipId &&
+        currentFrame?.source == target.source &&
+        current.moving == moving) {
+      return;
+    }
+
+    _publishMetadata(
+      _PreviewMetadata(
+        frame: MediaFrame.pending(
+          trackId: target.trackId,
+          clipId: target.clipId,
+          source: target.source,
+          requestedSourceFrame: target.sourceFrame,
+        ),
+        contributorCount: 1,
+        projectFrame: projectFrame,
+        moving: moving,
+        nativeTexture: true,
+        status: '',
+      ),
+    );
   }
 
   EditPlaybackFrameState get _effectivePlaybackState {
@@ -329,9 +415,63 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     );
     final ui.Size decodeSize = moving ? _fastDecodeSize : _fullDecodeSize;
 
+    late final EditVideoCompositor compositor;
+    try {
+      compositor = _ensureCompositor();
+    } catch (error) {
+      if (!mounted || serial != _requestSerial) return;
+      _setNativeTexture(null);
+      _replaceImage(null);
+      _publishMetadata(
+        _PreviewMetadata(
+          frame: null,
+          contributorCount: 0,
+          projectFrame: projectFrame,
+          moving: moving,
+          nativeTexture: false,
+          status: 'VIDEO PREVIEW UNAVAILABLE\n$error',
+        ),
+      );
+      return;
+    }
+
+    // The plain one-clip case bypasses Dart pixels completely. This is the
+    // production path under test for the Spring clip. If the backend is a fake,
+    // another platform, an overlap, or a transition, presentNativeTexture()
+    // returns null and the deterministic CPU path below remains authoritative.
+    final _NativeTextureTarget? textureTarget =
+        _singleNativeTextureTarget(projectFrame);
+    final MediaLayer? layer = _layer;
+    if (textureTarget != null && layer != null) {
+      int? textureId;
+      try {
+        textureId = layer.presentNativeTexture(
+          source: textureTarget.source,
+          requestedSourceFrame: textureTarget.sourceFrame,
+          width: decodeSize.width.round(),
+          height: decodeSize.height.round(),
+        );
+      } catch (_) {
+        // A texture presentation failure does not make the source offline.
+        // Fall back to the same CPU compositor used by tests and transitions.
+        textureId = null;
+      }
+
+      if (textureId != null && textureId > 0) {
+        if (!mounted || serial != _requestSerial || requestEpoch != _epoch) {
+          return;
+        }
+        _replaceImage(null);
+        _setNativeTexture(textureId);
+        _publishNativeMetadata(textureTarget, projectFrame, moving);
+        return;
+      }
+    }
+
+    _setNativeTexture(null);
+
     EditVideoCompositeResult result;
     try {
-      final EditVideoCompositor compositor = _ensureCompositor();
       result = moving
           ? compositor.renderAvailable(widget.editId, time, decodeSize)
           : compositor.render(widget.editId, time, decodeSize);
@@ -344,6 +484,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           contributorCount: 0,
           projectFrame: projectFrame,
           moving: moving,
+          nativeTexture: false,
           status: 'VIDEO PREVIEW UNAVAILABLE\n$error',
         ),
       );
@@ -360,6 +501,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
             contributorCount: 0,
             projectFrame: projectFrame,
             moving: moving,
+            nativeTexture: false,
             status: 'DECODE AHEAD',
           ),
         );
@@ -387,6 +529,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           contributorCount: 0,
           projectFrame: projectFrame,
           moving: moving,
+          nativeTexture: false,
           status: status,
         ),
       );
@@ -401,6 +544,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         contributorCount: result.contributors.length,
         projectFrame: projectFrame,
         moving: moving,
+        nativeTexture: false,
         status: '',
       ),
     );
@@ -421,6 +565,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           contributorCount: result.contributors.length,
           projectFrame: projectFrame,
           moving: moving,
+          nativeTexture: false,
           status: 'FRAME CONVERSION FAILED\n$error',
         ),
       );
@@ -460,8 +605,32 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         fit: StackFit.expand,
         children: [
           Positioned.fill(
-            child: CustomPaint(
-              painter: _PreviewImagePainter(_image),
+            child: ValueListenableBuilder<int?>(
+              valueListenable: _nativeTextureId,
+              builder: (
+                BuildContext context,
+                int? textureId,
+                Widget? child,
+              ) {
+                if (textureId != null && textureId > 0) {
+                  return ColoredBox(
+                    color: Colors.black,
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: Texture(
+                          textureId: textureId,
+                          filterQuality: FilterQuality.low,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return CustomPaint(
+                  painter: _PreviewImagePainter(_image),
+                );
+              },
             ),
           ),
           ValueListenableBuilder<_PreviewMetadata>(
@@ -514,12 +683,27 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   }
 }
 
+class _NativeTextureTarget {
+  final String trackId;
+  final String clipId;
+  final String source;
+  final int sourceFrame;
+
+  const _NativeTextureTarget({
+    required this.trackId,
+    required this.clipId,
+    required this.source,
+    required this.sourceFrame,
+  });
+}
+
 @immutable
 class _PreviewMetadata {
   final MediaFrame? frame;
   final int contributorCount;
   final int projectFrame;
   final bool moving;
+  final bool nativeTexture;
   final String status;
 
   const _PreviewMetadata({
@@ -527,6 +711,7 @@ class _PreviewMetadata {
     required this.contributorCount,
     required this.projectFrame,
     required this.moving,
+    required this.nativeTexture,
     required this.status,
   });
 
@@ -538,7 +723,7 @@ class _PreviewMetadata {
         'SRC ${current.requestedSourceFrame}'
         '${current.actualSourceFrame == null ? '' : '→${current.actualSourceFrame}'}   '
         'LAYERS $contributorCount'
-        '${moving ? '   ASYNC' : ''}';
+        '${nativeTexture ? '   TEXTURE' : moving ? '   ASYNC' : ''}';
   }
 
   @override
@@ -548,6 +733,7 @@ class _PreviewMetadata {
         other.contributorCount == contributorCount &&
         other.projectFrame == projectFrame &&
         other.moving == moving &&
+        other.nativeTexture == nativeTexture &&
         other.status == status;
   }
 
@@ -557,6 +743,7 @@ class _PreviewMetadata {
         contributorCount,
         projectFrame,
         moving,
+        nativeTexture,
         status,
       );
 }
