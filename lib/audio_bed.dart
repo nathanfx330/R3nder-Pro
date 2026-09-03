@@ -39,11 +39,14 @@
 // BACKEND
 // ffmpeg decodes, seeks, applies gain, and mixes. On Linux its raw PCM goes
 // directly into NativeAudioSink, whose worker thread owns the blocking
-// libpulse writes and bounded backpressure. aplay remains the subprocess
-// fallback when the native PulseAudio-compatible sink cannot be opened.
-// Nothing is held in memory: a 30 minute voiceover costs no RAM and starts
-// instantly rather than blocking the UI on a decode. ffmpeg owns the seek via
-// -ss, which makes click-to-jump and scrubber drags close to free.
+// libpulse writes, bounded backpressure, and AUDIO ProjectClock handoff. The
+// native sink opens BEFORE ffmpeg so ProjectTime is held at the authored audio
+// start while decoder startup and device prefill happen behind that hold.
+// aplay remains the subprocess fallback when the native PulseAudio-compatible
+// sink cannot be opened. Nothing is held in memory: a 30 minute voiceover
+// costs no RAM and starts instantly rather than blocking the UI on a decode.
+// ffmpeg owns the seek via -ss, which makes click-to-jump and scrubber drags
+// close to free.
 //
 // Gain is applied by ffmpeg's volume filter rather than in Dart, so preview
 // level matches what the exporter will mux. Audio is deliberately NOT
@@ -542,15 +545,11 @@ class _PipedPlayer implements AudioBedPlayer {
       '-',
     ];
 
-    Process decoder;
-    try {
-      decoder = await Process.start('ffmpeg', decodeArgs);
-    } catch (e) {
-      _playing = false;
-      throw AudioBedException('Could not start playback decoder: $e');
-    }
-
     if (_useNativePulse) {
+      // Establish the ProjectClock hold before decoder startup. NativeAudioSink
+      // captures the exact current ProjectTime in SCRUB mode synchronously in
+      // its constructor, so Process.start and libpulse prefill both happen
+      // behind the same authored point.
       NativeAudioSink nativeSink;
       try {
         nativeSink = NativeAudioSink(
@@ -559,12 +558,20 @@ class _PipedPlayer implements AudioBedPlayer {
           channels: _kBedChannels,
         );
       } catch (e) {
-        _killQuietly(decoder);
         _playing = false;
         throw AudioBedException('Could not open native playback sink: $e');
       }
 
-      // A newer request landed while either endpoint was opening. The new
+      Process decoder;
+      try {
+        decoder = await Process.start('ffmpeg', decodeArgs);
+      } catch (e) {
+        nativeSink.dispose();
+        _playing = false;
+        throw AudioBedException('Could not start playback decoder: $e');
+      }
+
+      // A newer request landed while the decoder process was opening. The new
       // generation owns playback, so this one must not contribute a sample.
       if (gen != _generation) {
         _killQuietly(decoder);
@@ -585,6 +592,16 @@ class _PipedPlayer implements AudioBedPlayer {
       _feeder = feeder;
       unawaited(_finishNativePlayback(gen, decoder, nativeSink, feeder));
       return;
+    }
+
+    // Subprocess fallback keeps the established decoder-first ordering. It has
+    // no native AUDIO ProjectClock authority and therefore no prefill hold.
+    Process decoder;
+    try {
+      decoder = await Process.start('ffmpeg', decodeArgs);
+    } catch (e) {
+      _playing = false;
+      throw AudioBedException('Could not start playback decoder: $e');
     }
 
     Process sink;
