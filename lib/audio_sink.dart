@@ -1,12 +1,12 @@
 // ./lib/audio_sink.dart
 //
-// Linux native PCM sink foundation for the future AUDIO ProjectClock.
+// Linux native PCM sink for preview playback and the future AUDIO ProjectClock.
 //
-// This file is intentionally not wired into AudioBedPlayer yet. The existing
-// ffmpeg -> paplay/aplay preview path remains unchanged while this surface is
-// validated in isolation. The native sink owns the blocking PulseAudio writes
-// on its own worker thread and exposes only a bounded enqueue plus monotonic
-// submitted-sample and measured-latency counters to Dart.
+// FFmpeg remains the decoder/mixer. This sink owns blocking PulseAudio writes
+// on its own worker thread and exposes only bounded enqueue, drain/flush, and
+// monotonic submitted-sample plus measured-latency counters to Dart. Project
+// time does not consume those counters yet; this transport migration is kept
+// separate from the later AUDIO authority handoff.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -129,6 +129,15 @@ class NativeAudioSink {
     }
   }
 
+  /// Waits for every accepted PCM sample to reach audible completion. This is
+  /// the natural-end operation; unlike [flush] it does not discard a tail.
+  void drain() {
+    _checkAlive();
+    if (_native.drain(_handle) < 0) {
+      throw AudioSinkException(lastError);
+    }
+  }
+
   /// Drops queued and server-buffered audio. The native submitted-sample
   /// counter deliberately remains monotonic across this operation.
   void flush() {
@@ -203,8 +212,8 @@ typedef _EnqueueDart = int Function(
   Pointer<Uint8> data,
   int byteCount,
 );
-typedef _FlushNative = Int32 Function(Pointer<Void> handle);
-typedef _FlushDart = int Function(Pointer<Void> handle);
+typedef _SinkActionNative = Int32 Function(Pointer<Void> handle);
+typedef _SinkActionDart = int Function(Pointer<Void> handle);
 typedef _ReadNative = Pointer<_NativeAudioSinkStats> Function(
   Pointer<Void> handle,
 );
@@ -244,8 +253,10 @@ class _NativeAudioSinkBindings {
       _DestroyDart>('r3_audio_sink_destroy');
   late final _EnqueueDart enqueue = _runner.lookupFunction<_EnqueueNative,
       _EnqueueDart>('r3_audio_sink_enqueue');
-  late final _FlushDart flush = _runner.lookupFunction<_FlushNative,
-      _FlushDart>('r3_audio_sink_flush');
+  late final _SinkActionDart drain = _runner.lookupFunction<_SinkActionNative,
+      _SinkActionDart>('r3_audio_sink_drain');
+  late final _SinkActionDart flush = _runner.lookupFunction<_SinkActionNative,
+      _SinkActionDart>('r3_audio_sink_flush');
   late final _ReadDart read = _runner.lookupFunction<_ReadNative,
       _ReadDart>('r3_audio_sink_read');
   late final _CopyErrorDart copyLastError = _runner.lookupFunction<
