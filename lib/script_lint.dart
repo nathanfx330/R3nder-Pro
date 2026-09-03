@@ -51,8 +51,9 @@ class LintFinding {
 
 class ScriptLinter {
   /// Bracketed constructs that are real R3nder markup but deliberately
-  /// live outside [tagRegex]. The preprocessor expands or strips these
-  /// before the parser ever runs, so an unmatched one is not a mistake.
+  /// live outside [tagRegex]. The preprocessor, structural CST, or another
+  /// source layer expands, strips, or owns these before the terminal parser
+  /// ever runs, so an unmatched one is not automatically a terminal mistake.
   ///
   /// FRAME belongs to sprite text files rather than scripts, but it turns
   /// up in prose often enough that flagging it would be noise.
@@ -64,6 +65,9 @@ class ScriptLinter {
     'MENU_STATE',
     'NEEDS',
     'FRAME',
+    'EDIT', '/EDIT',
+    'TRACK', '/TRACK',
+    'CLIP', '/CLIP',
   };
 
   /// Every tag keyword the grammar knows.
