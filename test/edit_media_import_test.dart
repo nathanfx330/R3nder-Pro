@@ -34,6 +34,33 @@ void main() {
     }
   });
 
+  test('script delimiter characters are removed from imported filenames', () {
+    final Directory temp = Directory.systemTemp.createTempSync('r3nder_import_');
+    try {
+      final Directory workspace = Directory('${temp.path}/workspace')..createSync();
+      final File external = File('${temp.path}/Interview [final]:A.mp4')
+        ..writeAsBytesSync(<int>[5, 6, 7]);
+
+      final ImportedEditVideo imported = importVideoToWorkspace(
+        external.path,
+        workspaceRoot: workspace.path,
+        probeFrames: (_) => 61,
+      );
+
+      expect(
+        imported.authoredSource,
+        'video/Interview _final__A.mp4',
+      );
+      expect(imported.clipBaseId, 'Interview_final_A');
+      expect(imported.authoredSource, isNot(contains('[')));
+      expect(imported.authoredSource, isNot(contains(']')));
+      expect(imported.authoredSource, isNot(contains(':')));
+      expect(File(imported.resolvedPath).existsSync(), isTrue);
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
+
   test('filename collision gets a deterministic suffix', () {
     final Directory temp = Directory.systemTemp.createTempSync('r3nder_import_');
     try {
