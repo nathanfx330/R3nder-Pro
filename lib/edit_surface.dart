@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
+import 'edit_video_preview.dart';
 import 'ui_theme.dart';
 
 class EditSurface extends StatefulWidget {
@@ -49,6 +50,7 @@ class _EditSurfaceState extends State<EditSurface> {
   static final double _kAudioHeight = sc(24);
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
+  static final double _kPreviewHeight = sc(230);
 
   late String _workingSource;
   String? _selectedTrackId;
@@ -57,6 +59,7 @@ class _EditSurfaceState extends State<EditSurface> {
   double _pixelsPerFrame = 2.0;
 
   final ScrollController _horizontal = ScrollController();
+  final ScrollController _vertical = ScrollController();
 
   @override
   void initState() {
@@ -76,6 +79,7 @@ class _EditSurfaceState extends State<EditSurface> {
   @override
   void dispose() {
     _horizontal.dispose();
+    _vertical.dispose();
     super.dispose();
   }
 
@@ -249,6 +253,10 @@ class _EditSurfaceState extends State<EditSurface> {
       document.projectFrameCount,
       math.max(widget.voiceFrames, widget.musicFrames),
     );
+    final double timelineContentHeight = _kRulerHeight +
+        tracks.length * _kTrackHeight +
+        (widget.voiceFrames > 0 ? _kAudioHeight : 0) +
+        (widget.musicFrames > 0 ? _kAudioHeight : 0);
 
     return Column(
       children: [
@@ -265,6 +273,18 @@ class _EditSurfaceState extends State<EditSurface> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+        Container(
+          height: _kPreviewHeight,
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+          ),
+          child: EditVideoPreview(
+            source: _workingSource,
+            editId: widget.editId,
+            currentFrame: widget.currentFrame,
+            theme: widget.theme,
+          ),
+        ),
         Expanded(
           child: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
@@ -275,71 +295,97 @@ class _EditSurfaceState extends State<EditSurface> {
                 math.max(1, contentFrames) * _pixelsPerFrame + sc(80),
               );
 
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(width: _kLabelWidth, child: _buildLabels(tracks)),
-                  Expanded(
-                    child: Scrollbar(
-                      controller: _horizontal,
-                      thumbVisibility: true,
-                      child: SingleChildScrollView(
-                        controller: _horizontal,
-                        scrollDirection: Axis.horizontal,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTapDown: (TapDownDetails details) {
-                            final int frame =
-                                (details.localPosition.dx / _pixelsPerFrame)
-                                    .floor()
-                                    .clamp(0, math.max(0, contentFrames));
-                            widget.onSeek(frame);
-                          },
-                          child: SizedBox(
-                            width: timelineWidth,
-                            child: Stack(
-                              children: [
-                                Column(
-                                  children: [
-                                    _buildRuler(timelineWidth, contentFrames),
-                                    for (final EditSurfaceTrack track in tracks)
-                                      _buildTrackLane(track),
-                                    if (widget.voiceFrames > 0)
-                                      _buildAudioLane(
-                                        widget.voiceFrames,
-                                        'VOICE',
-                                        R3Theme.ribbonWindow,
+              return Scrollbar(
+                controller: _vertical,
+                thumbVisibility: timelineContentHeight > constraints.maxHeight,
+                child: SingleChildScrollView(
+                  controller: _vertical,
+                  child: SizedBox(
+                    width: constraints.maxWidth,
+                    height: timelineContentHeight,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: _kLabelWidth,
+                          child: _buildLabels(tracks),
+                        ),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _horizontal,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _horizontal,
+                              scrollDirection: Axis.horizontal,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.translucent,
+                                onTapDown: (TapDownDetails details) {
+                                  final int frame =
+                                      (details.localPosition.dx /
+                                              _pixelsPerFrame)
+                                          .floor()
+                                          .clamp(
+                                            0,
+                                            math.max(0, contentFrames),
+                                          );
+                                  widget.onSeek(frame);
+                                },
+                                child: SizedBox(
+                                  width: timelineWidth,
+                                  height: timelineContentHeight,
+                                  child: Stack(
+                                    children: [
+                                      Column(
+                                        children: [
+                                          _buildRuler(
+                                            timelineWidth,
+                                            contentFrames,
+                                          ),
+                                          for (final EditSurfaceTrack track
+                                              in tracks)
+                                            _buildTrackLane(track),
+                                          if (widget.voiceFrames > 0)
+                                            _buildAudioLane(
+                                              widget.voiceFrames,
+                                              'VOICE',
+                                              R3Theme.ribbonWindow,
+                                            ),
+                                          if (widget.musicFrames > 0)
+                                            _buildAudioLane(
+                                              math.min(
+                                                widget.musicFrames,
+                                                document.projectFrameCount,
+                                              ),
+                                              widget.musicLoops
+                                                  ? 'MUSIC LOOP'
+                                                  : 'MUSIC',
+                                              R3Theme.ribbonMedia,
+                                            ),
+                                        ],
                                       ),
-                                    if (widget.musicFrames > 0)
-                                      _buildAudioLane(
-                                        math.min(
-                                          widget.musicFrames,
-                                          document.projectFrameCount,
+                                      Positioned(
+                                        left: widget.currentFrame *
+                                            _pixelsPerFrame,
+                                        top: 0,
+                                        bottom: 0,
+                                        child: IgnorePointer(
+                                          child: Container(
+                                            width: 1,
+                                            color: widget.theme.accent,
+                                          ),
                                         ),
-                                        widget.musicLoops ? 'MUSIC LOOP' : 'MUSIC',
-                                        R3Theme.ribbonMedia,
                                       ),
-                                  ],
-                                ),
-                                Positioned(
-                                  left: widget.currentFrame * _pixelsPerFrame,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: IgnorePointer(
-                                    child: Container(
-                                      width: 1,
-                                      color: widget.theme.accent,
-                                    ),
+                                    ],
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               );
             },
           ),
