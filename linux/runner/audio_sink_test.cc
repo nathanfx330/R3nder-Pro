@@ -106,30 +106,73 @@ int main() {
   }
 
   const std::vector<uint8_t> silence(kChunkBytes, 0);
+
+  // Creating a replacement native stream must invalidate the old sink's clock
+  // binding even though both sink objects still point at the same ProjectClock.
+  // The old sink may finish a device write, but it must no longer advance or
+  // release ProjectClock after the replacement generation has armed.
+  void* replacement =
+      r3_audio_sink_create(nullptr, kSampleRate, kChannels, 50, 100);
+  if (replacement == nullptr) {
+    char error[512] = {};
+    r3_audio_sink_copy_create_error(error, sizeof(error));
+    r3_audio_sink_destroy(sink);
+    r3_clock_destroy(clock);
+    std::printf("audio_sink_test: SKIP replacement (%s)\n", error);
+    return 0;
+  }
+
+  int64_t stale_samples = 0;
+  if (!EnqueueChunks(sink, silence, 1, &stale_samples) ||
+      !WaitForSubmitted(sink, stale_samples)) {
+    PrintSinkError(sink, "stale generation write failed");
+    r3_audio_sink_destroy(sink);
+    DestroyBoth(replacement, clock);
+    return 3;
+  }
+  if (r3_clock_get_played_samples(clock) != 0) {
+    std::fprintf(stderr,
+                 "superseded sink still advanced ProjectClock samples.\n");
+    r3_audio_sink_destroy(sink);
+    DestroyBoth(replacement, clock);
+    return 4;
+  }
+
+  r3_audio_sink_destroy(sink);
+  sink = replacement;
+
+  clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kScrub || clock_state.frame != 12) {
+    std::fprintf(stderr,
+                 "superseded sink release disturbed replacement clock hold.\n");
+    DestroyBoth(sink, clock);
+    return 5;
+  }
+
   int64_t accepted_samples = 0;
 
   // One second of silence proves the worker queue is paced by the real device.
   if (!EnqueueChunks(sink, silence, 100, &accepted_samples)) {
     PrintSinkError(sink, "enqueue failed");
     DestroyBoth(sink, clock);
-    return 3;
+    return 6;
   }
   if (!WaitForSubmitted(sink, accepted_samples)) {
     PrintSinkError(sink, "submitted counter did not reach target");
     DestroyBoth(sink, clock);
-    return 4;
+    return 7;
   }
 
   clock_state = *r3_clock_read(clock);
   if (clock_state.mode != kAudio) {
     std::fprintf(stderr, "project clock did not enter AUDIO authority.\n");
     DestroyBoth(sink, clock);
-    return 5;
+    return 8;
   }
   if (r3_clock_get_played_samples(clock) != accepted_samples) {
     std::fprintf(stderr, "project clock sample counter missed submitted PCM.\n");
     DestroyBoth(sink, clock);
-    return 6;
+    return 9;
   }
 
   // Natural EOF is requested without blocking the caller. While the device
@@ -139,29 +182,29 @@ int main() {
   if (r3_audio_sink_request_drain(sink) != 1) {
     PrintSinkError(sink, "drain request failed");
     DestroyBoth(sink, clock);
-    return 7;
+    return 10;
   }
   if (!WaitForDrain(sink, accepted_samples)) {
     PrintSinkError(sink, "drain did not complete");
     DestroyBoth(sink, clock);
-    return 8;
+    return 11;
   }
 
   clock_state = *r3_clock_read(clock);
   if (clock_state.mode != kMonotonic) {
     std::fprintf(stderr, "project clock did not hand back after drain.\n");
     DestroyBoth(sink, clock);
-    return 9;
+    return 12;
   }
   if (clock_state.frame < 42) {
     std::fprintf(stderr, "drain handoff lost audible project time.\n");
     DestroyBoth(sink, clock);
-    return 10;
+    return 13;
   }
   if (r3_clock_get_played_samples(clock) != accepted_samples) {
     std::fprintf(stderr, "drain reset cumulative project clock samples.\n");
     DestroyBoth(sink, clock);
-    return 11;
+    return 14;
   }
 
   // A drained sink is reusable. Its first new packet captures a fresh origin
@@ -170,68 +213,68 @@ int main() {
   if (!EnqueueChunks(sink, silence, 10, &accepted_samples)) {
     PrintSinkError(sink, "enqueue after drain failed");
     DestroyBoth(sink, clock);
-    return 12;
+    return 15;
   }
   if (!WaitForSubmitted(sink, accepted_samples)) {
     PrintSinkError(sink, "submitted counter after reuse did not reach target");
     DestroyBoth(sink, clock);
-    return 13;
+    return 16;
   }
 
   clock_state = *r3_clock_read(clock);
   if (clock_state.mode != kAudio) {
     std::fprintf(stderr, "reused sink did not re-enter AUDIO authority.\n");
     DestroyBoth(sink, clock);
-    return 14;
+    return 17;
   }
   if (r3_clock_get_played_samples(clock) != accepted_samples) {
     std::fprintf(stderr, "reused sink reset cumulative project clock samples.\n");
     DestroyBoth(sink, clock);
-    return 15;
+    return 18;
   }
 
   const R3AudioSinkStats before_flush = *r3_audio_sink_read(sink);
   if (before_flush.submitted_samples != accepted_samples) {
     std::fprintf(stderr, "submitted sample count mismatch.\n");
     DestroyBoth(sink, clock);
-    return 16;
+    return 19;
   }
   if (before_flush.latency_samples < 0 ||
       before_flush.latency_samples > kSampleRate) {
     std::fprintf(stderr, "measured latency outside sanity bound.\n");
     DestroyBoth(sink, clock);
-    return 17;
+    return 20;
   }
 
   if (r3_audio_sink_flush(sink) != 1) {
     PrintSinkError(sink, "flush failed");
     DestroyBoth(sink, clock);
-    return 18;
+    return 21;
   }
 
   const R3AudioSinkStats after_flush = *r3_audio_sink_read(sink);
   if (after_flush.submitted_samples != before_flush.submitted_samples) {
     std::fprintf(stderr, "flush reset monotonic submitted samples.\n");
     DestroyBoth(sink, clock);
-    return 19;
+    return 22;
   }
   if (after_flush.queued_samples != 0 || after_flush.latency_samples != 0 ||
       after_flush.draining != 0) {
     std::fprintf(stderr, "flush did not clear queued/latency/drain state.\n");
     DestroyBoth(sink, clock);
-    return 20;
+    return 23;
   }
 
   clock_state = *r3_clock_read(clock);
   if (clock_state.mode != kMonotonic) {
     std::fprintf(stderr, "flush did not hand ProjectClock back to monotonic.\n");
     DestroyBoth(sink, clock);
-    return 21;
+    return 24;
   }
   if (r3_clock_get_played_samples(clock) != accepted_samples) {
     std::fprintf(stderr, "flush reset ProjectClock cumulative samples.\n");
     DestroyBoth(sink, clock);
-    return 22;
+    return 25;
   }
 
   DestroyBoth(sink, clock);

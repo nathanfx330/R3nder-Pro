@@ -28,6 +28,13 @@ constexpr auto kDrainPollTimeout = std::chrono::seconds(2);
 
 thread_local std::string g_create_error;
 
+// Each native sink object is one ProjectClock binding generation. Creating a
+// newer sink permanently supersedes every older sink, even though all of them
+// point at the same long-lived ProjectClock. This is deliberately independent
+// of the Dart playback generation: the native worker must be able to reject a
+// stale release or sample write without asking Dart whether it is still current.
+std::atomic<uint64_t> g_clock_binding_generation{0};
+
 struct AudioSinkState {
   pa_simple* stream = nullptr;
   int32_t sample_rate = 0;
@@ -56,6 +63,10 @@ struct AudioSinkState {
   // ProjectClock binding. The sink object is short lived, but ProjectClock's
   // played_samples counter is cumulative for the lifetime of the preview
   // clock. Each sink generation captures that cumulative value as its origin.
+  // clock_generation is fixed for the lifetime of this sink object; a drained
+  // current sink may re-arm, but creation of any newer sink invalidates this
+  // generation permanently.
+  uint64_t clock_generation = 0;
   void* clock_handle = nullptr;
   R3ClockSnapshot clock_anchor{0, 0, 1, 0, 0, 0};
   int64_t clock_origin_sample = 0;
@@ -71,8 +82,9 @@ int64_t UsecToSamples(pa_usec_t usec, int32_t sample_rate) {
 }
 
 bool ClockStillBound(const AudioSinkState* state) {
-  return state->clock_handle != nullptr &&
-         r3_clock_active_handle() == state->clock_handle;
+  return state->clock_handle != nullptr && state->clock_generation != 0 &&
+         g_clock_binding_generation.load(std::memory_order_acquire) ==
+             state->clock_generation;
 }
 
 void ClearClockBinding(AudioSinkState* state) {
@@ -84,6 +96,14 @@ void ClearClockBinding(AudioSinkState* state) {
 
 void ArmProjectClock(AudioSinkState* state) {
   if (state->clock_armed) return;
+
+  // A superseded sink must never steal ProjectClock ownership back merely
+  // because a late feeder reaches enqueue after a replacement sink exists.
+  if (state->clock_generation == 0 ||
+      g_clock_binding_generation.load(std::memory_order_acquire) !=
+          state->clock_generation) {
+    return;
+  }
 
   void* clock = r3_clock_active_handle();
   if (clock == nullptr) return;
@@ -406,6 +426,12 @@ void* r3_audio_sink_create(const char* device, int32_t sample_rate,
     state->max_queue_bytes = state->bytes_per_frame;
   }
 
+  // Claim the next binding generation before ProjectClock is held. A newer
+  // native sink therefore invalidates every older sink before either stream
+  // can update or release the shared clock again.
+  state->clock_generation =
+      g_clock_binding_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+
   // Freeze ProjectTime before libpulse itself opens the device stream. Decoder
   // startup happens later in Dart, so both device creation and decoding are
   // now behind this same exact authored anchor.
@@ -481,9 +507,8 @@ int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
       return 0;
     }
 
-    // A drained sink can be reused. Re-arm at the first new packet so a new
-    // playback segment gets a fresh sample origin without resetting the
-    // cumulative ProjectClock played_samples counter.
+    // A drained current sink can be reused. ArmProjectClock refuses the call
+    // if a newer native sink generation has superseded this object.
     if (!state->clock_armed) ArmProjectClock(state);
 
     state->queue.emplace_back(data, data + byte_count);
