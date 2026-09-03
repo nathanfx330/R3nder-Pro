@@ -295,9 +295,6 @@ class _EditSurfaceState extends State<EditSurface> {
     _scrubTimer = null;
     _publishPendingScrub();
 
-    // Let the parent first publish the final frame while FAST preview remains
-    // active. On the following frame we drop FAST and redraw that same parked
-    // project frame at full resolution.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scrubbing) setState(() => _scrubbing = false);
     });
@@ -369,6 +366,7 @@ class _EditSurfaceState extends State<EditSurface> {
             source: _workingSource,
             editId: widget.editId,
             currentFrame: widget.currentFrame,
+            isPlaying: widget.isPlaying,
             fastPreview: _scrubbing || widget.isPlaying,
             theme: widget.theme,
           ),
