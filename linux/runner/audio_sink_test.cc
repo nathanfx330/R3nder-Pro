@@ -1,6 +1,7 @@
 // ./linux/runner/audio_sink_test.cc
 
 #include "audio_sink.h"
+#include "project_clock.h"
 
 #include <chrono>
 #include <cstdint>
@@ -14,6 +15,8 @@ constexpr int32_t kSampleRate = 48000;
 constexpr int32_t kChannels = 2;
 constexpr int32_t kChunkFrames = 480;
 constexpr int32_t kChunkBytes = kChunkFrames * kChannels * 2;
+constexpr int32_t kMonotonic = 0;
+constexpr int32_t kAudio = 2;
 
 bool EnqueueChunks(void* sink, const std::vector<uint8_t>& bytes, int chunks,
                    int64_t* accepted_samples) {
@@ -66,13 +69,30 @@ void PrintSinkError(void* sink, const char* prefix) {
   std::fprintf(stderr, "%s: %s\n", prefix, error);
 }
 
+void DestroyBoth(void* sink, void* clock) {
+  r3_audio_sink_destroy(sink);
+  r3_clock_destroy(clock);
+}
+
 }  // namespace
 
 int main() {
+  void* clock = r3_clock_create(30, 1);
+  if (clock == nullptr) {
+    std::fprintf(stderr, "project clock create failed.\n");
+    return 1;
+  }
+
+  // Give the audio sink an exact authored anchor to freeze while prefill is
+  // building. The production preview reaches the same state at the terminal's
+  // first audio-bearing tick.
+  r3_clock_seek_scrub(clock, 12, 0, 1);
+
   void* sink = r3_audio_sink_create(nullptr, kSampleRate, kChannels, 50, 100);
   if (sink == nullptr) {
     char error[512] = {};
     r3_audio_sink_copy_create_error(error, sizeof(error));
+    r3_clock_destroy(clock);
     std::printf("audio_sink_test: SKIP (%s)\n", error);
     return 0;
   }
@@ -83,70 +103,130 @@ int main() {
   // One second of silence proves the worker queue is paced by the real device.
   if (!EnqueueChunks(sink, silence, 100, &accepted_samples)) {
     PrintSinkError(sink, "enqueue failed");
-    r3_audio_sink_destroy(sink);
+    DestroyBoth(sink, clock);
     return 2;
-  }
-
-  // Natural EOF is requested without blocking the caller. The worker submits
-  // every accepted packet, performs pa_simple_drain(), and reports completion
-  // through the stats snapshot.
-  if (r3_audio_sink_request_drain(sink) != 1) {
-    PrintSinkError(sink, "drain request failed");
-    r3_audio_sink_destroy(sink);
-    return 3;
-  }
-  if (!WaitForDrain(sink, accepted_samples)) {
-    PrintSinkError(sink, "drain did not complete");
-    r3_audio_sink_destroy(sink);
-    return 4;
-  }
-
-  // A drained sink is reusable. Submit another short segment, then prove a
-  // destructive flush still preserves the monotonic submitted counter.
-  if (!EnqueueChunks(sink, silence, 10, &accepted_samples)) {
-    PrintSinkError(sink, "enqueue after drain failed");
-    r3_audio_sink_destroy(sink);
-    return 5;
   }
   if (!WaitForSubmitted(sink, accepted_samples)) {
     PrintSinkError(sink, "submitted counter did not reach target");
-    r3_audio_sink_destroy(sink);
+    DestroyBoth(sink, clock);
+    return 3;
+  }
+
+  R3ClockSnapshot clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kAudio) {
+    std::fprintf(stderr, "project clock did not enter AUDIO authority.\n");
+    DestroyBoth(sink, clock);
+    return 4;
+  }
+  if (r3_clock_get_played_samples(clock) != accepted_samples) {
+    std::fprintf(stderr, "project clock sample counter missed submitted PCM.\n");
+    DestroyBoth(sink, clock);
+    return 5;
+  }
+
+  // Natural EOF is requested without blocking the caller. While the device
+  // consumes its tail, latency falls and AUDIO ProjectClock follows it. Once
+  // the tail is gone, the sink reanchors the exact final ProjectTime onto
+  // CLOCK_MONOTONIC so a longer picture cannot freeze.
+  if (r3_audio_sink_request_drain(sink) != 1) {
+    PrintSinkError(sink, "drain request failed");
+    DestroyBoth(sink, clock);
     return 6;
+  }
+  if (!WaitForDrain(sink, accepted_samples)) {
+    PrintSinkError(sink, "drain did not complete");
+    DestroyBoth(sink, clock);
+    return 7;
+  }
+
+  clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kMonotonic) {
+    std::fprintf(stderr, "project clock did not hand back after drain.\n");
+    DestroyBoth(sink, clock);
+    return 8;
+  }
+  if (clock_state.frame < 42) {
+    std::fprintf(stderr, "drain handoff lost audible project time.\n");
+    DestroyBoth(sink, clock);
+    return 9;
+  }
+  if (r3_clock_get_played_samples(clock) != accepted_samples) {
+    std::fprintf(stderr, "drain reset cumulative project clock samples.\n");
+    DestroyBoth(sink, clock);
+    return 10;
+  }
+
+  // A drained sink is reusable. Its first new packet captures a fresh origin
+  // from the SAME cumulative ProjectClock sample counter, then enters AUDIO
+  // again once prefill becomes audible.
+  if (!EnqueueChunks(sink, silence, 10, &accepted_samples)) {
+    PrintSinkError(sink, "enqueue after drain failed");
+    DestroyBoth(sink, clock);
+    return 11;
+  }
+  if (!WaitForSubmitted(sink, accepted_samples)) {
+    PrintSinkError(sink, "submitted counter after reuse did not reach target");
+    DestroyBoth(sink, clock);
+    return 12;
+  }
+
+  clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kAudio) {
+    std::fprintf(stderr, "reused sink did not re-enter AUDIO authority.\n");
+    DestroyBoth(sink, clock);
+    return 13;
+  }
+  if (r3_clock_get_played_samples(clock) != accepted_samples) {
+    std::fprintf(stderr, "reused sink reset cumulative project clock samples.\n");
+    DestroyBoth(sink, clock);
+    return 14;
   }
 
   const R3AudioSinkStats before_flush = *r3_audio_sink_read(sink);
   if (before_flush.submitted_samples != accepted_samples) {
     std::fprintf(stderr, "submitted sample count mismatch.\n");
-    r3_audio_sink_destroy(sink);
-    return 7;
+    DestroyBoth(sink, clock);
+    return 15;
   }
   if (before_flush.latency_samples < 0 ||
       before_flush.latency_samples > kSampleRate) {
     std::fprintf(stderr, "measured latency outside sanity bound.\n");
-    r3_audio_sink_destroy(sink);
-    return 8;
+    DestroyBoth(sink, clock);
+    return 16;
   }
 
   if (r3_audio_sink_flush(sink) != 1) {
     PrintSinkError(sink, "flush failed");
-    r3_audio_sink_destroy(sink);
-    return 9;
+    DestroyBoth(sink, clock);
+    return 17;
   }
 
   const R3AudioSinkStats after_flush = *r3_audio_sink_read(sink);
   if (after_flush.submitted_samples != before_flush.submitted_samples) {
     std::fprintf(stderr, "flush reset monotonic submitted samples.\n");
-    r3_audio_sink_destroy(sink);
-    return 10;
+    DestroyBoth(sink, clock);
+    return 18;
   }
   if (after_flush.queued_samples != 0 || after_flush.latency_samples != 0 ||
       after_flush.draining != 0) {
     std::fprintf(stderr, "flush did not clear queued/latency/drain state.\n");
-    r3_audio_sink_destroy(sink);
-    return 11;
+    DestroyBoth(sink, clock);
+    return 19;
   }
 
-  r3_audio_sink_destroy(sink);
+  clock_state = *r3_clock_read(clock);
+  if (clock_state.mode != kMonotonic) {
+    std::fprintf(stderr, "flush did not hand ProjectClock back to monotonic.\n");
+    DestroyBoth(sink, clock);
+    return 20;
+  }
+  if (r3_clock_get_played_samples(clock) != accepted_samples) {
+    std::fprintf(stderr, "flush reset ProjectClock cumulative samples.\n");
+    DestroyBoth(sink, clock);
+    return 21;
+  }
+
+  DestroyBoth(sink, clock);
   std::printf("audio_sink_test: PASS\n");
   return 0;
 }
