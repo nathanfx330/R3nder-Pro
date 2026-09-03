@@ -10,9 +10,10 @@
 //
 // Playback follows the same timing rule as the terminal renderer: Flutter
 // vsync asks ProjectClock what project frame is current. A Ticker does not
-// advance time itself. The sampled frame is also published through a stable
-// listenable before the workspace rebuilds, so the video monitor can request
-// that picture at the beginning of the presentation frame instead of after it.
+// advance time itself. Each sampled frame is published through one stable
+// ValueNotifier. The monitor, playhead, and small transport readout listen to
+// that channel directly; the workspace and authored timeline do not rebuild on
+// every playback frame.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -186,6 +187,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _error = null;
       _publishPlaybackFrame(start, playing: true);
       _playTicker.start();
+
+      // PLAY/PAUSE controls and EditSurface's static editing affordances change
+      // once when transport starts. Subsequent playback frames do not rebuild
+      // this workspace.
       setState(() {});
     } catch (error) {
       _playTicker.stop();
@@ -232,12 +237,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _lastPolledPlaybackFrame = frame;
     _displayFrame = frame;
 
-    // Publish first. EditVideoPreview listens directly to this value and can
-    // submit the nonblocking decoder request while Flutter is still at the
-    // beginning of this vsync. The workspace rebuild that moves the timeline
-    // playhead happens afterwards and is no longer the trigger for video I/O.
+    // This notifier is the only per-frame Dart presentation signal. It reaches
+    // EditVideoPreview, the isolated timeline playhead, and the tiny readout.
+    // No authored edit model is reparsed and no workspace setState occurs here.
     _publishPlaybackFrame(frame, playing: true);
-    setState(() {});
   }
 
   void _pausePlayback() {
@@ -520,9 +523,18 @@ class _EditWorkspaceState extends State<EditWorkspace>
         ),
         Text('IMPORTING', style: widget.theme.micro),
       ] else if (edit != null)
-        Text(
-          'EDIT ${edit.id}   F$_displayFrame / ${edit.projectFrameCount}',
-          style: widget.theme.micro,
+        ValueListenableBuilder<EditPlaybackFrameState>(
+          valueListenable: _playbackFrame,
+          builder: (
+            BuildContext context,
+            EditPlaybackFrameState state,
+            Widget? child,
+          ) {
+            return Text(
+              'EDIT ${edit.id}   F${state.frame} / ${edit.projectFrameCount}',
+              style: widget.theme.micro,
+            );
+          },
         ),
     ];
 
