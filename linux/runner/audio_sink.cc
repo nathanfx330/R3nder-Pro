@@ -1,12 +1,14 @@
 // ./linux/runner/audio_sink.cc
 
 #include "audio_sink.h"
+#include "project_clock.h"
 
 #include <pulse/error.h>
 #include <pulse/sample.h>
 #include <pulse/simple.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -21,6 +23,8 @@
 namespace {
 
 constexpr int64_t kUsecPerSecond = 1000000LL;
+constexpr auto kDrainPollInterval = std::chrono::milliseconds(2);
+constexpr auto kDrainPollTimeout = std::chrono::seconds(2);
 
 thread_local std::string g_create_error;
 
@@ -48,6 +52,15 @@ struct AudioSinkState {
   std::atomic<int64_t> submitted_samples{0};
   std::atomic<int64_t> latency_samples{0};
   std::atomic<int64_t> queued_samples{0};
+
+  // ProjectClock binding. The sink object is short lived, but ProjectClock's
+  // played_samples counter is cumulative for the lifetime of the preview
+  // clock. Each sink generation captures that cumulative value as its origin.
+  void* clock_handle = nullptr;
+  R3ClockSnapshot clock_anchor{0, 0, 1, 0, 0, 0};
+  int64_t clock_origin_sample = 0;
+  bool clock_armed = false;
+  bool clock_active = false;
 };
 
 int64_t UsecToSamples(pa_usec_t usec, int32_t sample_rate) {
@@ -55,6 +68,99 @@ int64_t UsecToSamples(pa_usec_t usec, int32_t sample_rate) {
       static_cast<__int128>(usec) * static_cast<__int128>(sample_rate);
   return static_cast<int64_t>((scaled + kUsecPerSecond / 2) /
                               kUsecPerSecond);
+}
+
+bool ClockStillBound(const AudioSinkState* state) {
+  return state->clock_handle != nullptr &&
+         r3_clock_active_handle() == state->clock_handle;
+}
+
+void ClearClockBinding(AudioSinkState* state) {
+  state->clock_handle = nullptr;
+  state->clock_origin_sample = 0;
+  state->clock_armed = false;
+  state->clock_active = false;
+}
+
+void ArmProjectClock(AudioSinkState* state) {
+  if (state->clock_armed) return;
+
+  void* clock = r3_clock_active_handle();
+  if (clock == nullptr) return;
+
+  state->clock_handle = clock;
+  state->clock_anchor = *r3_clock_read(clock);
+  state->clock_origin_sample = r3_clock_get_played_samples(clock);
+  state->clock_armed = true;
+  state->clock_active = false;
+
+  // The sink is created at the authored point where preview audio begins.
+  // Hold that exact ProjectTime while libpulse fills its initial device queue.
+  // When the first sample is due to become audible, UpdateProjectClockTiming()
+  // releases this same point under AUDIO authority.
+  r3_clock_seek_scrub(clock, state->clock_anchor.frame,
+                      state->clock_anchor.phase_num,
+                      state->clock_anchor.phase_den);
+}
+
+void UpdateProjectClockTiming(AudioSinkState* state) {
+  if (!state->clock_armed) return;
+  if (!ClockStillBound(state)) {
+    ClearClockBinding(state);
+    return;
+  }
+
+  void* clock = state->clock_handle;
+  const int64_t latency =
+      state->latency_samples.load(std::memory_order_acquire);
+
+  if (state->clock_active) {
+    r3_clock_set_latency_samples(clock, latency);
+    return;
+  }
+
+  const int64_t played = r3_clock_get_played_samples(clock);
+  if (played - state->clock_origin_sample < latency) return;
+
+  r3_clock_seek_audio(clock, state->clock_anchor.frame,
+                      state->clock_anchor.phase_num,
+                      state->clock_anchor.phase_den,
+                      state->clock_origin_sample, state->sample_rate, latency);
+  state->clock_active = true;
+}
+
+void AddProjectClockSamples(AudioSinkState* state, int64_t samples) {
+  if (!state->clock_armed) return;
+  if (!ClockStillBound(state)) {
+    ClearClockBinding(state);
+    return;
+  }
+  r3_clock_add_played_samples(state->clock_handle, samples);
+}
+
+void ReleaseProjectClock(AudioSinkState* state, bool complete_audio_tail) {
+  if (!state->clock_armed) return;
+  if (!ClockStillBound(state)) {
+    ClearClockBinding(state);
+    return;
+  }
+
+  void* clock = state->clock_handle;
+  if (state->clock_active) {
+    if (complete_audio_tail) {
+      state->latency_samples.store(0, std::memory_order_release);
+      r3_clock_set_latency_samples(clock, 0);
+    }
+    const R3ClockSnapshot now = *r3_clock_read(clock);
+    r3_clock_seek_monotonic(clock, now.frame, now.phase_num, now.phase_den);
+  } else {
+    // Stopped before initial prefill ever became audible. The picture was held
+    // at this anchor, so release from the same authored point.
+    r3_clock_seek_monotonic(clock, state->clock_anchor.frame,
+                            state->clock_anchor.phase_num,
+                            state->clock_anchor.phase_den);
+  }
+  ClearClockBinding(state);
 }
 
 void SetFailure(AudioSinkState* state, const std::string& message) {
@@ -69,17 +175,25 @@ void SetFailure(AudioSinkState* state, const std::string& message) {
   state->cv.notify_all();
 }
 
-void RefreshLatency(AudioSinkState* state) {
+bool RefreshLatency(AudioSinkState* state) {
   int error = 0;
   const pa_usec_t usec = pa_simple_get_latency(state->stream, &error);
   if (usec == static_cast<pa_usec_t>(-1)) {
     SetFailure(state,
                std::string("pa_simple_get_latency failed: ") +
                    pa_strerror(error));
-    return;
+    return false;
   }
   state->latency_samples.store(
       UsecToSamples(usec, state->sample_rate), std::memory_order_release);
+  UpdateProjectClockTiming(state);
+  return true;
+}
+
+bool DrainWasSuperseded(AudioSinkState* state) {
+  std::lock_guard<std::mutex> lock(state->mutex);
+  return state->closing ||
+         state->flush_request != state->flush_complete;
 }
 
 void WorkerMain(AudioSinkState* state) {
@@ -122,6 +236,12 @@ void WorkerMain(AudioSinkState* state) {
     }
 
     if (flush_id != 0) {
+      // Preserve the audible ProjectTime before discarding anything still
+      // buffered by the server. A later sink generation can start from that
+      // point with a new sample origin.
+      RefreshLatency(state);
+      ReleaseProjectClock(state, false);
+
       int error = 0;
       if (pa_simple_flush(state->stream, &error) < 0) {
         SetFailure(state,
@@ -133,12 +253,50 @@ void WorkerMain(AudioSinkState* state) {
       {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->flush_complete = flush_id;
+        // A flush cancels an outstanding natural drain request.
+        state->drain_complete = state->drain_request;
       }
       state->cv.notify_all();
       continue;
     }
 
     if (drain_id != 0) {
+      // With no more writes, submitted_samples stops. Keep ProjectClock under
+      // AUDIO authority by repeatedly lowering measured latency as the device
+      // consumes its tail. This avoids freezing the picture for the final
+      // output buffer and then jumping forward at EOF.
+      const auto deadline = std::chrono::steady_clock::now() + kDrainPollTimeout;
+      bool fallback_to_monotonic = false;
+      bool superseded = false;
+
+      for (;;) {
+        if (DrainWasSuperseded(state)) {
+          superseded = true;
+          break;
+        }
+        if (!RefreshLatency(state)) break;
+        if (state->failed) break;
+
+        const int64_t latency =
+            state->latency_samples.load(std::memory_order_acquire);
+        // One millisecond is below a visible 30 fps frame and prevents a
+        // server reporting a tiny fixed floor from holding this loop forever.
+        if (latency <= state->sample_rate / 1000) break;
+
+        if (std::chrono::steady_clock::now() >= deadline) {
+          // The simple API gives no better tail clock if latency refuses to
+          // converge. Preserve the current audible position and let monotonic
+          // carry the remainder rather than freezing the preview.
+          ReleaseProjectClock(state, false);
+          fallback_to_monotonic = true;
+          break;
+        }
+        std::this_thread::sleep_for(kDrainPollInterval);
+      }
+
+      if (state->failed) break;
+      if (superseded) continue;
+
       int error = 0;
       if (pa_simple_drain(state->stream, &error) < 0) {
         SetFailure(state,
@@ -146,7 +304,16 @@ void WorkerMain(AudioSinkState* state) {
                        pa_strerror(error));
         break;
       }
+
       state->latency_samples.store(0, std::memory_order_release);
+      if (!fallback_to_monotonic) {
+        // A very short stream can finish before initial latency was ever less
+        // than submitted audio. Zero latency makes it eligible now, so the
+        // final exact sample count still defines the handoff point.
+        UpdateProjectClockTiming(state);
+        ReleaseProjectClock(state, true);
+      }
+
       {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->drain_complete = drain_id;
@@ -165,12 +332,16 @@ void WorkerMain(AudioSinkState* state) {
       break;
     }
 
-    state->submitted_samples.fetch_add(
-        static_cast<int64_t>(chunk.size()) / state->bytes_per_frame,
-        std::memory_order_acq_rel);
-    RefreshLatency(state);
+    const int64_t submitted =
+        static_cast<int64_t>(chunk.size()) / state->bytes_per_frame;
+    state->submitted_samples.fetch_add(submitted, std::memory_order_acq_rel);
+    AddProjectClockSamples(state, submitted);
+    if (!RefreshLatency(state)) break;
   }
 
+  // Closing or a native error must never strand ProjectClock in SCRUB/AUDIO.
+  // Preserve the last audible position before the final destructive flush.
+  ReleaseProjectClock(state, false);
   if (!state->failed && state->stream != nullptr) {
     int error = 0;
     pa_simple_flush(state->stream, &error);
@@ -252,9 +423,14 @@ void* r3_audio_sink_create(const char* device, int32_t sample_rate,
     state->max_queue_bytes = state->bytes_per_frame;
   }
 
+  // If a realtime preview clock exists, this exact point is the authored audio
+  // start. Freeze it before any PCM can reach the device.
+  ArmProjectClock(state);
+
   try {
     state->worker = std::thread(WorkerMain, state);
   } catch (...) {
+    ReleaseProjectClock(state, false);
     pa_simple_free(stream);
     delete state;
     g_create_error = "Could not start native audio sink worker thread.";
@@ -300,6 +476,11 @@ int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
         state->queued_bytes + byte_count > state->max_queue_bytes) {
       return 0;
     }
+
+    // A drained sink can be reused. Re-arm at the first new packet so a new
+    // playback segment gets a fresh sample origin without resetting the
+    // cumulative ProjectClock played_samples counter.
+    if (!state->clock_armed) ArmProjectClock(state);
 
     state->queue.emplace_back(data, data + byte_count);
     state->queued_bytes += byte_count;
@@ -350,7 +531,7 @@ int32_t r3_audio_sink_flush(void* handle) {
 
 const R3AudioSinkStats* r3_audio_sink_read(void* handle) {
   static thread_local R3AudioSinkStats out;
-  out = R3AudioSinkStats{0, 0, 0, 0, 0, 0, 0};
+  out = R3AudioSinkStats{0, 0, 0, 0, 0, 0, 0, 0};
 
   AudioSinkState* state = static_cast<AudioSinkState*>(handle);
   if (state == nullptr) return &out;
