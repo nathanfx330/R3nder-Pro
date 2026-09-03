@@ -16,7 +16,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
@@ -123,7 +122,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
   int _epoch = 0;
   int _requestSerial = 0;
-  int? _scheduledFrameCallbackId;
+  int _parkedScheduleGeneration = 0;
+  bool _parkedRenderScheduled = false;
 
   @override
   void initState() {
@@ -152,7 +152,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _lastPlaybackState = next?.value;
     next?.addListener(_onPlaybackFrameChanged);
     _epoch++;
-    _scheduleAlignedRender();
+    _scheduleParkedRender();
   }
 
   @override
@@ -164,11 +164,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         oldWidget.resolveSource != widget.resolveSource;
 
     if (sourceChanged) {
-      _cancelAlignedRender();
+      _cancelParkedRender();
       _disposeLayer();
       _replaceImage(null);
       _epoch++;
-      _scheduleAlignedRender();
+      _scheduleParkedRender();
       return;
     }
 
@@ -177,7 +177,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           oldWidget.fastPreview != widget.fastPreview ||
           oldWidget.isPlaying != widget.isPlaying) {
         _epoch++;
-        _scheduleAlignedRender();
+        _scheduleParkedRender();
       }
       return;
     }
@@ -187,14 +187,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     // size without changing the project frame.
     if (oldWidget.fastPreview != widget.fastPreview) {
       _epoch++;
-      _scheduleAlignedRender();
+      _scheduleParkedRender();
     }
   }
 
   @override
   void dispose() {
     _requestSerial++;
-    _cancelAlignedRender();
+    _cancelParkedRender();
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = null;
     _disposeLayer();
@@ -279,7 +279,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (next == _lastPlaybackState) return;
 
     _lastPlaybackState = next;
-    _cancelAlignedRender();
+    _cancelParkedRender();
     _epoch++;
 
     // This listener is invoked synchronously by EditWorkspace's Ticker before
@@ -294,29 +294,35 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     );
   }
 
-  void _scheduleAlignedRender() {
-    if (_scheduledFrameCallbackId != null || !mounted) return;
-    _scheduledFrameCallbackId = SchedulerBinding.instance.scheduleFrameCallback(
-      (_) {
-        _scheduledFrameCallbackId = null;
-        if (!mounted) return;
-        final EditPlaybackFrameState state = _effectivePlaybackState;
-        unawaited(
-          _renderFrame(
-            state.frame,
-            playing: state.isPlaying,
-            moving: state.isPlaying || widget.fastPreview,
-          ),
-        );
-      },
-    );
+  void _scheduleParkedRender() {
+    if (_parkedRenderScheduled || !mounted) return;
+    _parkedRenderScheduled = true;
+    final int generation = ++_parkedScheduleGeneration;
+
+    // Initial, parked, and scrub-retry rendering is deliberately separate from
+    // the live playback path. A post-frame callback is reliable even when no
+    // Ticker is active yet, which matters for the first parked frame and for
+    // standalone preview widgets. Playback itself never comes through here:
+    // _onPlaybackFrameChanged submits directly from the vsync Ticker listener.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _parkedScheduleGeneration) return;
+      _parkedRenderScheduled = false;
+      final EditPlaybackFrameState state = _effectivePlaybackState;
+      unawaited(
+        _renderFrame(
+          state.frame,
+          playing: state.isPlaying,
+          moving: state.isPlaying || widget.fastPreview,
+        ),
+      );
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  void _cancelAlignedRender() {
-    final int? id = _scheduledFrameCallbackId;
-    if (id == null) return;
-    SchedulerBinding.instance.cancelFrameCallbackWithId(id);
-    _scheduledFrameCallbackId = null;
+  void _cancelParkedRender() {
+    if (!_parkedRenderScheduled) return;
+    _parkedScheduleGeneration++;
+    _parkedRenderScheduled = false;
   }
 
   Future<void> _renderFrame(
@@ -372,7 +378,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           ),
         );
       }
-      if (!playing) _scheduleAlignedRender();
+      if (!playing) _scheduleParkedRender();
       return;
     }
 
