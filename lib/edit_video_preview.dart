@@ -81,16 +81,14 @@ class EditVideoPreview extends StatefulWidget {
   final String editId;
   final int currentFrame;
   final R3Theme theme;
-
-  /// True while R3nder ProjectClock is advancing the edit.
   final bool isPlaying;
 
-  /// Retained for the CPU compositor fallback. Native texture playback does
-  /// not lower its quality merely because the playhead is moving.
+  /// Used only by the CPU fallback. Native texture playback stays on the
+  /// source-profile render path while moving.
   final bool fastPreview;
 
-  /// Optional seams for widget tests and deterministic compositor tests.
-  /// Supplying either seam deliberately selects the synchronous test path.
+  /// Optional seams for deterministic widget tests. Supplying either one
+  /// deliberately selects the synchronous compositor path.
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
@@ -115,7 +113,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   static const ui.Size _fastDecodeSize = ui.Size(480, 270);
   static const Duration _texturePollInterval = Duration(milliseconds: 50);
 
-  // Native MLT texture path.
   NativeEditPreview? _native;
   Timer? _texturePoll;
   int _textureId = -1;
@@ -127,8 +124,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   EditSurfaceClip? _nativeClip;
   String? _nativeUnavailable;
 
-  // Deterministic synchronous fallback used by injected tests and overlapping
-  // video layers until the full edit graph is projected into native MLT.
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
   String? _layerSource;
@@ -162,16 +157,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (pipelineChanged) {
       _disposeSynchronousLayer();
       _closeNativeSource();
-      _native?.close();
       _native = null;
       _nativeUnavailable = null;
       _initializeNativeIfAvailable();
       _epoch++;
     } else if (authoredEditChanged) {
       _disposeSynchronousLayer();
-      // Do not assume an authored edit change still maps to the same clip.
-      // The next native drive reparses canonical source and reopens only when
-      // the resolved media source actually changed.
       _nativeClipKey = null;
       _nativeSourceFrame = null;
       _epoch++;
@@ -188,7 +179,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   void dispose() {
     _requestSerial++;
     _texturePoll?.cancel();
-    _texturePoll = null;
     _disposeSynchronousLayer();
     _replaceImage(null);
     _native?.close();
@@ -213,18 +203,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final NativeEditPreview? native = _native;
     if (native == null || !mounted) return;
 
-    int next = -1;
     try {
-      next = native.textureId;
+      final int next = native.textureId;
+      if (next > 0) {
+        if (_textureId != next) setState(() => _textureId = next);
+        return;
+      }
     } catch (error) {
       _nativeUnavailable = '$error';
-      return;
-    }
-
-    if (next > 0) {
-      if (_textureId != next) {
-        setState(() => _textureId = next);
-      }
       return;
     }
 
@@ -243,6 +229,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _nativeSourceFrame = null;
     _nativePlaying = false;
     _nativeClip = null;
+    _showNative = false;
   }
 
   void _disposeSynchronousLayer() {
@@ -308,6 +295,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (!_hasTestSeam && _native != null) {
       final EditSurfaceClip? nativeClip = _singleNativeClipAtCurrentFrame();
       if (nativeClip != null) {
+        ++_requestSerial;
         _disposeSynchronousLayer();
         _replaceImage(null);
         _driveNative(nativeClip);
@@ -346,9 +334,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         }
       }
 
-      // The native texture path is intentionally conservative in this first
-      // port. Any overlap or transition stays on R3nder's deterministic CPU
-      // compositor until the whole edit graph is represented in native MLT.
       if (active.length != 1) return null;
       final EditSurfaceClip clip = active.single;
       if (!clip.transition.isNone || clip.source.startsWith('EDIT.')) return null;
@@ -390,10 +375,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       }
 
       if (widget.isPlaying) {
-        // The crucial MLT Player behavior: once playback starts, do not seek
-        // on every Flutter/ProjectClock tick. MLT's consumer renders and feeds
-        // the texture continuously. R3nder only anchors it at play start or a
-        // canonical clip/speed boundary.
+        // Once playback starts, do not seek on every ProjectClock tick. MLT's
+        // consumer renders and feeds the texture continuously. R3nder anchors
+        // it only at play start or a canonical clip/speed boundary.
         if (!_nativePlaying || _nativeClipKey != clipKey) {
           if (!native.playFrom(
             sourceFrame: sourceFrame,
@@ -558,6 +542,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final ui.Image? image = _image;
     final MediaFrame? frame = _frame;
     final EditSurfaceClip? nativeClip = _nativeClip;
+    final int? nativeExpectedSourceFrame = nativeClip == null
+        ? null
+        : nativeClip.clip.sourceFrameAtProjectOffset(
+            widget.currentFrame - nativeClip.atFrame,
+          );
 
     return Container(
       color: Colors.black,
@@ -567,9 +556,10 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           if (_showNative && _textureId > 0)
             Center(
               child: AspectRatio(
-                // The current native bridge uses the source-derived profile.
-                // 16:9 is only the layout shell until the source dimension
-                // getters are wired; the texture pixels themselves are native.
+                // The first native parity gate targets the same 16:9 source
+                // used to expose the playback regression. Native source-size
+                // getters are the next small presentation cleanup, not part of
+                // the transport path itself.
                 aspectRatio: 16 / 9,
                 child: Texture(
                   textureId: _textureId,
@@ -606,8 +596,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                 _showNative && nativeClip != null
                     ? '${nativeClip.trackId} / ${nativeClip.id}   '
                         'P${widget.currentFrame}   '
-                        'SRC ${nativeClip.clip.sourceFrameAtProjectOffset('
-                        'widget.currentFrame - nativeClip.atFrame)}   '
+                        'SRC ${nativeExpectedSourceFrame ?? 0}   '
                         'LAYERS 1   NATIVE'
                         '${widget.isPlaying ? '   PLAY' : ''}'
                     : frame == null
