@@ -8,19 +8,19 @@
 // and drive EDIT playback from ProjectClock. There is no timeline database
 // here. Durable state remains authored source; playback state is transient.
 //
-// Playback samples ProjectClock at the project frame cadence, but those local
-// playhead updates are not republished through EditorScreen. The video preview
-// receives the exact current project frame and uses native nonblocking decoder
-// workers, while the parent receives only the parked frame on pause, end, or an
-// explicit seek.
-
-import 'dart:async';
+// Playback follows the same timing rule as the terminal renderer: Flutter
+// vsync asks ProjectClock what project frame is current. A Ticker does not
+// advance time itself. The sampled frame is also published through a stable
+// listenable before the workspace rebuilds, so the video monitor can request
+// that picture at the beginning of the presentation frame instead of after it.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'edit_media_import.dart';
 import 'edit_model.dart';
 import 'edit_playback_clock.dart';
+import 'edit_playback_frame.dart';
 import 'edit_surface.dart';
 import 'edit_surface_model.dart';
 import 'engine.dart';
@@ -66,14 +66,12 @@ class EditWorkspace extends StatefulWidget {
   State<EditWorkspace> createState() => _EditWorkspaceState();
 }
 
-class _EditWorkspaceState extends State<EditWorkspace> {
-  static const Duration _playbackPollInterval = Duration(
-    microseconds: 1000000 ~/ engineFps,
-  );
-
+class _EditWorkspaceState extends State<EditWorkspace>
+    with SingleTickerProviderStateMixin {
   late String _workingSource;
   late int _displayFrame;
-  Timer? _playPoll;
+  late final Ticker _playTicker;
+  late final ValueNotifier<EditPlaybackFrameState> _playbackFrame;
   EditPlaybackClock? _playClock;
   bool _importing = false;
   bool _playing = false;
@@ -88,6 +86,10 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     _displayFrame = widget.currentFrame;
     _refreshEditEndCache();
     _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
+    _playbackFrame = ValueNotifier<EditPlaybackFrameState>(
+      EditPlaybackFrameState(frame: _displayFrame, isPlaying: false),
+    );
+    _playTicker = createTicker(_onPlaybackTick);
   }
 
   @override
@@ -105,16 +107,28 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     if (!_playing && widget.currentFrame != oldWidget.currentFrame) {
       _displayFrame = widget.currentFrame.clamp(0, _cachedEditEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
+      _publishPlaybackFrame(_displayFrame, playing: false);
     }
   }
 
   @override
   void dispose() {
-    _playPoll?.cancel();
-    _playPoll = null;
+    _playTicker.stop();
+    _playTicker.dispose();
+    _playbackFrame.dispose();
     _playClock?.dispose();
     _playClock = null;
     super.dispose();
+  }
+
+  void _publishPlaybackFrame(int frame, {required bool playing}) {
+    final EditPlaybackFrameState next = EditPlaybackFrameState(
+      frame: frame,
+      isPlaying: playing,
+    );
+    if (_playbackFrame.value != next) {
+      _playbackFrame.value = next;
+    }
   }
 
   EditPlaybackClock _ensurePlaybackClock() {
@@ -165,26 +179,25 @@ class _EditWorkspaceState extends State<EditWorkspace> {
         ),
       );
 
-      _playPoll?.cancel();
-      _playPoll = Timer.periodic(_playbackPollInterval, _onPlaybackPoll);
+      _playTicker.stop();
       _lastPolledPlaybackFrame = start;
-
-      setState(() {
-        _displayFrame = start;
-        _playing = true;
-        _error = null;
-      });
+      _displayFrame = start;
+      _playing = true;
+      _error = null;
+      _publishPlaybackFrame(start, playing: true);
+      _playTicker.start();
+      setState(() {});
     } catch (error) {
-      _playPoll?.cancel();
-      _playPoll = null;
+      _playTicker.stop();
       setState(() {
         _playing = false;
+        _publishPlaybackFrame(_displayFrame, playing: false);
         _error = 'EDIT PLAYBACK UNAVAILABLE\n$error';
       });
     }
   }
 
-  void _onPlaybackPoll(Timer _) {
+  void _onPlaybackTick(Duration _) {
     if (!_playing || !mounted) return;
 
     final int end = _editEndFrame();
@@ -200,10 +213,10 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     try {
       sampled = clock.sample();
     } catch (error) {
-      _playPoll?.cancel();
-      _playPoll = null;
+      _playTicker.stop();
       setState(() {
         _playing = false;
+        _publishPlaybackFrame(_displayFrame, playing: false);
         _error = 'EDIT PLAYBACK CLOCK FAILED\n$error';
       });
       return;
@@ -217,11 +230,14 @@ class _EditWorkspaceState extends State<EditWorkspace> {
 
     if (frame == _lastPolledPlaybackFrame) return;
     _lastPolledPlaybackFrame = frame;
+    _displayFrame = frame;
 
-    // Local only. EditorScreen is not told about every advancing frame, so the
-    // parent editor tree remains outside the playback hot path. EditSurface and
-    // its monitor still receive project frames at the real project cadence.
-    setState(() => _displayFrame = frame);
+    // Publish first. EditVideoPreview listens directly to this value and can
+    // submit the nonblocking decoder request while Flutter is still at the
+    // beginning of this vsync. The workspace rebuild that moves the timeline
+    // playhead happens afterwards and is no longer the trigger for video I/O.
+    _publishPlaybackFrame(frame, playing: true);
+    setState(() {});
   }
 
   void _pausePlayback() {
@@ -239,8 +255,7 @@ class _EditWorkspaceState extends State<EditWorkspace> {
   }
 
   void _stopPlaybackAt(int frame, {required bool publish}) {
-    _playPoll?.cancel();
-    _playPoll = null;
+    _playTicker.stop();
 
     final int safeFrame = frame.clamp(0, _editEndFrame());
     final EditPlaybackClock? clock = _playClock;
@@ -261,6 +276,7 @@ class _EditWorkspaceState extends State<EditWorkspace> {
     final bool changed = _playing || _displayFrame != safeFrame;
     _playing = false;
     _displayFrame = safeFrame;
+    _publishPlaybackFrame(safeFrame, playing: false);
 
     if (publish && safeFrame != widget.currentFrame) {
       widget.onSeek(safeFrame);
@@ -286,11 +302,9 @@ class _EditWorkspaceState extends State<EditWorkspace> {
           // Seeking remains valid even if the optional realtime clock failed.
         }
       }
-      if (_displayFrame != safeFrame && mounted) {
-        setState(() => _displayFrame = safeFrame);
-      } else {
-        _displayFrame = safeFrame;
-      }
+      _displayFrame = safeFrame;
+      _publishPlaybackFrame(safeFrame, playing: false);
+      if (mounted) setState(() {});
     }
 
     _lastPolledPlaybackFrame = safeFrame;
@@ -361,6 +375,7 @@ class _EditWorkspaceState extends State<EditWorkspace> {
         _error = null;
         _refreshEditEndCache();
         _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
+        _publishPlaybackFrame(_displayFrame, playing: false);
       });
       widget.onSourceChanged(next);
     } catch (error) {
@@ -412,31 +427,38 @@ class _EditWorkspaceState extends State<EditWorkspace> {
                     ? _message(
                         'NO VIDEO EDIT YET\n\nADD VIDEO creates the first V1 clip.',
                       )
-                    : EditSurface(
-                        key: ValueKey('edit:${edit.id}'),
-                        source: _workingSource,
-                        editId: edit.id,
-                        currentFrame: _displayFrame.clamp(
-                          0,
-                          edit.projectFrameCount,
+                    : EditPlaybackFrameScope(
+                        listenable: _playbackFrame,
+                        child: EditSurface(
+                          key: ValueKey('edit:${edit.id}'),
+                          source: _workingSource,
+                          editId: edit.id,
+                          currentFrame: _displayFrame.clamp(
+                            0,
+                            edit.projectFrameCount,
+                          ),
+                          isPlaying: _playing,
+                          voiceFrames: widget.voiceFrames,
+                          musicFrames: widget.musicFrames,
+                          musicLoops: widget.musicLoops,
+                          theme: widget.theme,
+                          onSourceChanged: (String next) {
+                            if (_workingSource == next) return;
+                            if (_playing) _pausePlayback();
+                            setState(() {
+                              _workingSource = next;
+                              _refreshEditEndCache();
+                              _displayFrame =
+                                  _displayFrame.clamp(0, _cachedEditEndFrame);
+                              _publishPlaybackFrame(
+                                _displayFrame,
+                                playing: false,
+                              );
+                            });
+                            widget.onSourceChanged(next);
+                          },
+                          onSeek: _seekFromEdit,
                         ),
-                        isPlaying: _playing,
-                        voiceFrames: widget.voiceFrames,
-                        musicFrames: widget.musicFrames,
-                        musicLoops: widget.musicLoops,
-                        theme: widget.theme,
-                        onSourceChanged: (String next) {
-                          if (_workingSource == next) return;
-                          if (_playing) _pausePlayback();
-                          setState(() {
-                            _workingSource = next;
-                            _refreshEditEndCache();
-                            _displayFrame =
-                                _displayFrame.clamp(0, _cachedEditEndFrame);
-                          });
-                          widget.onSourceChanged(next);
-                        },
-                        onSeek: _seekFromEdit,
                       ),
           ),
         ],
