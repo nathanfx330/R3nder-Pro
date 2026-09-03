@@ -19,6 +19,11 @@ import 'project_clock.dart';
 import 'session_store.dart';
 import 'ui_theme.dart';
 
+bool _isAbsolutePath(String path) {
+  if (path.startsWith('/') || path.startsWith('\\\\')) return true;
+  return RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path);
+}
+
 /// Resolves an authored CLIP source against the active R3nder workspace.
 ///
 /// Relative paths are portable project paths. `video/intro.mp4` means
@@ -29,7 +34,7 @@ String resolveWorkspaceMediaSource(String source) {
   if (trimmed.isEmpty) {
     throw const FileSystemException('CLIP source path is empty.');
   }
-  if (FileSystemEntity.isAbsolute(trimmed)) return trimmed;
+  if (_isAbsolutePath(trimmed)) return trimmed;
 
   final String baseDir = resolvePortableBaseDir();
   final SessionStore session = SessionStore(baseDir: baseDir)..load();
