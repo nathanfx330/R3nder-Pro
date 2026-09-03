@@ -14,6 +14,84 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
+/// Packet contract for the preview PCM stream.
+///
+/// Full producer packets represent exactly 10 ms of audio. A single shorter
+/// frame-aligned packet is allowed only as the final EOF tail. This makes packet
+/// duration explicit without forcing the native C sink itself to care about
+/// decoder packetization.
+class PreviewPcmPacketContract {
+  static const int packetDurationMicroseconds = 10000;
+  static const int bytesPerSample = 2;
+
+  final int sampleRate;
+  final int channels;
+
+  const PreviewPcmPacketContract({
+    required this.sampleRate,
+    required this.channels,
+  });
+
+  int get bytesPerFrame {
+    if (channels <= 0) {
+      throw ArgumentError.value(channels, 'channels', 'Must be positive.');
+    }
+    return channels * bytesPerSample;
+  }
+
+  int get framesPerPacket {
+    if (sampleRate <= 0) {
+      throw ArgumentError.value(
+        sampleRate,
+        'sampleRate',
+        'Must be positive.',
+      );
+    }
+
+    final int scaled = sampleRate * packetDurationMicroseconds;
+    if (scaled % Duration.microsecondsPerSecond != 0) {
+      throw StateError(
+        'A 10 ms preview packet is not an exact PCM frame count at '
+        '$sampleRate Hz.',
+      );
+    }
+    return scaled ~/ Duration.microsecondsPerSecond;
+  }
+
+  int get bytesPerPacket => framesPerPacket * bytesPerFrame;
+
+  /// Validates one non-empty packet and returns true when it is the short EOF
+  /// tail rather than a full 10 ms packet.
+  bool validatePacketByteCount(
+    int byteCount, {
+    required bool shortTailAlreadyAccepted,
+  }) {
+    final int frameBytes = bytesPerFrame;
+    if (byteCount <= 0 || byteCount % frameBytes != 0) {
+      throw ArgumentError(
+        'PCM byte count must be aligned to $frameBytes-byte sample frames.',
+      );
+    }
+
+    final int fullPacketBytes = bytesPerPacket;
+    if (byteCount > fullPacketBytes) {
+      throw ArgumentError(
+        'Preview PCM packets must not exceed 10 ms '
+        '($fullPacketBytes bytes at $sampleRate Hz, $channels channels).',
+      );
+    }
+
+    if (shortTailAlreadyAccepted) {
+      throw StateError(
+        'A short preview PCM tail must be followed by drain or flush before '
+        'more audio is enqueued.',
+      );
+    }
+
+    return byteCount < fullPacketBytes;
+  }
+}
+
 class AudioSinkException implements Exception {
   final String message;
   const AudioSinkException(this.message);
@@ -52,6 +130,9 @@ class NativeAudioSink {
 
   final _NativeAudioSinkBindings _native;
   late final Pointer<Void> _handle;
+  late final PreviewPcmPacketContract _packetContract;
+  late final int _packetBytes;
+  bool _shortTailAccepted = false;
   bool _disposed = false;
 
   NativeAudioSink({
@@ -61,6 +142,16 @@ class NativeAudioSink {
     int latencyMs = defaultLatencyMs,
     int maxQueueMs = defaultQueueMs,
   }) : _native = _NativeAudioSinkBindings.open() {
+    _packetContract = PreviewPcmPacketContract(
+      sampleRate: sampleRate,
+      channels: channels,
+    );
+
+    // Resolve the exact 10 ms packet size before native stream creation. This
+    // throws if the duration cannot be represented by an integer PCM frame
+    // count, so packet timing never depends on rounding or producer chunking.
+    _packetBytes = _packetContract.bytesPerPacket;
+
     Pointer<Int8> devicePtr = nullptr;
     try {
       if (device != null && device.isNotEmpty) {
@@ -101,7 +192,9 @@ class NativeAudioSink {
     );
   }
 
-  /// Attempts to copy one interleaved s16le PCM chunk into the native queue.
+  /// Attempts to copy one interleaved s16le PCM packet into the native queue.
+  /// Full packets are exactly 10 ms. One shorter frame-aligned packet is
+  /// allowed as the final EOF tail and must be followed by drain or flush.
   /// Returns false when the bounded queue is full. A false result is
   /// backpressure, not an error: the caller should pause the source stream and
   /// retry later instead of buffering an unbounded amount in Dart.
@@ -109,12 +202,11 @@ class NativeAudioSink {
     _checkAlive();
     if (pcm.isEmpty) return true;
 
-    final int bytesPerFrame = stats.channels * 2;
-    if (pcm.lengthInBytes % bytesPerFrame != 0) {
-      throw ArgumentError(
-        'PCM byte count must be aligned to $bytesPerFrame-byte sample frames.',
-      );
-    }
+    final bool isShortTail = _packetContract.validatePacketByteCount(
+      pcm.lengthInBytes,
+      shortTailAlreadyAccepted: _shortTailAccepted,
+    );
+    assert(_packetBytes == _packetContract.bytesPerPacket);
 
     final Pointer<Uint8> buffer =
         _native.malloc(pcm.lengthInBytes).cast<Uint8>();
@@ -125,7 +217,10 @@ class NativeAudioSink {
     try {
       buffer.asTypedList(pcm.lengthInBytes).setAll(0, pcm);
       final int result = _native.enqueue(_handle, buffer, pcm.lengthInBytes);
-      if (result > 0) return true;
+      if (result > 0) {
+        if (isShortTail) _shortTailAccepted = true;
+        return true;
+      }
       if (result == 0) return false;
       throw AudioSinkException(lastError);
     } finally {
@@ -141,6 +236,7 @@ class NativeAudioSink {
     if (_native.requestDrain(_handle) < 0) {
       throw AudioSinkException(lastError);
     }
+    _shortTailAccepted = false;
   }
 
   /// Drops queued and server-buffered audio. The native ProjectClock sample
@@ -151,6 +247,7 @@ class NativeAudioSink {
     if (_native.flush(_handle) < 0) {
       throw AudioSinkException(lastError);
     }
+    _shortTailAccepted = false;
   }
 
   String get lastError {
