@@ -171,7 +171,7 @@ void main() {
   });
 
   testWidgets(
-      'PLAY samples ProjectClock locally and PAUSE publishes exact parked frame',
+      'PLAY samples ProjectClock on Flutter frames and PAUSE publishes parked frame',
       (WidgetTester tester) async {
     const String source = '''[EDIT:main]
   [TRACK:V1]
@@ -208,14 +208,15 @@ void main() {
     await tester.pump();
     expect(find.text('PAUSE'), findsOneWidget);
 
-    // ProjectClock is sampled at project cadence for the local EDIT playhead.
-    // Those updates must still stay inside EditWorkspace instead of bubbling
-    // every playback frame through EditorScreen.
-    await tester.pump(const Duration(milliseconds: 110));
+    // A Ticker is exercised by advancing actual Flutter frames, not by one
+    // coarse timer-sized jump. ProjectClock is sampled once at each vsync and
+    // the advancing frame remains local to the EDIT workspace.
+    for (int i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 17));
+    }
     expect(fake, isNotNull);
-    expect(fake!.samples, greaterThanOrEqualTo(2));
+    expect(fake!.samples, greaterThanOrEqualTo(3));
     expect(find.textContaining('EDIT main   F'), findsOneWidget);
-
     expect(lastSeek, 0);
 
     await tester.tap(find.text('PAUSE'));
