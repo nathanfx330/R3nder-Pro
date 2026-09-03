@@ -194,9 +194,9 @@ class EditSurfaceDocument {
 
   String trimStart(String trackId, String clipId, int newAtFrame) {
     final EditSurfaceClip selected = clip(trackId, clipId);
-    final EditClip clip = selected.clip;
-    final int delta = newAtFrame - clip.atFrame;
-    final int newDuration = clip.durationFrames - delta;
+    final EditClip editClip = selected.clip;
+    final int delta = newAtFrame - editClip.atFrame;
+    final int newDuration = editClip.durationFrames - delta;
 
     if (newAtFrame < 0) {
       throw ArgumentError.value(
@@ -214,10 +214,10 @@ class EditSurfaceDocument {
     }
 
     final int sourceDelta = _floorDiv(
-      delta * clip.speed.numerator,
-      clip.speed.denominator,
+      delta * editClip.speed.numerator,
+      editClip.speed.denominator,
     );
-    final int newIn = clip.inFrame + sourceDelta;
+    final int newIn = editClip.inFrame + sourceDelta;
     if (newIn < 0) {
       throw ArgumentError.value(
         newAtFrame,
@@ -227,7 +227,7 @@ class EditSurfaceDocument {
     }
 
     return model.rewriteClip(
-      clip,
+      editClip,
       atFrame: newAtFrame,
       inFrame: newIn,
       durationFrames: newDuration,
@@ -236,8 +236,8 @@ class EditSurfaceDocument {
 
   String trimEnd(String trackId, String clipId, int newEndFrameExclusive) {
     final EditSurfaceClip selected = clip(trackId, clipId);
-    final EditClip clip = selected.clip;
-    final int duration = newEndFrameExclusive - clip.atFrame;
+    final EditClip editClip = selected.clip;
+    final int duration = newEndFrameExclusive - editClip.atFrame;
     if (duration <= 0) {
       throw ArgumentError.value(
         newEndFrameExclusive,
@@ -245,7 +245,7 @@ class EditSurfaceDocument {
         'Trim would remove the entire CLIP.',
       );
     }
-    return model.rewriteClip(clip, durationFrames: duration);
+    return model.rewriteClip(editClip, durationFrames: duration);
   }
 
   String slipClip(String trackId, String clipId, int sourceFrameDelta) {
@@ -295,9 +295,10 @@ class EditSurfaceDocument {
   String splitClip(String trackId, String clipId, int projectFrame) {
     final EditSurfaceTrack selectedTrack = track(trackId);
     final EditSurfaceClip selected = clip(trackId, clipId);
-    final EditClip clip = selected.clip;
+    final EditClip editClip = selected.clip;
 
-    if (projectFrame <= clip.atFrame || projectFrame >= clip.endFrameExclusive) {
+    if (projectFrame <= editClip.atFrame ||
+        projectFrame >= editClip.endFrameExclusive) {
       throw ArgumentError.value(
         projectFrame,
         'projectFrame',
@@ -305,35 +306,35 @@ class EditSurfaceDocument {
       );
     }
 
-    final int leftDuration = projectFrame - clip.atFrame;
-    final int rightDuration = clip.durationFrames - leftDuration;
-    final int rightIn = clip.sourceFrameAtProjectOffset(leftDuration);
-    final String rightId = _nextSplitId(selectedTrack, clip.id);
-    final String indent = _lineIndentAt(source, clip.block.startOffset);
+    final int leftDuration = projectFrame - editClip.atFrame;
+    final int rightDuration = editClip.durationFrames - leftDuration;
+    final int rightIn = editClip.sourceFrameAtProjectOffset(leftDuration);
+    final String rightId = _nextSplitId(selectedTrack, editClip.id);
+    final String indent = _lineIndentAt(source, editClip.block.startOffset);
 
     final String leftOpening = _clipOpeningTag(
-      id: clip.id,
-      source: clip.source,
-      atFrame: clip.atFrame,
-      inFrame: clip.inFrame,
+      id: editClip.id,
+      source: editClip.source,
+      atFrame: editClip.atFrame,
+      inFrame: editClip.inFrame,
       durationFrames: leftDuration,
-      speed: clip.speed,
+      speed: editClip.speed,
     );
     final String rightOpening = _clipOpeningTag(
       id: rightId,
-      source: clip.source,
+      source: editClip.source,
       atFrame: projectFrame,
       inFrame: rightIn,
       durationFrames: rightDuration,
-      speed: clip.speed,
+      speed: editClip.speed,
     );
 
-    final String leftBody = clip.block.innerSource;
+    final String leftBody = editClip.block.innerSource;
     final String rightBody = leftBody.replaceFirst(_transitionLine, '');
     final String replacement = '$leftOpening$leftBody[/CLIP]\n'
         '$indent$rightOpening$rightBody[/CLIP]';
 
-    return model.cst.replaceBlock(clip.block, replacement);
+    return model.cst.replaceBlock(editClip.block, replacement);
   }
 
   static EditTransition _parseTransition(String body) {
