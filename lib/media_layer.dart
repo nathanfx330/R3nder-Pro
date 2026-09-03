@@ -5,8 +5,9 @@
 // The edit model owns clip geometry. ProjectTime owns the playhead. MLT owns
 // only persistent source decoders. Exact parked-frame work may wait for decode,
 // while live preview publishes targets to native workers and polls completed
-// frames without blocking Dart. No decoder advances project time or decides
-// project duration.
+// frames without blocking Dart. A native external-texture capability can also
+// consume the same decoder worker directly, keeping RGBA out of Dart entirely.
+// No decoder advances project time or decides project duration.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -207,6 +208,14 @@ abstract interface class NonBlockingMediaDecoder implements MediaDecoder {
   DecodedMediaFrame? poll(int requestedSourceFrame, int width, int height);
 }
 
+/// Optional zero-Dart-pixel presentation capability. The decoder remains the
+/// same persistent MLT worker used by request/poll; this only changes where its
+/// exact target frame is delivered.
+abstract interface class TextureMediaDecoder implements NonBlockingMediaDecoder {
+  int get textureId;
+  void presentTexture(int requestedSourceFrame, int width, int height);
+}
+
 abstract interface class MediaDecoderBackend {
   MediaDecoder open(String resolvedPath);
 }
@@ -253,6 +262,33 @@ class MediaLayer {
     ui.Size size,
   ) {
     return _render(editId, time, size, nonBlocking: true);
+  }
+
+  /// Hands one source-frame target to the Linux external texture while reusing
+  /// the exact same decoder object cached by normal render paths. Returns the
+  /// Flutter texture id when the backend supports native presentation, or null
+  /// for test/alternate backends so callers can fall back to CPU composition.
+  int? presentNativeTexture({
+    required String source,
+    required int requestedSourceFrame,
+    required int width,
+    required int height,
+  }) {
+    _checkAlive();
+    if (source.startsWith('EDIT.')) return null;
+    if (requestedSourceFrame < 0 || width <= 0 || height <= 0) {
+      throw ArgumentError('Native texture media request is invalid.');
+    }
+
+    final String resolved = resolveSource(source);
+    final MediaDecoder decoder =
+        _decoders.putIfAbsent(resolved, () => backend.open(resolved));
+    if (decoder is! TextureMediaDecoder) return null;
+
+    final int id = decoder.textureId;
+    if (id <= 0) return null;
+    decoder.presentTexture(requestedSourceFrame, width, height);
+    return id;
   }
 
   MediaRenderResult _render(
@@ -406,12 +442,18 @@ class NativeMltMediaBackend implements MediaDecoderBackend {
   }
 }
 
-class _NativeMltMediaDecoder implements NonBlockingMediaDecoder {
+class _NativeMltMediaDecoder implements TextureMediaDecoder {
   final _NativeMediaBindings _native;
   Pointer<Void> _handle;
   bool _disposed = false;
 
   _NativeMltMediaDecoder(this._native, this._handle);
+
+  @override
+  int get textureId {
+    _checkAlive();
+    return _native.textureId();
+  }
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
@@ -461,6 +503,21 @@ class _NativeMltMediaDecoder implements NonBlockingMediaDecoder {
         return status == 1;
       },
     );
+  }
+
+  @override
+  void presentTexture(int requestedSourceFrame, int width, int height) {
+    _checkRequest(requestedSourceFrame, width, height);
+    if (_native.textureId() <= 0) {
+      throw const MediaDecodeException(
+        'Flutter media texture is not registered yet.',
+      );
+    }
+    final int status =
+        _native.textureRequest(_handle, requestedSourceFrame, width, height);
+    if (status != 0) {
+      throw MediaDecodeException(_native.decoderError(_handle));
+    }
   }
 
   DecodedMediaFrame? _readNativeFrame(
@@ -521,6 +578,7 @@ class _NativeMltMediaDecoder implements NonBlockingMediaDecoder {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _native.textureDetach(_handle);
     _native.destroy(_handle);
     _handle = nullptr;
   }
@@ -584,6 +642,11 @@ typedef _RequestDart = int Function(
   int height,
 );
 
+typedef _TextureIdNative = Int64 Function();
+typedef _TextureIdDart = int Function();
+typedef _TextureDetachNative = Void Function(Pointer<Void> handle);
+typedef _TextureDetachDart = void Function(Pointer<Void> handle);
+
 typedef _ReleaseFrameNative = Void Function(
   Pointer<_NativeMediaDecodedFrame> frame,
 );
@@ -614,22 +677,37 @@ class _NativeMediaBindings {
   final DynamicLibrary _runner;
   final DynamicLibrary _libc;
 
-  late final _CreateDart create = _runner.lookupFunction<_CreateNative, _CreateDart>(
+  late final _CreateDart create =
+      _runner.lookupFunction<_CreateNative, _CreateDart>(
     'r3_media_decoder_create',
   );
   late final _DestroyDart destroy =
       _runner.lookupFunction<_DestroyNative, _DestroyDart>(
     'r3_media_decoder_destroy',
   );
-  late final _RenderDart render = _runner.lookupFunction<_RenderNative, _RenderDart>(
+  late final _RenderDart render =
+      _runner.lookupFunction<_RenderNative, _RenderDart>(
     'r3_media_decoder_render',
   );
   late final _RequestDart request =
       _runner.lookupFunction<_RequestNative, _RequestDart>(
     'r3_media_decoder_request',
   );
-  late final _RenderDart poll = _runner.lookupFunction<_RenderNative, _RenderDart>(
+  late final _RenderDart poll =
+      _runner.lookupFunction<_RenderNative, _RenderDart>(
     'r3_media_decoder_poll',
+  );
+  late final _TextureIdDart textureId =
+      _runner.lookupFunction<_TextureIdNative, _TextureIdDart>(
+    'r3_media_texture_id',
+  );
+  late final _RequestDart textureRequest =
+      _runner.lookupFunction<_RequestNative, _RequestDart>(
+    'r3_media_texture_request',
+  );
+  late final _TextureDetachDart textureDetach =
+      _runner.lookupFunction<_TextureDetachNative, _TextureDetachDart>(
+    'r3_media_texture_detach_decoder',
   );
   late final _ReleaseFrameDart releaseFrame = _runner.lookupFunction<
       _ReleaseFrameNative,
