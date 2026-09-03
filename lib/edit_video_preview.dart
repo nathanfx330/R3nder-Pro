@@ -233,6 +233,15 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
+    // Publish the decoded frame identity immediately. Converting raw RGBA into
+    // a ui.Image is asynchronous, but the source mapping is already known and
+    // should not be hidden behind that presentation-only conversion. This also
+    // makes the preview metadata deterministic under fast scrubbing.
+    setState(() {
+      _frame = chosen;
+      _status = 'DECODING FRAME';
+    });
+
     final ui.Image decoded;
     try {
       decoded = await _decodeRgba(chosen);
