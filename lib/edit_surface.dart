@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
+import 'edit_video_preview.dart';
 import 'ui_theme.dart';
 
 class EditSurface extends StatefulWidget {
@@ -49,6 +50,7 @@ class _EditSurfaceState extends State<EditSurface> {
   static final double _kAudioHeight = sc(24);
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
+  static final double _kPreviewHeight = sc(230);
 
   late String _workingSource;
   String? _selectedTrackId;
@@ -265,6 +267,18 @@ class _EditSurfaceState extends State<EditSurface> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+        Container(
+          height: _kPreviewHeight,
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+          ),
+          child: EditVideoPreview(
+            source: _workingSource,
+            editId: widget.editId,
+            currentFrame: widget.currentFrame,
+            theme: widget.theme,
+          ),
+        ),
         Expanded(
           child: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
