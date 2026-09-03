@@ -95,7 +95,8 @@ void ArmProjectClock(AudioSinkState* state) {
   state->clock_active = false;
 
   // The sink is created at the authored point where preview audio begins.
-  // Hold that exact ProjectTime while libpulse fills its initial device queue.
+  // Hold that exact ProjectTime before the libpulse stream is opened, while
+  // device setup and initial queue prefill happen behind the same anchor.
   // When the first sample is due to become audible, UpdateProjectClockTiming()
   // releases this same point under AUDIO authority.
   r3_clock_seek_scrub(clock, state->clock_anchor.frame,
@@ -394,6 +395,22 @@ void* r3_audio_sink_create(const char* device, int32_t sample_rate,
   attr.minreq = std::numeric_limits<uint32_t>::max();
   attr.fragsize = std::numeric_limits<uint32_t>::max();
 
+  AudioSinkState* state = new AudioSinkState();
+  state->sample_rate = sample_rate;
+  state->channels = channels;
+  state->bytes_per_frame = channels * static_cast<int32_t>(sizeof(int16_t));
+  state->max_queue_bytes =
+      static_cast<int64_t>(sample_rate) * state->bytes_per_frame *
+      max_queue_ms / 1000;
+  if (state->max_queue_bytes < state->bytes_per_frame) {
+    state->max_queue_bytes = state->bytes_per_frame;
+  }
+
+  // Freeze ProjectTime before libpulse itself opens the device stream. Decoder
+  // startup happens later in Dart, so both device creation and decoding are
+  // now behind this same exact authored anchor.
+  ArmProjectClock(state);
+
   int error = 0;
   pa_simple* stream = pa_simple_new(
       nullptr,
@@ -406,26 +423,13 @@ void* r3_audio_sink_create(const char* device, int32_t sample_rate,
       &attr,
       &error);
   if (stream == nullptr) {
+    ReleaseProjectClock(state, false);
     g_create_error =
         std::string("pa_simple_new failed: ") + pa_strerror(error);
+    delete state;
     return nullptr;
   }
-
-  AudioSinkState* state = new AudioSinkState();
   state->stream = stream;
-  state->sample_rate = sample_rate;
-  state->channels = channels;
-  state->bytes_per_frame = channels * static_cast<int32_t>(sizeof(int16_t));
-  state->max_queue_bytes =
-      static_cast<int64_t>(sample_rate) * state->bytes_per_frame *
-      max_queue_ms / 1000;
-  if (state->max_queue_bytes < state->bytes_per_frame) {
-    state->max_queue_bytes = state->bytes_per_frame;
-  }
-
-  // If a realtime preview clock exists, this exact point is the authored audio
-  // start. Freeze it before any PCM can reach the device.
-  ArmProjectClock(state);
 
   try {
     state->worker = std::thread(WorkerMain, state);
