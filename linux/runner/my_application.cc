@@ -11,8 +11,9 @@ struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
 
-  // Channel used to forward OS file drops (paths) to the Dart layer.
-  // Owned here; created in activate, released in dispose.
+  // Native file bridge. It forwards OS drops to Dart and also accepts the
+  // explicit pickVideo method from the EDIT workspace. Owned here; created in
+  // activate and released in dispose.
   FlMethodChannel* drop_channel;
 
   // Last motion position forwarded to Dart, and whether one has been sent
@@ -28,6 +29,74 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+// ---------------------------------------------------------------------------
+// Dart -> GTK file chooser
+// ---------------------------------------------------------------------------
+
+static FlMethodResponse* pick_video(MyApplication* self) {
+  GtkWindow* parent =
+      gtk_application_get_active_window(GTK_APPLICATION(self));
+  GtkWidget* dialog = gtk_file_chooser_dialog_new(
+      "Add Video",
+      parent,
+      GTK_FILE_CHOOSER_ACTION_OPEN,
+      "_Cancel",
+      GTK_RESPONSE_CANCEL,
+      "_Open",
+      GTK_RESPONSE_ACCEPT,
+      nullptr);
+
+  GtkFileFilter* video_filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(video_filter, "Video files");
+  gtk_file_filter_add_pattern(video_filter, "*.mp4");
+  gtk_file_filter_add_pattern(video_filter, "*.MP4");
+  gtk_file_filter_add_pattern(video_filter, "*.mov");
+  gtk_file_filter_add_pattern(video_filter, "*.MOV");
+  gtk_file_filter_add_pattern(video_filter, "*.mkv");
+  gtk_file_filter_add_pattern(video_filter, "*.MKV");
+  gtk_file_filter_add_pattern(video_filter, "*.webm");
+  gtk_file_filter_add_pattern(video_filter, "*.WEBM");
+  gtk_file_filter_add_pattern(video_filter, "*.m4v");
+  gtk_file_filter_add_pattern(video_filter, "*.M4V");
+  gtk_file_filter_add_pattern(video_filter, "*.avi");
+  gtk_file_filter_add_pattern(video_filter, "*.AVI");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), video_filter);
+
+  GtkFileFilter* all_filter = gtk_file_filter_new();
+  gtk_file_filter_set_name(all_filter, "All files");
+  gtk_file_filter_add_pattern(all_filter, "*");
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), all_filter);
+
+  g_autofree gchar* filename = nullptr;
+  if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+    filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+  }
+  gtk_widget_destroy(dialog);
+
+  g_autoptr(FlValue) result = filename == nullptr
+      ? fl_value_new_null()
+      : fl_value_new_string(filename);
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+}
+
+static void native_file_method_call_handler(FlMethodChannel* channel,
+                                            FlMethodCall* method_call,
+                                            gpointer user_data) {
+  MyApplication* self = MY_APPLICATION(user_data);
+  g_autoptr(FlMethodResponse) response = nullptr;
+
+  if (g_strcmp0(fl_method_call_get_name(method_call), "pickVideo") == 0) {
+    response = pick_video(self);
+  } else {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+
+  g_autoptr(GError) error = nullptr;
+  if (!fl_method_call_respond(method_call, response, &error)) {
+    g_warning("Failed to send native file response: %s", error->message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,10 +129,11 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 // Dart-side listeners decide what to do with the paths; drops arriving while
 // no listener cares are simply ignored.
 //
-// THREE METHODS on this channel. "onDrop" is the commit and the only one
-// that matters for correctness. "onDragMotion" and "onDragLeave" are hover
-// feedback and are purely advisory: ignoring them costs the highlight, not
-// the import.
+// THREE EVENT METHODS on this channel. "onDrop" is the commit and the only
+// one that matters for correctness. "onDragMotion" and "onDragLeave" are
+// hover feedback and are purely advisory: ignoring them costs the highlight,
+// not the import. The same channel also accepts the Dart initiated pickVideo
+// request handled above.
 // ---------------------------------------------------------------------------
 
 // Pixels the pointer must travel before another motion event is forwarded.
@@ -213,13 +283,18 @@ static void setup_drop_target(MyApplication* self, FlView* view) {
   g_signal_connect(GTK_WIDGET(view), "drag-leave",
                    G_CALLBACK(on_drag_leave), self);
 
-  // Method channel to Dart. Standard codec, so the payload arrives as a
-  // Map with a List<String> under "paths" and doubles under "x" and "y".
+  // Standard codec, so both native events and Dart requests share one small
+  // bridge without a plugin dependency.
   FlEngine* engine = fl_view_get_engine(view);
   FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   self->drop_channel = fl_method_channel_new(messenger, "r3nder/drop",
                                              FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      self->drop_channel,
+      native_file_method_call_handler,
+      self,
+      nullptr);
 }
 
 // Implements GApplication::activate.
@@ -278,8 +353,8 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
-  // OS file drag-and-drop -> Dart bridge. Must run after realize so the
-  // engine (and its binary messenger) exists.
+  // OS file drag-and-drop plus the explicit GTK video chooser. Must run after
+  // realize so the engine and its binary messenger exist.
   setup_drop_target(self, view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
