@@ -28,6 +28,11 @@ typedef struct R3MediaDecodedFrame {
 void* r3_media_decoder_create(const char* path);
 void r3_media_decoder_destroy(void* handle);
 
+// Returns the producer length in source-native frames, or -1 if the decoder
+// is invalid or closed. This is descriptive source metadata only. It never
+// changes project duration or advances the producer.
+int64_t r3_media_decoder_length(void* handle);
+
 // Returns 0 on success and -1 on failure. The caller owns out_frame->rgba on
 // success and must release it through r3_media_decoded_frame_release().
 int r3_media_decoder_render(
