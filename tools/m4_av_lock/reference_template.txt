@@ -1,0 +1,6 @@
+[# M4 end to end A/V lock reference]
+[# 30 fps. Two SVGs x 15 frames = one second per cycle.]
+[# 300 cycles = five minutes.]
+[CONFIG:BG:0,0,0]
+[CONFIG:FG:255,255,255]
+[SVGFLASH:m4_av_lock:15:300]
