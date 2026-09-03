@@ -3,12 +3,14 @@
 // Workspace media import for the source-backed EDIT surface.
 //
 // External files are copied into <workspace>/video and represented in script
-// as portable video/<name> paths. MLT is consulted once for source length so
-// the initial CLIP can be authored at the source's real frame count. After the
-// CLIP exists, authored duration remains canonical project state.
+// as portable video/<name> paths. MLT is consulted once for source length and
+// exact source frame rate. Import then conforms that source timing to R3nder's
+// fixed project rate. After the CLIP exists, authored duration and speed remain
+// canonical project state.
 
 import 'dart:io';
 
+import 'engine.dart';
 import 'native_media_probe.dart';
 import 'session_store.dart';
 
@@ -17,12 +19,20 @@ class ImportedEditVideo {
   final String resolvedPath;
   final String clipBaseId;
   final int durationFrames;
+  final int speedNumerator;
+  final int speedDenominator;
+  final int sourceFpsNumerator;
+  final int sourceFpsDenominator;
 
   const ImportedEditVideo({
     required this.authoredSource,
     required this.resolvedPath,
     required this.clipBaseId,
     required this.durationFrames,
+    this.speedNumerator = 1,
+    this.speedDenominator = 1,
+    this.sourceFpsNumerator = engineFps,
+    this.sourceFpsDenominator = 1,
   });
 }
 
@@ -40,6 +50,7 @@ ImportedEditVideo importVideoToWorkspace(
   String pickedPath, {
   String? workspaceRoot,
   int Function(String resolvedPath)? probeFrames,
+  NativeMediaProbeResult Function(String resolvedPath)? probeMedia,
 }) {
   final File sourceFile = File(pickedPath).absolute;
   if (!sourceFile.existsSync()) {
@@ -81,19 +92,59 @@ ImportedEditVideo importVideoToWorkspace(
   }
 
   try {
-    final int length = (probeFrames ?? NativeMltMediaProbe().sourceLengthFrames)(
-      destination.path,
-    );
-    if (length <= 0) {
-      throw StateError('Media probe returned an invalid source length: $length');
+    final NativeMediaProbeResult timing;
+    if (probeMedia != null) {
+      timing = probeMedia(destination.path);
+    } else if (probeFrames != null) {
+      // Backward-compatible deterministic test seam. Existing tests that only
+      // care about filesystem import implicitly describe project-rate media.
+      timing = NativeMediaProbeResult(
+        lengthFrames: probeFrames(destination.path),
+        fpsNumerator: engineFps,
+        fpsDenominator: 1,
+      );
+    } else {
+      timing = NativeMltMediaProbe().probe(destination.path);
     }
+
+    if (timing.lengthFrames <= 0 ||
+        timing.fpsNumerator <= 0 ||
+        timing.fpsDenominator <= 0) {
+      throw StateError(
+        'Media probe returned invalid timing: '
+        '${timing.lengthFrames} frames at '
+        '${timing.fpsNumerator}/${timing.fpsDenominator} fps',
+      );
+    }
+
+    // CLIP speed is source frames consumed per project frame. A 24 fps source
+    // in R3nder's 30 fps project therefore becomes 24/30 = 4/5. Native MLT
+    // playback then runs that source at its natural 1.0 transport speed while
+    // ProjectClock still advances at 30 project frames per second.
+    final int rawSpeedNumerator = timing.fpsNumerator;
+    final int rawSpeedDenominator = timing.fpsDenominator * engineFps;
+    final int speedDivisor = _gcd(rawSpeedNumerator, rawSpeedDenominator);
+    final int speedNumerator = rawSpeedNumerator ~/ speedDivisor;
+    final int speedDenominator = rawSpeedDenominator ~/ speedDivisor;
+
+    // Preserve source duration in wall-clock time while expressing duration in
+    // project frames. ceil(sourceFrames / sourceFramesPerProjectFrame) ensures
+    // the final authored project frame can still address the final source frame.
+    final int durationNumerator =
+        timing.lengthFrames * engineFps * timing.fpsDenominator;
+    final int durationFrames =
+        (durationNumerator + timing.fpsNumerator - 1) ~/ timing.fpsNumerator;
 
     final String fileName = _basename(destination.path);
     return ImportedEditVideo(
       authoredSource: 'video/$fileName',
       resolvedPath: destination.path,
       clipBaseId: _clipIdFromFileName(fileName),
-      durationFrames: length,
+      durationFrames: durationFrames,
+      speedNumerator: speedNumerator,
+      speedDenominator: speedDenominator,
+      sourceFpsNumerator: timing.fpsNumerator,
+      sourceFpsDenominator: timing.fpsDenominator,
     );
   } catch (_) {
     if (copied && destination.existsSync()) {
@@ -149,4 +200,15 @@ String _clipIdFromFileName(String fileName) {
       .replaceAll(RegExp(r'_+'), '_');
   id = id.replaceAll(RegExp(r'^_+|_+$'), '');
   return id.isEmpty ? 'clip' : id;
+}
+
+int _gcd(int a, int b) {
+  int x = a.abs();
+  int y = b.abs();
+  while (y != 0) {
+    final int next = x % y;
+    x = y;
+    y = next;
+  }
+  return x == 0 ? 1 : x;
 }
