@@ -288,6 +288,19 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     }
 
     final MediaFrame? top = result.topFrame;
+
+    // Frame identity and layer metadata are already authoritative at this
+    // point. Publish them before the asynchronous Flutter image upload. The
+    // pixel upload may complete on a later event-loop turn, but diagnostic
+    // state must not pretend that no frame exists while those pixels are being
+    // converted. This also keeps widget tests independent of engine image
+    // callback timing.
+    setState(() {
+      _frame = top;
+      _contributorCount = result.contributors.length;
+      _status = 'COMPOSITING FRAME';
+    });
+
     final ui.Image decoded;
     try {
       decoded = await _decodeRgba(
