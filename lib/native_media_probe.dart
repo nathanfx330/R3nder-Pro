@@ -3,9 +3,9 @@
 // Read-only source metadata probe backed by the same persistent MLT bridge
 // used for EDIT preview decoding.
 //
-// The returned value is source length in source-native frames. Import code may
-// use it to author an initial CLIP duration, but once that duration is written
-// the script remains canonical and media replacement cannot silently change it.
+// The probe returns source length plus the exact source-profile frame rate.
+// Import uses those values once to conform source time to R3nder's project
+// frame rate. After the CLIP is authored, the script remains canonical.
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -21,12 +21,24 @@ class NativeMediaProbeException implements Exception {
   String toString() => 'NativeMediaProbeException: $message';
 }
 
+class NativeMediaProbeResult {
+  final int lengthFrames;
+  final int fpsNumerator;
+  final int fpsDenominator;
+
+  const NativeMediaProbeResult({
+    required this.lengthFrames,
+    required this.fpsNumerator,
+    required this.fpsDenominator,
+  });
+}
+
 class NativeMltMediaProbe {
   final _NativeProbeBindings _native;
 
   NativeMltMediaProbe() : _native = _NativeProbeBindings.open();
 
-  int sourceLengthFrames(String resolvedPath) {
+  NativeMediaProbeResult probe(String resolvedPath) {
     if (resolvedPath.trim().isEmpty) {
       throw const NativeMediaProbeException('Media path is empty.');
     }
@@ -44,23 +56,32 @@ class NativeMltMediaProbe {
       }
 
       final int length = _native.length(handle);
-      if (length <= 0) {
+      final int fpsNumerator = _native.fpsNumerator(handle);
+      final int fpsDenominator = _native.fpsDenominator(handle);
+      if (length <= 0 || fpsNumerator <= 0 || fpsDenominator <= 0) {
         throw NativeMediaProbeException(_native.decoderError(handle));
       }
-      return length;
+
+      return NativeMediaProbeResult(
+        lengthFrames: length,
+        fpsNumerator: fpsNumerator,
+        fpsDenominator: fpsDenominator,
+      );
     } finally {
       if (handle != nullptr) _native.destroy(handle);
       _native.free(path.cast<Void>());
     }
   }
+
+  int sourceLengthFrames(String resolvedPath) => probe(resolvedPath).lengthFrames;
 }
 
 typedef _CreateNative = Pointer<Void> Function(Pointer<Int8> path);
 typedef _CreateDart = Pointer<Void> Function(Pointer<Int8> path);
 typedef _DestroyNative = Void Function(Pointer<Void> handle);
 typedef _DestroyDart = void Function(Pointer<Void> handle);
-typedef _LengthNative = Int64 Function(Pointer<Void> handle);
-typedef _LengthDart = int Function(Pointer<Void> handle);
+typedef _Int64HandleNative = Int64 Function(Pointer<Void> handle);
+typedef _Int64HandleDart = int Function(Pointer<Void> handle);
 typedef _CopyErrorNative = Int32 Function(
   Pointer<Void> handle,
   Pointer<Int8> buffer,
@@ -92,9 +113,17 @@ class _NativeProbeBindings {
       _runner.lookupFunction<_DestroyNative, _DestroyDart>(
     'r3_media_decoder_destroy',
   );
-  late final _LengthDart length =
-      _runner.lookupFunction<_LengthNative, _LengthDart>(
+  late final _Int64HandleDart length =
+      _runner.lookupFunction<_Int64HandleNative, _Int64HandleDart>(
     'r3_media_decoder_length',
+  );
+  late final _Int64HandleDart fpsNumerator =
+      _runner.lookupFunction<_Int64HandleNative, _Int64HandleDart>(
+    'r3_media_decoder_fps_num',
+  );
+  late final _Int64HandleDart fpsDenominator =
+      _runner.lookupFunction<_Int64HandleNative, _Int64HandleDart>(
+    'r3_media_decoder_fps_den',
   );
   late final _CopyErrorDart copyLastError = _runner.lookupFunction<
       _CopyErrorNative,
