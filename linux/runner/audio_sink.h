@@ -32,6 +32,11 @@ void r3_audio_sink_destroy(void* handle);
 int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
                               int64_t byte_count);
 
+// Waits until all queued PCM has been submitted and audibly drained by the
+// server/device. The monotonic submitted sample counter remains intact. Returns
+// 1 on success, -1 on sink failure.
+int32_t r3_audio_sink_drain(void* handle);
+
 // Drops queued and server-buffered audio while keeping the monotonic submitted
 // sample counter intact. Returns 1 on success, -1 on sink failure.
 int32_t r3_audio_sink_flush(void* handle);
