@@ -37,6 +37,8 @@ struct AudioSinkState {
   int64_t queued_bytes = 0;
   bool closing = false;
   bool failed = false;
+  uint64_t drain_request = 0;
+  uint64_t drain_complete = 0;
   uint64_t flush_request = 0;
   uint64_t flush_complete = 0;
   std::string last_error;
@@ -83,6 +85,7 @@ void RefreshLatency(AudioSinkState* state) {
 void WorkerMain(AudioSinkState* state) {
   for (;;) {
     std::vector<uint8_t> chunk;
+    uint64_t drain_id = 0;
     uint64_t flush_id = 0;
 
     {
@@ -90,11 +93,13 @@ void WorkerMain(AudioSinkState* state) {
       state->cv.wait(lock, [&]() {
         return state->closing || state->failed ||
                state->flush_request != state->flush_complete ||
+               state->drain_request != state->drain_complete ||
                !state->queue.empty();
       });
 
       if (state->failed) break;
 
+      // Flush is destructive and therefore outranks everything else.
       if (state->flush_request != state->flush_complete) {
         flush_id = state->flush_request;
         state->queue.clear();
@@ -103,12 +108,16 @@ void WorkerMain(AudioSinkState* state) {
       } else if (state->closing) {
         break;
       } else if (!state->queue.empty()) {
+        // A drain request waits behind every already-accepted PCM packet. That
+        // is what makes drain mean audible EOF rather than merely queue EOF.
         chunk = std::move(state->queue.front());
         state->queue.pop_front();
         state->queued_bytes -= static_cast<int64_t>(chunk.size());
         state->queued_samples.store(
             state->queued_bytes / state->bytes_per_frame,
             std::memory_order_release);
+      } else if (state->drain_request != state->drain_complete) {
+        drain_id = state->drain_request;
       }
     }
 
@@ -124,6 +133,23 @@ void WorkerMain(AudioSinkState* state) {
       {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->flush_complete = flush_id;
+      }
+      state->cv.notify_all();
+      continue;
+    }
+
+    if (drain_id != 0) {
+      int error = 0;
+      if (pa_simple_drain(state->stream, &error) < 0) {
+        SetFailure(state,
+                   std::string("pa_simple_drain failed: ") +
+                       pa_strerror(error));
+        break;
+      }
+      state->latency_samples.store(0, std::memory_order_release);
+      {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->drain_complete = drain_id;
       }
       state->cv.notify_all();
       continue;
@@ -266,7 +292,10 @@ int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
 
   {
     std::lock_guard<std::mutex> lock(state->mutex);
-    if (state->closing || state->failed) return -1;
+    if (state->closing || state->failed ||
+        state->drain_request != state->drain_complete) {
+      return -1;
+    }
     if (byte_count > state->max_queue_bytes ||
         state->queued_bytes + byte_count > state->max_queue_bytes) {
       return 0;
@@ -280,6 +309,25 @@ int32_t r3_audio_sink_enqueue(void* handle, const uint8_t* data,
   }
   state->cv.notify_one();
   return 1;
+}
+
+int32_t r3_audio_sink_drain(void* handle) {
+  AudioSinkState* state = static_cast<AudioSinkState*>(handle);
+  if (state == nullptr) return -1;
+
+  uint64_t request = 0;
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->closing || state->failed) return -1;
+    request = ++state->drain_request;
+  }
+  state->cv.notify_all();
+
+  std::unique_lock<std::mutex> lock(state->mutex);
+  state->cv.wait(lock, [&]() {
+    return state->failed || state->closing || state->drain_complete >= request;
+  });
+  return (!state->failed && state->drain_complete >= request) ? 1 : -1;
 }
 
 int32_t r3_audio_sink_flush(void* handle) {
