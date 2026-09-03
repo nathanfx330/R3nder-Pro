@@ -109,7 +109,8 @@ class EditSurfaceTrack {
 
 class EditSurfaceDocument {
   static final RegExp _transitionLine = RegExp(
-    r'(?m)^[ \t]*\[#EDIT_TRANSITION:(?:CROSSFADE:\d+|LUMA:[^\]\r\n:]+:\d+)\][ \t]*(?:\r?\n)?',
+    r'^[ \t]*\[#EDIT_TRANSITION:(CROSSFADE:\d+|LUMA:[^:\r\n\]]+:\d+)\][ \t]*(\r?\n)?',
+    multiLine: true,
   );
 
   static final RegExp _crossfadeDirective = RegExp(
