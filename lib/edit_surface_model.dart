@@ -107,6 +107,57 @@ class EditSurfaceTrack {
   String get id => track.id;
 }
 
+String createEditWithClip({
+  required String source,
+  required String editId,
+  required String trackId,
+  required String clipId,
+  required String mediaSource,
+  required int atFrame,
+  required int durationFrames,
+}) {
+  _validateInsertedClip(
+    editId: editId,
+    trackId: trackId,
+    clipId: clipId,
+    mediaSource: mediaSource,
+    atFrame: atFrame,
+    durationFrames: durationFrames,
+  );
+
+  final EditDocumentModel existing = EditDocumentModel.parse(source);
+  if (existing.edits.isNotEmpty) {
+    throw StateError('createEditWithClip requires a document with no EDIT blocks.');
+  }
+
+  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+  final StringBuffer out = StringBuffer(source);
+  if (source.isNotEmpty &&
+      !source.endsWith('\n') &&
+      !source.endsWith('\r')) {
+    out.write(lineEnding);
+  }
+
+  out
+    ..write('[EDIT:$editId]$lineEnding')
+    ..write('  [TRACK:$trackId]$lineEnding')
+    ..write('    ${_clipOpeningTagStatic(
+      id: clipId,
+      source: mediaSource,
+      atFrame: atFrame,
+      inFrame: 0,
+      durationFrames: durationFrames,
+      speed: ExactClipSpeed(1),
+    )}$lineEnding')
+    ..write('    [/CLIP]$lineEnding')
+    ..write('  [/TRACK]$lineEnding')
+    ..write('[/EDIT]$lineEnding');
+
+  final String next = out.toString();
+  EditSurfaceDocument.parse(next, editId);
+  return next;
+}
+
 class EditSurfaceDocument {
   static final RegExp _transitionLine = RegExp(
     r'^[ \t]*\[#EDIT_TRANSITION:(CROSSFADE:\d+|LUMA:[^:\r\n\]]+:\d+)\][ \t]*(\r?\n)?',
@@ -177,6 +228,13 @@ class EditSurfaceDocument {
         ),
       );
 
+  EditSurfaceTrack? trackOrNull(String trackId) {
+    for (final EditSurfaceTrack track in tracks) {
+      if (track.id == trackId) return track;
+    }
+    return null;
+  }
+
   EditSurfaceClip clip(String trackId, String clipId) =>
       track(trackId).clips.singleWhere(
             (EditSurfaceClip clip) => clip.id == clipId,
@@ -184,6 +242,84 @@ class EditSurfaceDocument {
               'No CLIP named "$clipId" in TRACK "$trackId".',
             ),
           );
+
+  String nextClipId(String trackId, String baseId) {
+    if (!_structuralIdPattern.hasMatch(baseId)) {
+      throw ArgumentError.value(
+        baseId,
+        'baseId',
+        'CLIP id must use letters, numbers, underscore, or hyphen.',
+      );
+    }
+
+    final Set<String> ids = trackOrNull(trackId)
+            ?.clips
+            .map((EditSurfaceClip clip) => clip.id)
+            .toSet() ??
+        <String>{};
+    if (!ids.contains(baseId)) return baseId;
+
+    int suffix = 2;
+    String candidate = '${baseId}_$suffix';
+    while (ids.contains(candidate)) {
+      suffix++;
+      candidate = '${baseId}_$suffix';
+    }
+    return candidate;
+  }
+
+  String addClip({
+    required String trackId,
+    required String clipId,
+    required String mediaSource,
+    required int atFrame,
+    required int durationFrames,
+  }) {
+    _validateInsertedClip(
+      editId: editId,
+      trackId: trackId,
+      clipId: clipId,
+      mediaSource: mediaSource,
+      atFrame: atFrame,
+      durationFrames: durationFrames,
+    );
+
+    final String opening = _clipOpeningTag(
+      id: clipId,
+      source: mediaSource,
+      atFrame: atFrame,
+      inFrame: 0,
+      durationFrames: durationFrames,
+      speed: ExactClipSpeed(1),
+    );
+    final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+    final EditSurfaceTrack? existingTrack = trackOrNull(trackId);
+
+    late final String next;
+    if (existingTrack != null) {
+      final int close = existingTrack.track.block.closeStartOffset;
+      final String parentIndent = _lineIndentAt(source, close);
+      final String childIndent = '$parentIndent  ';
+      final String insertion = '  $opening$lineEnding'
+          '$childIndent[/CLIP]$lineEnding'
+          '$parentIndent';
+      next = source.replaceRange(close, close, insertion);
+    } else {
+      final int close = edit.block.closeStartOffset;
+      final String editIndent = _lineIndentAt(source, close);
+      final String trackIndent = '$editIndent  ';
+      final String clipIndent = '$trackIndent  ';
+      final String insertion = '  [TRACK:$trackId]$lineEnding'
+          '$clipIndent$opening$lineEnding'
+          '$clipIndent[/CLIP]$lineEnding'
+          '$trackIndent[/TRACK]$lineEnding'
+          '$editIndent';
+      next = source.replaceRange(close, close, insertion);
+    }
+
+    EditSurfaceDocument.parse(next, editId);
+    return next;
+  }
 
   String moveClip(String trackId, String clipId, int atFrame) {
     if (atFrame < 0) {
@@ -422,8 +558,14 @@ class EditSurfaceDocument {
     required int durationFrames,
     required ExactClipSpeed speed,
   }) {
-    return '[CLIP:$id:$source:$atFrame:$inFrame:$durationFrames:'
-        '${speed.canonicalMarkup}]';
+    return _clipOpeningTagStatic(
+      id: id,
+      source: source,
+      atFrame: atFrame,
+      inFrame: inFrame,
+      durationFrames: durationFrames,
+      speed: speed,
+    );
   }
 
   static String _lineIndentAt(String source, int offset) {
@@ -436,6 +578,65 @@ class EditSurfaceDocument {
     }
     return source.substring(start, cursor);
   }
+}
+
+final RegExp _structuralIdPattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
+void _validateInsertedClip({
+  required String editId,
+  required String trackId,
+  required String clipId,
+  required String mediaSource,
+  required int atFrame,
+  required int durationFrames,
+}) {
+  for (final MapEntry<String, String> entry in <String, String>{
+    'editId': editId,
+    'trackId': trackId,
+    'clipId': clipId,
+  }.entries) {
+    if (!_structuralIdPattern.hasMatch(entry.value)) {
+      throw ArgumentError.value(
+        entry.value,
+        entry.key,
+        'Structural ids must use letters, numbers, underscore, or hyphen.',
+      );
+    }
+  }
+
+  final String path = mediaSource.trim();
+  if (path.isEmpty ||
+      path.contains(':') ||
+      path.contains('\n') ||
+      path.contains('\r')) {
+    throw ArgumentError.value(
+      mediaSource,
+      'mediaSource',
+      'Media source must be one non-empty portable path without colon or newline.',
+    );
+  }
+  if (atFrame < 0) {
+    throw ArgumentError.value(atFrame, 'atFrame', 'Must be non-negative.');
+  }
+  if (durationFrames <= 0) {
+    throw ArgumentError.value(
+      durationFrames,
+      'durationFrames',
+      'CLIP duration must be positive.',
+    );
+  }
+}
+
+String _clipOpeningTagStatic({
+  required String id,
+  required String source,
+  required int atFrame,
+  required int inFrame,
+  required int durationFrames,
+  required ExactClipSpeed speed,
+}) {
+  return '[CLIP:$id:$source:$atFrame:$inFrame:$durationFrames:'
+      '${speed.canonicalMarkup}]';
 }
 
 int _floorDiv(int numerator, int denominator) {
