@@ -5,15 +5,19 @@
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
 // through EditSurfaceDocument and returned to the caller as script text.
+// During playback, the static timeline document does not rebuild every frame:
+// only the playhead and monitor listen to EditPlaybackFrameScope directly.
 
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'
     show PointerCancelEvent, PointerDownEvent, PointerMoveEvent, PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
+import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
 import 'ui_theme.dart';
@@ -65,6 +69,7 @@ class _EditSurfaceState extends State<EditSurface> {
   Timer? _scrubTimer;
   int? _pendingScrubFrame;
   int? _lastSeekSent;
+  ValueListenable<EditPlaybackFrameState>? _playbackFrames;
 
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
@@ -77,6 +82,18 @@ class _EditSurfaceState extends State<EditSurface> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ValueListenable<EditPlaybackFrameState>? next =
+        EditPlaybackFrameScope.maybeOf(context);
+    if (identical(next, _playbackFrames)) return;
+
+    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+    _playbackFrames = next;
+    next?.addListener(_onPlaybackFrameChanged);
+  }
+
+  @override
   void didUpdateWidget(covariant EditSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.source != oldWidget.source && widget.source != _workingSource) {
@@ -85,18 +102,35 @@ class _EditSurfaceState extends State<EditSurface> {
     }
     if (widget.currentFrame != oldWidget.currentFrame) {
       _lastSeekSent = widget.currentFrame;
-      if (widget.isPlaying) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _followPlayhead());
+      if (!widget.isPlaying) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _followPlayheadFrame(widget.currentFrame),
+        );
       }
     }
   }
 
   @override
   void dispose() {
+    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+    _playbackFrames = null;
     _scrubTimer?.cancel();
     _horizontal.dispose();
     _vertical.dispose();
     super.dispose();
+  }
+
+  int get _effectiveFrame =>
+      _playbackFrames?.value.frame ?? widget.currentFrame;
+
+  void _onPlaybackFrameChanged() {
+    final ValueListenable<EditPlaybackFrameState>? playback = _playbackFrames;
+    if (playback == null || !mounted) return;
+    final EditPlaybackFrameState state = playback.value;
+    _lastSeekSent = state.frame;
+    if (state.isPlaying) {
+      _followPlayheadFrame(state.frame);
+    }
   }
 
   EditSurfaceDocument? _parse() {
@@ -150,8 +184,8 @@ class _EditSurfaceState extends State<EditSurface> {
   void _splitSelected(EditSurfaceDocument document) {
     final EditSurfaceClip? selected = _selected(document);
     if (selected == null) return;
-    if (widget.currentFrame <= selected.atFrame ||
-        widget.currentFrame >= selected.endFrameExclusive) {
+    final int frame = _effectiveFrame;
+    if (frame <= selected.atFrame || frame >= selected.endFrameExclusive) {
       setState(() {
         _error = 'Park the playhead inside the selected CLIP before splitting.';
       });
@@ -162,7 +196,7 @@ class _EditSurfaceState extends State<EditSurface> {
       return current.splitClip(
         selected.trackId,
         selected.id,
-        widget.currentFrame,
+        frame,
       );
     });
   }
@@ -308,13 +342,13 @@ class _EditSurfaceState extends State<EditSurface> {
     widget.onSeek(frame);
   }
 
-  void _followPlayhead() {
+  void _followPlayheadFrame(int frame) {
     if (!mounted || !_horizontal.hasClients) return;
     final ScrollPosition position = _horizontal.position;
     final double viewport = position.viewportDimension;
     if (viewport <= 0) return;
 
-    final double x = widget.currentFrame * _pixelsPerFrame;
+    final double x = frame * _pixelsPerFrame;
     final double leftGuard = position.pixels + viewport * 0.12;
     final double rightGuard = position.pixels + viewport * 0.82;
     if (x >= leftGuard && x <= rightGuard) return;
@@ -324,6 +358,55 @@ class _EditSurfaceState extends State<EditSurface> {
     if ((target - position.pixels).abs() > 1.0) {
       _horizontal.jumpTo(target);
     }
+  }
+
+  Widget _buildPlayhead(int frame) {
+    return Positioned(
+      left: frame * _pixelsPerFrame - sc(4),
+      top: 0,
+      bottom: 0,
+      child: IgnorePointer(
+        child: SizedBox(
+          width: sc(8),
+          child: Stack(
+            alignment: Alignment.topCenter,
+            children: [
+              Positioned(
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 2,
+                  color: widget.theme.accent,
+                ),
+              ),
+              Container(
+                width: sc(7),
+                height: sc(7),
+                decoration: BoxDecoration(
+                  color: widget.theme.accent,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _playheadWidget() {
+    final ValueListenable<EditPlaybackFrameState>? playback = _playbackFrames;
+    if (playback == null) return _buildPlayhead(widget.currentFrame);
+    return ValueListenableBuilder<EditPlaybackFrameState>(
+      valueListenable: playback,
+      builder: (
+        BuildContext context,
+        EditPlaybackFrameState state,
+        Widget? child,
+      ) {
+        return _buildPlayhead(state.frame);
+      },
+    );
   }
 
   @override
@@ -436,40 +519,7 @@ class _EditSurfaceState extends State<EditSurface> {
                                           ),
                                       ],
                                     ),
-                                    Positioned(
-                                      left: widget.currentFrame *
-                                              _pixelsPerFrame -
-                                          sc(4),
-                                      top: 0,
-                                      bottom: 0,
-                                      child: IgnorePointer(
-                                        child: SizedBox(
-                                          width: sc(8),
-                                          child: Stack(
-                                            alignment: Alignment.topCenter,
-                                            children: [
-                                              Positioned(
-                                                top: 0,
-                                                bottom: 0,
-                                                child: Container(
-                                                  width: 2,
-                                                  color: widget.theme.accent,
-                                                ),
-                                              ),
-                                              Container(
-                                                width: sc(7),
-                                                height: sc(7),
-                                                decoration: BoxDecoration(
-                                                  color: widget.theme.accent,
-                                                  borderRadius:
-                                                      BorderRadius.circular(1),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                    _playheadWidget(),
                                   ],
                                 ),
                               ),
@@ -516,6 +566,7 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceDocument document,
     EditSurfaceClip? selected,
   ) {
+    final int frame = _effectiveFrame;
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
@@ -561,8 +612,8 @@ class _EditSurfaceState extends State<EditSurface> {
               if (selected != null) ...[
                 _toolButton(
                   'SPLIT',
-                  onPressed: widget.currentFrame > selected.atFrame &&
-                          widget.currentFrame < selected.endFrameExclusive
+                  onPressed: frame > selected.atFrame &&
+                          frame < selected.endFrameExclusive
                       ? () => _splitSelected(document)
                       : null,
                 ),
@@ -634,8 +685,9 @@ class _EditSurfaceState extends State<EditSurface> {
                   value: _pixelsPerFrame,
                   onChanged: (double value) {
                     setState(() => _pixelsPerFrame = value);
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _followPlayhead());
+                    WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _followPlayheadFrame(_effectiveFrame),
+                    );
                   },
                 ),
               ),
@@ -719,10 +771,10 @@ class _EditSurfaceState extends State<EditSurface> {
         _queueScrub(_frameFromDx(details.localPosition.dx, frames));
       },
       onHorizontalDragEnd: (_) {
-        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? widget.currentFrame);
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
       },
       onHorizontalDragCancel: () {
-        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? widget.currentFrame);
+        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
       },
       child: SizedBox(
         height: _kRulerHeight,
