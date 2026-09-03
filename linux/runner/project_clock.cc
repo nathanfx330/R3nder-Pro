@@ -5,8 +5,10 @@
 // Control values are individual atomics and are grouped by a seqlock so a
 // reader sees one coherent configuration (mode, epoch, origin, rate, latency)
 // rather than a mixture from two writes. played_samples is intentionally NOT
-// in that group: the eventual audio callback/sink owns it and updates that
-// single counter independently at audio cadence.
+// in that group: the audio sink owns it and updates that single counter
+// independently at audio cadence.
+
+#include "project_clock.h"
 
 #include <atomic>
 #include <chrono>
@@ -41,10 +43,16 @@ struct ClockState {
   std::atomic<int64_t> fps_num{30};
   std::atomic<int64_t> fps_den{1};
 
-  // Separate by design. The audio sink may write this without entering the
+  // Separate by design. The audio sink writes this without entering the
   // control seqlock; readers combine it with one coherent control snapshot.
   std::atomic<int64_t> played_samples{0};
 };
+
+// There is one native realtime preview clock in the application. Export uses
+// ExportProjectClock in Dart and never registers here. Keeping the active
+// handle native lets the audio worker advance played_samples at audio cadence
+// without turning Flutter's ticker into the time source again.
+std::atomic<ClockState*> g_active_clock{nullptr};
 
 struct ControlSnapshot {
   int32_t mode;
@@ -126,21 +134,6 @@ __int128 Gcd128(__int128 a, __int128 b) {
   return a == 0 ? 1 : a;
 }
 
-}  // namespace
-
-extern "C" {
-
-struct R3ClockSnapshot {
-  int64_t frame;
-  int64_t phase_num;
-  int64_t phase_den;
-  uint64_t epoch;
-  int32_t mode;
-  int32_t padding;
-};
-
-namespace {
-
 void NormalizeTime(__int128 numerator, __int128 denominator,
                    R3ClockSnapshot* out) {
   if (denominator <= 0) {
@@ -181,17 +174,30 @@ void EvaluateDelta(const ControlSnapshot& control, __int128 delta_num,
 
 }  // namespace
 
+extern "C" {
+
 void* r3_clock_create(int64_t fps_num, int64_t fps_den) {
   if (fps_num <= 0 || fps_den <= 0) return nullptr;
   auto* clock = new ClockState();
   clock->fps_num.store(fps_num, std::memory_order_relaxed);
   clock->fps_den.store(fps_den, std::memory_order_relaxed);
   clock->origin_monotonic_ns.store(MonotonicNs(), std::memory_order_relaxed);
+  g_active_clock.store(clock, std::memory_order_release);
   return clock;
 }
 
 void r3_clock_destroy(void* handle) {
-  delete static_cast<ClockState*>(handle);
+  auto* clock = static_cast<ClockState*>(handle);
+  if (clock == nullptr) return;
+
+  ClockState* expected = clock;
+  g_active_clock.compare_exchange_strong(
+      expected, nullptr, std::memory_order_acq_rel, std::memory_order_acquire);
+  delete clock;
+}
+
+void* r3_clock_active_handle() {
+  return g_active_clock.load(std::memory_order_acquire);
 }
 
 void r3_clock_set_rate(void* handle, int64_t fps_num, int64_t fps_den) {
@@ -263,6 +269,12 @@ void r3_clock_add_played_samples(void* handle, int64_t samples) {
   auto* clock = static_cast<ClockState*>(handle);
   if (clock == nullptr) return;
   clock->played_samples.fetch_add(samples, std::memory_order_acq_rel);
+}
+
+int64_t r3_clock_get_played_samples(void* handle) {
+  const auto* clock = static_cast<const ClockState*>(handle);
+  if (clock == nullptr) return 0;
+  return clock->played_samples.load(std::memory_order_acquire);
 }
 
 const R3ClockSnapshot* r3_clock_read(void* handle) {
