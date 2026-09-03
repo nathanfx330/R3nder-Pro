@@ -383,13 +383,15 @@ class _EditSurfaceState extends State<EditSurface> {
 
   Widget _playheadWidget() {
     return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: _EditPlayheadPainter(
-            position: _playbackExact,
-            fallbackFrame: widget.currentFrame.toDouble(),
-            pixelsPerFrame: _pixelsPerFrame,
-            color: widget.theme.accent,
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _EditPlayheadPainter(
+              position: _playbackExact,
+              fallbackFrame: widget.currentFrame.toDouble(),
+              pixelsPerFrame: _pixelsPerFrame,
+              color: widget.theme.accent,
+            ),
           ),
         ),
       ),
@@ -478,33 +480,35 @@ class _EditSurfaceState extends State<EditSurface> {
                                 height: timelineContentHeight,
                                 child: Stack(
                                   children: [
-                                    Column(
-                                      children: [
-                                        _buildRuler(
-                                          timelineWidth,
-                                          contentFrames,
-                                        ),
-                                        for (final EditSurfaceTrack track
-                                            in tracks)
-                                          _buildTrackLane(track),
-                                        if (widget.voiceFrames > 0)
-                                          _buildAudioLane(
-                                            widget.voiceFrames,
-                                            'VOICE',
-                                            R3Theme.ribbonWindow,
+                                    RepaintBoundary(
+                                      child: Column(
+                                        children: [
+                                          _buildRuler(
+                                            timelineWidth,
+                                            contentFrames,
                                           ),
-                                        if (widget.musicFrames > 0)
-                                          _buildAudioLane(
-                                            math.min(
-                                              widget.musicFrames,
-                                              document.projectFrameCount,
+                                          for (final EditSurfaceTrack track
+                                              in tracks)
+                                            _buildTrackLane(track),
+                                          if (widget.voiceFrames > 0)
+                                            _buildAudioLane(
+                                              widget.voiceFrames,
+                                              'VOICE',
+                                              R3Theme.ribbonWindow,
                                             ),
-                                            widget.musicLoops
-                                                ? 'MUSIC LOOP'
-                                                : 'MUSIC',
-                                            R3Theme.ribbonMedia,
-                                          ),
-                                      ],
+                                          if (widget.musicFrames > 0)
+                                            _buildAudioLane(
+                                              math.min(
+                                                widget.musicFrames,
+                                                document.projectFrameCount,
+                                              ),
+                                              widget.musicLoops
+                                                  ? 'MUSIC LOOP'
+                                                  : 'MUSIC',
+                                              R3Theme.ribbonMedia,
+                                            ),
+                                        ],
+                                      ),
                                     ),
                                     _playheadWidget(),
                                   ],
