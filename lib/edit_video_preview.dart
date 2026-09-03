@@ -4,9 +4,10 @@
 //
 // R3nder owns project time, edit geometry, layer order, and final pixels. MLT
 // owns persistent source decoders only. Parked frames use the exact render path.
-// While the playhead is moving, native decoders run ahead on worker threads and
-// this widget only polls completed frames. A pending decode holds the previous
-// complete image instead of blocking the UI isolate or audio feeder.
+// During playback, EditWorkspace publishes ProjectClock samples at Flutter
+// vsync. This widget listens to that channel directly, submits nonblocking media
+// requests before the surrounding workspace rebuild, and paints completed
+// images through a repaint listenable instead of rebuilding the widget tree.
 
 import 'dart:async';
 import 'dart:io';
@@ -14,8 +15,10 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'edit_model.dart';
+import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
 import 'media_layer.dart';
@@ -106,25 +109,49 @@ class EditVideoPreview extends StatefulWidget {
 class _EditVideoPreviewState extends State<EditVideoPreview> {
   static const ui.Size _fullDecodeSize = ui.Size(960, 540);
   static const ui.Size _fastDecodeSize = ui.Size(480, 270);
-  static const Duration _pendingRetryDelay = Duration(milliseconds: 6);
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
   String? _layerSource;
   String? _layerEditId;
-  ui.Image? _image;
-  MediaFrame? _frame;
-  int _contributorCount = 0;
-  String _status = 'NO VIDEO AT THIS FRAME';
+
+  late final ValueNotifier<ui.Image?> _image;
+  late final ValueNotifier<_PreviewMetadata> _metadata;
+  ValueListenable<EditPlaybackFrameState>? _playbackFrames;
+  EditPlaybackFrameState? _lastPlaybackState;
+
   int _epoch = 0;
   int _requestSerial = 0;
-  bool _scheduled = false;
-  Timer? _pendingRetry;
+  int? _scheduledFrameCallbackId;
 
   @override
   void initState() {
     super.initState();
-    _scheduleRender();
+    _image = ValueNotifier<ui.Image?>(null);
+    _metadata = ValueNotifier<_PreviewMetadata>(
+      _PreviewMetadata(
+        frame: null,
+        contributorCount: 0,
+        projectFrame: widget.currentFrame,
+        moving: widget.isPlaying || widget.fastPreview,
+        status: 'NO VIDEO AT THIS FRAME',
+      ),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ValueListenable<EditPlaybackFrameState>? next =
+        EditPlaybackFrameScope.maybeOf(context);
+    if (identical(next, _playbackFrames)) return;
+
+    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+    _playbackFrames = next;
+    _lastPlaybackState = next?.value;
+    next?.addListener(_onPlaybackFrameChanged);
+    _epoch++;
+    _scheduleAlignedRender();
   }
 
   @override
@@ -134,26 +161,48 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         oldWidget.editId != widget.editId ||
         oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
+
     if (sourceChanged) {
-      _pendingRetry?.cancel();
+      _cancelAlignedRender();
       _disposeLayer();
+      _replaceImage(null);
       _epoch++;
-    } else if (oldWidget.currentFrame != widget.currentFrame ||
-        oldWidget.fastPreview != widget.fastPreview ||
-        oldWidget.isPlaying != widget.isPlaying) {
-      // Epoch invalidates late presentation, not the decoder or its read-ahead.
-      _epoch++;
+      _scheduleAlignedRender();
+      return;
     }
-    _scheduleRender();
+
+    if (_playbackFrames == null) {
+      if (oldWidget.currentFrame != widget.currentFrame ||
+          oldWidget.fastPreview != widget.fastPreview ||
+          oldWidget.isPlaying != widget.isPlaying) {
+        _epoch++;
+        _scheduleAlignedRender();
+      }
+      return;
+    }
+
+    // Scoped playback supplies frame and play state directly at vsync. A
+    // fast-preview change still matters because scrubbing can change decode
+    // size without changing the project frame.
+    if (oldWidget.fastPreview != widget.fastPreview) {
+      _epoch++;
+      _scheduleAlignedRender();
+    }
   }
 
   @override
   void dispose() {
     _requestSerial++;
-    _pendingRetry?.cancel();
-    _pendingRetry = null;
+    _cancelAlignedRender();
+    _playbackFrames?.removeListener(_onPlaybackFrameChanged);
+    _playbackFrames = null;
     _disposeLayer();
-    _replaceImage(null);
+
+    final ui.Image? oldImage = _image.value;
+    _image.value = null;
+    oldImage?.dispose();
+    _image.dispose();
+    _metadata.dispose();
     super.dispose();
   }
 
@@ -167,9 +216,16 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   }
 
   void _replaceImage(ui.Image? next) {
-    final ui.Image? old = _image;
-    _image = next;
-    if (old != null && !identical(old, next)) old.dispose();
+    final ui.Image? old = _image.value;
+    if (identical(old, next)) return;
+    _image.value = next;
+    old?.dispose();
+  }
+
+  void _publishMetadata(_PreviewMetadata next) {
+    if (_metadata.value != next) {
+      _metadata.value = next;
+    }
   }
 
   EditVideoCompositor _ensureCompositor() {
@@ -206,100 +262,158 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     return compositor;
   }
 
-  bool get _moving => widget.isPlaying || widget.fastPreview;
-
-  void _scheduleRender() {
-    if (_scheduled) return;
-    _scheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scheduled = false;
-      if (!mounted) return;
-      unawaited(_renderCurrent());
-    });
+  EditPlaybackFrameState get _effectivePlaybackState {
+    final ValueListenable<EditPlaybackFrameState>? scoped = _playbackFrames;
+    if (scoped != null) return scoped.value;
+    return EditPlaybackFrameState(
+      frame: widget.currentFrame,
+      isPlaying: widget.isPlaying,
+    );
   }
 
-  void _schedulePendingRetry() {
-    if (_pendingRetry != null || !mounted) return;
-    _pendingRetry = Timer(_pendingRetryDelay, () {
-      _pendingRetry = null;
-      if (mounted) _scheduleRender();
-    });
+  void _onPlaybackFrameChanged() {
+    final ValueListenable<EditPlaybackFrameState>? scoped = _playbackFrames;
+    if (scoped == null || !mounted) return;
+    final EditPlaybackFrameState next = scoped.value;
+    if (next == _lastPlaybackState) return;
+
+    _lastPlaybackState = next;
+    _cancelAlignedRender();
+    _epoch++;
+
+    // This listener is invoked synchronously by EditWorkspace's Ticker before
+    // its setState. Submit the media request here so frame N is requested at the
+    // beginning of the same vsync that will move the project playhead to N.
+    unawaited(
+      _renderFrame(
+        next.frame,
+        playing: next.isPlaying,
+        moving: next.isPlaying || widget.fastPreview,
+      ),
+    );
   }
 
-  Future<void> _renderCurrent() async {
+  void _scheduleAlignedRender() {
+    if (_scheduledFrameCallbackId != null || !mounted) return;
+    _scheduledFrameCallbackId = SchedulerBinding.instance.scheduleFrameCallback(
+      (_) {
+        _scheduledFrameCallbackId = null;
+        if (!mounted) return;
+        final EditPlaybackFrameState state = _effectivePlaybackState;
+        unawaited(
+          _renderFrame(
+            state.frame,
+            playing: state.isPlaying,
+            moving: state.isPlaying || widget.fastPreview,
+          ),
+        );
+      },
+    );
+  }
+
+  void _cancelAlignedRender() {
+    final int? id = _scheduledFrameCallbackId;
+    if (id == null) return;
+    SchedulerBinding.instance.cancelFrameCallbackWithId(id);
+    _scheduledFrameCallbackId = null;
+  }
+
+  Future<void> _renderFrame(
+    int projectFrame, {
+    required bool playing,
+    required bool moving,
+  }) async {
     final int serial = ++_requestSerial;
     final int requestEpoch = _epoch;
     final ProjectTime time = ProjectTime(
-      frame: widget.currentFrame,
+      frame: projectFrame,
       epoch: requestEpoch,
-      mode: widget.isPlaying
-          ? ProjectClockMode.monotonic
-          : ProjectClockMode.scrub,
+      mode: playing ? ProjectClockMode.monotonic : ProjectClockMode.scrub,
     );
-    final ui.Size decodeSize =
-        _moving ? _fastDecodeSize : _fullDecodeSize;
+    final ui.Size decodeSize = moving ? _fastDecodeSize : _fullDecodeSize;
 
     EditVideoCompositeResult result;
     try {
       final EditVideoCompositor compositor = _ensureCompositor();
-      result = _moving
+      result = moving
           ? compositor.renderAvailable(widget.editId, time, decodeSize)
           : compositor.render(widget.editId, time, decodeSize);
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
-      setState(() {
-        _replaceImage(null);
-        _frame = null;
-        _contributorCount = 0;
-        _status = 'VIDEO PREVIEW UNAVAILABLE\n$error';
-      });
+      _replaceImage(null);
+      _publishMetadata(
+        _PreviewMetadata(
+          frame: null,
+          contributorCount: 0,
+          projectFrame: projectFrame,
+          moving: moving,
+          status: 'VIDEO PREVIEW UNAVAILABLE\n$error',
+        ),
+      );
       return;
     }
 
     if (!mounted || serial != _requestSerial || requestEpoch != _epoch) return;
 
     if (result.hasPending) {
-      // Keep the last complete composite on screen. This is frame dropping, not
-      // clock slowing: ProjectClock continues and the worker receives the next
-      // target even if this exact picture misses its presentation deadline.
-      if (_image == null && _status != 'DECODE AHEAD') {
-        setState(() => _status = 'DECODE AHEAD');
+      // During playback, a missed exact frame is dropped. The next ProjectClock
+      // sample will request the next presentation frame. While parked or
+      // scrubbing, retry only on the next Flutter frame instead of a free-running
+      // millisecond timer.
+      if (_image.value == null) {
+        _publishMetadata(
+          _PreviewMetadata(
+            frame: null,
+            contributorCount: 0,
+            projectFrame: projectFrame,
+            moving: moving,
+            status: 'DECODE AHEAD',
+          ),
+        );
       }
-      _schedulePendingRetry();
+      if (!playing) _scheduleAlignedRender();
       return;
     }
 
     if (!result.hasImage || result.rgba == null) {
       final MediaFrame? problem =
           result.mediaFrames.isEmpty ? null : result.mediaFrames.last;
-      setState(() {
-        _replaceImage(null);
-        _frame = problem;
-        _contributorCount = 0;
-        if (problem == null) {
-          _status = 'NO VIDEO AT FRAME ${widget.currentFrame}';
-        } else if (problem.status == MediaFrameStatus.nestedEditPending) {
-          _status = 'NESTED EDIT PREVIEW PENDING\n${problem.source}';
-        } else {
-          _status = 'OFFLINE\n${problem.source}\n${problem.error ?? ''}';
-        }
-      });
+      String status;
+      if (problem == null) {
+        status = 'NO VIDEO AT FRAME $projectFrame';
+      } else if (problem.status == MediaFrameStatus.nestedEditPending) {
+        status = 'NESTED EDIT PREVIEW PENDING\n${problem.source}';
+      } else {
+        status = 'OFFLINE\n${problem.source}\n${problem.error ?? ''}';
+      }
+
+      _replaceImage(null);
+      _publishMetadata(
+        _PreviewMetadata(
+          frame: problem,
+          contributorCount: 0,
+          projectFrame: projectFrame,
+          moving: moving,
+          status: status,
+        ),
+      );
       return;
     }
 
     final MediaFrame? top = result.topFrame;
 
-    // Frame identity and layer metadata are already authoritative at this
-    // point. Publish them before the asynchronous Flutter image upload. The
-    // pixel upload may complete on a later event-loop turn, but diagnostic
-    // state must not pretend that no frame exists while those pixels are being
-    // converted. This also keeps widget tests independent of engine image
-    // callback timing.
-    setState(() {
-      _frame = top;
-      _contributorCount = result.contributors.length;
-      _status = 'COMPOSITING FRAME';
-    });
+    // Metadata is tiny and test-visible, so publish it immediately. It no
+    // longer calls setState or rebuilds the preview. The actual picture update
+    // is a separate repaint-only channel below.
+    _publishMetadata(
+      _PreviewMetadata(
+        frame: top,
+        contributorCount: result.contributors.length,
+        projectFrame: projectFrame,
+        moving: moving,
+        status: '',
+      ),
+    );
 
     final ui.Image decoded;
     try {
@@ -311,10 +425,15 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       );
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
-      setState(() {
-        _frame = top;
-        _status = 'FRAME CONVERSION FAILED\n$error';
-      });
+      _publishMetadata(
+        _PreviewMetadata(
+          frame: top,
+          contributorCount: result.contributors.length,
+          projectFrame: projectFrame,
+          moving: moving,
+          status: 'FRAME CONVERSION FAILED\n$error',
+        ),
+      );
       return;
     }
 
@@ -323,12 +442,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    setState(() {
-      _replaceImage(decoded);
-      _frame = top;
-      _contributorCount = result.contributors.length;
-      _status = '';
-    });
+    // CustomPainter listens directly to this notifier. No widget setState,
+    // layout, or subtree rebuild is required to put the new picture on screen.
+    _replaceImage(decoded);
   }
 
   Future<ui.Image> _decodeRgba(
@@ -351,52 +467,154 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
   @override
   Widget build(BuildContext context) {
-    final ui.Image? image = _image;
-    final MediaFrame? frame = _frame;
-
-    return Container(
-      color: Colors.black,
+    return RepaintBoundary(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (image != null)
-            RawImage(
-              image: image,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.low,
-            )
-          else
-            Center(
-              child: Padding(
-                padding: EdgeInsets.all(sc(18)),
-                child: Text(
-                  _status,
-                  textAlign: TextAlign.center,
-                  style: widget.theme.micro.copyWith(color: R3Theme.textDim),
-                ),
-              ),
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _PreviewImagePainter(_image),
             ),
-          Positioned(
-            left: sc(8),
-            bottom: sc(7),
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: sc(6), vertical: sc(3)),
-              color: Colors.black.withValues(alpha: 0.72),
-              child: Text(
-                frame == null
-                    ? 'EDIT ${widget.editId}  F${widget.currentFrame}'
-                    : '${frame.trackId} / ${frame.clipId}   '
-                        'P${widget.currentFrame}   '
-                        'SRC ${frame.requestedSourceFrame}'
-                        '${frame.actualSourceFrame == null ? '' : '→${frame.actualSourceFrame}'}   '
-                        'LAYERS $_contributorCount'
-                        '${_moving ? '   ASYNC' : ''}',
-                style: widget.theme.micro.copyWith(color: R3Theme.textMid),
-              ),
-            ),
+          ),
+          ValueListenableBuilder<_PreviewMetadata>(
+            valueListenable: _metadata,
+            builder: (
+              BuildContext context,
+              _PreviewMetadata metadata,
+              Widget? child,
+            ) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (metadata.status.isNotEmpty)
+                    Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(sc(18)),
+                        child: Text(
+                          metadata.status,
+                          textAlign: TextAlign.center,
+                          style: widget.theme.micro.copyWith(
+                            color: R3Theme.textDim,
+                          ),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    left: sc(8),
+                    bottom: sc(7),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: sc(6),
+                        vertical: sc(3),
+                      ),
+                      color: Colors.black.withValues(alpha: 0.72),
+                      child: Text(
+                        metadata.label(widget.editId),
+                        style: widget.theme.micro.copyWith(
+                          color: R3Theme.textMid,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
     );
   }
 }
+
+@immutable
+class _PreviewMetadata {
+  final MediaFrame? frame;
+  final int contributorCount;
+  final int projectFrame;
+  final bool moving;
+  final String status;
+
+  const _PreviewMetadata({
+    required this.frame,
+    required this.contributorCount,
+    required this.projectFrame,
+    required this.moving,
+    required this.status,
+  });
+
+  String label(String editId) {
+    final MediaFrame? current = frame;
+    if (current == null) return 'EDIT $editId  F$projectFrame';
+    return '${current.trackId} / ${current.clipId}   '
+        'P$projectFrame   '
+        'SRC ${current.requestedSourceFrame}'
+        '${current.actualSourceFrame == null ? '' : '→${current.actualSourceFrame}'}   '
+        'LAYERS $contributorCount'
+        '${moving ? '   ASYNC' : ''}';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _PreviewMetadata &&
+        identical(other.frame, frame) &&
+        other.contributorCount == contributorCount &&
+        other.projectFrame == projectFrame &&
+        other.moving == moving &&
+        other.status == status;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        identityHashCode(frame),
+        contributorCount,
+        projectFrame,
+        moving,
+        status,
+      );
+}
+
+class _PreviewImagePainter extends CustomPainter {
+  final ValueListenable<ui.Image?> image;
+
+  _PreviewImagePainter(this.image) : super(repaint: image);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = Colors.black,
+    );
+
+    final ui.Image? current = image.value;
+    if (current == null || size.width <= 0 || size.height <= 0) return;
+
+    final double sourceWidth = current.width.toDouble();
+    final double sourceHeight = current.height.toDouble();
+    final double scale = mathMin(
+      size.width / sourceWidth,
+      size.height / sourceHeight,
+    );
+    final double drawWidth = sourceWidth * scale;
+    final double drawHeight = sourceHeight * scale;
+    final Rect destination = Rect.fromLTWH(
+      (size.width - drawWidth) / 2,
+      (size.height - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+
+    canvas.drawImageRect(
+      current,
+      Rect.fromLTWH(0, 0, sourceWidth, sourceHeight),
+      destination,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PreviewImagePainter oldDelegate) {
+    return !identical(oldDelegate.image, image);
+  }
+}
+
+double mathMin(double a, double b) => a < b ? a : b;
