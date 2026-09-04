@@ -70,6 +70,12 @@ void main() {
   testWidgets(
     'SET IN and SET OUT send only the marked edit range to a new mosaic',
     (WidgetTester tester) async {
+      // A SizedBox cannot make the test viewport larger than Flutter's default
+      // 800x600 surface. This workflow is a desktop editor interaction, so give
+      // it an explicit desktop-sized surface before laying the workspace out.
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       String? latestSource;
 
       await tester.pumpWidget(
@@ -97,7 +103,8 @@ void main() {
       await tester.pump();
       expect(find.text('IN F3   OUT F19   17F'), findsOneWidget);
 
-      final Finder ruler = find.byKey(const ValueKey<String>('edit-timeline-scrub'));
+      final Finder ruler =
+          find.byKey(const ValueKey<String>('edit-timeline-scrub'));
       expect(ruler, findsOneWidget);
       final RenderBox rulerBox = tester.renderObject<RenderBox>(ruler);
       await tester.tapAt(rulerBox.localToGlobal(const Offset(20, 10)));
@@ -112,12 +119,16 @@ void main() {
 
       expect(latestSource, isNotNull);
       final EditDocumentModel model = EditDocumentModel.parse(latestSource!);
-      final EditClip clip = model.mosaic('mosaic').pane('pane').clip('source');
+      final EditClip clip =
+          model.mosaic('mosaic').pane('pane').clip('source');
       expect(clip.source, 'EDIT.main');
       expect(clip.inFrame, 3);
       expect(clip.durationFrames, 8);
 
-      expect(find.byKey(const ValueKey<String>('mosaic-pane:pane')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('mosaic-pane:pane')),
+        findsOneWidget,
+      );
     },
   );
 }
