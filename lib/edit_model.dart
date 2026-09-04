@@ -1,12 +1,13 @@
 // ./lib/edit_model.dart
 //
-// Canonical EDIT / TRACK / CLIP source model.
+// Canonical EDIT / TRACK / CLIP and MOSAIC / PANE / CLIP source model.
 //
 // ScriptCstDocument owns source spans and nesting. This file gives those
 // structural blocks meaning without introducing a parallel project database.
 // The script remains canonical. Clip duration is authored in project frames and
-// never inferred from media. Missing or replaced media may change what can be
-// decoded, but it cannot change how many project frames the edit owns.
+// never inferred from media or from another structural source. Missing or
+// replaced media may change what can be decoded, but it cannot change how many
+// project frames the authored container owns.
 
 import 'script_cst.dart';
 
@@ -18,6 +19,69 @@ class EditLanguageFormatException implements Exception {
 
   @override
   String toString() => 'EditLanguageFormatException at $offset: $message';
+}
+
+enum StructuralSourceKind {
+  edit,
+  mosaic,
+}
+
+/// A CLIP source that points back into the canonical script instead of to a
+/// filesystem media resource.
+///
+/// The source spelling is intentionally explicit. `EDIT.foo` and `MOSAIC.foo`
+/// occupy separate namespaces, so an EDIT and a MOSAIC may share the same id
+/// without becoming ambiguous.
+class StructuralSourceRef {
+  final StructuralSourceKind kind;
+  final String id;
+
+  const StructuralSourceRef._(this.kind, this.id);
+
+  static StructuralSourceRef? tryParse(String source) {
+    final String value = source.trim();
+    if (value.startsWith('EDIT.')) {
+      return StructuralSourceRef._(
+        StructuralSourceKind.edit,
+        value.substring('EDIT.'.length).trim(),
+      );
+    }
+    if (value.startsWith('MOSAIC.')) {
+      return StructuralSourceRef._(
+        StructuralSourceKind.mosaic,
+        value.substring('MOSAIC.'.length).trim(),
+      );
+    }
+    return null;
+  }
+
+  String get canonicalSource {
+    switch (kind) {
+      case StructuralSourceKind.edit:
+        return 'EDIT.$id';
+      case StructuralSourceKind.mosaic:
+        return 'MOSAIC.$id';
+    }
+  }
+
+  String get graphLabel {
+    switch (kind) {
+      case StructuralSourceKind.edit:
+        return 'EDIT.$id';
+      case StructuralSourceKind.mosaic:
+        return 'MOSAIC.$id';
+    }
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is StructuralSourceRef && other.kind == kind && other.id == id;
+
+  @override
+  int get hashCode => Object.hash(kind, id);
+
+  @override
+  String toString() => canonicalSource;
 }
 
 class ExactClipSpeed {
@@ -103,68 +167,51 @@ class ExactClipSpeed {
 class EditDocumentModel {
   final ScriptCstDocument cst;
   final List<EditSequence> edits;
+  final List<MosaicSequence> mosaics;
 
-  EditDocumentModel._(this.cst, this.edits);
+  EditDocumentModel._(this.cst, this.edits, this.mosaics);
 
   factory EditDocumentModel.parse(String source) {
     final ScriptCstDocument cst = ScriptCstDocument.parse(source);
     final List<EditSequence> edits = <EditSequence>[];
+    final List<MosaicSequence> mosaics = <MosaicSequence>[];
     final Set<String> editIds = <String>{};
+    final Set<String> mosaicIds = <String>{};
 
-    for (final ScriptCstBlock editBlock in cst.roots) {
-      final String editId = _parseSingleIdHeader(editBlock, 'EDIT');
-      if (!editIds.add(editId)) {
-        throw EditLanguageFormatException(
-          'Duplicate EDIT id "$editId".',
-          editBlock.startOffset,
-        );
-      }
-
-      final List<EditTrack> tracks = <EditTrack>[];
-      final Set<String> trackIds = <String>{};
-      for (final ScriptCstBlock trackBlock in editBlock.children) {
-        final String trackId = _parseSingleIdHeader(trackBlock, 'TRACK');
-        if (!trackIds.add(trackId)) {
-          throw EditLanguageFormatException(
-            'Duplicate TRACK id "$trackId" inside EDIT "$editId".',
-            trackBlock.startOffset,
-          );
-        }
-
-        final List<EditClip> clips = <EditClip>[];
-        final Set<String> clipIds = <String>{};
-        for (final ScriptCstBlock clipBlock in trackBlock.children) {
-          final EditClip clip = _parseClip(clipBlock);
-          if (!clipIds.add(clip.id)) {
+    for (final ScriptCstBlock root in cst.roots) {
+      switch (root.type) {
+        case 'EDIT':
+          final EditSequence edit = _parseEditSequence(root);
+          if (!editIds.add(edit.id)) {
             throw EditLanguageFormatException(
-              'Duplicate CLIP id "${clip.id}" inside TRACK "$trackId".',
-              clipBlock.startOffset,
+              'Duplicate EDIT id "${edit.id}".',
+              root.startOffset,
             );
           }
-          clips.add(clip);
-        }
-
-        tracks.add(
-          EditTrack._(
-            id: trackId,
-            block: trackBlock,
-            clips: List<EditClip>.unmodifiable(clips),
-          ),
-        );
+          edits.add(edit);
+          break;
+        case 'MOSAIC':
+          final MosaicSequence mosaic = _parseMosaicSequence(root);
+          if (!mosaicIds.add(mosaic.id)) {
+            throw EditLanguageFormatException(
+              'Duplicate MOSAIC id "${mosaic.id}".',
+              root.startOffset,
+            );
+          }
+          mosaics.add(mosaic);
+          break;
+        default:
+          throw EditLanguageFormatException(
+            'Unsupported structural root ${root.type}.',
+            root.startOffset,
+          );
       }
-
-      edits.add(
-        EditSequence._(
-          id: editId,
-          block: editBlock,
-          tracks: List<EditTrack>.unmodifiable(tracks),
-        ),
-      );
     }
 
     return EditDocumentModel._(
       cst,
       List<EditSequence>.unmodifiable(edits),
+      List<MosaicSequence>.unmodifiable(mosaics),
     );
   }
 
@@ -175,6 +222,44 @@ class EditDocumentModel {
         orElse: () => throw StateError('No EDIT named "$id".'),
       );
 
+  MosaicSequence mosaic(String id) => mosaics.singleWhere(
+        (MosaicSequence mosaic) => mosaic.id == id,
+        orElse: () => throw StateError('No MOSAIC named "$id".'),
+      );
+
+  bool containsStructuralSource(StructuralSourceRef ref) {
+    switch (ref.kind) {
+      case StructuralSourceKind.edit:
+        return edits.any((EditSequence edit) => edit.id == ref.id);
+      case StructuralSourceKind.mosaic:
+        return mosaics.any((MosaicSequence mosaic) => mosaic.id == ref.id);
+    }
+  }
+
+  int structuralSourceFrameCount(StructuralSourceRef ref) {
+    switch (ref.kind) {
+      case StructuralSourceKind.edit:
+        return edit(ref.id).projectFrameCount;
+      case StructuralSourceKind.mosaic:
+        return mosaic(ref.id).projectFrameCount;
+    }
+  }
+
+  Iterable<EditClip> clipsForStructuralSource(StructuralSourceRef ref) sync* {
+    switch (ref.kind) {
+      case StructuralSourceKind.edit:
+        for (final EditTrack track in edit(ref.id).tracks) {
+          yield* track.clips;
+        }
+        break;
+      case StructuralSourceKind.mosaic:
+        for (final MosaicPane pane in mosaic(ref.id).panes) {
+          yield* pane.clips;
+        }
+        break;
+    }
+  }
+
   EditDryRun dryRun(
     String editId, {
     required bool Function(String source) mediaExists,
@@ -183,6 +268,7 @@ class EditDocumentModel {
     final List<String> offline = <String>[];
     for (final EditTrack track in sequence.tracks) {
       for (final EditClip clip in track.clips) {
+        if (StructuralSourceRef.tryParse(clip.source) != null) continue;
         if (!mediaExists(clip.source)) offline.add(clip.source);
       }
     }
@@ -192,9 +278,10 @@ class EditDocumentModel {
     );
   }
 
-  /// Rewrites only one CLIP opening tag. The enclosing TRACK and EDIT source,
-  /// the CLIP body, and every untouched header field remain byte-for-byte as
-  /// authored. Callers reparse the returned source to obtain fresh spans.
+  /// Rewrites only one CLIP opening tag. The enclosing TRACK/PANE and root
+  /// source, the CLIP body, and every untouched header field remain
+  /// byte-for-byte as authored. Callers reparse the returned source to obtain
+  /// fresh spans.
   String rewriteClip(
     EditClip clip, {
     String? source,
@@ -243,7 +330,14 @@ class EditDocumentModel {
         }
       }
     }
-    throw ArgumentError('The CLIP does not belong to this edit document.');
+    for (final MosaicSequence mosaic in mosaics) {
+      for (final MosaicPane pane in mosaic.panes) {
+        if (pane.clips.any((EditClip candidate) => identical(candidate, clip))) {
+          return;
+        }
+      }
+    }
+    throw ArgumentError('The CLIP does not belong to this structural document.');
   }
 }
 
@@ -300,6 +394,65 @@ class EditTrack {
       );
 }
 
+/// One frame-producing Metro composition.
+///
+/// Pane order owns layout. One pane fills the frame, two split 56/44, and
+/// three use the same hero-plus-stack geometry as APP:MOSAIC. A MOSAIC is one
+/// composition, not a paged presentation, so more than three panes are
+/// rejected rather than silently moved to another page.
+class MosaicSequence {
+  final String id;
+  final ScriptCstBlock block;
+  final List<MosaicPane> panes;
+
+  MosaicSequence._({
+    required this.id,
+    required this.block,
+    required this.panes,
+  });
+
+  int get projectFrameCount {
+    int end = 0;
+    for (final MosaicPane pane in panes) {
+      final int paneEnd = pane.projectFrameCount;
+      if (paneEnd > end) end = paneEnd;
+    }
+    return end;
+  }
+
+  MosaicPane pane(String id) => panes.singleWhere(
+        (MosaicPane pane) => pane.id == id,
+        orElse: () =>
+            throw StateError('No PANE named "$id" in MOSAIC "${this.id}".'),
+      );
+}
+
+class MosaicPane {
+  final String id;
+  final ScriptCstBlock block;
+  final List<EditClip> clips;
+
+  MosaicPane._({
+    required this.id,
+    required this.block,
+    required this.clips,
+  });
+
+  int get projectFrameCount {
+    int end = 0;
+    for (final EditClip clip in clips) {
+      if (clip.endFrameExclusive > end) end = clip.endFrameExclusive;
+    }
+    return end;
+  }
+
+  EditClip clip(String id) => clips.singleWhere(
+        (EditClip clip) => clip.id == id,
+        orElse: () =>
+            throw StateError('No CLIP named "$id" in PANE "${this.id}".'),
+      );
+}
+
 class EditClip {
   final String id;
   final String source;
@@ -325,7 +478,7 @@ class EditClip {
 
   /// Returns the integer source frame sampled at one project-frame offset.
   /// The mapping is exact rational arithmetic. Fractional source positions are
-  /// floored here only because M7 defines geometry, not interpolation.
+  /// floored here because authored source sampling is frame-exact.
   int sourceFrameAtProjectOffset(int projectOffset) {
     if (projectOffset < 0 || projectOffset >= durationFrames) {
       throw RangeError.range(
@@ -350,6 +503,101 @@ class EditDryRun {
   });
 
   bool get allMediaOnline => offlineSources.isEmpty;
+}
+
+EditSequence _parseEditSequence(ScriptCstBlock editBlock) {
+  final String editId = _parseSingleIdHeader(editBlock, 'EDIT');
+  final List<EditTrack> tracks = <EditTrack>[];
+  final Set<String> trackIds = <String>{};
+
+  for (final ScriptCstBlock trackBlock in editBlock.children) {
+    final String trackId = _parseSingleIdHeader(trackBlock, 'TRACK');
+    if (!trackIds.add(trackId)) {
+      throw EditLanguageFormatException(
+        'Duplicate TRACK id "$trackId" inside EDIT "$editId".',
+        trackBlock.startOffset,
+      );
+    }
+
+    tracks.add(
+      EditTrack._(
+        id: trackId,
+        block: trackBlock,
+        clips: _parseOwnedClips(
+          trackBlock,
+          ownerType: 'TRACK',
+          ownerId: trackId,
+        ),
+      ),
+    );
+  }
+
+  return EditSequence._(
+    id: editId,
+    block: editBlock,
+    tracks: List<EditTrack>.unmodifiable(tracks),
+  );
+}
+
+MosaicSequence _parseMosaicSequence(ScriptCstBlock mosaicBlock) {
+  final String mosaicId = _parseSingleIdHeader(mosaicBlock, 'MOSAIC');
+  final List<MosaicPane> panes = <MosaicPane>[];
+  final Set<String> paneIds = <String>{};
+
+  for (final ScriptCstBlock paneBlock in mosaicBlock.children) {
+    final String paneId = _parseSingleIdHeader(paneBlock, 'PANE');
+    if (!paneIds.add(paneId)) {
+      throw EditLanguageFormatException(
+        'Duplicate PANE id "$paneId" inside MOSAIC "$mosaicId".',
+        paneBlock.startOffset,
+      );
+    }
+
+    panes.add(
+      MosaicPane._(
+        id: paneId,
+        block: paneBlock,
+        clips: _parseOwnedClips(
+          paneBlock,
+          ownerType: 'PANE',
+          ownerId: paneId,
+        ),
+      ),
+    );
+  }
+
+  if (panes.length > 3) {
+    throw EditLanguageFormatException(
+      'MOSAIC "$mosaicId" has ${panes.length} panes; one MOSAIC supports at most 3.',
+      mosaicBlock.startOffset,
+    );
+  }
+
+  return MosaicSequence._(
+    id: mosaicId,
+    block: mosaicBlock,
+    panes: List<MosaicPane>.unmodifiable(panes),
+  );
+}
+
+List<EditClip> _parseOwnedClips(
+  ScriptCstBlock owner, {
+  required String ownerType,
+  required String ownerId,
+}) {
+  final List<EditClip> clips = <EditClip>[];
+  final Set<String> clipIds = <String>{};
+  for (final ScriptCstBlock clipBlock in owner.children) {
+    final EditClip clip = _parseClip(clipBlock);
+    if (!clipIds.add(clip.id)) {
+      throw EditLanguageFormatException(
+        'Duplicate CLIP id "${clip.id}" inside $ownerType "$ownerId".',
+        clipBlock.startOffset,
+      );
+    }
+    clips.add(clip);
+  }
+  return List<EditClip>.unmodifiable(clips);
 }
 
 String _parseSingleIdHeader(ScriptCstBlock block, String type) {

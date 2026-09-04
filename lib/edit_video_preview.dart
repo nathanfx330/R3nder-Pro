@@ -1,13 +1,13 @@
 // ./lib/edit_video_preview.dart
 //
-// Live MLT frame preview for the source-backed EDIT surface.
+// Live MLT frame preview for source-backed structural video sources.
 //
-// R3nder owns project time, edit geometry, layer order, and final pixels. MLT
-// owns persistent source decoders only. During playback, EditWorkspace publishes
-// ProjectClock samples at Flutter vsync. A single plain active video clip uses
-// the Linux external texture path, so its decoded RGBA never crosses into Dart.
-// Overlaps, transitions, test backends, and unsupported platforms retain the
-// deterministic CPU compositor fallback.
+// R3nder owns project time, authored geometry, recursion, layer order, MOSAIC
+// pane layout, and final pixels. MLT owns persistent leaf decoders only. During
+// playback, EditWorkspace publishes ProjectClock samples at Flutter vsync. A
+// single plain EDIT leaf clip keeps the Linux external texture fast path. Any
+// structural source, overlap, transition, test backend, or unsupported platform
+// uses the deterministic CPU compositor fallback.
 
 import 'dart:async';
 import 'dart:io';
@@ -77,7 +77,14 @@ MediaFrame? selectVisibleEditFrame(List<MediaFrame> frames) {
 
 class EditVideoPreview extends StatefulWidget {
   final String source;
-  final String editId;
+
+  /// Back-compatible EDIT root selection. Exactly one of [editId] and
+  /// [structuralSource] must be supplied.
+  final String? editId;
+
+  /// Canonical structural root such as `EDIT.main` or `MOSAIC.wall`.
+  final String? structuralSource;
+
   final int currentFrame;
   final R3Theme theme;
   final bool isPlaying;
@@ -93,14 +100,21 @@ class EditVideoPreview extends StatefulWidget {
   const EditVideoPreview({
     super.key,
     required this.source,
-    required this.editId,
+    this.editId,
+    this.structuralSource,
     required this.currentFrame,
     required this.theme,
     this.isPlaying = false,
     this.fastPreview = false,
     this.backend,
     this.resolveSource,
-  });
+  }) : assert(
+          (editId != null && structuralSource == null) ||
+              (editId == null && structuralSource != null),
+          'Supply exactly one of editId or structuralSource.',
+        );
+
+  String get sourceRef => structuralSource ?? 'EDIT.$editId';
 
   @override
   State<EditVideoPreview> createState() => _EditVideoPreviewState();
@@ -114,7 +128,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   EditVideoCompositor? _compositor;
   EditSurfaceDocument? _surface;
   String? _layerSource;
-  String? _layerEditId;
+  String? _layerStructuralSource;
 
   late final ValueNotifier<ui.Image?> _image;
   late final ValueNotifier<int?> _nativeTextureId;
@@ -164,7 +178,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   void didUpdateWidget(covariant EditVideoPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     final bool sourceChanged = oldWidget.source != widget.source ||
-        oldWidget.editId != widget.editId ||
+        oldWidget.sourceRef != widget.sourceRef ||
         oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
 
@@ -219,7 +233,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _layer?.dispose();
     _layer = null;
     _layerSource = null;
-    _layerEditId = null;
+    _layerStructuralSource = null;
   }
 
   void _replaceImage(ui.Image? next) {
@@ -245,14 +259,20 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final EditVideoCompositor? existing = _compositor;
     if (existing != null &&
         _layerSource == widget.source &&
-        _layerEditId == widget.editId) {
+        _layerStructuralSource == widget.sourceRef) {
       return existing;
     }
 
     _disposeLayer();
     final EditDocumentModel model = EditDocumentModel.parse(widget.source);
-    final EditSurfaceDocument surface =
-        EditSurfaceDocument.parse(widget.source, widget.editId);
+    final StructuralSourceRef? selected =
+        StructuralSourceRef.tryParse(widget.sourceRef);
+    if (selected == null ||
+        selected.id.isEmpty ||
+        !model.containsStructuralSource(selected)) {
+      throw StateError('No structural source named "${widget.sourceRef}".');
+    }
+
     final MediaDecoderBackend backend = widget.backend ?? NativeMltMediaBackend();
     final String Function(String source) resolver =
         widget.resolveSource ?? resolveWorkspaceMediaSource;
@@ -261,18 +281,23 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       backend: backend,
       resolveSource: resolver,
     );
-    final EditVideoCompositor compositor = EditVideoCompositor(
-      document: surface,
+    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+      model: model,
       mediaLayer: layer,
       backend: backend,
       resolveSource: resolver,
     );
 
+    EditSurfaceDocument? surface;
+    if (selected.kind == StructuralSourceKind.edit) {
+      surface = EditSurfaceDocument.parse(widget.source, selected.id);
+    }
+
     _layer = layer;
     _compositor = compositor;
     _surface = surface;
     _layerSource = widget.source;
-    _layerEditId = widget.editId;
+    _layerStructuralSource = widget.sourceRef;
     return compositor;
   }
 
@@ -293,7 +318,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
         activeCount++;
         if (activeCount > 1) return null;
-        if (!clip.transition.isNone || clip.source.startsWith('EDIT.')) {
+        if (!clip.transition.isNone ||
+            StructuralSourceRef.tryParse(clip.source) != null) {
           return null;
         }
 
@@ -435,10 +461,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // The plain one-clip case bypasses Dart pixels completely. This is the
-    // production path under test for the Spring clip. If the backend is a fake,
-    // another platform, an overlap, or a transition, presentNativeTexture()
-    // returns null and the deterministic CPU path below remains authoritative.
+    // Only a plain leaf EDIT clip may bypass Dart pixels. MOSAIC and nested
+    // structural sources must pass through the deterministic compositor.
     final _NativeTextureTarget? textureTarget =
         _singleNativeTextureTarget(projectFrame);
     final MediaLayer? layer = _layer;
@@ -453,7 +477,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         );
       } catch (_) {
         // A texture presentation failure does not make the source offline.
-        // Fall back to the same CPU compositor used by tests and transitions.
+        // Fall back to the same CPU compositor used by structural sources.
         textureId = null;
       }
 
@@ -473,8 +497,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     EditVideoCompositeResult result;
     try {
       result = moving
-          ? compositor.renderAvailable(widget.editId, time, decodeSize)
-          : compositor.render(widget.editId, time, decodeSize);
+          ? compositor.renderSourceAvailable(widget.sourceRef, time, decodeSize)
+          : compositor.renderSource(widget.sourceRef, time, decodeSize);
     } catch (error) {
       if (!mounted || serial != _requestSerial) return;
       _replaceImage(null);
@@ -516,8 +540,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       String status;
       if (problem == null) {
         status = 'NO VIDEO AT FRAME $projectFrame';
-      } else if (problem.status == MediaFrameStatus.nestedEditPending) {
-        status = 'NESTED EDIT PREVIEW PENDING\n${problem.source}';
+      } else if (problem.status == MediaFrameStatus.nestedEditPending ||
+          problem.status == MediaFrameStatus.nestedMosaicPending) {
+        status = 'STRUCTURAL PREVIEW PENDING\n${problem.source}';
       } else {
         status = 'OFFLINE\n${problem.source}\n${problem.error ?? ''}';
       }
@@ -666,7 +691,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                       ),
                       color: Colors.black.withValues(alpha: 0.72),
                       child: Text(
-                        metadata.label(widget.editId),
+                        metadata.label(widget.sourceRef),
                         style: widget.theme.micro.copyWith(
                           color: R3Theme.textMid,
                         ),
@@ -715,9 +740,9 @@ class _PreviewMetadata {
     required this.status,
   });
 
-  String label(String editId) {
+  String label(String sourceRef) {
     final MediaFrame? current = frame;
-    if (current == null) return 'EDIT $editId  F$projectFrame';
+    if (current == null) return '$sourceRef  F$projectFrame';
     return '${current.trackId} / ${current.clipId}   '
         'P$projectFrame   '
         'SRC ${current.requestedSourceFrame}'

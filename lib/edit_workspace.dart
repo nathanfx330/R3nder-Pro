@@ -1,12 +1,12 @@
 // ./lib/edit_workspace.dart
 //
-// GUI entry point for source-backed video editing.
+// GUI entry point for source-backed structural video editing.
 //
-// EditSurface edits clips that already exist. This wrapper owns the missing
-// authoring and transport paths: choose a video, import it into the active
-// workspace, serialize a real V1 or V2 CLIP into the same script document,
-// and drive EDIT playback from ProjectClock. There is no timeline database
-// here. Durable state remains authored source; playback state is transient.
+// EDIT and MOSAIC are both canonical frame sources. This workspace owns only
+// transient selection, import, and transport state. Durable changes are always
+// serialized back into the same script through EditSurfaceDocument or
+// MosaicSurfaceDocument. ProjectClock remains the sole playback authority for
+// whichever structural source is selected.
 //
 // Playback follows the same timing rule as the terminal renderer: Flutter
 // vsync asks ProjectClock what project time is current. A Ticker does not
@@ -17,6 +17,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'edit_linter.dart';
 import 'edit_media_import.dart';
 import 'edit_model.dart';
 import 'edit_playback_clock.dart';
@@ -24,6 +25,8 @@ import 'edit_playback_frame.dart';
 import 'edit_surface.dart';
 import 'edit_surface_model.dart';
 import 'engine.dart';
+import 'mosaic_surface.dart';
+import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
@@ -75,9 +78,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
   late final ValueNotifier<EditPlaybackFrameState> _playbackFrame;
   late final ValueNotifier<EditPlaybackExactState> _playbackExact;
   EditPlaybackClock? _playClock;
+  String? _selectedSourceRef;
   bool _importing = false;
   bool _playing = false;
-  int _cachedEditEndFrame = 0;
+  int _cachedSourceEndFrame = 0;
   int? _lastPolledPlaybackFrame;
   String? _error;
 
@@ -88,8 +92,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
     super.initState();
     _workingSource = widget.source;
     _displayFrame = widget.currentFrame;
-    _refreshEditEndCache();
-    _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
+    _refreshSourceSelectionAndEnd();
+    _displayFrame = _displayFrame.clamp(0, _cachedSourceEndFrame);
     _playbackFrame = ValueNotifier<EditPlaybackFrameState>(
       EditPlaybackFrameState(frame: _displayFrame, isPlaying: false),
     );
@@ -111,7 +115,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (widget.source != oldWidget.source && widget.source != _workingSource) {
       _workingSource = widget.source;
       _error = null;
-      _refreshEditEndCache();
+      _refreshSourceSelectionAndEnd();
       _stopPlaybackAt(
         widget.currentFrame,
         publish: false,
@@ -121,7 +125,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
 
     if (!_playing && widget.currentFrame != oldWidget.currentFrame) {
-      _displayFrame = widget.currentFrame.clamp(0, _cachedEditEndFrame);
+      _displayFrame = widget.currentFrame.clamp(0, _cachedSourceEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
       _publishPlaybackFrame(_displayFrame, playing: false);
       _publishPlaybackExactFrame(_displayFrame, playing: false);
@@ -185,25 +189,53 @@ class _EditWorkspaceState extends State<EditWorkspace>
     return created;
   }
 
-  void _refreshEditEndCache() {
+  List<StructuralSourceRef> _structuralSources(EditDocumentModel model) {
+    return <StructuralSourceRef>[
+      for (final EditSequence edit in model.edits)
+        StructuralSourceRef.tryParse('EDIT.${edit.id}')!,
+      for (final MosaicSequence mosaic in model.mosaics)
+        StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!,
+    ];
+  }
+
+  StructuralSourceRef? _selectedRefFor(EditDocumentModel model) {
+    final List<StructuralSourceRef> refs = _structuralSources(model);
+    if (refs.isEmpty) {
+      _selectedSourceRef = null;
+      return null;
+    }
+
+    final String? selected = _selectedSourceRef;
+    if (selected != null) {
+      for (final StructuralSourceRef ref in refs) {
+        if (ref.canonicalSource == selected) return ref;
+      }
+    }
+
+    final StructuralSourceRef fallback = refs.first;
+    _selectedSourceRef = fallback.canonicalSource;
+    return fallback;
+  }
+
+  void _refreshSourceSelectionAndEnd() {
     try {
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
-      _cachedEditEndFrame =
-          model.edits.isEmpty ? 0 : model.edits.first.projectFrameCount;
+      final StructuralSourceRef? selected = _selectedRefFor(model);
+      _cachedSourceEndFrame = selected == null
+          ? 0
+          : model.structuralSourceFrameCount(selected);
     } catch (_) {
-      _cachedEditEndFrame = 0;
+      _cachedSourceEndFrame = 0;
     }
   }
 
-  int _editEndFrame() => _cachedEditEndFrame;
+  int _sourceEndFrame() => _cachedSourceEndFrame;
 
-  void _togglePlayback(EditSequence edit) {
+  void _togglePlayback(StructuralSourceRef source, int end) {
     if (_playing) {
       _pausePlayback();
       return;
     }
-
-    final int end = edit.projectFrameCount;
     if (end <= 0) return;
 
     int start = _displayFrame.clamp(0, end);
@@ -224,7 +256,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       if (_traceProductionPlayback) {
         PlaybackTrace.instance.start(
           projectFps: engineFps,
-          editId: edit.id,
+          editId: source.canonicalSource,
           startFrame: start,
         );
       }
@@ -237,10 +269,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _publishPlaybackFrame(start, playing: true);
       _publishPlaybackExact(startTime, playing: true);
       _playTicker.start();
-
-      // PLAY/PAUSE controls and EditSurface's static editing affordances change
-      // once when transport starts. Subsequent playback frames do not rebuild
-      // this workspace.
       setState(() {});
     } catch (error) {
       _playTicker.stop();
@@ -249,7 +277,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
         _publishPlaybackExactFrame(_displayFrame, playing: false);
-        _error = 'EDIT PLAYBACK UNAVAILABLE\n$error';
+        _error = 'STRUCTURAL PLAYBACK UNAVAILABLE\n$error';
       });
     }
   }
@@ -257,9 +285,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
   void _onPlaybackTick(Duration elapsed) {
     if (!_playing || !mounted) return;
 
-    final int end = _editEndFrame();
+    final int end = _sourceEndFrame();
     if (end <= 0) {
-      _stopPlaybackAt(0, publish: true, traceReason: 'empty_edit');
+      _stopPlaybackAt(0, publish: true, traceReason: 'empty_source');
       return;
     }
 
@@ -277,7 +305,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
         _publishPlaybackExactFrame(_displayFrame, playing: false);
-        _error = 'EDIT PLAYBACK CLOCK FAILED\n$error';
+        _error = 'STRUCTURAL PLAYBACK CLOCK FAILED\n$error';
       });
       return;
     }
@@ -288,9 +316,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       return;
     }
 
-    // Exact presentation position is published every vsync, even while the
-    // integer project frame is unchanged. This is the continuous clock signal
-    // used by paint-only consumers such as the timeline playhead.
     if (sampled.frame < 0) {
       _publishPlaybackExactFrame(0, playing: true);
     } else {
@@ -300,22 +325,17 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (frame == _lastPolledPlaybackFrame) return;
     _lastPolledPlaybackFrame = frame;
     _displayFrame = frame;
-
-    // Integer frame state remains quantized deliberately. Authored edit
-    // operations, readouts, and the current video selection path continue to
-    // receive only real project-frame changes during this diagnostic step.
     _publishPlaybackFrame(frame, playing: true);
   }
 
   void _pausePlayback() {
     final EditPlaybackClock? clock = _playClock;
-    int frame = _displayFrame.clamp(0, _editEndFrame());
+    int frame = _displayFrame.clamp(0, _sourceEndFrame());
     if (clock != null) {
       try {
-        frame = clock.sample().frame.clamp(0, _editEndFrame());
+        frame = clock.sample().frame.clamp(0, _sourceEndFrame());
       } catch (_) {
-        // Holding the last locally visible frame is a safe fallback if
-        // sampling fails.
+        // Holding the last locally visible frame is a safe fallback.
       }
     }
     _stopPlaybackAt(frame, publish: true, traceReason: 'pause');
@@ -328,7 +348,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }) {
     _playTicker.stop();
 
-    final int safeFrame = frame.clamp(0, _editEndFrame());
+    final int safeFrame = frame.clamp(0, _sourceEndFrame());
     final EditPlaybackClock? clock = _playClock;
     if (clock != null) {
       try {
@@ -339,7 +359,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           ),
         );
       } catch (_) {
-        // UI state still stops even if the native clock vanished mid-session.
+        // UI state still stops even if the optional realtime clock vanished.
       }
     }
 
@@ -357,8 +377,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (changed && mounted) setState(() {});
   }
 
-  void _seekFromEdit(int frame) {
-    final int safeFrame = frame.clamp(0, _editEndFrame());
+  void _seekFromSurface(int frame) {
+    final int safeFrame = frame.clamp(0, _sourceEndFrame());
     if (_playing) {
       _stopPlaybackAt(
         safeFrame,
@@ -387,6 +407,38 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
     _lastPolledPlaybackFrame = safeFrame;
     widget.onSeek(safeFrame);
+  }
+
+  void _selectSource(EditDocumentModel model, String source) {
+    final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
+    if (ref == null || !model.containsStructuralSource(ref)) return;
+    if (_playing) _pausePlayback();
+
+    setState(() {
+      _selectedSourceRef = ref.canonicalSource;
+      _cachedSourceEndFrame = model.structuralSourceFrameCount(ref);
+      _displayFrame = _displayFrame.clamp(0, _cachedSourceEndFrame);
+      _lastPolledPlaybackFrame = _displayFrame;
+      _publishPlaybackFrame(_displayFrame, playing: false);
+      _publishPlaybackExactFrame(_displayFrame, playing: false);
+      _error = null;
+    });
+    widget.onSeek(_displayFrame);
+  }
+
+  void _applySourceChange(String next, {String? selectSource}) {
+    if (_playing) _pausePlayback();
+    setState(() {
+      _workingSource = next;
+      if (selectSource != null) _selectedSourceRef = selectSource;
+      _error = null;
+      _refreshSourceSelectionAndEnd();
+      _displayFrame = _displayFrame.clamp(0, _cachedSourceEndFrame);
+      _lastPolledPlaybackFrame = _displayFrame;
+      _publishPlaybackFrame(_displayFrame, playing: false);
+      _publishPlaybackExactFrame(_displayFrame, playing: false);
+    });
+    widget.onSourceChanged(next);
   }
 
   Future<void> _addVideo(String trackId) async {
@@ -426,7 +478,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
           durationFrames: imported.durationFrames,
         );
       } else {
-        targetEditId = model.edits.first.id;
+        final StructuralSourceRef? selected = _selectedRefFor(model);
+        targetEditId = selected?.kind == StructuralSourceKind.edit
+            ? selected!.id
+            : model.edits.first.id;
         final EditSurfaceDocument document =
             EditSurfaceDocument.parse(_workingSource, targetEditId);
         targetClipId = document.nextClipId(trackId, imported.clipBaseId);
@@ -448,42 +503,179 @@ class _EditWorkspaceState extends State<EditWorkspace>
       }
 
       if (!mounted) return;
-      setState(() {
-        _workingSource = next;
-        _error = null;
-        _refreshEditEndCache();
-        _displayFrame = _displayFrame.clamp(0, _cachedEditEndFrame);
-        _publishPlaybackFrame(_displayFrame, playing: false);
-        _publishPlaybackExactFrame(_displayFrame, playing: false);
-      });
-      widget.onSourceChanged(next);
+      _applySourceChange(next, selectSource: 'EDIT.$targetEditId');
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = '$error');
     } finally {
-      if (mounted) {
-        setState(() => _importing = false);
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  void _newEdit(EditDocumentModel model) {
+    final Set<String> ids = model.edits.map((EditSequence edit) => edit.id).toSet();
+    String id = 'edit';
+    int suffix = 2;
+    while (ids.contains(id)) {
+      id = 'edit_$suffix';
+      suffix++;
+    }
+
+    final String newline = _workingSource.contains('\r\n') ? '\r\n' : '\n';
+    final StringBuffer out = StringBuffer(_workingSource);
+    if (_workingSource.isNotEmpty &&
+        !_workingSource.endsWith('\n') &&
+        !_workingSource.endsWith('\r')) {
+      out.write(newline);
+    }
+    out
+      ..write('[EDIT:$id]$newline')
+      ..write('[/EDIT]$newline');
+
+    final String next = out.toString();
+    EditDocumentModel.parse(next);
+    _applySourceChange(next, selectSource: 'EDIT.$id');
+  }
+
+  void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
+    final int duration = model.structuralSourceFrameCount(selected);
+    if (duration <= 0) {
+      setState(() => _error = '${selected.canonicalSource} has no authored frames.');
+      return;
+    }
+
+    final Set<String> ids =
+        model.mosaics.map((MosaicSequence mosaic) => mosaic.id).toSet();
+    String id = 'mosaic';
+    int suffix = 2;
+    while (ids.contains(id)) {
+      id = 'mosaic_$suffix';
+      suffix++;
+    }
+
+    try {
+      final String next = createMosaicWithSource(
+        source: _workingSource,
+        mosaicId: id,
+        paneId: 'pane',
+        clipId: 'source',
+        structuralSource: selected.canonicalSource,
+        durationFrames: duration,
+      );
+      _applySourceChange(next, selectSource: 'MOSAIC.$id');
+    } catch (error) {
+      setState(() => _error = '$error');
+    }
+  }
+
+  Future<void> _addStructuralSource(
+    EditDocumentModel model,
+    EditSequence edit,
+  ) async {
+    final List<StructuralSourceRef> choices = _structuralSources(model)
+        .where((StructuralSourceRef ref) =>
+            ref.canonicalSource != 'EDIT.${edit.id}')
+        .toList(growable: false);
+    if (choices.isEmpty) {
+      setState(() => _error = 'No other EDIT or MOSAIC source is available.');
+      return;
+    }
+
+    String selected = choices.first.canonicalSource;
+    final String? picked = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Add structural source', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(420),
+                child: DropdownButton<String>(
+                  value: selected,
+                  isExpanded: true,
+                  dropdownColor: R3Theme.panel,
+                  style: widget.theme.value,
+                  items: [
+                    for (final StructuralSourceRef ref in choices)
+                      DropdownMenuItem<String>(
+                        value: ref.canonicalSource,
+                        child: Text(ref.canonicalSource),
+                      ),
+                  ],
+                  onChanged: (String? value) {
+                    if (value == null) return;
+                    setDialogState(() => selected = value);
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(selected),
+                  child: const Text('ADD'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    try {
+      final StructuralSourceRef ref = StructuralSourceRef.tryParse(picked)!;
+      final int duration = model.structuralSourceFrameCount(ref);
+      if (duration <= 0) {
+        throw StateError('${ref.canonicalSource} has no authored frames.');
       }
+      final EditSurfaceDocument document =
+          EditSurfaceDocument.parse(_workingSource, edit.id);
+      final String baseId = '${ref.kind.name}_${ref.id}';
+      final String clipId = document.nextClipId('V1', baseId);
+      final String next = document.addClip(
+        trackId: 'V1',
+        clipId: clipId,
+        mediaSource: ref.canonicalSource,
+        atFrame: _displayFrame,
+        durationFrames: duration,
+      );
+
+      final EditLintResult lint =
+          EditGraphLinter.lint(EditDocumentModel.parse(next));
+      if (!lint.isValid) {
+        final EditLintIssue issue = lint.issues.first;
+        throw StateError('${issue.message} Path: ${issue.editPath.join(' -> ')}');
+      }
+      _applySourceChange(next, selectSource: 'EDIT.${edit.id}');
+    } catch (error) {
+      setState(() => _error = '$error');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final EditDocumentModel? model = _parseModel();
-    final EditSequence? edit =
-        model == null || model.edits.isEmpty ? null : model.edits.first;
+    final StructuralSourceRef? selected =
+        model == null ? null : _selectedRefFor(model);
+    final EditSequence? edit = model != null &&
+            selected?.kind == StructuralSourceKind.edit
+        ? model.edit(selected!.id)
+        : null;
+    final MosaicSequence? mosaic = model != null &&
+            selected?.kind == StructuralSourceKind.mosaic
+        ? model.mosaic(selected!.id)
+        : null;
 
-    // EditWorkspace is intentionally safe to mount as a complete workspace,
-    // not only underneath EditorScreen. R3Button and EditSurface use InkWell
-    // and Slider, both of which require a Material sheet. MaterialApp provides
-    // theme/navigation but does not itself promise a Material ancestor around
-    // arbitrary home content, so the workspace supplies its own transparent
-    // sheet here.
     return Material(
       type: MaterialType.transparency,
       child: Column(
         children: [
-          _buildImportBar(edit),
+          _buildImportBar(model, selected, edit, mosaic),
           if (_error != null)
             Container(
               width: double.infinity,
@@ -501,48 +693,44 @@ class _EditWorkspaceState extends State<EditWorkspace>
             ),
           Expanded(
             child: model == null
-                ? _message('EDIT LANGUAGE ERROR')
-                : edit == null
+                ? _message('STRUCTURAL VIDEO LANGUAGE ERROR')
+                : selected == null
                     ? _message(
                         'NO VIDEO EDIT YET\n\nADD VIDEO creates the first V1 clip.',
                       )
                     : EditPlaybackFrameScope(
                         listenable: _playbackFrame,
                         exactListenable: _playbackExact,
-                        child: EditSurface(
-                          key: ValueKey('edit:${edit.id}'),
-                          source: _workingSource,
-                          editId: edit.id,
-                          currentFrame: _displayFrame.clamp(
-                            0,
-                            edit.projectFrameCount,
-                          ),
-                          isPlaying: _playing,
-                          voiceFrames: widget.voiceFrames,
-                          musicFrames: widget.musicFrames,
-                          musicLoops: widget.musicLoops,
-                          theme: widget.theme,
-                          onSourceChanged: (String next) {
-                            if (_workingSource == next) return;
-                            if (_playing) _pausePlayback();
-                            setState(() {
-                              _workingSource = next;
-                              _refreshEditEndCache();
-                              _displayFrame =
-                                  _displayFrame.clamp(0, _cachedEditEndFrame);
-                              _publishPlaybackFrame(
-                                _displayFrame,
-                                playing: false,
-                              );
-                              _publishPlaybackExactFrame(
-                                _displayFrame,
-                                playing: false,
-                              );
-                            });
-                            widget.onSourceChanged(next);
-                          },
-                          onSeek: _seekFromEdit,
-                        ),
+                        child: edit != null
+                            ? EditSurface(
+                                key: ValueKey('edit:${edit.id}'),
+                                source: _workingSource,
+                                editId: edit.id,
+                                currentFrame: _displayFrame.clamp(
+                                  0,
+                                  edit.projectFrameCount,
+                                ),
+                                isPlaying: _playing,
+                                voiceFrames: widget.voiceFrames,
+                                musicFrames: widget.musicFrames,
+                                musicLoops: widget.musicLoops,
+                                theme: widget.theme,
+                                onSourceChanged: _applySourceChange,
+                                onSeek: _seekFromSurface,
+                              )
+                            : MosaicSurface(
+                                key: ValueKey('mosaic:${mosaic!.id}'),
+                                source: _workingSource,
+                                mosaicId: mosaic.id,
+                                currentFrame: _displayFrame.clamp(
+                                  0,
+                                  mosaic.projectFrameCount,
+                                ),
+                                isPlaying: _playing,
+                                theme: widget.theme,
+                                onSourceChanged: _applySourceChange,
+                                onSeek: _seekFromSurface,
+                              ),
                       ),
           ),
         ],
@@ -553,8 +741,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
   EditDocumentModel? _parseModel() {
     try {
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
-      _cachedEditEndFrame =
-          model.edits.isEmpty ? 0 : model.edits.first.projectFrameCount;
+      final StructuralSourceRef? selected = _selectedRefFor(model);
+      _cachedSourceEndFrame = selected == null
+          ? 0
+          : model.structuralSourceFrameCount(selected);
       return model;
     } catch (error) {
       _error ??= '$error';
@@ -562,36 +752,96 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
-  Widget _buildImportBar(EditSequence? edit) {
+  Widget _buildImportBar(
+    EditDocumentModel? model,
+    StructuralSourceRef? selected,
+    EditSequence? edit,
+    MosaicSequence? mosaic,
+  ) {
+    final int selectedEnd = selected == null || model == null
+        ? 0
+        : model.structuralSourceFrameCount(selected);
+    final List<StructuralSourceRef> refs =
+        model == null ? const <StructuralSourceRef>[] : _structuralSources(model);
+    final bool mediaMode = selected == null || edit != null;
+
     final List<Widget> controls = <Widget>[
-      R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
+      R3MicroLabel('STRUCTURE', theme: widget.theme, accent: true),
+      if (refs.isNotEmpty)
+        SizedBox(
+          width: sc(180),
+          child: DropdownButton<String>(
+            key: const ValueKey<String>('structural-source-selector'),
+            value: selected?.canonicalSource,
+            isExpanded: true,
+            dropdownColor: R3Theme.panel,
+            style: widget.theme.micro,
+            underline: Container(height: 1, color: R3Theme.hairline),
+            items: [
+              for (final StructuralSourceRef ref in refs)
+                DropdownMenuItem<String>(
+                  value: ref.canonicalSource,
+                  child: Text(ref.canonicalSource),
+                ),
+            ],
+            onChanged: _playing || model == null
+                ? null
+                : (String? value) {
+                    if (value != null) _selectSource(model, value);
+                  },
+          ),
+        ),
       R3Button(
-        'ADD VIDEO',
+        'NEW EDIT',
         theme: widget.theme,
         compact: true,
-        kind: R3ButtonKind.primary,
-        onPressed: _importing ? null : () => _addVideo('V1'),
+        onPressed: model == null || _playing ? null : () => _newEdit(model),
       ),
       R3Button(
-        'ADD OVERLAY',
+        'NEW MOSAIC',
         theme: widget.theme,
         compact: true,
-        onPressed: _importing ? null : () => _addVideo('V2'),
+        onPressed: model == null || selected == null || selectedEnd <= 0 || _playing
+            ? null
+            : () => _newMosaic(model, selected),
       ),
-      Text(
-        'VIDEO = V1   OVERLAY = V2',
-        style: widget.theme.micro,
-      ),
-      SizedBox(width: sc(6)),
+      if (mediaMode) ...[
+        SizedBox(width: sc(5)),
+        R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
+        R3Button(
+          'ADD VIDEO',
+          theme: widget.theme,
+          compact: true,
+          kind: R3ButtonKind.primary,
+          onPressed: _importing ? null : () => _addVideo('V1'),
+        ),
+        R3Button(
+          'ADD OVERLAY',
+          theme: widget.theme,
+          compact: true,
+          onPressed: _importing ? null : () => _addVideo('V2'),
+        ),
+      ],
+      if (edit != null) ...[
+        R3Button(
+          'ADD SOURCE',
+          theme: widget.theme,
+          compact: true,
+          onPressed: _importing || _playing || model == null
+              ? null
+              : () => _addStructuralSource(model, edit),
+        ),
+      ],
+      SizedBox(width: sc(5)),
       R3MicroLabel('TRANSPORT', theme: widget.theme, accent: true),
       R3Button(
         _playing ? 'PAUSE' : 'PLAY',
         theme: widget.theme,
         compact: true,
         kind: _playing ? R3ButtonKind.hot : R3ButtonKind.primary,
-        onPressed: edit == null || _importing
+        onPressed: selected == null || selectedEnd <= 0 || _importing
             ? null
-            : () => _togglePlayback(edit),
+            : () => _togglePlayback(selected, selectedEnd),
       ),
       if (_importing) ...[
         SizedBox(
@@ -603,7 +853,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           ),
         ),
         Text('IMPORTING', style: widget.theme.micro),
-      ] else if (edit != null)
+      ] else if (selected != null)
         ValueListenableBuilder<EditPlaybackFrameState>(
           valueListenable: _playbackFrame,
           builder: (
@@ -611,8 +861,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
             EditPlaybackFrameState state,
             Widget? child,
           ) {
+            final String label = edit != null
+                ? 'EDIT ${edit.id}'
+                : 'MOSAIC ${mosaic!.id}';
             return Text(
-              'EDIT ${edit.id}   F${state.frame} / ${edit.projectFrameCount}',
+              '$label   F${state.frame} / $selectedEnd',
               style: widget.theme.micro,
             );
           },

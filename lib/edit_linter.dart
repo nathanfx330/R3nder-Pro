@@ -1,16 +1,17 @@
 // ./lib/edit_linter.dart
 //
-// Structural graph validation for EDIT sources.
+// Structural graph validation for EDIT and MOSAIC sources.
 //
 // Rendering code must never discover recursion policy while it is painting.
-// Nested edit references are represented by CLIP sources named EDIT.<id>. This
-// linter owns reference validation, cycle detection, and the maximum nesting
-// depth before nested edits become renderable in M11.
+// Structural CLIP sources are named EDIT.<id> or MOSAIC.<id>. This linter owns
+// reference validation, cycle detection, and the maximum nesting depth across
+// both namespaces before the compositor evaluates anything.
 
 import 'edit_model.dart';
 
 enum EditLintCode {
   missingEditSource,
+  missingMosaicSource,
   cycle,
   nestingLimit,
 }
@@ -46,24 +47,27 @@ class EditGraphLinter {
       throw ArgumentError.value(
         maxNesting,
         'maxNesting',
-        'Maximum EDIT nesting must be positive.',
+        'Maximum structural source nesting must be positive.',
       );
     }
 
-    final Map<String, EditSequence> edits = <String, EditSequence>{
-      for (final EditSequence edit in document.edits) edit.id: edit,
-    };
-    final Map<String, List<String>> edges = <String, List<String>>{};
+    final List<StructuralSourceRef> nodes = <StructuralSourceRef>[
+      for (final EditSequence edit in document.edits)
+        StructuralSourceRef.tryParse('EDIT.${edit.id}')!,
+      for (final MosaicSequence mosaic in document.mosaics)
+        StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!,
+    ];
+    final Map<StructuralSourceRef, List<StructuralSourceRef>> edges =
+        <StructuralSourceRef, List<StructuralSourceRef>>{};
 
-    for (final EditSequence edit in document.edits) {
-      final List<String> targets = <String>[];
-      for (final EditTrack track in edit.tracks) {
-        for (final EditClip clip in track.clips) {
-          final String? target = nestedEditId(clip.source);
-          if (target != null) targets.add(target);
-        }
+    for (final StructuralSourceRef node in nodes) {
+      final List<StructuralSourceRef> targets = <StructuralSourceRef>[];
+      for (final EditClip clip in document.clipsForStructuralSource(node)) {
+        final StructuralSourceRef? target =
+            StructuralSourceRef.tryParse(clip.source);
+        if (target != null) targets.add(target);
       }
-      edges[edit.id] = List<String>.unmodifiable(targets);
+      edges[node] = List<StructuralSourceRef>.unmodifiable(targets);
     }
 
     final List<EditLintIssue> issues = <EditLintIssue>[];
@@ -75,26 +79,52 @@ class EditGraphLinter {
       if (emitted.add(key)) issues.add(issue);
     }
 
-    void walk(String editId, List<String> path) {
-      final List<String> nextPath = <String>[...path, editId];
+    List<String> displayPath(List<StructuralSourceRef> path) {
+      final bool mixed = path.any(
+        (StructuralSourceRef ref) => ref.kind == StructuralSourceKind.mosaic,
+      );
+      if (!mixed) {
+        return List<String>.unmodifiable(
+          path.map((StructuralSourceRef ref) => ref.id),
+        );
+      }
+      return List<String>.unmodifiable(
+        path.map((StructuralSourceRef ref) => ref.graphLabel),
+      );
+    }
+
+    void walk(
+      StructuralSourceRef node,
+      List<StructuralSourceRef> path,
+    ) {
+      final List<StructuralSourceRef> nextPath = <StructuralSourceRef>[
+        ...path,
+        node,
+      ];
       if (nextPath.length > maxNesting) {
         emit(
           EditLintIssue(
             code: EditLintCode.nestingLimit,
-            message: 'EDIT nesting exceeds the limit of $maxNesting.',
-            editPath: List<String>.unmodifiable(nextPath),
+            message: 'Structural source nesting exceeds the limit of $maxNesting.',
+            editPath: displayPath(nextPath),
           ),
         );
         return;
       }
 
-      for (final String target in edges[editId] ?? const <String>[]) {
-        if (!edits.containsKey(target)) {
+      for (final StructuralSourceRef target
+          in edges[node] ?? const <StructuralSourceRef>[]) {
+        if (!document.containsStructuralSource(target)) {
+          final bool missingEdit = target.kind == StructuralSourceKind.edit;
           emit(
             EditLintIssue(
-              code: EditLintCode.missingEditSource,
-              message: 'EDIT "$editId" references missing EDIT "$target".',
-              editPath: List<String>.unmodifiable(<String>[...nextPath, target]),
+              code: missingEdit
+                  ? EditLintCode.missingEditSource
+                  : EditLintCode.missingMosaicSource,
+              message: missingEdit
+                  ? 'EDIT "${node.id}" references missing EDIT "${target.id}".'
+                  : '${node.graphLabel} references missing MOSAIC "${target.id}".',
+              editPath: displayPath(<StructuralSourceRef>[...nextPath, target]),
             ),
           );
           continue;
@@ -102,15 +132,20 @@ class EditGraphLinter {
 
         final int cycleAt = nextPath.indexOf(target);
         if (cycleAt >= 0) {
-          final List<String> cyclePath = <String>[
+          final List<StructuralSourceRef> cyclePath = <StructuralSourceRef>[
             ...nextPath.sublist(cycleAt),
             target,
           ];
+          final bool editOnly = cyclePath.every(
+            (StructuralSourceRef ref) => ref.kind == StructuralSourceKind.edit,
+          );
           emit(
             EditLintIssue(
               code: EditLintCode.cycle,
-              message: 'EDIT source cycle: ${cyclePath.join(' -> ')}.',
-              editPath: List<String>.unmodifiable(cyclePath),
+              message: editOnly
+                  ? 'EDIT source cycle: ${cyclePath.map((ref) => ref.id).join(' -> ')}.'
+                  : 'Structural source cycle: ${cyclePath.map((ref) => ref.graphLabel).join(' -> ')}.',
+              editPath: displayPath(cyclePath),
             ),
           );
           continue;
@@ -120,16 +155,22 @@ class EditGraphLinter {
       }
     }
 
-    for (final String editId in edits.keys) {
-      walk(editId, const <String>[]);
+    for (final StructuralSourceRef node in nodes) {
+      walk(node, const <StructuralSourceRef>[]);
     }
 
     return EditLintResult(List<EditLintIssue>.unmodifiable(issues));
   }
 
   static String? nestedEditId(String source) {
-    if (!source.startsWith('EDIT.')) return null;
-    final String id = source.substring('EDIT.'.length).trim();
-    return id.isEmpty ? '' : id;
+    final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
+    if (ref == null || ref.kind != StructuralSourceKind.edit) return null;
+    return ref.id;
+  }
+
+  static String? nestedMosaicId(String source) {
+    final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
+    if (ref == null || ref.kind != StructuralSourceKind.mosaic) return null;
+    return ref.id;
   }
 }

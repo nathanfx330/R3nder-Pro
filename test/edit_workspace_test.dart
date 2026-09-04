@@ -2,7 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/edit_linter.dart';
 import 'package:r3nder/edit_media_import.dart';
+import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/edit_playback_clock.dart';
 import 'package:r3nder/edit_surface_model.dart';
 import 'package:r3nder/edit_workspace.dart';
@@ -208,9 +210,6 @@ void main() {
     await tester.pump();
     expect(find.text('PAUSE'), findsOneWidget);
 
-    // A Ticker is exercised by advancing actual Flutter frames, not by one
-    // coarse timer-sized jump. ProjectClock is sampled once at each vsync and
-    // the advancing frame remains local to the EDIT workspace.
     for (int i = 0; i < 4; i++) {
       await tester.pump(const Duration(milliseconds: 17));
     }
@@ -225,5 +224,72 @@ void main() {
     expect(fake!.holds, greaterThan(0));
     expect(fake!.running, isFalse);
     expect(lastSeek, greaterThan(0));
+  });
+
+  testWidgets('GUI can build MOSAIC from EDIT then use MOSAIC as EDIT CLIP source',
+      (WidgetTester tester) async {
+    String latest = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:base:video/base.mp4:0:0:60:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1100,
+          height: 760,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 0,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('NEW MOSAIC'));
+    await tester.pumpAndSettle();
+
+    EditDocumentModel model = EditDocumentModel.parse(latest);
+    expect(model.mosaics, hasLength(1));
+    expect(model.mosaic('mosaic').pane('pane').clip('source').source, 'EDIT.main');
+    expect(find.textContaining('MOSAIC mosaic'), findsWidgets);
+    expect(find.textContaining('PANE pane'), findsOneWidget);
+
+    await tester.tap(find.text('NEW EDIT'));
+    await tester.pumpAndSettle();
+
+    model = EditDocumentModel.parse(latest);
+    expect(model.edits.map((EditSequence edit) => edit.id), <String>['main', 'edit']);
+    expect(find.textContaining('EDIT edit   F'), findsOneWidget);
+
+    await tester.tap(find.text('ADD SOURCE'));
+    await tester.pumpAndSettle();
+
+    final Finder dialog = find.byType(AlertDialog);
+    expect(dialog, findsOneWidget);
+    final Finder picker = find.descendant(
+      of: dialog,
+      matching: find.byType(DropdownButton<String>),
+    );
+    expect(picker, findsOneWidget);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('MOSAIC.mosaic').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: dialog, matching: find.text('ADD')));
+    await tester.pumpAndSettle();
+
+    model = EditDocumentModel.parse(latest);
+    final EditClip nested = model.edit('edit').track('V1').clips.single;
+    expect(nested.source, 'MOSAIC.mosaic');
+    expect(nested.durationFrames, 60);
+    expect(EditGraphLinter.lint(model).isValid, isTrue);
   });
 }

@@ -2,11 +2,12 @@
 //
 // Reentrant project-time to media-frame layer.
 //
-// The edit model owns clip geometry. ProjectTime owns the playhead. MLT owns
-// only persistent source decoders. Exact parked-frame work may wait for decode,
-// while live preview publishes targets to native workers and polls completed
-// frames without blocking Dart. A native external-texture capability can also
-// consume the same decoder worker directly, keeping RGBA out of Dart entirely.
+// The structural source model owns clip geometry. ProjectTime owns the
+// playhead. MLT owns only persistent leaf-media decoders. Exact parked-frame
+// work may wait for decode, while live preview publishes targets to native
+// workers and polls completed frames without blocking Dart. EDIT and MOSAIC
+// references are never opened as files; they are returned as structural
+// placeholders for the compositor to resolve recursively.
 // No decoder advances project time or decides project duration.
 
 import 'dart:convert';
@@ -23,6 +24,7 @@ enum MediaFrameStatus {
   pending,
   offline,
   nestedEditPending,
+  nestedMosaicPending,
 }
 
 class MediaFrame {
@@ -133,15 +135,42 @@ class MediaFrame {
       stride: 0,
       rgba: null,
       status: MediaFrameStatus.nestedEditPending,
-      error: 'Nested EDIT sources are reserved for M11.',
+      error: 'Nested EDIT source requires compositor resolution.',
+    );
+  }
+
+  factory MediaFrame.nestedMosaicPending({
+    required String trackId,
+    required String clipId,
+    required String source,
+    required int requestedSourceFrame,
+  }) {
+    return MediaFrame._(
+      trackId: trackId,
+      clipId: clipId,
+      source: source,
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: null,
+      width: 0,
+      height: 0,
+      stride: 0,
+      rgba: null,
+      status: MediaFrameStatus.nestedMosaicPending,
+      error: 'Nested MOSAIC source requires compositor resolution.',
     );
   }
 
   bool get isDecoded => status == MediaFrameStatus.decoded;
   bool get isPending => status == MediaFrameStatus.pending;
+  bool get isStructuralPending =>
+      status == MediaFrameStatus.nestedEditPending ||
+      status == MediaFrameStatus.nestedMosaicPending;
 }
 
 class MediaRenderResult {
+  /// Owner id for this clip evaluation. Existing EDIT callers use the edit id;
+  /// pane callers use the containing MOSAIC id. Kept as editId for API
+  /// compatibility with the M10 surface.
   final String editId;
   final ProjectTime projectTime;
   final ui.Size outputSize;
@@ -245,29 +274,80 @@ class MediaLayer {
     );
   }
 
-  /// Exact render path used for parked frames, deterministic tests, and export
-  /// style work. A native decoder may wait for its worker here, but the source
-  /// frame returned is exact.
+  /// Exact EDIT render path used for parked frames, deterministic tests, and
+  /// export-style work.
   MediaRenderResult render(String editId, ProjectTime time, ui.Size size) {
-    return _render(editId, time, size, nonBlocking: false);
+    final EditSequence edit = editDocument.edit(editId);
+    return _renderLanes(
+      ownerId: editId,
+      lanes: <_MediaLane>[
+        for (final EditTrack track in edit.tracks)
+          _MediaLane(track.id, track.clips),
+      ],
+      time: time,
+      size: size,
+      nonBlocking: false,
+    );
   }
 
-  /// Live preview path. Native decoders only publish the newest source target
-  /// and poll their read-ahead ring. When an exact requested frame is not ready
-  /// yet, the result carries [MediaFrameStatus.pending] instead of blocking the
-  /// caller. Synchronous test/alternate decoders keep their existing behavior.
+  /// Nonblocking EDIT preview path.
   MediaRenderResult renderAvailable(
     String editId,
     ProjectTime time,
     ui.Size size,
   ) {
-    return _render(editId, time, size, nonBlocking: true);
+    final EditSequence edit = editDocument.edit(editId);
+    return _renderLanes(
+      ownerId: editId,
+      lanes: <_MediaLane>[
+        for (final EditTrack track in edit.tracks)
+          _MediaLane(track.id, track.clips),
+      ],
+      time: time,
+      size: size,
+      nonBlocking: true,
+    );
   }
 
-  /// Hands one source-frame target to the Linux external texture while reusing
-  /// the exact same decoder object cached by normal render paths. Returns the
-  /// Flutter texture id when the backend supports native presentation, or null
-  /// for test/alternate backends so callers can fall back to CPU composition.
+  /// Exact evaluation of one MOSAIC pane. A pane is a timeline lane whose
+  /// visual rectangle is owned by the compositor, so the media layer only
+  /// needs its requested pixel size and authored project time.
+  MediaRenderResult renderPane(
+    String mosaicId,
+    String paneId,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    final MosaicPane pane = editDocument.mosaic(mosaicId).pane(paneId);
+    return _renderLanes(
+      ownerId: mosaicId,
+      lanes: <_MediaLane>[_MediaLane(pane.id, pane.clips)],
+      time: time,
+      size: size,
+      nonBlocking: false,
+    );
+  }
+
+  /// Nonblocking evaluation of one MOSAIC pane.
+  MediaRenderResult renderPaneAvailable(
+    String mosaicId,
+    String paneId,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    final MosaicPane pane = editDocument.mosaic(mosaicId).pane(paneId);
+    return _renderLanes(
+      ownerId: mosaicId,
+      lanes: <_MediaLane>[_MediaLane(pane.id, pane.clips)],
+      time: time,
+      size: size,
+      nonBlocking: true,
+    );
+  }
+
+  /// Hands one leaf-media source-frame target to the Linux external texture
+  /// while reusing the exact same decoder object cached by normal render paths.
+  /// Structural sources always return null because they must be composited.
   int? presentNativeTexture({
     required String source,
     required int requestedSourceFrame,
@@ -275,7 +355,7 @@ class MediaLayer {
     required int height,
   }) {
     _checkAlive();
-    if (source.startsWith('EDIT.')) return null;
+    if (StructuralSourceRef.tryParse(source) != null) return null;
     if (requestedSourceFrame < 0 || width <= 0 || height <= 0) {
       throw ArgumentError('Native texture media request is invalid.');
     }
@@ -291,10 +371,11 @@ class MediaLayer {
     return id;
   }
 
-  MediaRenderResult _render(
-    String editId,
-    ProjectTime time,
-    ui.Size size, {
+  MediaRenderResult _renderLanes({
+    required String ownerId,
+    required List<_MediaLane> lanes,
+    required ProjectTime time,
+    required ui.Size size,
     required bool nonBlocking,
   }) {
     _checkAlive();
@@ -311,11 +392,10 @@ class MediaLayer {
       );
     }
 
-    final EditSequence edit = editDocument.edit(editId);
     final List<MediaFrame> result = <MediaFrame>[];
 
-    for (final EditTrack track in edit.tracks) {
-      for (final EditClip clip in track.clips) {
+    for (final _MediaLane lane in lanes) {
+      for (final EditClip clip in lane.clips) {
         if (time.frame < clip.atFrame || time.frame >= clip.endFrameExclusive) {
           continue;
         }
@@ -323,16 +403,29 @@ class MediaLayer {
         final int projectOffset = time.frame - clip.atFrame;
         final int requestedSourceFrame =
             clip.sourceFrameAtProjectOffset(projectOffset);
+        final StructuralSourceRef? structural =
+            StructuralSourceRef.tryParse(clip.source);
 
-        if (clip.source.startsWith('EDIT.')) {
-          result.add(
-            MediaFrame.nestedEditPending(
-              trackId: track.id,
-              clipId: clip.id,
-              source: clip.source,
-              requestedSourceFrame: requestedSourceFrame,
-            ),
-          );
+        if (structural != null) {
+          if (structural.kind == StructuralSourceKind.edit) {
+            result.add(
+              MediaFrame.nestedEditPending(
+                trackId: lane.id,
+                clipId: clip.id,
+                source: clip.source,
+                requestedSourceFrame: requestedSourceFrame,
+              ),
+            );
+          } else {
+            result.add(
+              MediaFrame.nestedMosaicPending(
+                trackId: lane.id,
+                clipId: clip.id,
+                source: clip.source,
+                requestedSourceFrame: requestedSourceFrame,
+              ),
+            );
+          }
           continue;
         }
 
@@ -348,7 +441,7 @@ class MediaLayer {
             if (decoded == null) {
               result.add(
                 MediaFrame.pending(
-                  trackId: track.id,
+                  trackId: lane.id,
                   clipId: clip.id,
                   source: clip.source,
                   requestedSourceFrame: requestedSourceFrame,
@@ -362,7 +455,7 @@ class MediaLayer {
 
           result.add(
             MediaFrame.decoded(
-              trackId: track.id,
+              trackId: lane.id,
               clipId: clip.id,
               source: clip.source,
               decoded: decoded,
@@ -371,7 +464,7 @@ class MediaLayer {
         } on MediaDecodeException catch (error) {
           result.add(
             MediaFrame.offline(
-              trackId: track.id,
+              trackId: lane.id,
               clipId: clip.id,
               source: clip.source,
               requestedSourceFrame: requestedSourceFrame,
@@ -381,7 +474,7 @@ class MediaLayer {
         } on FileSystemException catch (error) {
           result.add(
             MediaFrame.offline(
-              trackId: track.id,
+              trackId: lane.id,
               clipId: clip.id,
               source: clip.source,
               requestedSourceFrame: requestedSourceFrame,
@@ -393,7 +486,7 @@ class MediaLayer {
     }
 
     return MediaRenderResult(
-      editId: editId,
+      editId: ownerId,
       projectTime: time,
       outputSize: size,
       frames: List<MediaFrame>.unmodifiable(result),
@@ -414,6 +507,13 @@ class MediaLayer {
     }
     _decoders.clear();
   }
+}
+
+class _MediaLane {
+  final String id;
+  final List<EditClip> clips;
+
+  const _MediaLane(this.id, this.clips);
 }
 
 class NativeMltMediaBackend implements MediaDecoderBackend {

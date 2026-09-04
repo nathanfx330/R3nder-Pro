@@ -52,6 +52,53 @@ class _FakeDecoder implements MediaDecoder {
   }
 }
 
+class _SizedFakeBackend implements MediaDecoderBackend {
+  int openCount = 0;
+  final Map<String, List<int>> requests = <String, List<int>>{};
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    openCount++;
+    return _SizedFakeDecoder(
+      resolvedPath,
+      (int frame) => requests
+          .putIfAbsent(resolvedPath, () => <int>[])
+          .add(frame),
+    );
+  }
+}
+
+class _SizedFakeDecoder implements MediaDecoder {
+  final String path;
+  final void Function(int frame) onRequest;
+
+  _SizedFakeDecoder(this.path, this.onRequest);
+
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    onRequest(requestedSourceFrame);
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final int red = path.contains('left') ? 255 : 0;
+    final int blue = path.contains('right') ? 255 : 0;
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = red;
+      rgba[i + 2] = blue;
+      rgba[i + 3] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
 MediaFrame _frame(String trackId, String clipId, int sourceFrame) {
   return MediaFrame.decoded(
     trackId: trackId,
@@ -166,5 +213,59 @@ void main() {
     expect(find.textContaining('V2 / top'), findsOneWidget);
     expect(find.textContaining('SRC 15'), findsOneWidget);
     expect(find.textContaining('LAYERS 2'), findsOneWidget);
+  });
+
+  testWidgets('generic monitor previews MOSAIC source without an EDIT anchor',
+      (WidgetTester tester) async {
+    const String source = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:a:left.mp4:0:0:20:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
+[CLIP:b:right.mp4:0:10:20:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:hero]
+[CLIP:l:EDIT.left:0:0:20:1]
+[/CLIP]
+[/PANE]
+[PANE:side]
+[CLIP:r:EDIT.right:0:0:20:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+    final _SizedFakeBackend backend = _SizedFakeBackend();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 640,
+          height: 360,
+          child: EditVideoPreview(
+            source: source,
+            structuralSource: 'MOSAIC.wall',
+            currentFrame: 5,
+            fastPreview: true,
+            theme: R3Theme.of(Colors.green),
+            backend: backend,
+            resolveSource: (String value) => value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(backend.openCount, 2);
+    expect(backend.requests['left.mp4'], contains(5));
+    expect(backend.requests['right.mp4'], contains(15));
+    expect(find.textContaining('LAYERS 2'), findsOneWidget);
+    expect(find.textContaining('VIDEO PREVIEW UNAVAILABLE'), findsNothing);
   });
 }

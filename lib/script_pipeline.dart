@@ -93,11 +93,12 @@ class CompiledScript {
 
 /// Compiles [rawText] into engine-ready text.
 ///
-/// EDIT / TRACK / CLIP are authored project structure, not terminal content.
-/// They remain byte-for-byte in [rawText], but the engine projection replaces
-/// each complete EDIT block with only its newline characters. Keeping those
-/// newlines is what lets editor [LINE:n] markers continue to refer to the raw
-/// document line numbers even though the edit structure itself does not run.
+/// EDIT / TRACK / CLIP and MOSAIC / PANE / CLIP are authored project
+/// structure, not terminal content. They remain byte-for-byte in [rawText],
+/// but the engine projection replaces each complete structural root with only
+/// its newline characters. Keeping those newlines is what lets editor
+/// [LINE:n] markers continue to refer to raw document line numbers even though
+/// the source graph itself does not run in TerminalEngine.
 ///
 /// [lineMarkers] injects an editor-only `[LINE:n]` at the head of each
 /// document line so the engine reports its read position back as a line
@@ -146,7 +147,8 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
 /// rather than trying to match nested blocks with a regular expression. Roots
 /// are replaced from right to left so every original offset remains valid.
 String _engineProjectionSource(String rawText) {
-  if (!RegExp(r'\[(?:EDIT|TRACK|CLIP)(?::[^\]\r\n]*)?\]').hasMatch(rawText)) {
+  if (!RegExp(r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]')
+      .hasMatch(rawText)) {
     return rawText;
   }
 

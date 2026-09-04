@@ -4,9 +4,10 @@
 //
 // The existing ScriptNode parser is intentionally flat: it is excellent for
 // lossless editing of the current tag language, but block bodies such as CARD
-// and TIMELINE are opaque strings. EDIT / TRACK / CLIP need a different
-// guarantee. Their nesting is structural, and editing an inner block must not
-// give the writer permission to regenerate any enclosing bytes.
+// and TIMELINE are opaque strings. EDIT / TRACK / CLIP and MOSAIC / PANE / CLIP
+// need a different guarantee. Their nesting is structural, and editing an
+// inner block must not give the writer permission to regenerate any enclosing
+// bytes.
 //
 // This file supplies that missing layer without changing runtime parsing. It
 // recognizes only structural ownership tags and records exact source spans.
@@ -27,11 +28,13 @@ class ScriptCstDocument {
   static const Set<String> structuralTypes = <String>{
     'EDIT',
     'TRACK',
+    'MOSAIC',
+    'PANE',
     'CLIP',
   };
 
   static final RegExp _structuralTag = RegExp(
-    r'\[(?<close>/)?(?<type>EDIT|TRACK|CLIP)(?<tail>:[^\]\r\n]*)?\]',
+    r'\[(?<close>/)?(?<type>EDIT|TRACK|MOSAIC|PANE|CLIP)(?<tail>:[^\]\r\n]*)?\]',
   );
 
   final String source;
@@ -118,7 +121,7 @@ class ScriptCstDocument {
       source,
       List<ScriptCstBlock>.unmodifiable(roots),
     );
-    document._validateEditOwnership();
+    document._validateStructuralOwnership();
     return document;
   }
 
@@ -141,8 +144,8 @@ class ScriptCstDocument {
 
   /// Replaces only the opening tag of one block.
   ///
-  /// This is the operation M7 field edits will use when clip geometry lives in
-  /// the CLIP header. The replacement must remain the same structural type.
+  /// This is the operation field edits use when clip geometry lives in the
+  /// CLIP header. The replacement must remain the same structural type.
   String replaceOpeningTag(ScriptCstBlock block, String replacement) {
     _checkOwned(block);
     final RegExpMatch? match = _structuralTag.firstMatch(replacement);
@@ -195,11 +198,11 @@ class ScriptCstDocument {
     }
   }
 
-  void _validateEditOwnership() {
+  void _validateStructuralOwnership() {
     for (final ScriptCstBlock root in roots) {
-      if (root.type != 'EDIT') {
+      if (root.type != 'EDIT' && root.type != 'MOSAIC') {
         throw ScriptCstFormatException(
-          '${root.type} must be nested inside EDIT.',
+          '${root.type} must be nested inside EDIT or MOSAIC.',
           root.startOffset,
         );
       }
@@ -215,6 +218,14 @@ class ScriptCstDocument {
               );
             }
             break;
+          case 'MOSAIC':
+            if (parent != null) {
+              throw ScriptCstFormatException(
+                'MOSAIC cannot be nested inside another structural block.',
+                block.startOffset,
+              );
+            }
+            break;
           case 'TRACK':
             if (parent?.type != 'EDIT') {
               throw ScriptCstFormatException(
@@ -223,10 +234,18 @@ class ScriptCstDocument {
               );
             }
             break;
-          case 'CLIP':
-            if (parent?.type != 'TRACK') {
+          case 'PANE':
+            if (parent?.type != 'MOSAIC') {
               throw ScriptCstFormatException(
-                'CLIP must be a direct child of TRACK.',
+                'PANE must be a direct child of MOSAIC.',
+                block.startOffset,
+              );
+            }
+            break;
+          case 'CLIP':
+            if (parent?.type != 'TRACK' && parent?.type != 'PANE') {
+              throw ScriptCstFormatException(
+                'CLIP must be a direct child of TRACK or PANE.',
                 block.startOffset,
               );
             }
