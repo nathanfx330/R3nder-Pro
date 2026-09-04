@@ -68,6 +68,8 @@ class ScriptLinter {
     'EDIT', '/EDIT',
     'TRACK', '/TRACK',
     'CLIP', '/CLIP',
+    'MOSAIC', '/MOSAIC',
+    'PANE', '/PANE',
   };
 
   /// Every tag keyword the grammar knows.
