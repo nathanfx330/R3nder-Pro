@@ -200,7 +200,7 @@ class MosaicSurfaceDocument {
         '$paneIndent[/PANE]$newline'
         '$indent';
 
-    final String next = source.replaceRange(close, close, insertion);
+    final String next = model.cst.insertBeforeClosingTag(mosaic.block, insertion);
     _validateRenderable(next);
     return next;
   }
@@ -237,7 +237,7 @@ class MosaicSurfaceDocument {
         '$clipIndent[/CLIP]$newline'
         '$indent';
 
-    final String next = source.replaceRange(close, close, insertion);
+    final String next = model.cst.insertBeforeClosingTag(target.block, insertion);
     _validateRenderable(next);
     return next;
   }
