@@ -360,7 +360,7 @@ int RunProbe(const std::string& mode, int64_t duration_ms,
               metrics.video_stale_hold_streak);
           metrics.video_stale_gap_frames_max = std::max(
               metrics.video_stale_gap_frames_max,
-              std::llabs(presented_delta_frames));
+              std::abs(presented_delta_frames));
         } else {
           metrics.video_stale_hold_streak = 0;
         }
