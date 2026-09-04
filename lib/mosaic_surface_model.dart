@@ -17,11 +17,19 @@ String createMosaicWithSource({
   required String paneId,
   required String clipId,
   required String structuralSource,
+  int inFrame = 0,
   required int durationFrames,
 }) {
   _validateId('MOSAIC', mosaicId);
   _validateId('PANE', paneId);
   _validateId('CLIP', clipId);
+  if (inFrame < 0) {
+    throw ArgumentError.value(
+      inFrame,
+      'inFrame',
+      'MOSAIC source in frame must be non-negative.',
+    );
+  }
   if (durationFrames <= 0) {
     throw ArgumentError.value(
       durationFrames,
@@ -38,6 +46,13 @@ String createMosaicWithSource({
     model,
     structuralSource,
   );
+  final int sourceFrames = model.structuralSourceFrameCount(ref);
+  if (inFrame >= sourceFrames || inFrame + durationFrames > sourceFrames) {
+    throw ArgumentError(
+      'MOSAIC source range $inFrame..${inFrame + durationFrames} exceeds '
+      '${ref.canonicalSource} ($sourceFrames frames).',
+    );
+  }
 
   final String newline = source.contains('\r\n') ? '\r\n' : '\n';
   final StringBuffer out = StringBuffer(source);
@@ -50,7 +65,7 @@ String createMosaicWithSource({
     ..write('[MOSAIC:$mosaicId]$newline')
     ..write('  [PANE:$paneId]$newline')
     ..write(
-      '    [CLIP:$clipId:${ref.canonicalSource}:0:0:$durationFrames:1]$newline',
+      '    [CLIP:$clipId:${ref.canonicalSource}:0:$inFrame:$durationFrames:1]$newline',
     )
     ..write('    [/CLIP]$newline')
     ..write('  [/PANE]$newline')
