@@ -6,6 +6,7 @@
 // and the script ribbon can depend on it without depending on each other.
 
 import 'parser.dart';
+import 'script_cst.dart';
 
 // =====================================================================
 // ROUND-TRIP CONTRACT
@@ -29,6 +30,11 @@ import 'parser.dart';
 /// Node type for a whitespace-only run between two tags. Hidden from the
 /// graph, always emitted verbatim, never editable.
 const String kSpacer = 'SPACER';
+
+/// Node type for one valid EDIT or MOSAIC CST root. Hidden from the flat node
+/// graph and emitted verbatim. Structural authoring belongs to the dedicated
+/// edit and mosaic surfaces, never to the terminal node editor.
+const String kStructural = 'STRUCTURAL';
 
 /// Node type for markup the tag grammar does not model: comments, menu
 /// definitions, MACRO_CFG lines. Edited as raw text, round-trips exactly.
@@ -56,7 +62,12 @@ final RegExp _macroRegex = RegExp(
 );
 
 final RegExp _nonGrammarMarkup = RegExp(
-    r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE)');
+  r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE|/?EDIT|/?TRACK|/?MOSAIC|/?PANE|/?CLIP)',
+);
+
+final RegExp _structuralOpening = RegExp(
+  r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]',
+);
 
 // ---------------------------------------------------------------------
 // Positional-optional tag emitter
@@ -175,11 +186,17 @@ class ScriptNode {
   ScriptNode({required this.type, required this.rawText});
 
   bool get isSpacer => type == kSpacer;
-  bool get isVisible => !isSpacer;
+  bool get isStructural => type == kStructural;
+  bool get isVisible => !isSpacer && !isStructural;
 
   String param(String k, [String fallback = '']) => params[k] ?? fallback;
 
   void set(String k, String v) {
+    if (isStructural) {
+      throw StateError(
+        'Structural roots are edited through EDIT or MOSAIC surfaces.',
+      );
+    }
     params[k] = v;
     dirty = true;
   }
@@ -192,6 +209,7 @@ class ScriptNode {
 
     switch (type) {
       case kSpacer:
+      case kStructural:
         return rawText;
 
       case 'TEXT':
@@ -418,7 +436,48 @@ class ScriptNode {
 // =====================================================================
 
 List<ScriptNode> parseScriptToNodes(String text) {
-  final List<ScriptNode> result = [];
+  final List<ScriptCstBlock> structuralRoots = _flatStructuralRoots(text);
+  if (structuralRoots.isEmpty) {
+    return _parseNonStructuralNodes(text);
+  }
+
+  final List<ScriptNode> result = <ScriptNode>[];
+  int cursor = 0;
+  for (final ScriptCstBlock root in structuralRoots) {
+    if (root.startOffset > cursor) {
+      result.addAll(
+        _parseNonStructuralNodes(text.substring(cursor, root.startOffset)),
+      );
+    }
+    result.add(
+      ScriptNode(
+        type: kStructural,
+        rawText: text.substring(root.startOffset, root.endOffset),
+      ),
+    );
+    cursor = root.endOffset;
+  }
+
+  if (cursor < text.length) {
+    result.addAll(_parseNonStructuralNodes(text.substring(cursor)));
+  }
+  return result;
+}
+
+List<ScriptCstBlock> _flatStructuralRoots(String text) {
+  if (!_structuralOpening.hasMatch(text)) return const <ScriptCstBlock>[];
+  try {
+    return ScriptCstDocument.parse(text).roots;
+  } on ScriptCstFormatException {
+    // Invalid structural source is repair mode. Do not make the flat editor
+    // unusable because one authoring block is half typed. The fallback parser
+    // still marks structural-looking fragments RAW rather than terminal TEXT.
+    return const <ScriptCstBlock>[];
+  }
+}
+
+List<ScriptNode> _parseNonStructuralNodes(String text) {
+  final List<ScriptNode> result = <ScriptNode>[];
   int lastEnd = 0;
 
   void addTextSlice(String slice) {
@@ -454,10 +513,10 @@ List<ScriptNode> parseScriptToNodes(String text) {
     result.add(n);
   }
 
-  // Two grammars tile the document together: the tag grammar and the
-  // macro grammar. They never overlap (macro constructs are absent from
-  // tagRegex), so a two-pointer merge in document order is enough, and
-  // it keeps the gapless-coverage guarantee intact.
+  // Two grammars tile the non-structural slice together: the tag grammar and
+  // the macro grammar. Structural roots have already been removed before this
+  // function is called, so an ordinary tag can never claim bytes owned by an
+  // EDIT or MOSAIC root even if its regex would otherwise span across them.
   final List<RegExpMatch> tagHits = tagRegex.allMatches(text).toList();
   final List<RegExpMatch> macroHits = _macroRegex.allMatches(text).toList();
 
