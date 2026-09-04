@@ -1,5 +1,7 @@
 // ./test/edit_workspace_test.dart
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_linter.dart';
@@ -8,6 +10,7 @@ import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/edit_playback_clock.dart';
 import 'package:r3nder/edit_surface_model.dart';
 import 'package:r3nder/edit_workspace.dart';
+import 'package:r3nder/exporter.dart';
 import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -292,4 +295,142 @@ void main() {
     expect(nested.durationFrames, 60);
     expect(EditGraphLinter.lint(model).isValid, isTrue);
   });
+
+  testWidgets(
+    'EXPORT sends selected MOSAIC root to structural exporter',
+    (WidgetTester tester) async {
+      // Widget tests run in Flutter's fake async zone. Real asynchronous file
+      // system futures can wait forever there unless routed through runAsync.
+      // This test only needs a writable path, so create and remove it
+      // synchronously instead of introducing unrelated real async work.
+      final Directory temp = Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'r3nder_edit_workspace_export_${pid}_${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+      temp.createSync(recursive: true);
+
+      try {
+        const String source = '''[MOSAIC:wall]
+[PANE:pane]
+[CLIP:source:video/base.mp4:0:0:30:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+        String? exportedSource;
+        String? exportedPath;
+        VideoExportFormat? exportedFormat;
+        int? exportedWidth;
+        int? exportedHeight;
+        int? exportedFps;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SizedBox(
+              width: 1200,
+              height: 760,
+              child: EditWorkspace(
+                source: source,
+                currentFrame: 0,
+                theme: R3Theme.of(Colors.green),
+                onSourceChanged: (_) {},
+                onSeek: (_) {},
+                workspaceRootResolver: () => temp.path,
+                exportSource: ({
+                  required String source,
+                  required String structuralSource,
+                  required String outputPath,
+                  required VideoExportFormat format,
+                  required int fps,
+                  required int width,
+                  required int height,
+                  required String Function(String source) resolveSource,
+                  void Function(int done, int total)? onProgress,
+                  void Function(String status)? onStatus,
+                  ExportCancelToken? cancelToken,
+                }) async {
+                  exportedSource = structuralSource;
+                  exportedPath = outputPath;
+                  exportedFormat = format;
+                  exportedWidth = width;
+                  exportedHeight = height;
+                  exportedFps = fps;
+                  onStatus?.call('Rendering Structural Source...');
+                  onProgress?.call(30, 30);
+                  return ExportResult(
+                    success: true,
+                    cancelled: false,
+                    framesWritten: 30,
+                    outputPath: outputPath,
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.textContaining('MOSAIC wall'), findsWidgets);
+        expect(find.text('EXPORT'), findsOneWidget);
+
+        await tester.tap(find.text('EXPORT'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        final Finder dialog = find.byType(AlertDialog);
+        expect(dialog, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey<String>('structural-export-resolution')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey<String>('structural-export-format')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.descendant(of: dialog, matching: find.text('EXPORT')),
+        );
+        await tester.pump();
+
+        for (int i = 0; i < 20 && exportedSource == null; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(exportedSource, 'MOSAIC.wall');
+
+        for (int i = 0;
+            i < 20 &&
+                find
+                    .byKey(const ValueKey<String>('structural-export-status'))
+                    .evaluate()
+                    .isEmpty;
+            i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+
+        expect(exportedFormat, VideoExportFormat.h264Solid);
+        expect(exportedWidth, 1920);
+        expect(exportedHeight, 1080);
+        expect(exportedFps, 30);
+        expect(
+          exportedPath,
+          '${temp.path}${Platform.pathSeparator}output_frames'
+          '${Platform.pathSeparator}mosaic_wall_1080p.mp4',
+        );
+        expect(
+          find.byKey(const ValueKey<String>('structural-export-status')),
+          findsOneWidget,
+        );
+        expect(find.textContaining('EXPORTED'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
 }

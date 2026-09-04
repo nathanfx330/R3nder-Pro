@@ -3,8 +3,8 @@
 // GUI entry point for source-backed structural video editing.
 //
 // EDIT and MOSAIC are both canonical frame sources. This workspace owns only
-// transient selection, import, and transport state. Durable changes are always
-// serialized back into the same script through EditSurfaceDocument or
+// transient selection, import, transport, and export state. Durable changes are
+// always serialized back into the same script through EditSurfaceDocument or
 // MosaicSurfaceDocument. ProjectClock remains the sole playback authority for
 // whichever structural source is selected.
 //
@@ -13,6 +13,8 @@
 // advance time itself. Integer project frames are published only when they
 // change for authored/edit semantics, while exact rational position is
 // published every vsync for smooth presentation paint.
+
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -24,16 +26,61 @@ import 'edit_playback_clock.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface.dart';
 import 'edit_surface_model.dart';
+import 'edit_video_preview.dart';
 import 'engine.dart';
+import 'exporter.dart';
 import 'mosaic_surface.dart';
 import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
+import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
 typedef EditVideoPicker = Future<String?> Function();
 typedef EditVideoImporter = ImportedEditVideo Function(String pickedPath);
+typedef EditWorkspaceRootResolver = String Function();
+typedef EditStructuralExportRunner = Future<ExportResult> Function({
+  required String source,
+  required String structuralSource,
+  required String outputPath,
+  required VideoExportFormat format,
+  required int fps,
+  required int width,
+  required int height,
+  required String Function(String source) resolveSource,
+  void Function(int done, int total)? onProgress,
+  void Function(String status)? onStatus,
+  ExportCancelToken? cancelToken,
+});
+
+Future<ExportResult> _defaultStructuralExportRunner({
+  required String source,
+  required String structuralSource,
+  required String outputPath,
+  required VideoExportFormat format,
+  required int fps,
+  required int width,
+  required int height,
+  required String Function(String source) resolveSource,
+  void Function(int done, int total)? onProgress,
+  void Function(String status)? onStatus,
+  ExportCancelToken? cancelToken,
+}) {
+  return StructuralSourceExporter.export(
+    source: source,
+    structuralSource: structuralSource,
+    outputPath: outputPath,
+    format: format,
+    fps: fps,
+    width: width,
+    height: height,
+    resolveSource: resolveSource,
+    onProgress: onProgress,
+    onStatus: onStatus,
+    cancelToken: cancelToken,
+  );
+}
 
 class EditWorkspace extends StatefulWidget {
   final String source;
@@ -45,11 +92,13 @@ class EditWorkspace extends StatefulWidget {
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
 
-  /// Test seams. Production uses the GTK chooser, workspace MLT import, and
-  /// the native realtime ProjectClock adapter.
+  /// Test seams. Production uses the GTK chooser, workspace MLT import, native
+  /// realtime ProjectClock adapter, active workspace, and structural exporter.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
+  final EditWorkspaceRootResolver? workspaceRootResolver;
+  final EditStructuralExportRunner? exportSource;
 
   const EditWorkspace({
     super.key,
@@ -64,6 +113,8 @@ class EditWorkspace extends StatefulWidget {
     this.pickVideo,
     this.importVideo,
     this.playbackClockFactory,
+    this.workspaceRootResolver,
+    this.exportSource,
   });
 
   @override
@@ -81,6 +132,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
   String? _selectedSourceRef;
   bool _importing = false;
   bool _playing = false;
+  bool _exporting = false;
+  int _exportDone = 0;
+  int _exportTotal = 0;
+  String? _exportStatus;
+  ExportCancelToken? _exportCancelToken;
   int _cachedSourceEndFrame = 0;
   int? _lastPolledPlaybackFrame;
   String? _error;
@@ -134,6 +190,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   @override
   void dispose() {
+    _exportCancelToken?.cancel();
     PlaybackTrace.instance.stop(reason: 'workspace_dispose');
     _playTicker.stop();
     _playTicker.dispose();
@@ -236,7 +293,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _pausePlayback();
       return;
     }
-    if (end <= 0) return;
+    if (end <= 0 || _exporting) return;
 
     int start = _displayFrame.clamp(0, end);
     if (start >= end) {
@@ -411,7 +468,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   void _selectSource(EditDocumentModel model, String source) {
     final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
-    if (ref == null || !model.containsStructuralSource(ref)) return;
+    if (ref == null || !model.containsStructuralSource(ref) || _exporting) return;
     if (_playing) _pausePlayback();
 
     setState(() {
@@ -442,7 +499,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   Future<void> _addVideo(String trackId) async {
-    if (_importing) return;
+    if (_importing || _exporting) return;
     if (_playing) _pausePlayback();
     setState(() {
       _importing = true;
@@ -513,6 +570,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   void _newEdit(EditDocumentModel model) {
+    if (_exporting) return;
     final Set<String> ids = model.edits.map((EditSequence edit) => edit.id).toSet();
     String id = 'edit';
     int suffix = 2;
@@ -538,6 +596,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
+    if (_exporting) return;
     final int duration = model.structuralSourceFrameCount(selected);
     if (duration <= 0) {
       setState(() => _error = '${selected.canonicalSource} has no authored frames.');
@@ -572,6 +631,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     EditDocumentModel model,
     EditSequence edit,
   ) async {
+    if (_exporting) return;
     final List<StructuralSourceRef> choices = _structuralSources(model)
         .where((StructuralSourceRef ref) =>
             ref.canonicalSource != 'EDIT.${edit.id}')
@@ -655,6 +715,222 @@ class _EditWorkspaceState extends State<EditWorkspace>
     } catch (error) {
       setState(() => _error = '$error');
     }
+  }
+
+  Future<_StructuralExportChoice?> _chooseExportSettings() async {
+    String resolution = '1080p';
+    VideoExportFormat format = VideoExportFormat.h264Solid;
+
+    return showDialog<_StructuralExportChoice>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Export structural source', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('RESOLUTION', style: widget.theme.micro),
+                    SizedBox(height: sc(5)),
+                    DropdownButton<String>(
+                      key: const ValueKey<String>('structural-export-resolution'),
+                      value: resolution,
+                      isExpanded: true,
+                      dropdownColor: R3Theme.panel,
+                      style: widget.theme.value,
+                      items: const <DropdownMenuItem<String>>[
+                        DropdownMenuItem<String>(
+                          value: '720p',
+                          child: Text('720p   1280 × 720'),
+                        ),
+                        DropdownMenuItem<String>(
+                          value: '1080p',
+                          child: Text('1080p   1920 × 1080'),
+                        ),
+                        DropdownMenuItem<String>(
+                          value: '4K',
+                          child: Text('4K   3840 × 2160'),
+                        ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => resolution = value);
+                      },
+                    ),
+                    SizedBox(height: sc(14)),
+                    Text('FORMAT', style: widget.theme.micro),
+                    SizedBox(height: sc(5)),
+                    DropdownButton<VideoExportFormat>(
+                      key: const ValueKey<String>('structural-export-format'),
+                      value: format,
+                      isExpanded: true,
+                      dropdownColor: R3Theme.panel,
+                      style: widget.theme.value,
+                      items: const <DropdownMenuItem<VideoExportFormat>>[
+                        DropdownMenuItem<VideoExportFormat>(
+                          value: VideoExportFormat.h264Solid,
+                          child: Text('H.264 MP4'),
+                        ),
+                        DropdownMenuItem<VideoExportFormat>(
+                          value: VideoExportFormat.proresAlpha,
+                          child: Text('ProRes 4444 Alpha'),
+                        ),
+                        DropdownMenuItem<VideoExportFormat>(
+                          value: VideoExportFormat.lumaMatte,
+                          child: Text('H.264 Fill + Matte'),
+                        ),
+                      ],
+                      onChanged: (VideoExportFormat? value) {
+                        if (value == null) return;
+                        setDialogState(() => format = value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final (int width, int height) =
+                        _resolutionDimensions(resolution);
+                    Navigator.of(context).pop(
+                      _StructuralExportChoice(
+                        resolution: resolution,
+                        width: width,
+                        height: height,
+                        format: format,
+                      ),
+                    );
+                  },
+                  child: const Text('EXPORT'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  static (int, int) _resolutionDimensions(String resolution) {
+    switch (resolution) {
+      case '720p':
+        return (1280, 720);
+      case '4K':
+        return (3840, 2160);
+      case '1080p':
+      default:
+        return (1920, 1080);
+    }
+  }
+
+  static String _exportStem(StructuralSourceRef source) {
+    String stem = source.canonicalSource
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    stem = stem.replaceAll(RegExp(r'^_+|_+$'), '');
+    return stem.isEmpty ? 'structural_source' : stem;
+  }
+
+  Future<void> _exportSelected(StructuralSourceRef selected) async {
+    if (_exporting || _importing) return;
+    if (_playing) _pausePlayback();
+
+    final _StructuralExportChoice? choice = await _chooseExportSettings();
+    if (choice == null || !mounted) return;
+
+    final ExportCancelToken cancelToken = ExportCancelToken();
+    _exportCancelToken = cancelToken;
+
+    setState(() {
+      _exporting = true;
+      _exportDone = 0;
+      _exportTotal = 0;
+      _exportStatus = 'PREPARING ${selected.canonicalSource}';
+      _error = null;
+    });
+
+    try {
+      final String workspace =
+          (widget.workspaceRootResolver ?? resolveActiveWorkspaceRoot)();
+      final Directory outputDirectory = Directory(
+        '$workspace${Platform.pathSeparator}output_frames',
+      );
+      outputDirectory.createSync(recursive: true);
+
+      final String extension =
+          choice.format == VideoExportFormat.proresAlpha ? 'mov' : 'mp4';
+      final String outputPath =
+          '${outputDirectory.path}${Platform.pathSeparator}'
+          '${_exportStem(selected)}_${choice.resolution.toLowerCase()}.$extension';
+
+      final EditStructuralExportRunner runner =
+          widget.exportSource ?? _defaultStructuralExportRunner;
+      final ExportResult result = await runner(
+        source: _workingSource,
+        structuralSource: selected.canonicalSource,
+        outputPath: outputPath,
+        format: choice.format,
+        fps: engineFps,
+        width: choice.width,
+        height: choice.height,
+        resolveSource: resolveWorkspaceMediaSource,
+        cancelToken: cancelToken,
+        onProgress: (int done, int total) {
+          if (!mounted) return;
+          setState(() {
+            _exportDone = done;
+            _exportTotal = total;
+          });
+        },
+        onStatus: (String status) {
+          if (!mounted) return;
+          setState(() => _exportStatus = status.toUpperCase());
+        },
+      );
+
+      if (!mounted) return;
+      setState(() {
+        if (result.cancelled) {
+          _exportStatus = 'EXPORT CANCELLED';
+        } else if (result.success) {
+          final String matte = result.mattePath == null
+              ? ''
+              : '   MATTE ${result.mattePath}';
+          _exportStatus = 'EXPORTED ${result.outputPath}$matte';
+        } else {
+          _exportStatus = null;
+          _error = result.error ?? 'Structural export failed.';
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _exportStatus = null;
+        _error = '$error';
+      });
+    } finally {
+      _exportCancelToken = null;
+      if (mounted) {
+        setState(() => _exporting = false);
+      }
+    }
+  }
+
+  void _cancelExport() {
+    if (!_exporting) return;
+    _exportCancelToken?.cancel();
+    setState(() => _exportStatus = 'CANCELLING EXPORT');
   }
 
   @override
@@ -784,7 +1060,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                   child: Text(ref.canonicalSource),
                 ),
             ],
-            onChanged: _playing || model == null
+            onChanged: _playing || _exporting || model == null
                 ? null
                 : (String? value) {
                     if (value != null) _selectSource(model, value);
@@ -795,13 +1071,19 @@ class _EditWorkspaceState extends State<EditWorkspace>
         'NEW EDIT',
         theme: widget.theme,
         compact: true,
-        onPressed: model == null || _playing ? null : () => _newEdit(model),
+        onPressed: model == null || _playing || _exporting
+            ? null
+            : () => _newEdit(model),
       ),
       R3Button(
         'NEW MOSAIC',
         theme: widget.theme,
         compact: true,
-        onPressed: model == null || selected == null || selectedEnd <= 0 || _playing
+        onPressed: model == null ||
+                selected == null ||
+                selectedEnd <= 0 ||
+                _playing ||
+                _exporting
             ? null
             : () => _newMosaic(model, selected),
       ),
@@ -813,13 +1095,13 @@ class _EditWorkspaceState extends State<EditWorkspace>
           theme: widget.theme,
           compact: true,
           kind: R3ButtonKind.primary,
-          onPressed: _importing ? null : () => _addVideo('V1'),
+          onPressed: _importing || _exporting ? null : () => _addVideo('V1'),
         ),
         R3Button(
           'ADD OVERLAY',
           theme: widget.theme,
           compact: true,
-          onPressed: _importing ? null : () => _addVideo('V2'),
+          onPressed: _importing || _exporting ? null : () => _addVideo('V2'),
         ),
       ],
       if (edit != null) ...[
@@ -827,7 +1109,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           'ADD SOURCE',
           theme: widget.theme,
           compact: true,
-          onPressed: _importing || _playing || model == null
+          onPressed: _importing || _playing || _exporting || model == null
               ? null
               : () => _addStructuralSource(model, edit),
         ),
@@ -839,9 +1121,25 @@ class _EditWorkspaceState extends State<EditWorkspace>
         theme: widget.theme,
         compact: true,
         kind: _playing ? R3ButtonKind.hot : R3ButtonKind.primary,
-        onPressed: selected == null || selectedEnd <= 0 || _importing
+        onPressed: selected == null ||
+                selectedEnd <= 0 ||
+                _importing ||
+                _exporting
             ? null
             : () => _togglePlayback(selected, selectedEnd),
+      ),
+      SizedBox(width: sc(5)),
+      R3MicroLabel('OUTPUT', theme: widget.theme, accent: true),
+      R3Button(
+        _exporting ? 'CANCEL EXPORT' : 'EXPORT',
+        theme: widget.theme,
+        compact: true,
+        kind: _exporting ? R3ButtonKind.hot : R3ButtonKind.primary,
+        onPressed: _exporting
+            ? _cancelExport
+            : selected == null || selectedEnd <= 0 || _importing
+                ? null
+                : () => _exportSelected(selected),
       ),
       if (_importing) ...[
         SizedBox(
@@ -853,7 +1151,30 @@ class _EditWorkspaceState extends State<EditWorkspace>
           ),
         ),
         Text('IMPORTING', style: widget.theme.micro),
-      ] else if (selected != null)
+      ] else if (_exporting) ...[
+        SizedBox(
+          width: sc(13),
+          height: sc(13),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: widget.theme.accentDim,
+          ),
+        ),
+        Text(
+          _exportTotal > 0
+              ? '${_exportStatus ?? 'EXPORTING'}   $_exportDone / $_exportTotal'
+              : (_exportStatus ?? 'EXPORTING'),
+          style: widget.theme.micro,
+        ),
+      ] else if (_exportStatus != null)
+        Text(
+          _exportStatus!,
+          key: const ValueKey<String>('structural-export-status'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: widget.theme.micro,
+        )
+      else if (selected != null)
         ValueListenableBuilder<EditPlaybackFrameState>(
           valueListenable: _playbackFrame,
           builder: (
@@ -900,4 +1221,18 @@ class _EditWorkspaceState extends State<EditWorkspace>
       ),
     );
   }
+}
+
+class _StructuralExportChoice {
+  final String resolution;
+  final int width;
+  final int height;
+  final VideoExportFormat format;
+
+  const _StructuralExportChoice({
+    required this.resolution,
+    required this.width,
+    required this.height,
+    required this.format,
+  });
 }
