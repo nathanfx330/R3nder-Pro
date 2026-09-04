@@ -1163,7 +1163,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         fps: engineFps,
         width: choice.width,
         height: choice.height,
-        resolveSource: resolveWorkspaceMediaSource,
+        resolveSource: widget.resolveSource ?? resolveWorkspaceMediaSource,
         audioPath: audioMix.audioPath,
         audioGainDb: audioMix.audioGainDb,
         musicPath: audioMix.musicPath,
