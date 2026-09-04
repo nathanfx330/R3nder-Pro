@@ -2,6 +2,10 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/script_cst.dart';
+import 'package:r3nder/script_nodes.dart';
+
+String _composeNodes(List<ScriptNode> nodes) =>
+    nodes.map((ScriptNode node) => node.toMarkup()).join();
 
 void main() {
   const String source = '''[# source before edit]
@@ -147,6 +151,91 @@ B
       siblings.substring(clips[0].endOffset, clips[1].startOffset),
       '\n  untouched between clips\n',
     );
+  });
+
+  test('flat node parser keeps EDIT and MOSAIC roots opaque and hidden', () {
+    const String mixed = '''BEFORE
+[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/base.mp4:0:0:30:1]
+      [PAUSE:99]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[PAUSE:12]
+[MOSAIC:wall]
+  [PANE:left]
+    [CLIP:b:EDIT.main:0:0:30:1]
+      [SPEED:MAX]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+AFTER
+''';
+
+    final ScriptCstDocument cst = ScriptCstDocument.parse(mixed);
+    final List<ScriptNode> nodes = parseScriptToNodes(mixed);
+    final List<ScriptNode> structural = nodes
+        .where((ScriptNode node) => node.type == kStructural)
+        .toList(growable: false);
+
+    expect(structural, hasLength(2));
+    expect(structural.every((ScriptNode node) => !node.isVisible), isTrue);
+    expect(structural[0].rawText, cst.roots[0].rawSource);
+    expect(structural[1].rawText, cst.roots[1].rawSource);
+    expect(_composeNodes(nodes), mixed);
+
+    final List<ScriptNode> pauses = nodes
+        .where((ScriptNode node) => node.type == 'PAUSE')
+        .toList(growable: false);
+    expect(pauses, hasLength(1));
+    expect(pauses.single.param('frames'), '12');
+    expect(nodes.where((ScriptNode node) => node.type == 'SPEED'), isEmpty);
+  });
+
+  test('ordinary node edit cannot rewrite a neighboring structural root', () {
+    const String mixed = '''[PAUSE:3]
+[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/base.mp4:0:0:30:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[PAUSE:7]
+''';
+
+    final List<ScriptNode> nodes = parseScriptToNodes(mixed);
+    final ScriptNode structural =
+        nodes.singleWhere((ScriptNode node) => node.type == kStructural);
+    final String owned = structural.rawText;
+    final List<ScriptNode> pauses = nodes
+        .where((ScriptNode node) => node.type == 'PAUSE')
+        .toList(growable: false);
+
+    pauses.last.set('frames', '120');
+    final String edited = _composeNodes(nodes);
+
+    expect(structural.rawText, owned);
+    expect(edited.contains(owned), isTrue);
+    expect(edited, mixed.replaceFirst('[PAUSE:7]', '[PAUSE:120]'));
+    expect(
+      () => structural.set('anything', 'unsafe'),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('malformed structural text stays available as RAW repair source', () {
+    const String malformed = '''[EDIT:main]
+  [TRACK:V1]
+''';
+
+    final List<ScriptNode> nodes = parseScriptToNodes(malformed);
+
+    expect(nodes.where((ScriptNode node) => node.type == kStructural), isEmpty);
+    expect(nodes, hasLength(1));
+    expect(nodes.single.type, kRaw);
+    expect(nodes.single.isVisible, isTrue);
+    expect(_composeNodes(nodes), malformed);
   });
 
   test('mismatched or illegal structural ownership is rejected', () {
