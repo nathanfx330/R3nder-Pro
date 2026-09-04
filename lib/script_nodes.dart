@@ -6,6 +6,7 @@
 // and the script ribbon can depend on it without depending on each other.
 
 import 'parser.dart';
+import 'script_cst.dart';
 
 // =====================================================================
 // ROUND-TRIP CONTRACT
@@ -24,11 +25,20 @@ import 'parser.dart';
 // Whitespace-only slices between tags become hidden SPACER nodes. They
 // are never shown in the graph and never regenerated, so blank lines and
 // indentation survive verbatim.
+//
+// EDIT and MOSAIC roots are also hidden, but for a different reason. They
+// are canonical structural source owned by ScriptCstDocument and edited by
+// their dedicated surfaces. They remain one exact opaque node here so the
+// generic node editor cannot reinterpret their nested bytes as terminal copy.
 // =====================================================================
 
 /// Node type for a whitespace-only run between two tags. Hidden from the
 /// graph, always emitted verbatim, never editable.
 const String kSpacer = 'SPACER';
+
+/// One complete EDIT or MOSAIC CST root. Hidden from the generic node graph,
+/// emitted verbatim, and never granted terminal runtime line ownership.
+const String kStructural = 'STRUCTURAL';
 
 /// Node type for markup the tag grammar does not model: comments, menu
 /// definitions, MACRO_CFG lines. Edited as raw text, round-trips exactly.
@@ -57,6 +67,9 @@ final RegExp _macroRegex = RegExp(
 
 final RegExp _nonGrammarMarkup = RegExp(
     r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE)');
+
+final RegExp _structuralRootOpening =
+    RegExp(r'\[(?:EDIT|MOSAIC)(?::[^\]\r\n]*)?\]');
 
 // ---------------------------------------------------------------------
 // Positional-optional tag emitter
@@ -162,7 +175,8 @@ class ScriptNode {
   bool dirty = false;
 
   /// Document line span, recomputed after every change. Drives the playback
-  /// highlight and the auto-scroll.
+  /// highlight and the auto-scroll. STRUCTURAL nodes use -1/-1 because their
+  /// source lines exist in the document but own no TerminalEngine frames.
   int startLine = 0;
   int endLine = 0;
 
@@ -175,7 +189,8 @@ class ScriptNode {
   ScriptNode({required this.type, required this.rawText});
 
   bool get isSpacer => type == kSpacer;
-  bool get isVisible => !isSpacer;
+  bool get isStructural => type == kStructural;
+  bool get isVisible => !isSpacer && !isStructural;
 
   String param(String k, [String fallback = '']) => params[k] ?? fallback;
 
@@ -192,6 +207,7 @@ class ScriptNode {
 
     switch (type) {
       case kSpacer:
+      case kStructural:
         return rawText;
 
       case 'TEXT':
@@ -402,6 +418,67 @@ class ScriptNode {
   }
 }
 
+class _NodeParseHit {
+  final int start;
+  final int end;
+  final int priority;
+  final RegExpMatch? match;
+  final bool macro;
+  final bool structural;
+
+  const _NodeParseHit._({
+    required this.start,
+    required this.end,
+    required this.priority,
+    required this.match,
+    required this.macro,
+    required this.structural,
+  });
+
+  factory _NodeParseHit.structural(int start, int end) => _NodeParseHit._(
+        start: start,
+        end: end,
+        priority: 0,
+        match: null,
+        macro: false,
+        structural: true,
+      );
+
+  factory _NodeParseHit.tag(RegExpMatch match) => _NodeParseHit._(
+        start: match.start,
+        end: match.end,
+        priority: 1,
+        match: match,
+        macro: false,
+        structural: false,
+      );
+
+  factory _NodeParseHit.macro(RegExpMatch match) => _NodeParseHit._(
+        start: match.start,
+        end: match.end,
+        priority: 2,
+        match: match,
+        macro: true,
+        structural: false,
+      );
+}
+
+List<ScriptCstBlock> _structuralRootsForNodeParsing(String text) {
+  if (!_structuralRootOpening.hasMatch(text)) {
+    return const <ScriptCstBlock>[];
+  }
+
+  try {
+    return ScriptCstDocument.parse(text).roots;
+  } on ScriptCstFormatException {
+    // Node mode is also a repair surface. A malformed structural block must
+    // remain byte-for-byte editable as ordinary source instead of preventing
+    // the document from opening. Runtime/model validation can still report the
+    // structural error through its normal path.
+    return const <ScriptCstBlock>[];
+  }
+}
+
 // =====================================================================
 // SCRIPT PARSING
 //
@@ -415,6 +492,10 @@ class ScriptNode {
 // Every character of the input lands in exactly one node, which is what
 // makes the round trip lossless and what lets the ribbon assume its
 // blocks tile the document without gaps.
+//
+// Structural roots participate in that tiling as one opaque hit each. They
+// dominate any tag or macro-looking text nested inside their owned source,
+// which keeps the generic node grammar from taking ownership away from CST.
 // =====================================================================
 
 List<ScriptNode> parseScriptToNodes(String text) {
@@ -454,34 +535,46 @@ List<ScriptNode> parseScriptToNodes(String text) {
     result.add(n);
   }
 
-  // Two grammars tile the document together: the tag grammar and the
-  // macro grammar. They never overlap (macro constructs are absent from
-  // tagRegex), so a two-pointer merge in document order is enough, and
-  // it keeps the gapless-coverage guarantee intact.
-  final List<RegExpMatch> tagHits = tagRegex.allMatches(text).toList();
-  final List<RegExpMatch> macroHits = _macroRegex.allMatches(text).toList();
+  final List<_NodeParseHit> hits = <_NodeParseHit>[
+    for (final ScriptCstBlock root in _structuralRootsForNodeParsing(text))
+      _NodeParseHit.structural(root.startOffset, root.endOffset),
+    for (final RegExpMatch match in tagRegex.allMatches(text))
+      _NodeParseHit.tag(match),
+    for (final RegExpMatch match in _macroRegex.allMatches(text))
+      _NodeParseHit.macro(match),
+  ];
 
-  int ti = 0;
-  int mi = 0;
+  hits.sort((_NodeParseHit a, _NodeParseHit b) {
+    final int byStart = a.start.compareTo(b.start);
+    if (byStart != 0) return byStart;
+    final int byPriority = a.priority.compareTo(b.priority);
+    if (byPriority != 0) return byPriority;
+    return b.end.compareTo(a.end);
+  });
 
-  while (true) {
-    while (ti < tagHits.length && tagHits[ti].start < lastEnd) {
-      ti++;
+  for (final _NodeParseHit hit in hits) {
+    // A structural root wins ownership over any generic tag or macro match in
+    // its body. Once its exact span has been emitted, nested hits fall here.
+    if (hit.start < lastEnd) continue;
+
+    if (hit.start > lastEnd) {
+      addTextSlice(text.substring(lastEnd, hit.start));
     }
-    while (mi < macroHits.length && macroHits[mi].start < lastEnd) {
-      mi++;
-    }
-    if (ti >= tagHits.length && mi >= macroHits.length) break;
 
-    final bool takeTag = mi >= macroHits.length ||
-        (ti < tagHits.length && tagHits[ti].start <= macroHits[mi].start);
-    final RegExpMatch m = takeTag ? tagHits[ti] : macroHits[mi];
-
-    if (m.start > lastEnd) {
-      addTextSlice(text.substring(lastEnd, m.start));
+    if (hit.structural) {
+      result.add(
+        ScriptNode(
+          type: kStructural,
+          rawText: text.substring(hit.start, hit.end),
+        ),
+      );
+    } else {
+      final RegExpMatch match = hit.match!;
+      result.add(
+        hit.macro ? _nodeFromMacroMatch(match) : _nodeFromMatch(match),
+      );
     }
-    result.add(takeTag ? _nodeFromMatch(m) : _nodeFromMacroMatch(m));
-    lastEnd = m.end;
+    lastEnd = hit.end;
   }
 
   if (lastEnd < text.length) {
@@ -724,6 +817,12 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
 /// line, the ribbon maps frames to lines to nodes, and click-to-jump goes
 /// the other way.
 ///
+/// STRUCTURAL nodes advance the document line counter but receive -1/-1.
+/// Their authored lines are real source coordinates, yet compileScript removes
+/// those roots before TerminalEngine runs, so no runtime frame may belong to
+/// them. This also prevents a structural root later on the same physical line
+/// from stealing frame attribution from a preceding PAUSE or presentation tag.
+///
 /// [endLine] is inclusive, and a node whose markup ends on a newline does
 /// not claim the line after it. Getting that off by one would put every
 /// later node's span one line out, which reads as the ribbon highlighting
@@ -732,14 +831,21 @@ void assignNodeLineSpans(List<ScriptNode> nodes) {
   int line = 0;
   for (final n in nodes) {
     final String m = n.toMarkup();
-    n.startLine = line;
 
     int total = 0;
     for (int i = 0; i < m.length; i++) {
       if (m.codeUnitAt(i) == 10) total++;
     }
-    final bool endsOnBreak = m.isNotEmpty && m.codeUnitAt(m.length - 1) == 10;
-    n.endLine = line + (endsOnBreak ? total - 1 : total);
+
+    if (n.isStructural) {
+      n.startLine = -1;
+      n.endLine = -1;
+    } else {
+      n.startLine = line;
+      final bool endsOnBreak =
+          m.isNotEmpty && m.codeUnitAt(m.length - 1) == 10;
+      n.endLine = line + (endsOnBreak ? total - 1 : total);
+    }
 
     line += total;
   }
