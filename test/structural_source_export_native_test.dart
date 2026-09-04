@@ -272,10 +272,99 @@ Future<void> _generateColorClip(String path, String color) async {
   expect(
     result.exitCode,
     0,
-    reason: 'M12 source generation failed for $color.\n'
+    reason: 'M13 source generation failed for $color.\n'
         'stdout:\n${result.stdout}\n'
         'stderr:\n${result.stderr}',
   );
+}
+
+Future<void> _generateTone(
+  String path, {
+  required int frequency,
+  required double duration,
+}) async {
+  final ProcessResult result = await Process.run(
+    'ffmpeg',
+    <String>[
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=$frequency:sample_rate=48000:duration=$duration',
+      '-c:a',
+      'pcm_s16le',
+      path,
+    ],
+  );
+  expect(
+    result.exitCode,
+    0,
+    reason: 'M13 tone generation failed for $frequency Hz.\n'
+        'stdout:\n${result.stdout}\n'
+        'stderr:\n${result.stderr}',
+  );
+}
+
+Future<List<Map<String, dynamic>>> _probeStreams(String path) async {
+  final ProcessResult probe = await Process.run(
+    'ffprobe',
+    <String>[
+      '-v',
+      'error',
+      '-show_entries',
+      'stream=codec_type,codec_name,width,height,avg_frame_rate,nb_frames,duration',
+      '-of',
+      'json',
+      path,
+    ],
+  );
+  expect(probe.exitCode, 0, reason: '${probe.stderr}');
+  final Map<String, dynamic> json =
+      jsonDecode('${probe.stdout}') as Map<String, dynamic>;
+  return (json['streams'] as List<dynamic>)
+      .cast<Map<String, dynamic>>();
+}
+
+Future<int> _maxAbsAudioSample(
+  String path, {
+  required double start,
+  required double duration,
+}) async {
+  final ProcessResult decode = await Process.run(
+    'ffmpeg',
+    <String>[
+      '-v',
+      'error',
+      '-ss',
+      start.toStringAsFixed(3),
+      '-i',
+      path,
+      '-t',
+      duration.toStringAsFixed(3),
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      '48000',
+      '-f',
+      's16le',
+      'pipe:1',
+    ],
+    stdoutEncoding: null,
+  );
+  expect(decode.exitCode, 0, reason: '${decode.stderr}');
+
+  final Uint8List bytes = Uint8List.fromList(decode.stdout as List<int>);
+  final ByteData data = ByteData.sublistView(bytes);
+  int max = 0;
+  for (int offset = 0; offset + 1 < data.lengthInBytes; offset += 2) {
+    final int sample = data.getInt16(offset, Endian.little).abs();
+    if (sample > max) max = sample;
+  }
+  return max;
 }
 
 bool _mostlyRed(List<int> pixel) =>
@@ -286,7 +375,7 @@ bool _mostlyBlue(List<int> pixel) =>
 
 void main() {
   test(
-    'M12 exports exact native MLT MOSAIC through FFmpeg',
+    'M13 exports native MOSAIC with structural audio bounded by picture',
     () async {
       final String? mltPkg = await _findMltPkg();
       if (mltPkg == null) return;
@@ -306,11 +395,14 @@ void main() {
       expect(pkg.exitCode, 0, reason: '${pkg.stderr}');
 
       final Directory temp =
-          await Directory.systemTemp.createTemp('r3nder_m12_export_');
-      final String library = '${temp.path}/libm12_media_decoder.so';
+          await Directory.systemTemp.createTemp('r3nder_m13_export_');
+      final String library = '${temp.path}/libm13_media_decoder.so';
       final String red = '${temp.path}/red.mp4';
       final String blue = '${temp.path}/blue.mp4';
-      final String output = '${temp.path}/mosaic.mp4';
+      final String shortMusic = '${temp.path}/short_music.wav';
+      final String longVoice = '${temp.path}/long_voice.wav';
+      final String loopOutput = '${temp.path}/mosaic_loop.mp4';
+      final String matteOutput = '${temp.path}/mosaic_matte.mp4';
 
       try {
         final List<String> pkgArgs = '${pkg.stdout}'
@@ -340,13 +432,15 @@ void main() {
         expect(
           compile.exitCode,
           0,
-          reason: 'M12 native decoder library failed to compile.\n'
+          reason: 'M13 native decoder library failed to compile.\n'
               'stdout:\n${compile.stdout}\n'
               'stderr:\n${compile.stderr}',
         );
 
         await _generateColorClip(red, 'red');
         await _generateColorClip(blue, 'blue');
+        await _generateTone(shortMusic, frequency: 880, duration: 0.20);
+        await _generateTone(longVoice, frequency: 440, duration: 2.00);
 
         const String source = '''[MOSAIC:wall]
 [PANE:left]
@@ -361,15 +455,20 @@ void main() {
 ''';
 
         final _ProbeNativeBackend backend = _ProbeNativeBackend(library);
-        final ExportResult result = await StructuralSourceExporter.export(
+
+        // A 0.20 second score loops audibly through a 1.00 second structural
+        // root. The infinite input still cannot extend the authored 30 frames.
+        final ExportResult loopResult = await StructuralSourceExporter.export(
           source: source,
           structuralSource: 'MOSAIC.wall',
-          outputPath: output,
+          outputPath: loopOutput,
           format: VideoExportFormat.h264Solid,
           fps: 30,
           width: 320,
           height: 180,
           backend: backend,
+          musicPath: shortMusic,
+          musicLoop: true,
           resolveSource: (String value) {
             if (value == 'red.mp4') return red;
             if (value == 'blue.mp4') return blue;
@@ -377,34 +476,39 @@ void main() {
           },
         );
 
-        expect(result.success, isTrue, reason: result.error);
-        expect(result.cancelled, isFalse);
-        expect(result.framesWritten, 30);
-        expect(File(result.outputPath).existsSync(), isTrue);
+        expect(loopResult.success, isTrue, reason: loopResult.error);
+        expect(loopResult.cancelled, isFalse);
+        expect(loopResult.framesWritten, 30);
+        expect(File(loopResult.outputPath).existsSync(), isTrue);
 
-        final ProcessResult probe = await Process.run(
-          'ffprobe',
-          <String>[
-            '-v',
-            'error',
-            '-select_streams',
-            'v:0',
-            '-show_entries',
-            'stream=width,height,avg_frame_rate,nb_frames',
-            '-of',
-            'json',
-            result.outputPath,
-          ],
+        final List<Map<String, dynamic>> loopStreams =
+            await _probeStreams(loopResult.outputPath);
+        final Map<String, dynamic> loopVideo = loopStreams.singleWhere(
+          (Map<String, dynamic> stream) => stream['codec_type'] == 'video',
         );
-        expect(probe.exitCode, 0, reason: '${probe.stderr}');
-        final Map<String, dynamic> probeJson =
-            jsonDecode('${probe.stdout}') as Map<String, dynamic>;
-        final Map<String, dynamic> stream =
-            (probeJson['streams'] as List<dynamic>).single as Map<String, dynamic>;
-        expect(stream['width'], 320);
-        expect(stream['height'], 180);
-        expect(stream['avg_frame_rate'], '30/1');
-        expect(stream['nb_frames'], '30');
+        final Map<String, dynamic> loopAudio = loopStreams.singleWhere(
+          (Map<String, dynamic> stream) => stream['codec_type'] == 'audio',
+        );
+        expect(loopVideo['width'], 320);
+        expect(loopVideo['height'], 180);
+        expect(loopVideo['avg_frame_rate'], '30/1');
+        expect(loopVideo['nb_frames'], '30');
+        expect(loopAudio['codec_name'], 'aac');
+
+        final double loopAudioDuration =
+            double.parse('${loopAudio['duration']}');
+        expect(loopAudioDuration, inInclusiveRange(0.95, 1.05));
+
+        // Well past the original 0.20 second music file, so a nonzero sample
+        // here proves the loop filled rather than merely padding with silence.
+        expect(
+          await _maxAbsAudioSample(
+            loopResult.outputPath,
+            start: 0.72,
+            duration: 0.12,
+          ),
+          greaterThan(200),
+        );
 
         final ProcessResult firstFrame = await Process.run(
           'ffmpeg',
@@ -412,7 +516,7 @@ void main() {
             '-v',
             'error',
             '-i',
-            result.outputPath,
+            loopResult.outputPath,
             '-frames:v',
             '1',
             '-f',
@@ -432,9 +536,60 @@ void main() {
           return rgb.sublist(at, at + 3);
         }
 
-        // The two-pane MOSAIC boundary is 56 percent across the frame.
         expect(_mostlyRed(pixel(40, 90)), isTrue);
         expect(_mostlyBlue(pixel(280, 90)), isTrue);
+
+        // Voice is intentionally twice as long as picture. Structural source
+        // duration stays 30 authored frames. Fill carries the bounded voice;
+        // the paired matte is deliberately silent.
+        final ExportResult matteResult = await StructuralSourceExporter.export(
+          source: source,
+          structuralSource: 'MOSAIC.wall',
+          outputPath: matteOutput,
+          format: VideoExportFormat.lumaMatte,
+          fps: 30,
+          width: 320,
+          height: 180,
+          backend: backend,
+          audioPath: longVoice,
+          resolveSource: (String value) {
+            if (value == 'red.mp4') return red;
+            if (value == 'blue.mp4') return blue;
+            return value;
+          },
+        );
+
+        expect(matteResult.success, isTrue, reason: matteResult.error);
+        expect(matteResult.framesWritten, 30);
+        expect(matteResult.mattePath, isNotNull);
+        expect(File(matteResult.outputPath).existsSync(), isTrue);
+        expect(File(matteResult.mattePath!).existsSync(), isTrue);
+
+        final List<Map<String, dynamic>> fillStreams =
+            await _probeStreams(matteResult.outputPath);
+        final List<Map<String, dynamic>> matteStreams =
+            await _probeStreams(matteResult.mattePath!);
+
+        final List<Map<String, dynamic>> fillAudio = fillStreams
+            .where((Map<String, dynamic> stream) => stream['codec_type'] == 'audio')
+            .toList();
+        final List<Map<String, dynamic>> matteAudio = matteStreams
+            .where((Map<String, dynamic> stream) => stream['codec_type'] == 'audio')
+            .toList();
+        expect(fillAudio, hasLength(1));
+        expect(matteAudio, isEmpty);
+
+        final double voiceDuration =
+            double.parse('${fillAudio.single['duration']}');
+        expect(voiceDuration, inInclusiveRange(0.95, 1.05));
+        expect(
+          await _maxAbsAudioSample(
+            matteResult.outputPath,
+            start: 0.72,
+            duration: 0.12,
+          ),
+          greaterThan(200),
+        );
       } finally {
         if (temp.existsSync()) {
           temp.deleteSync(recursive: true);
@@ -443,6 +598,6 @@ void main() {
     },
     skip: Platform.isLinux
         ? false
-        : 'M12 native structural export is currently Linux-only.',
+        : 'M13 native structural export is currently Linux-only.',
   );
 }

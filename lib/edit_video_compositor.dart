@@ -7,6 +7,13 @@
 // No decoder or nested source advances the playhead. A structural CLIP source
 // is evaluated at the exact integer source frame selected by its outer CLIP and
 // composited into one synthetic frame before the outer rules are applied.
+//
+// mediaFrames stays composition-local on purpose: callers that reason about the
+// currently composed layers should see the synthetic structural frame the outer
+// CLIP consumes. diagnosticFrames is separate and recursive. It carries the
+// actual leaf decode outcomes through every EDIT/MOSAIC boundary so exact
+// offline export can reject an offline or adjacent frame even when a nested
+// composition still produced valid pixels from other layers.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -25,7 +32,15 @@ class EditVideoCompositeResult {
   final Uint8List? rgba;
   final MediaFrame? topFrame;
   final List<MediaFrame> contributors;
+
+  /// Frames consumed by this composition level. Nested structural sources are
+  /// represented here by their synthetic outer frame for compatibility with
+  /// preview and compositor callers.
   final List<MediaFrame> mediaFrames;
+
+  /// Recursive leaf decode outcomes. Structural synthetic frames do not hide
+  /// the frames that produced them, so exact export can validate every leaf.
+  final List<MediaFrame> diagnosticFrames;
 
   const EditVideoCompositeResult({
     required this.width,
@@ -35,10 +50,11 @@ class EditVideoCompositeResult {
     required this.topFrame,
     required this.contributors,
     required this.mediaFrames,
+    required this.diagnosticFrames,
   });
 
   bool get hasImage => rgba != null;
-  bool get hasPending => mediaFrames.any(
+  bool get hasPending => diagnosticFrames.any(
         (MediaFrame frame) =>
             frame.status == MediaFrameStatus.pending ||
             frame.status == MediaFrameStatus.nestedEditPending ||
@@ -192,11 +208,16 @@ class EditVideoCompositor {
     final MediaRenderResult media = nonBlocking
         ? mediaLayer.renderAvailable(editId, time, size)
         : mediaLayer.render(editId, time, size);
-    final MediaRenderResult resolved = _resolveStructuralFrames(
+    final _ResolvedMediaRender resolved = _resolveStructuralFrames(
       media,
       nonBlocking: nonBlocking,
     );
-    return _composeEdit(resolved, time, size);
+    return _composeEdit(
+      resolved.media,
+      time,
+      size,
+      diagnosticFrames: resolved.diagnosticFrames,
+    );
   }
 
   EditVideoCompositeResult _renderMosaic(
@@ -222,6 +243,7 @@ class EditVideoCompositor {
     final List<ui.Rect> layout = _mosaicLayout(mosaic.panes.length);
     final Uint8List output = Uint8List(width * height * 4);
     final List<MediaFrame> mediaFrames = <MediaFrame>[];
+    final List<MediaFrame> diagnosticFrames = <MediaFrame>[];
     final List<MediaFrame> contributors = <MediaFrame>[];
     MediaFrame? topFrame;
     bool hasImage = false;
@@ -248,18 +270,20 @@ class EditVideoCompositor {
               time,
               paneSize,
             );
-      final MediaRenderResult resolved = _resolveStructuralFrames(
+      final _ResolvedMediaRender resolved = _resolveStructuralFrames(
         media,
         nonBlocking: nonBlocking,
       );
       final EditVideoCompositeResult paneResult = _composePane(
         pane,
-        resolved,
+        resolved.media,
         time,
         paneSize,
+        diagnosticFrames: resolved.diagnosticFrames,
       );
 
       mediaFrames.addAll(paneResult.mediaFrames);
+      diagnosticFrames.addAll(paneResult.diagnosticFrames);
       contributors.addAll(paneResult.contributors);
       if (paneResult.topFrame != null) topFrame = paneResult.topFrame;
 
@@ -283,50 +307,57 @@ class EditVideoCompositor {
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: List<MediaFrame>.unmodifiable(mediaFrames),
+      diagnosticFrames: List<MediaFrame>.unmodifiable(diagnosticFrames),
     );
   }
 
   /// MediaLayer deliberately returns structural sources as placeholders. This
   /// resolves both EDIT and MOSAIC recursively while retaining the outer CLIP
-  /// frame request as the synthetic frame's identity.
-  MediaRenderResult _resolveStructuralFrames(
+  /// frame request as the synthetic frame's identity for composition.
+  ///
+  /// The second channel, [diagnosticFrames], deliberately does NOT replace the
+  /// nested leaf frames with that synthetic identity. Exact export needs the
+  /// original decode status and requested/actual frame pair from every leaf.
+  _ResolvedMediaRender _resolveStructuralFrames(
     MediaRenderResult media, {
     required bool nonBlocking,
   }) {
     bool changed = false;
     final List<MediaFrame> frames = <MediaFrame>[];
+    final List<MediaFrame> diagnosticFrames = <MediaFrame>[];
 
     for (final MediaFrame frame in media.frames) {
       if (!frame.isStructuralPending) {
         frames.add(frame);
+        diagnosticFrames.add(frame);
         continue;
       }
 
       changed = true;
       final StructuralSourceRef? ref = StructuralSourceRef.tryParse(frame.source);
       if (ref == null || ref.id.isEmpty) {
-        frames.add(
-          MediaFrame.offline(
-            trackId: frame.trackId,
-            clipId: frame.clipId,
-            source: frame.source,
-            requestedSourceFrame: frame.requestedSourceFrame,
-            error: 'Invalid structural source "${frame.source}".',
-          ),
+        final MediaFrame offline = MediaFrame.offline(
+          trackId: frame.trackId,
+          clipId: frame.clipId,
+          source: frame.source,
+          requestedSourceFrame: frame.requestedSourceFrame,
+          error: 'Invalid structural source "${frame.source}".',
         );
+        frames.add(offline);
+        diagnosticFrames.add(offline);
         continue;
       }
 
       if (!model.containsStructuralSource(ref)) {
-        frames.add(
-          MediaFrame.offline(
-            trackId: frame.trackId,
-            clipId: frame.clipId,
-            source: frame.source,
-            requestedSourceFrame: frame.requestedSourceFrame,
-            error: 'Missing structural source "${ref.canonicalSource}".',
-          ),
+        final MediaFrame offline = MediaFrame.offline(
+          trackId: frame.trackId,
+          clipId: frame.clipId,
+          source: frame.source,
+          requestedSourceFrame: frame.requestedSourceFrame,
+          error: 'Missing structural source "${ref.canonicalSource}".',
         );
+        frames.add(offline);
+        diagnosticFrames.add(offline);
         continue;
       }
 
@@ -334,7 +365,9 @@ class EditVideoCompositor {
 
       // Outer CLIP duration remains authoritative. Asking beyond a nested
       // source's authored range contributes transparent pixels rather than
-      // shortening the outer CLIP or inventing a hold frame.
+      // shortening the outer CLIP or inventing a hold frame. This is authored
+      // transparency, not a decode outcome, so it contributes no leaf
+      // diagnostic.
       if (frame.requestedSourceFrame < 0 ||
           frame.requestedSourceFrame >= sourceFrameCount) {
         frames.add(_transparentStructuralFrame(frame, media.outputSize));
@@ -353,13 +386,18 @@ class EditVideoCompositor {
         nonBlocking: nonBlocking,
       );
 
+      // Always preserve recursive leaf status, even when the nested source
+      // produced a valid image from another layer.
+      diagnosticFrames.addAll(nested.diagnosticFrames);
+
       if (nested.hasPending) {
         frames.add(frame);
         continue;
       }
 
       if (nested.rgba == null) {
-        final MediaFrame? offline = _firstOfflineFrame(nested.mediaFrames);
+        final MediaFrame? offline =
+            _firstOfflineFrame(nested.diagnosticFrames);
         if (offline != null) {
           frames.add(
             MediaFrame.offline(
@@ -394,12 +432,21 @@ class EditVideoCompositor {
       );
     }
 
-    if (!changed) return media;
-    return MediaRenderResult(
-      editId: media.editId,
-      projectTime: media.projectTime,
-      outputSize: media.outputSize,
-      frames: List<MediaFrame>.unmodifiable(frames),
+    final MediaRenderResult resolvedMedia;
+    if (!changed) {
+      resolvedMedia = media;
+    } else {
+      resolvedMedia = MediaRenderResult(
+        editId: media.editId,
+        projectTime: media.projectTime,
+        outputSize: media.outputSize,
+        frames: List<MediaFrame>.unmodifiable(frames),
+      );
+    }
+
+    return _ResolvedMediaRender(
+      media: resolvedMedia,
+      diagnosticFrames: List<MediaFrame>.unmodifiable(diagnosticFrames),
     );
   }
 
@@ -431,8 +478,9 @@ class EditVideoCompositor {
   EditVideoCompositeResult _composeEdit(
     MediaRenderResult media,
     ProjectTime time,
-    ui.Size size,
-  ) {
+    ui.Size size, {
+    required List<MediaFrame> diagnosticFrames,
+  }) {
     final EditSurfaceDocument surface = _surfaceFor(media.editId);
     final List<_ActiveLayer> layers = <_ActiveLayer>[];
 
@@ -466,7 +514,11 @@ class EditVideoCompositor {
     });
 
     if (layers.isEmpty) {
-      return _emptyResult(size, media.frames);
+      return _emptyResult(
+        size,
+        media.frames,
+        diagnosticFrames: diagnosticFrames,
+      );
     }
 
     final int width = layers.first.frame.width;
@@ -491,6 +543,7 @@ class EditVideoCompositor {
           topFrame: frame,
           contributors: List<MediaFrame>.unmodifiable(<MediaFrame>[frame]),
           mediaFrames: media.frames,
+          diagnosticFrames: diagnosticFrames,
         );
       }
     }
@@ -527,6 +580,7 @@ class EditVideoCompositor {
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: media.frames,
+      diagnosticFrames: diagnosticFrames,
     );
   }
 
@@ -534,8 +588,9 @@ class EditVideoCompositor {
     MosaicPane pane,
     MediaRenderResult media,
     ProjectTime time,
-    ui.Size size,
-  ) {
+    ui.Size size, {
+    required List<MediaFrame> diagnosticFrames,
+  }) {
     final List<_PaneLayer> layers = <_PaneLayer>[];
 
     for (int index = 0; index < media.frames.length; index++) {
@@ -559,7 +614,13 @@ class EditVideoCompositor {
 
     layers.sort((_PaneLayer a, _PaneLayer b) =>
         a.authoredIndex.compareTo(b.authoredIndex));
-    if (layers.isEmpty) return _emptyResult(size, media.frames);
+    if (layers.isEmpty) {
+      return _emptyResult(
+        size,
+        media.frames,
+        diagnosticFrames: diagnosticFrames,
+      );
+    }
 
     final int width = size.width.round();
     final int height = size.height.round();
@@ -582,6 +643,7 @@ class EditVideoCompositor {
           contributors:
               List<MediaFrame>.unmodifiable(<MediaFrame>[only.frame]),
           mediaFrames: media.frames,
+          diagnosticFrames: diagnosticFrames,
         );
       }
     }
@@ -616,13 +678,15 @@ class EditVideoCompositor {
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: media.frames,
+      diagnosticFrames: diagnosticFrames,
     );
   }
 
   EditVideoCompositeResult _emptyResult(
     ui.Size size,
-    List<MediaFrame> mediaFrames,
-  ) {
+    List<MediaFrame> mediaFrames, {
+    required List<MediaFrame> diagnosticFrames,
+  }) {
     final int width = size.width.round();
     final int height = size.height.round();
     return EditVideoCompositeResult(
@@ -633,6 +697,7 @@ class EditVideoCompositor {
       topFrame: null,
       contributors: const <MediaFrame>[],
       mediaFrames: mediaFrames,
+      diagnosticFrames: diagnosticFrames,
     );
   }
 
@@ -891,6 +956,16 @@ class EditVideoCompositor {
     _maskFrames.clear();
     _surfaces.clear();
   }
+}
+
+class _ResolvedMediaRender {
+  final MediaRenderResult media;
+  final List<MediaFrame> diagnosticFrames;
+
+  const _ResolvedMediaRender({
+    required this.media,
+    required this.diagnosticFrames,
+  });
 }
 
 class _ActiveLayer {

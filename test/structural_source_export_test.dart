@@ -212,10 +212,99 @@ void main() {
     renderer.dispose();
   });
 
+  test('nested offline leaf remains a hard error even when sibling pixels render',
+      () {
+    const String source = '''[EDIT:child]
+[TRACK:V1]
+[CLIP:good:good.mp4:0:0:2:1]
+[/CLIP]
+[/TRACK]
+[TRACK:V2]
+[CLIP:missing:missing.mp4:0:0:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:main]
+[TRACK:V1]
+[CLIP:nested:EDIT.child:0:0:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
+    final StructuralSourceFrameRenderer renderer =
+        StructuralSourceFrameRenderer.create(
+      source: source,
+      structuralSource: 'EDIT.main',
+      width: 2,
+      height: 2,
+      backend: _RecordingBackend(),
+      resolveSource: (String value) {
+        if (value == 'missing.mp4') {
+          throw FileSystemException('not found', value);
+        }
+        return value;
+      },
+    );
+
+    expect(
+      () => renderer.renderFrame(0),
+      throwsA(
+        isA<MediaDecodeException>().having(
+          (MediaDecodeException error) => error.message,
+          'message',
+          contains('Offline source "missing.mp4"'),
+        ),
+      ),
+    );
+
+    renderer.dispose();
+  });
+
   test('decoder returning adjacent source frame is rejected during export', () {
     const String source = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:leaf:leaf.mp4:0:5:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
+    final StructuralSourceFrameRenderer renderer =
+        StructuralSourceFrameRenderer.create(
+      source: source,
+      structuralSource: 'EDIT.main',
+      width: 2,
+      height: 2,
+      backend: _RecordingBackend(actualFrameOffset: 1),
+      resolveSource: (String value) => value,
+    );
+
+    expect(
+      () => renderer.renderFrame(0),
+      throwsA(
+        isA<MediaDecodeException>().having(
+          (MediaDecodeException error) => error.message,
+          'message',
+          contains('returned frame 6 when exact frame 5 was requested'),
+        ),
+      ),
+    );
+
+    renderer.dispose();
+  });
+
+  test('nested adjacent source frame mismatch is preserved through structural frame',
+      () {
+    const String source = '''[EDIT:child]
+[TRACK:V1]
+[CLIP:leaf:leaf.mp4:0:5:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:main]
+[TRACK:V1]
+[CLIP:nested:EDIT.child:0:0:2:1]
 [/CLIP]
 [/TRACK]
 [/EDIT]

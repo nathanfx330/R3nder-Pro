@@ -13,12 +13,22 @@
 // advance time itself. Integer project frames are published only when they
 // change for authored/edit semantics, while exact rational position is
 // published every vsync for smooth presentation paint.
+//
+// When a native libpulse bed is available, structural PLAY begins from SCRUB
+// rather than MONOTONIC. NativeAudioSink captures that exact authored point,
+// holds it through decoder/device prefill, then hands the SAME ProjectClock to
+// AUDIO authority only when samples become audible. PAUSE reverses the order:
+// the sink generation is stopped first, then SCRUB is reasserted, so a late
+// native release can never overwrite the parked frame.
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'audio_bed.dart';
 import 'edit_linter.dart';
 import 'edit_media_import.dart';
 import 'edit_model.dart';
@@ -34,12 +44,18 @@ import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
+import 'session_store.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
 typedef EditVideoPicker = Future<String?> Function();
 typedef EditVideoImporter = ImportedEditVideo Function(String pickedPath);
 typedef EditWorkspaceRootResolver = String Function();
+typedef EditAudioPlayerResolver = AudioBedPlayer? Function();
+typedef EditPlaybackDeviceResolver = Future<PlaybackDevice> Function(
+  AudioBedPlayer player,
+);
+typedef EditAudioProbe = Future<AudioBedInfo> Function(String path);
 typedef EditStructuralExportRunner = Future<ExportResult> Function({
   required String source,
   required String structuralSource,
@@ -49,6 +65,11 @@ typedef EditStructuralExportRunner = Future<ExportResult> Function({
   required int width,
   required int height,
   required String Function(String source) resolveSource,
+  String? audioPath,
+  double audioGainDb,
+  String? musicPath,
+  double musicGainDb,
+  bool musicLoop,
   void Function(int done, int total)? onProgress,
   void Function(String status)? onStatus,
   ExportCancelToken? cancelToken,
@@ -63,6 +84,11 @@ Future<ExportResult> _defaultStructuralExportRunner({
   required int width,
   required int height,
   required String Function(String source) resolveSource,
+  String? audioPath,
+  double audioGainDb = 0.0,
+  String? musicPath,
+  double musicGainDb = 0.0,
+  bool musicLoop = false,
   void Function(int done, int total)? onProgress,
   void Function(String status)? onStatus,
   ExportCancelToken? cancelToken,
@@ -76,10 +102,41 @@ Future<ExportResult> _defaultStructuralExportRunner({
     width: width,
     height: height,
     resolveSource: resolveSource,
+    audioPath: audioPath,
+    audioGainDb: audioGainDb,
+    musicPath: musicPath,
+    musicGainDb: musicGainDb,
+    musicLoop: musicLoop,
     onProgress: onProgress,
     onStatus: onStatus,
     cancelToken: cancelToken,
   );
+}
+
+AudioBedPlayer? _defaultAudioPlayerResolver() => sharedAudioBedPlayer;
+
+Future<PlaybackDevice> _defaultPlaybackDeviceResolver(
+  AudioBedPlayer player,
+) async {
+  String? storedId;
+  try {
+    final SessionStore session = SessionStore(
+      baseDir: resolvePortableBaseDir(),
+    )..load();
+    storedId = session.audioDeviceId;
+  } catch (_) {
+    storedId = null;
+  }
+
+  try {
+    final List<PlaybackDevice> available = await player.listDevices();
+    return resolveDevice(available, storedId);
+  } catch (_) {
+    return const PlaybackDevice(
+      id: null,
+      description: 'System Default',
+    );
+  }
 }
 
 class EditWorkspace extends StatefulWidget {
@@ -93,11 +150,15 @@ class EditWorkspace extends StatefulWidget {
   final ValueChanged<int> onSeek;
 
   /// Test seams. Production uses the GTK chooser, workspace MLT import, native
-  /// realtime ProjectClock adapter, active workspace, and structural exporter.
+  /// realtime ProjectClock adapter, borrowed app audio backend, active
+  /// workspace, and structural exporter.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
   final EditWorkspaceRootResolver? workspaceRootResolver;
+  final EditAudioPlayerResolver? audioPlayerResolver;
+  final EditPlaybackDeviceResolver? playbackDeviceResolver;
+  final EditAudioProbe? audioProbe;
   final EditStructuralExportRunner? exportSource;
 
   const EditWorkspace({
@@ -114,6 +175,9 @@ class EditWorkspace extends StatefulWidget {
     this.importVideo,
     this.playbackClockFactory,
     this.workspaceRootResolver,
+    this.audioPlayerResolver,
+    this.playbackDeviceResolver,
+    this.audioProbe,
     this.exportSource,
   });
 
@@ -129,9 +193,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
   late final ValueNotifier<EditPlaybackFrameState> _playbackFrame;
   late final ValueNotifier<EditPlaybackExactState> _playbackExact;
   EditPlaybackClock? _playClock;
+  AudioBedPlayer? _activeAudioPlayer;
   String? _selectedSourceRef;
   bool _importing = false;
   bool _playing = false;
+  bool _startingPlayback = false;
   bool _exporting = false;
   int _exportDone = 0;
   int _exportTotal = 0;
@@ -139,6 +205,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
   ExportCancelToken? _exportCancelToken;
   int _cachedSourceEndFrame = 0;
   int? _lastPolledPlaybackFrame;
+  int _transportGeneration = 0;
+  String? _musicProbePath;
+  double _musicDurationSec = 0.0;
   String? _error;
 
   bool get _traceProductionPlayback => widget.playbackClockFactory == null;
@@ -180,7 +249,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
       return;
     }
 
-    if (!_playing && widget.currentFrame != oldWidget.currentFrame) {
+    if (!_playing &&
+        !_startingPlayback &&
+        widget.currentFrame != oldWidget.currentFrame) {
       _displayFrame = widget.currentFrame.clamp(0, _cachedSourceEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
       _publishPlaybackFrame(_displayFrame, playing: false);
@@ -190,14 +261,27 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   @override
   void dispose() {
+    _transportGeneration++;
     _exportCancelToken?.cancel();
     PlaybackTrace.instance.stop(reason: 'workspace_dispose');
     _playTicker.stop();
     _playTicker.dispose();
     _playbackFrame.dispose();
     _playbackExact.dispose();
-    _playClock?.dispose();
+
+    // The player is borrowed from main and must not be disposed here. If this
+    // workspace was the one using it, stop that generation first and only then
+    // release the ProjectClock handle. NativeAudioSink may still need the
+    // handle while its feeder is quiescing.
+    final AudioBedPlayer? player = _activeAudioPlayer;
+    _activeAudioPlayer = null;
+    final EditPlaybackClock? clock = _playClock;
     _playClock = null;
+    if (player != null) {
+      unawaited(player.stop().whenComplete(() => clock?.dispose()));
+    } else {
+      clock?.dispose();
+    }
     super.dispose();
   }
 
@@ -288,12 +372,76 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   int _sourceEndFrame() => _cachedSourceEndFrame;
 
-  void _togglePlayback(StructuralSourceRef source, int end) {
+  static String? _existingAudioPath(String? path) {
+    if (path == null || path.trim().isEmpty) return null;
+    try {
+      return File(path).existsSync() ? path : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<double> _secondaryMusicSeek(
+    String musicPath,
+    double startSec,
+  ) async {
+    if (startSec <= 0.0) return 0.0;
+
+    if (_musicProbePath != musicPath) {
+      _musicProbePath = musicPath;
+      _musicDurationSec = 0.0;
+      try {
+        final AudioBedInfo info =
+            await (widget.audioProbe ?? AudioBedProbe.probe)(musicPath);
+        if (info.ok) _musicDurationSec = info.durationSec;
+      } catch (_) {
+        _musicDurationSec = 0.0;
+      }
+    }
+
+    // Falling back to the full authored seek remains correct for an infinite
+    // stream_loop; it simply asks ffmpeg to discard more decoded loops. The
+    // probe is an optimization that reduces that lead-in to one cycle.
+    return _musicDurationSec > 0.0
+        ? loopedSeek(startSec, _musicDurationSec)
+        : startSec;
+  }
+
+  void _commitPlaybackStarted(
+    int generation,
+    StructuralSourceRef source,
+    int start,
+    ProjectTime startTime, {
+    String? warning,
+  }) {
+    if (!mounted || generation != _transportGeneration) return;
+
+    if (_traceProductionPlayback) {
+      PlaybackTrace.instance.start(
+        projectFps: engineFps,
+        editId: source.canonicalSource,
+        startFrame: start,
+      );
+    }
+
+    _playTicker.stop();
+    _lastPolledPlaybackFrame = start;
+    _displayFrame = start;
+    _startingPlayback = false;
+    _playing = true;
+    _error = warning;
+    _publishPlaybackFrame(start, playing: true);
+    _publishPlaybackExact(startTime, playing: true);
+    _playTicker.start();
+    setState(() {});
+  }
+
+  Future<void> _togglePlayback(StructuralSourceRef source, int end) async {
     if (_playing) {
       _pausePlayback();
       return;
     }
-    if (end <= 0 || _exporting) return;
+    if (_startingPlayback || end <= 0 || _exporting) return;
 
     int start = _displayFrame.clamp(0, end);
     if (start >= end) {
@@ -302,35 +450,139 @@ class _EditWorkspaceState extends State<EditWorkspace>
       widget.onSeek(0);
     }
 
+    final int generation = ++_transportGeneration;
+    setState(() {
+      _startingPlayback = true;
+      _error = null;
+    });
+
     try {
       final EditPlaybackClock clock = _ensurePlaybackClock();
       final ProjectTime startTime = ProjectTime(
         frame: start,
         mode: ProjectClockMode.monotonic,
       );
-      clock.playFrom(startTime);
 
-      if (_traceProductionPlayback) {
-        PlaybackTrace.instance.start(
-          projectFps: engineFps,
-          editId: source.canonicalSource,
-          startFrame: start,
-        );
+      String? workspaceWarning;
+      _WorkspaceAudioMix audioMix = const _WorkspaceAudioMix(
+        audioPath: null,
+        audioGainDb: 0.0,
+        musicPath: null,
+        musicGainDb: 0.0,
+        musicLoop: false,
+      );
+      try {
+        final String workspace =
+            (widget.workspaceRootResolver ?? resolveActiveWorkspaceRoot)();
+        audioMix = _WorkspaceAudioMix.load(workspace);
+      } catch (error) {
+        workspaceWarning = 'STRUCTURAL AUDIO CONFIG UNAVAILABLE\n$error';
       }
 
-      _playTicker.stop();
-      _lastPolledPlaybackFrame = start;
-      _displayFrame = start;
-      _playing = true;
-      _error = null;
-      _publishPlaybackFrame(start, playing: true);
-      _publishPlaybackExact(startTime, playing: true);
-      _playTicker.start();
-      setState(() {});
+      final AudioBedPlayer? player =
+          (widget.audioPlayerResolver ?? _defaultAudioPlayerResolver)();
+      final String? bed = _existingAudioPath(audioMix.audioPath);
+      final String? music = _existingAudioPath(audioMix.musicPath);
+      final String? primary = bed ?? music;
+
+      // No usable audio is an ordinary structural playback state. The same
+      // ProjectClock simply runs MONOTONIC as it did before M13.
+      if (player == null || primary == null) {
+        if (generation != _transportGeneration || !mounted) return;
+        clock.playFrom(startTime);
+        _activeAudioPlayer = null;
+        _commitPlaybackStarted(
+          generation,
+          source,
+          start,
+          startTime,
+          warning: workspaceWarning,
+        );
+        return;
+      }
+
+      PlaybackDevice device;
+      try {
+        device = await (widget.playbackDeviceResolver ??
+            _defaultPlaybackDeviceResolver)(player);
+      } catch (_) {
+        device = const PlaybackDevice(
+          id: null,
+          description: 'System Default',
+        );
+      }
+      if (generation != _transportGeneration || !mounted) return;
+
+      final double startSec = start / engineFps;
+      final double remainingSec = (end - start) / engineFps;
+      final bool bedIsPrimary = bed != null;
+      double? musicSeekSec;
+      if (bedIsPrimary &&
+          music != null &&
+          audioMix.musicLoop &&
+          startSec > 0.0) {
+        musicSeekSec = await _secondaryMusicSeek(music, startSec);
+        if (generation != _transportGeneration || !mounted) return;
+      }
+
+      // This hold is load bearing for native audio. NativeAudioSink captures
+      // the active clock synchronously in its constructor inside player.play.
+      // Decoder startup and libpulse prefill therefore happen behind the exact
+      // authored point rather than while picture time races ahead.
+      clock.holdAt(startTime.withMode(ProjectClockMode.scrub));
+      _activeAudioPlayer = player;
+
+      String? audioWarning = workspaceWarning;
+      try {
+        await player.play(
+          primary,
+          startSec: startSec,
+          gainDb: bedIsPrimary
+              ? audioMix.audioGainDb
+              : audioMix.musicGainDb,
+          loop: bedIsPrimary ? false : audioMix.musicLoop,
+          device: device,
+          musicPath: bedIsPrimary ? music : null,
+          musicGainDb: audioMix.musicGainDb,
+          musicLoop: audioMix.musicLoop,
+          musicSeekSec: musicSeekSec,
+          durationSec: remainingSec,
+        );
+      } catch (error) {
+        audioWarning = 'STRUCTURAL AUDIO UNAVAILABLE\n$error';
+      }
+
+      if (generation != _transportGeneration || !mounted) return;
+
+      if (!player.isPlaying) {
+        // Missing/failed audio is survivable. Release the prefill hold and let
+        // picture continue silently rather than turning a valid edit into a
+        // dead transport.
+        _activeAudioPlayer = null;
+        clock.playFrom(startTime);
+      } else if (player.backendName != 'libpulse') {
+        // aplay has no native sample counter to own ProjectClock. Start the
+        // sole project clock only after the subprocess sink exists, minimizing
+        // startup skew without inventing a second timeline authority.
+        clock.playFrom(startTime);
+      }
+
+      _commitPlaybackStarted(
+        generation,
+        source,
+        start,
+        startTime,
+        warning: audioWarning,
+      );
     } catch (error) {
+      if (generation != _transportGeneration || !mounted) return;
       _playTicker.stop();
       PlaybackTrace.instance.stop(reason: 'play_error');
+      final AudioBedPlayer? player = _activeAudioPlayer;
+      _activeAudioPlayer = null;
+      if (player != null) unawaited(player.stop());
       setState(() {
+        _startingPlayback = false;
         _playing = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
         _publishPlaybackExactFrame(_displayFrame, playing: false);
@@ -358,8 +610,12 @@ class _EditWorkspaceState extends State<EditWorkspace>
     } catch (error) {
       _playTicker.stop();
       PlaybackTrace.instance.stop(reason: 'clock_error');
+      final AudioBedPlayer? player = _activeAudioPlayer;
+      _activeAudioPlayer = null;
+      if (player != null) unawaited(player.stop());
       setState(() {
         _playing = false;
+        _startingPlayback = false;
         _publishPlaybackFrame(_displayFrame, playing: false);
         _publishPlaybackExactFrame(_displayFrame, playing: false);
         _error = 'STRUCTURAL PLAYBACK CLOCK FAILED\n$error';
@@ -398,35 +654,57 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _stopPlaybackAt(frame, publish: true, traceReason: 'pause');
   }
 
+  void _holdClockAt(EditPlaybackClock? clock, int frame) {
+    if (clock == null) return;
+    try {
+      clock.holdAt(
+        ProjectTime(
+          frame: frame,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+    } catch (_) {
+      // UI state still stops even if the optional realtime clock vanished.
+    }
+  }
+
   void _stopPlaybackAt(
     int frame, {
     required bool publish,
     String traceReason = 'stop',
   }) {
     _playTicker.stop();
+    final int generation = ++_transportGeneration;
 
     final int safeFrame = frame.clamp(0, _sourceEndFrame());
     final EditPlaybackClock? clock = _playClock;
-    if (clock != null) {
-      try {
-        clock.holdAt(
-          ProjectTime(
-            frame: safeFrame,
-            mode: ProjectClockMode.scrub,
-          ),
-        );
-      } catch (_) {
-        // UI state still stops even if the optional realtime clock vanished.
-      }
-    }
+    final AudioBedPlayer? player = _activeAudioPlayer;
+    _activeAudioPlayer = null;
 
     _lastPolledPlaybackFrame = safeFrame;
-    final bool changed = _playing || _displayFrame != safeFrame;
+    final bool changed =
+        _playing || _startingPlayback || _displayFrame != safeFrame;
     _playing = false;
+    _startingPlayback = false;
     _displayFrame = safeFrame;
     _publishPlaybackFrame(safeFrame, playing: false);
     _publishPlaybackExactFrame(safeFrame, playing: false);
     PlaybackTrace.instance.stop(reason: traceReason);
+
+    if (player == null) {
+      _holdClockAt(clock, safeFrame);
+    } else {
+      // NativeAudioSink releases AUDIO back to MONOTONIC while it flushes.
+      // Reasserting SCRUB before that release would be overwritten, so the
+      // ordering is stop generation first, exact hold second.
+      unawaited(() async {
+        try {
+          await player.stop();
+        } catch (_) {}
+        if (generation != _transportGeneration) return;
+        _holdClockAt(clock, safeFrame);
+      }());
+    }
 
     if (publish && safeFrame != widget.currentFrame) {
       widget.onSeek(safeFrame);
@@ -436,7 +714,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   void _seekFromSurface(int frame) {
     final int safeFrame = frame.clamp(0, _sourceEndFrame());
-    if (_playing) {
+    if (_playing || _startingPlayback) {
       _stopPlaybackAt(
         safeFrame,
         publish: false,
@@ -444,18 +722,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       );
     } else {
       final EditPlaybackClock? clock = _playClock;
-      if (clock != null) {
-        try {
-          clock.holdAt(
-            ProjectTime(
-              frame: safeFrame,
-              mode: ProjectClockMode.scrub,
-            ),
-          );
-        } catch (_) {
-          // Seeking remains valid even if the optional realtime clock failed.
-        }
-      }
+      _holdClockAt(clock, safeFrame);
       _displayFrame = safeFrame;
       _publishPlaybackFrame(safeFrame, playing: false);
       _publishPlaybackExactFrame(safeFrame, playing: false);
@@ -468,7 +735,12 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   void _selectSource(EditDocumentModel model, String source) {
     final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
-    if (ref == null || !model.containsStructuralSource(ref) || _exporting) return;
+    if (ref == null ||
+        !model.containsStructuralSource(ref) ||
+        _exporting ||
+        _startingPlayback) {
+      return;
+    }
     if (_playing) _pausePlayback();
 
     setState(() {
@@ -484,7 +756,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   void _applySourceChange(String next, {String? selectSource}) {
-    if (_playing) _pausePlayback();
+    if (_playing || _startingPlayback) _pausePlayback();
     setState(() {
       _workingSource = next;
       if (selectSource != null) _selectedSourceRef = selectSource;
@@ -499,7 +771,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   Future<void> _addVideo(String trackId) async {
-    if (_importing || _exporting) return;
+    if (_importing || _exporting || _startingPlayback) return;
     if (_playing) _pausePlayback();
     setState(() {
       _importing = true;
@@ -570,7 +842,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   void _newEdit(EditDocumentModel model) {
-    if (_exporting) return;
+    if (_exporting || _startingPlayback) return;
     final Set<String> ids = model.edits.map((EditSequence edit) => edit.id).toSet();
     String id = 'edit';
     int suffix = 2;
@@ -596,7 +868,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
-    if (_exporting) return;
+    if (_exporting || _startingPlayback) return;
     final int duration = model.structuralSourceFrameCount(selected);
     if (duration <= 0) {
       setState(() => _error = '${selected.canonicalSource} has no authored frames.');
@@ -631,7 +903,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     EditDocumentModel model,
     EditSequence edit,
   ) async {
-    if (_exporting) return;
+    if (_exporting || _startingPlayback) return;
     final List<StructuralSourceRef> choices = _structuralSources(model)
         .where((StructuralSourceRef ref) =>
             ref.canonicalSource != 'EDIT.${edit.id}')
@@ -843,7 +1115,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   Future<void> _exportSelected(StructuralSourceRef selected) async {
-    if (_exporting || _importing) return;
+    if (_exporting || _importing || _startingPlayback) return;
     if (_playing) _pausePlayback();
 
     final _StructuralExportChoice? choice = await _chooseExportSettings();
@@ -863,6 +1135,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     try {
       final String workspace =
           (widget.workspaceRootResolver ?? resolveActiveWorkspaceRoot)();
+      final _WorkspaceAudioMix audioMix = _WorkspaceAudioMix.load(workspace);
       final Directory outputDirectory = Directory(
         '$workspace${Platform.pathSeparator}output_frames',
       );
@@ -885,6 +1158,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
         width: choice.width,
         height: choice.height,
         resolveSource: resolveWorkspaceMediaSource,
+        audioPath: audioMix.audioPath,
+        audioGainDb: audioMix.audioGainDb,
+        musicPath: audioMix.musicPath,
+        musicGainDb: audioMix.musicGainDb,
+        musicLoop: audioMix.musicLoop,
         cancelToken: cancelToken,
         onProgress: (int done, int total) {
           if (!mounted) return;
@@ -1060,7 +1338,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
                   child: Text(ref.canonicalSource),
                 ),
             ],
-            onChanged: _playing || _exporting || model == null
+            onChanged: _playing ||
+                    _startingPlayback ||
+                    _exporting ||
+                    model == null
                 ? null
                 : (String? value) {
                     if (value != null) _selectSource(model, value);
@@ -1071,7 +1352,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
         'NEW EDIT',
         theme: widget.theme,
         compact: true,
-        onPressed: model == null || _playing || _exporting
+        onPressed: model == null ||
+                _playing ||
+                _startingPlayback ||
+                _exporting
             ? null
             : () => _newEdit(model),
       ),
@@ -1083,6 +1367,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                 selected == null ||
                 selectedEnd <= 0 ||
                 _playing ||
+                _startingPlayback ||
                 _exporting
             ? null
             : () => _newMosaic(model, selected),
@@ -1095,13 +1380,17 @@ class _EditWorkspaceState extends State<EditWorkspace>
           theme: widget.theme,
           compact: true,
           kind: R3ButtonKind.primary,
-          onPressed: _importing || _exporting ? null : () => _addVideo('V1'),
+          onPressed: _importing || _startingPlayback || _exporting
+              ? null
+              : () => _addVideo('V1'),
         ),
         R3Button(
           'ADD OVERLAY',
           theme: widget.theme,
           compact: true,
-          onPressed: _importing || _exporting ? null : () => _addVideo('V2'),
+          onPressed: _importing || _startingPlayback || _exporting
+              ? null
+              : () => _addVideo('V2'),
         ),
       ],
       if (edit != null) ...[
@@ -1109,7 +1398,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
           'ADD SOURCE',
           theme: widget.theme,
           compact: true,
-          onPressed: _importing || _playing || _exporting || model == null
+          onPressed: _importing ||
+                  _playing ||
+                  _startingPlayback ||
+                  _exporting ||
+                  model == null
               ? null
               : () => _addStructuralSource(model, edit),
         ),
@@ -1117,16 +1410,17 @@ class _EditWorkspaceState extends State<EditWorkspace>
       SizedBox(width: sc(5)),
       R3MicroLabel('TRANSPORT', theme: widget.theme, accent: true),
       R3Button(
-        _playing ? 'PAUSE' : 'PLAY',
+        _startingPlayback ? 'STARTING' : (_playing ? 'PAUSE' : 'PLAY'),
         theme: widget.theme,
         compact: true,
         kind: _playing ? R3ButtonKind.hot : R3ButtonKind.primary,
         onPressed: selected == null ||
                 selectedEnd <= 0 ||
                 _importing ||
+                _startingPlayback ||
                 _exporting
             ? null
-            : () => _togglePlayback(selected, selectedEnd),
+            : () => unawaited(_togglePlayback(selected, selectedEnd)),
       ),
       SizedBox(width: sc(5)),
       R3MicroLabel('OUTPUT', theme: widget.theme, accent: true),
@@ -1137,7 +1431,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
         kind: _exporting ? R3ButtonKind.hot : R3ButtonKind.primary,
         onPressed: _exporting
             ? _cancelExport
-            : selected == null || selectedEnd <= 0 || _importing
+            : selected == null ||
+                    selectedEnd <= 0 ||
+                    _importing ||
+                    _startingPlayback
                 ? null
                 : () => _exportSelected(selected),
       ),
@@ -1151,6 +1448,16 @@ class _EditWorkspaceState extends State<EditWorkspace>
           ),
         ),
         Text('IMPORTING', style: widget.theme.micro),
+      ] else if (_startingPlayback) ...[
+        SizedBox(
+          width: sc(13),
+          height: sc(13),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: widget.theme.accentDim,
+          ),
+        ),
+        Text('SYNCING AUDIO', style: widget.theme.micro),
       ] else if (_exporting) ...[
         SizedBox(
           width: sc(13),
@@ -1235,4 +1542,86 @@ class _StructuralExportChoice {
     required this.height,
     required this.format,
   });
+}
+
+class _WorkspaceAudioMix {
+  final String? audioPath;
+  final double audioGainDb;
+  final String? musicPath;
+  final double musicGainDb;
+  final bool musicLoop;
+
+  const _WorkspaceAudioMix({
+    required this.audioPath,
+    required this.audioGainDb,
+    required this.musicPath,
+    required this.musicGainDb,
+    required this.musicLoop,
+  });
+
+  static _WorkspaceAudioMix load(String workspace) {
+    String? audioPath;
+    double audioGainDb = 0.0;
+    String? musicPath;
+    double musicGainDb = 0.0;
+    bool musicLoop = false;
+
+    final File config = File(
+      '$workspace${Platform.pathSeparator}workspace.json',
+    );
+    if (!config.existsSync()) {
+      return const _WorkspaceAudioMix(
+        audioPath: null,
+        audioGainDb: 0.0,
+        musicPath: null,
+        musicGainDb: 0.0,
+        musicLoop: false,
+      );
+    }
+
+    try {
+      final dynamic decoded = jsonDecode(config.readAsStringSync());
+      if (decoded is! Map) {
+        throw const FormatException('workspace.json root must be an object.');
+      }
+
+      String? pathFrom(dynamic value) {
+        if (value is! Map) return null;
+        final String name = ((value['file'] as String?) ?? '').trim();
+        if (name.isEmpty) return null;
+        if (name.startsWith('/') || RegExp(r'^[A-Za-z]:[\\/]').hasMatch(name)) {
+          return name;
+        }
+        return '$workspace${Platform.pathSeparator}audio'
+            '${Platform.pathSeparator}$name';
+      }
+
+      double gainFrom(dynamic value) {
+        if (value is! Map) return 0.0;
+        return ((value['gainDb'] as num?)?.toDouble() ?? 0.0)
+            .clamp(-40.0, 12.0)
+            .toDouble();
+      }
+
+      final dynamic bed = decoded['audioBed'];
+      final dynamic music = decoded['musicBed'];
+      audioPath = pathFrom(bed);
+      audioGainDb = gainFrom(bed);
+      musicPath = pathFrom(music);
+      musicGainDb = gainFrom(music);
+      if (music is Map) {
+        musicLoop = (music['loop'] as bool?) ?? false;
+      }
+    } catch (error) {
+      throw FormatException('Could not read workspace audio mix: $error');
+    }
+
+    return _WorkspaceAudioMix(
+      audioPath: audioPath,
+      audioGainDb: audioGainDb,
+      musicPath: musicPath,
+      musicGainDb: musicGainDb,
+      musicLoop: musicLoop,
+    );
+  }
 }

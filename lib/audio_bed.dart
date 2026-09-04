@@ -355,10 +355,18 @@ abstract class AudioBedPlayer {
   void dispose();
 }
 
+/// The application owns exactly one preview player. Main creates and disposes
+/// it; editing workspaces may borrow the same object so TEXT, EDIT, and MOSAIC
+/// can never spawn competing playback pipelines. This reference transfers no
+/// ownership. It is cleared by the owning player's dispose path.
+AudioBedPlayer? _sharedAudioBedPlayer;
+AudioBedPlayer? get sharedAudioBedPlayer => _sharedAudioBedPlayer;
+
 /// Prefers the in-process Linux libpulse sink. aplay remains a fallback for a
 /// Linux environment where the PulseAudio-compatible server cannot be opened.
 /// Export remains enabled even when neither preview backend is available.
 Future<AudioBedPlayer?> createAudioBedPlayer() async {
+  AudioBedPlayer? player;
   if (Platform.isLinux && NativeAudioSink.isSupported) {
     try {
       final NativeAudioSink probe = NativeAudioSink(
@@ -366,14 +374,17 @@ Future<AudioBedPlayer?> createAudioBedPlayer() async {
         channels: _kBedChannels,
       );
       probe.dispose();
-      return _PipedPlayer._nativePulse();
+      player = _PipedPlayer._nativePulse();
     } catch (_) {
       // Fall through to aplay. A render-only machine may legitimately have no
       // PulseAudio-compatible server even though the runner has libpulse.
     }
   }
-  if (await _binaryExists('aplay')) return _PipedPlayer._aplay();
-  return null;
+  if (player == null && await _binaryExists('aplay')) {
+    player = _PipedPlayer._aplay();
+  }
+  _sharedAudioBedPlayer = player;
+  return player;
 }
 
 Future<bool> _binaryExists(String name) async {
@@ -868,6 +879,9 @@ class _PipedPlayer implements AudioBedPlayer {
 
   @override
   void dispose() {
+    if (identical(_sharedAudioBedPlayer, this)) {
+      _sharedAudioBedPlayer = null;
+    }
     _generation++;
     _killQuietly(_decoder);
     _killQuietly(_sink);

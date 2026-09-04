@@ -7,17 +7,28 @@
 // through the blocking compositor path. A decoder may take as long as it needs
 // to produce that frame, but it cannot move project time, shorten the authored
 // source, substitute a nearby frame, or turn an offline layer into a hold.
+// Recursive EDIT/MOSAIC boundaries preserve leaf decode diagnostics separately
+// from their synthetic composition frames, so every actual decoder result is
+// validated here even when another nested layer still produced visible pixels.
+//
+// Structural audio follows the same rule. Workspace voice and music may be
+// muxed under a structural root, but neither track may change its authored
+// frame count. Voice therefore differs from terminal SceneExporter semantics:
+// terminal voice can stretch an already-owned end hold before rendering,
+// whereas EDIT/MOSAIC duration is canonical authoring state and is immutable
+// here. Music looping fills the authored duration and never extends it.
 //
 // Terminal SceneExporter remains independent. Its Flutter-canvas readback is
-// premultiplied and has preroll/audio semantics that structural sources do not.
+// premultiplied and has preroll semantics that structural sources do not.
 // Structural frames come directly from MLT plus R3nder's RGBA compositor, so
-// terminal-only readback filters are not copied into this path.
+// terminal-only readback and preroll filters are not copied into this path.
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'audio_mix.dart';
 import 'edit_linter.dart';
 import 'edit_model.dart';
 import 'edit_video_compositor.dart';
@@ -134,7 +145,11 @@ class StructuralSourceFrameRenderer {
       );
     }
 
-    for (final MediaFrame frame in result.mediaFrames) {
+    // Validate the recursive leaf channel, not the composition-local synthetic
+    // frame list. A nested structural source can produce useful pixels from one
+    // layer while another leaf is offline or returned the wrong source frame;
+    // exact export must still fail rather than silently bake the partial image.
+    for (final MediaFrame frame in result.diagnosticFrames) {
       if (frame.status == MediaFrameStatus.offline) {
         throw MediaDecodeException(
           'Offline source "${frame.source}" while exporting '
@@ -224,6 +239,11 @@ class StructuralSourceExporter {
     required int height,
     required String Function(String source) resolveSource,
     MediaDecoderBackend? backend,
+    String? audioPath,
+    double audioGainDb = 0.0,
+    String? musicPath,
+    double musicGainDb = 0.0,
+    bool musicLoop = false,
     void Function(int done, int total)? onProgress,
     void Function(String status)? onStatus,
     ExportCancelToken? cancelToken,
@@ -315,6 +335,15 @@ class StructuralSourceExporter {
         await outputDirectory.create(recursive: true);
       }
 
+      // Missing workspace audio is survivable, exactly as terminal BAKE is.
+      // A missing bed must not turn a valid structural picture export into a
+      // failed render. Callers normally pass already-probed paths, but keeping
+      // this check here makes the exporter safe as a standalone boundary too.
+      final String? bedFile =
+          audioPath != null && File(audioPath).existsSync() ? audioPath : null;
+      final String? musicFile =
+          musicPath != null && File(musicPath).existsSync() ? musicPath : null;
+
       final Process currentProcess = await Process.start(
         'ffmpeg',
         _ffmpegArgs(
@@ -324,6 +353,12 @@ class StructuralSourceExporter {
           fps: fps,
           width: width,
           height: height,
+          totalFrames: totalFrames,
+          bedFile: bedFile,
+          audioGainDb: audioGainDb,
+          musicFile: musicFile,
+          musicGainDb: musicGainDb,
+          musicLoop: musicLoop,
         ),
       );
       process = currentProcess;
@@ -404,12 +439,21 @@ class StructuralSourceExporter {
     required int fps,
     required int width,
     required int height,
+    required int totalFrames,
+    required String? bedFile,
+    required double audioGainDb,
+    required String? musicFile,
+    required double musicGainDb,
+    required bool musicLoop,
   }) {
+    final bool hasAudio = bedFile != null || musicFile != null;
+
     final List<String> args = <String>[
       '-y',
       '-v',
       'error',
       '-nostats',
+      '-nostdin',
       '-f',
       'rawvideo',
       '-pix_fmt',
@@ -420,11 +464,59 @@ class StructuralSourceExporter {
       '$fps',
       '-i',
       'pipe:0',
+      if (bedFile != null) ...<String>[
+        '-i',
+        bedFile,
+      ],
+      if (musicFile != null) ...<String>[
+        if (musicLoop) ...<String>['-stream_loop', '-1'],
+        '-i',
+        musicFile,
+      ],
     ];
+
+    const String audioOutLabel = 'structaudio';
+    String audioGraph = '';
+    if (hasAudio) {
+      final String voiceInput = '1:a';
+      final String musicInput = bedFile != null ? '2:a' : '1:a';
+      if (bedFile != null && musicFile != null) {
+        audioGraph = '${bedMixGraph(
+          voiceGainDb: audioGainDb,
+          musicGainDb: musicGainDb,
+          voiceInput: voiceInput,
+          musicInput: musicInput,
+        )};[$kBedMixOutLabel]apad[$audioOutLabel]';
+      } else {
+        final String input = bedFile != null ? voiceInput : musicInput;
+        final double gain = bedFile != null ? audioGainDb : musicGainDb;
+        audioGraph =
+            '[$input]${bedVolumeFilter(gain)},apad[$audioOutLabel]';
+      }
+    }
+
+    // Structural time is authored frame count. The audio may be longer,
+    // shorter, or infinitely looped, so every audio-bearing output is cut at
+    // exactly the picture duration. The decimal is an ffmpeg boundary value,
+    // never canonical project state; frame count and fps remain the source of
+    // truth throughout R3nder.
+    final String outDuration = (totalFrames / fps).toStringAsFixed(9);
 
     switch (format) {
       case VideoExportFormat.h264Solid:
         args.addAll(<String>[
+          if (hasAudio) ...<String>[
+            '-filter_complex',
+            audioGraph,
+            '-map',
+            '0:v:0',
+            '-map',
+            '[$audioOutLabel]',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '192k',
+          ],
           '-c:v',
           'libx264',
           '-preset',
@@ -435,11 +527,23 @@ class StructuralSourceExporter {
           'yuv420p',
           '-threads',
           '0',
+          if (hasAudio) ...<String>['-t', outDuration],
           outputPath,
         ]);
         break;
+
       case VideoExportFormat.proresAlpha:
         args.addAll(<String>[
+          if (hasAudio) ...<String>[
+            '-filter_complex',
+            audioGraph,
+            '-map',
+            '0:v:0',
+            '-map',
+            '[$audioOutLabel]',
+            '-c:a',
+            'pcm_s24le',
+          ],
           '-c:v',
           'prores_ks',
           '-profile:v',
@@ -450,17 +554,32 @@ class StructuralSourceExporter {
           'yuva444p10le',
           '-threads',
           '0',
+          if (hasAudio) ...<String>['-t', outDuration],
           outputPath,
         ]);
         break;
+
       case VideoExportFormat.lumaMatte:
+        const String videoGraph =
+            '[0:v]split=2[fg][fa];'
+            '[fg]format=yuv420p[color];'
+            '[fa]alphaextract,format=yuv420p[matte]';
         args.addAll(<String>[
           '-filter_complex',
-          '[0:v]split=2[fg][fa];'
-              '[fg]format=yuv420p[color];'
-              '[fa]alphaextract,format=yuv420p[matte]',
+          hasAudio ? '$videoGraph;$audioGraph' : videoGraph,
+
+          // Fill carries the sound. The matte stays silent so dropping both
+          // files into an NLE cannot accidentally double the audio level.
           '-map',
           '[color]',
+          if (hasAudio) ...<String>[
+            '-map',
+            '[$audioOutLabel]',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '192k',
+          ],
           '-c:v',
           'libx264',
           '-preset',
@@ -469,7 +588,9 @@ class StructuralSourceExporter {
           '18',
           '-threads',
           '0',
+          if (hasAudio) ...<String>['-t', outDuration],
           outputPath,
+
           '-map',
           '[matte]',
           '-c:v',
@@ -481,6 +602,7 @@ class StructuralSourceExporter {
           '-threads',
           '0',
           '-an',
+          if (hasAudio) ...<String>['-t', outDuration],
           mattePath!,
         ]);
         break;
