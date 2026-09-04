@@ -303,7 +303,10 @@ class EditSurfaceDocument {
       final String insertion = '  $opening$lineEnding'
           '$childIndent[/CLIP]$lineEnding'
           '$parentIndent';
-      next = source.replaceRange(close, close, insertion);
+      next = model.cst.insertBeforeClosingTag(
+        existingTrack.track.block,
+        insertion,
+      );
     } else {
       final int close = edit.block.closeStartOffset;
       final String editIndent = _lineIndentAt(source, close);
@@ -314,7 +317,7 @@ class EditSurfaceDocument {
           '$clipIndent[/CLIP]$lineEnding'
           '$trackIndent[/TRACK]$lineEnding'
           '$editIndent';
-      next = source.replaceRange(close, close, insertion);
+      next = model.cst.insertBeforeClosingTag(edit.block, insertion);
     }
 
     EditSurfaceDocument.parse(next, editId);
