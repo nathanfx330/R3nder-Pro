@@ -39,6 +39,7 @@ import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
 import 'engine.dart';
 import 'exporter.dart';
+import 'media_layer.dart';
 import 'mosaic_surface.dart';
 import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
@@ -151,7 +152,8 @@ class EditWorkspace extends StatefulWidget {
 
   /// Test seams. Production uses the GTK chooser, workspace MLT import, native
   /// realtime ProjectClock adapter, borrowed app audio backend, active
-  /// workspace, and structural exporter.
+  /// workspace, structural exporter, native preview decoder, and workspace
+  /// media resolver.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
@@ -160,6 +162,8 @@ class EditWorkspace extends StatefulWidget {
   final EditPlaybackDeviceResolver? playbackDeviceResolver;
   final EditAudioProbe? audioProbe;
   final EditStructuralExportRunner? exportSource;
+  final MediaDecoderBackend? backend;
+  final String Function(String source)? resolveSource;
 
   const EditWorkspace({
     super.key,
@@ -179,6 +183,8 @@ class EditWorkspace extends StatefulWidget {
     this.playbackDeviceResolver,
     this.audioProbe,
     this.exportSource,
+    this.backend,
+    this.resolveSource,
   });
 
   @override
@@ -1271,6 +1277,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
                                 theme: widget.theme,
                                 onSourceChanged: _applySourceChange,
                                 onSeek: _seekFromSurface,
+                                backend: widget.backend,
+                                resolveSource: widget.resolveSource,
                               )
                             : MosaicSurface(
                                 key: ValueKey('mosaic:${mosaic!.id}'),
@@ -1284,6 +1292,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
                                 theme: widget.theme,
                                 onSourceChanged: _applySourceChange,
                                 onSeek: _seekFromSurface,
+                                backend: widget.backend,
+                                resolveSource: widget.resolveSource,
                               ),
                       ),
           ),

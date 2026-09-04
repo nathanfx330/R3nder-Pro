@@ -21,6 +21,7 @@ import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
+import 'media_layer.dart';
 import 'ui_theme.dart';
 
 class EditSurface extends StatefulWidget {
@@ -35,6 +36,12 @@ class EditSurface extends StatefulWidget {
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
 
+  /// Optional decoder seams forwarded to EditVideoPreview. Production leaves
+  /// both null so the preview owns its native MLT backend and workspace source
+  /// resolver. Widget tests inject them to stay entirely off native symbols.
+  final MediaDecoderBackend? backend;
+  final String Function(String source)? resolveSource;
+
   const EditSurface({
     super.key,
     required this.source,
@@ -47,6 +54,8 @@ class EditSurface extends StatefulWidget {
     this.voiceFrames = 0,
     this.musicFrames = 0,
     this.musicLoops = false,
+    this.backend,
+    this.resolveSource,
   });
 
   @override
@@ -441,6 +450,8 @@ class _EditSurfaceState extends State<EditSurface> {
             isPlaying: widget.isPlaying,
             fastPreview: _scrubbing || widget.isPlaying,
             theme: widget.theme,
+            backend: widget.backend,
+            resolveSource: widget.resolveSource,
           ),
         ),
         Expanded(

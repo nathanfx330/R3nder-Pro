@@ -1,6 +1,7 @@
 // ./test/edit_workspace_test.dart
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:r3nder/edit_playback_clock.dart';
 import 'package:r3nder/edit_surface_model.dart';
 import 'package:r3nder/edit_workspace.dart';
 import 'package:r3nder/exporter.dart';
+import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -131,6 +133,41 @@ class _FakeAudioBedPlayer implements AudioBedPlayer {
   }
 }
 
+class _PreviewBackend implements MediaDecoderBackend {
+  int openCount = 0;
+  final List<String> openedPaths = <String>[];
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    openCount++;
+    openedPaths.add(resolvedPath);
+    return _PreviewDecoder();
+  }
+}
+
+class _PreviewDecoder implements MediaDecoder {
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    final Uint8List rgba = Uint8List(width * height * 4);
+    for (int i = 3; i < rgba.length; i += 4) {
+      rgba[i] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
+String _previewResolve(String source) => '/virtual/$source';
+
 void main() {
   testWidgets('ADD VIDEO creates first edit and V1 clip without TEXT authoring',
       (WidgetTester tester) async {
@@ -147,6 +184,8 @@ void main() {
             theme: R3Theme.of(Colors.green),
             onSourceChanged: (String value) => latest = value,
             onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
             pickVideo: () async => '/outside/interview.mp4',
             importVideo: (_) => const ImportedEditVideo(
               authoredSource: 'video/interview.mp4',
@@ -183,6 +222,8 @@ void main() {
             theme: R3Theme.of(Colors.green),
             onSourceChanged: (String value) => latest = value,
             onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
             pickVideo: () async => '/outside/spring.webm',
             importVideo: (_) => const ImportedEditVideo(
               authoredSource: 'video/spring.webm',
@@ -231,6 +272,8 @@ void main() {
             theme: R3Theme.of(Colors.green),
             onSourceChanged: (String value) => latest = value,
             onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
             pickVideo: () async => '/outside/title.mov',
             importVideo: (_) => const ImportedEditVideo(
               authoredSource: 'video/title.mov',
@@ -280,6 +323,8 @@ void main() {
             theme: R3Theme.of(Colors.green),
             onSourceChanged: (_) {},
             onSeek: (int frame) => lastSeek = frame,
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
             playbackClockFactory: (RationalFrameRate rate) {
               fake = _FakePlaybackClock(rate);
               return fake!;
@@ -354,8 +399,6 @@ void main() {
         late _FakeAudioBedPlayer audio;
         audio = _FakeAudioBedPlayer(
           onPlay: () {
-            // Simulate NativeAudioSink releasing the held ProjectClock under
-            // AUDIO authority once the first audible sample is due.
             clock!.running = true;
           },
         );
@@ -376,6 +419,8 @@ void main() {
                 theme: R3Theme.of(Colors.green),
                 onSourceChanged: (_) {},
                 onSeek: (int frame) => lastSeek = frame,
+                backend: _PreviewBackend(),
+                resolveSource: _previewResolve,
                 workspaceRootResolver: () => temp.path,
                 playbackClockFactory: (RationalFrameRate rate) {
                   clock = _FakePlaybackClock(rate);
@@ -465,6 +510,8 @@ void main() {
             theme: R3Theme.of(Colors.green),
             onSourceChanged: (String value) => latest = value,
             onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
           ),
         ),
       ),
@@ -556,6 +603,8 @@ void main() {
         String? exportedMusicPath;
         double? exportedMusicGain;
         bool? exportedMusicLoop;
+        final _PreviewBackend previewBackend = _PreviewBackend();
+        final List<String> resolvedPreviewSources = <String>[];
 
         await tester.pumpWidget(
           MaterialApp(
@@ -568,6 +617,11 @@ void main() {
                 theme: R3Theme.of(Colors.green),
                 onSourceChanged: (_) {},
                 onSeek: (_) {},
+                backend: previewBackend,
+                resolveSource: (String value) {
+                  resolvedPreviewSources.add(value);
+                  return '/preview/$value';
+                },
                 workspaceRootResolver: () => temp.path,
                 exportSource: ({
                   required String source,
@@ -611,7 +665,13 @@ void main() {
             ),
           ),
         );
-        await tester.pump();
+
+        for (int i = 0; i < 20 && previewBackend.openCount == 0; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(previewBackend.openCount, greaterThan(0));
+        expect(resolvedPreviewSources, contains('video/base.mp4'));
+        expect(previewBackend.openedPaths, contains('/preview/video/base.mp4'));
 
         expect(find.textContaining('MOSAIC wall'), findsWidgets);
         expect(find.text('EXPORT'), findsOneWidget);
