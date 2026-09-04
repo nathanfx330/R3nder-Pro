@@ -13,6 +13,14 @@
 // recognizes only structural ownership tags and records exact source spans.
 // Everything else remains uninterpreted source. Mutations are source-range
 // replacements, so bytes outside the selected span are preserved verbatim.
+//
+// Structural scanning also respects lexical ownership already established by
+// the terminal language. CARD, DOSSIER, TIMELINE, DEF_MENU, and comments may
+// contain bracketed text as data. A token that merely looks like EDIT, TRACK,
+// MOSAIC, PANE, or CLIP inside one of those opaque spans is not structural
+// source and must never enter this tree.
+
+import 'parser.dart' show tagRegex;
 
 class ScriptCstFormatException implements Exception {
   final String message;
@@ -37,16 +45,40 @@ class ScriptCstDocument {
     r'\[(?<close>/)?(?<type>EDIT|TRACK|MOSAIC|PANE|CLIP)(?<tail>:[^\]\r\n]*)?\]',
   );
 
+  // Keep these two expressions aligned with the existing terminal parser.
+  // CARD, DOSSIER, and TIMELINE come from tagRegex itself below, so their
+  // exact grammar remains single-source rather than being copied here.
+  static final RegExp _definitionBlock = RegExp(
+    r'\[DEF_MENU:[a-zA-Z0-9_-]+\].*?\[/DEF_MENU\]',
+    dotAll: true,
+  );
+  static final RegExp _comment = RegExp(
+    r'\[#.*?\]\n?',
+    dotAll: true,
+  );
+
   final String source;
   final List<ScriptCstBlock> roots;
 
   ScriptCstDocument._(this.source, this.roots);
 
   factory ScriptCstDocument.parse(String source) {
+    final List<_SourceRange> opaqueRanges = _opaqueSourceRanges(source);
+    int opaqueIndex = 0;
+
     final List<_OpenStructuralBlock> stack = <_OpenStructuralBlock>[];
     final List<ScriptCstBlock> roots = <ScriptCstBlock>[];
 
     for (final RegExpMatch match in _structuralTag.allMatches(source)) {
+      while (opaqueIndex < opaqueRanges.length &&
+          opaqueRanges[opaqueIndex].endOffset <= match.start) {
+        opaqueIndex++;
+      }
+      if (opaqueIndex < opaqueRanges.length &&
+          opaqueRanges[opaqueIndex].contains(match.start)) {
+        continue;
+      }
+
       final bool closing = match.namedGroup('close') != null;
       final String type = match.namedGroup('type')!;
       final String tail = match.namedGroup('tail') ?? '';
@@ -188,6 +220,20 @@ class ScriptCstDocument {
     );
   }
 
+  /// Inserts source immediately before one owned block's closing tag.
+  ///
+  /// Container authoring uses this instead of applying a raw offset directly.
+  /// The insertion is therefore anchored to the exact CST owner that granted
+  /// permission to mutate that location.
+  String insertBeforeClosingTag(ScriptCstBlock block, String insertion) {
+    _checkOwned(block);
+    return source.replaceRange(
+      block.closeStartOffset,
+      block.closeStartOffset,
+      insertion,
+    );
+  }
+
   void _checkOwned(ScriptCstBlock block) {
     final bool present = roots.any(
       (ScriptCstBlock root) =>
@@ -253,6 +299,60 @@ class ScriptCstDocument {
         }
       }
     }
+  }
+
+  static List<_SourceRange> _opaqueSourceRanges(String source) {
+    final List<_SourceRange> ranges = <_SourceRange>[];
+
+    // The runtime tag grammar already owns these complete blocks, including
+    // their bodies. Reusing its matches avoids a second copy of their header
+    // grammar here while preserving the exact source offsets.
+    for (final RegExpMatch match in tagRegex.allMatches(source)) {
+      final String raw = match.group(0) ?? '';
+      if (raw.startsWith('[CARD:') ||
+          raw.startsWith('[DOSSIER:') ||
+          raw.startsWith('[TIMELINE')) {
+        ranges.add(_SourceRange(match.start, match.end));
+      }
+    }
+
+    // Macro definitions are intentionally outside tagRegex but are also one
+    // opaque construct in ScriptNode parsing and macro preprocessing.
+    for (final RegExpMatch match in _definitionBlock.allMatches(source)) {
+      ranges.add(_SourceRange(match.start, match.end));
+    }
+
+    // Match the terminal preprocessor's comment ownership exactly. This also
+    // protects a structural-looking token before the comment's first closing
+    // bracket from being interpreted by the CST.
+    for (final RegExpMatch match in _comment.allMatches(source)) {
+      ranges.add(_SourceRange(match.start, match.end));
+    }
+
+    if (ranges.length < 2) {
+      return List<_SourceRange>.unmodifiable(ranges);
+    }
+
+    ranges.sort((_SourceRange a, _SourceRange b) {
+      final int byStart = a.startOffset.compareTo(b.startOffset);
+      if (byStart != 0) return byStart;
+      return a.endOffset.compareTo(b.endOffset);
+    });
+
+    final List<_SourceRange> merged = <_SourceRange>[];
+    for (final _SourceRange range in ranges) {
+      if (merged.isEmpty || range.startOffset > merged.last.endOffset) {
+        merged.add(range);
+        continue;
+      }
+      if (range.endOffset > merged.last.endOffset) {
+        merged[merged.length - 1] = _SourceRange(
+          merged.last.startOffset,
+          range.endOffset,
+        );
+      }
+    }
+    return List<_SourceRange>.unmodifiable(merged);
   }
 }
 
@@ -327,4 +427,13 @@ class _OpenStructuralBlock {
     required this.startOffset,
     required this.openEndOffset,
   });
+}
+
+class _SourceRange {
+  final int startOffset;
+  final int endOffset;
+
+  const _SourceRange(this.startOffset, this.endOffset);
+
+  bool contains(int offset) => offset >= startOffset && offset < endOffset;
 }
