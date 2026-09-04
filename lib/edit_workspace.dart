@@ -201,6 +201,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
   EditPlaybackClock? _playClock;
   AudioBedPlayer? _activeAudioPlayer;
   String? _selectedSourceRef;
+  String? _mosaicRangeSourceRef;
+  int _mosaicInFrame = 0;
+  int _mosaicOutFrameExclusive = 0;
   bool _importing = false;
   bool _playing = false;
   bool _startingPlayback = false;
@@ -364,6 +367,32 @@ class _EditWorkspaceState extends State<EditWorkspace>
     return fallback;
   }
 
+  void _ensureMosaicRange(StructuralSourceRef? selected, int sourceEnd) {
+    final String? sourceRef = selected?.canonicalSource;
+    if (sourceRef == null || sourceEnd <= 0) {
+      _mosaicRangeSourceRef = sourceRef;
+      _mosaicInFrame = 0;
+      _mosaicOutFrameExclusive = 0;
+      return;
+    }
+
+    if (_mosaicRangeSourceRef != sourceRef) {
+      _mosaicRangeSourceRef = sourceRef;
+      _mosaicInFrame = 0;
+      _mosaicOutFrameExclusive = sourceEnd;
+      return;
+    }
+
+    if (_mosaicInFrame < 0) _mosaicInFrame = 0;
+    if (_mosaicInFrame >= sourceEnd) _mosaicInFrame = sourceEnd - 1;
+    if (_mosaicOutFrameExclusive > sourceEnd) {
+      _mosaicOutFrameExclusive = sourceEnd;
+    }
+    if (_mosaicOutFrameExclusive <= _mosaicInFrame) {
+      _mosaicOutFrameExclusive = _mosaicInFrame + 1;
+    }
+  }
+
   void _refreshSourceSelectionAndEnd() {
     try {
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
@@ -371,8 +400,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _cachedSourceEndFrame = selected == null
           ? 0
           : model.structuralSourceFrameCount(selected);
+      _ensureMosaicRange(selected, _cachedSourceEndFrame);
     } catch (_) {
       _cachedSourceEndFrame = 0;
+      _ensureMosaicRange(null, 0);
     }
   }
 
@@ -752,6 +783,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     setState(() {
       _selectedSourceRef = ref.canonicalSource;
       _cachedSourceEndFrame = model.structuralSourceFrameCount(ref);
+      _ensureMosaicRange(ref, _cachedSourceEndFrame);
       _displayFrame = _displayFrame.clamp(0, _cachedSourceEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
       _publishPlaybackFrame(_displayFrame, playing: false);
@@ -873,13 +905,56 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _applySourceChange(next, selectSource: 'EDIT.$id');
   }
 
+  void _markMosaicIn(StructuralSourceRef selected, int sourceEnd) {
+    if (sourceEnd <= 0) return;
+    final int frame = _displayFrame.clamp(0, sourceEnd - 1);
+    setState(() {
+      _ensureMosaicRange(selected, sourceEnd);
+      _mosaicInFrame = frame;
+      if (_mosaicOutFrameExclusive <= frame) {
+        _mosaicOutFrameExclusive = frame + 1;
+      }
+      _error = null;
+    });
+  }
+
+  void _markMosaicOut(StructuralSourceRef selected, int sourceEnd) {
+    if (sourceEnd <= 0) return;
+    final int frame = _displayFrame.clamp(0, sourceEnd - 1);
+    final int outExclusive = frame + 1;
+    setState(() {
+      _ensureMosaicRange(selected, sourceEnd);
+      _mosaicOutFrameExclusive = outExclusive;
+      if (_mosaicInFrame >= outExclusive) {
+        _mosaicInFrame = outExclusive - 1;
+      }
+      _error = null;
+    });
+  }
+
+  void _resetMosaicRange(StructuralSourceRef selected, int sourceEnd) {
+    if (sourceEnd <= 0) return;
+    setState(() {
+      _mosaicRangeSourceRef = selected.canonicalSource;
+      _mosaicInFrame = 0;
+      _mosaicOutFrameExclusive = sourceEnd;
+      _error = null;
+    });
+  }
+
   void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
     if (_exporting || _startingPlayback) return;
-    final int duration = model.structuralSourceFrameCount(selected);
-    if (duration <= 0) {
+    final int sourceEnd = model.structuralSourceFrameCount(selected);
+    if (sourceEnd <= 0) {
       setState(() => _error = '${selected.canonicalSource} has no authored frames.');
       return;
     }
+
+    _ensureMosaicRange(selected, sourceEnd);
+    final int inFrame = _mosaicInFrame.clamp(0, sourceEnd - 1);
+    final int outFrameExclusive =
+        _mosaicOutFrameExclusive.clamp(inFrame + 1, sourceEnd);
+    final int duration = outFrameExclusive - inFrame;
 
     final Set<String> ids =
         model.mosaics.map((MosaicSequence mosaic) => mosaic.id).toSet();
@@ -897,6 +972,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
         paneId: 'pane',
         clipId: 'source',
         structuralSource: selected.canonicalSource,
+        inFrame: inFrame,
         durationFrames: duration,
       );
       _applySourceChange(next, selectSource: 'MOSAIC.$id');
@@ -1309,6 +1385,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _cachedSourceEndFrame = selected == null
           ? 0
           : model.structuralSourceFrameCount(selected);
+      _ensureMosaicRange(selected, _cachedSourceEndFrame);
       return model;
     } catch (error) {
       _error ??= '$error';
@@ -1328,6 +1405,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final List<StructuralSourceRef> refs =
         model == null ? const <StructuralSourceRef>[] : _structuralSources(model);
     final bool mediaMode = selected == null || edit != null;
+    final bool rangeReady = selected != null && selectedEnd > 0;
+    final int rangeDuration = rangeReady
+        ? (_mosaicOutFrameExclusive - _mosaicInFrame).clamp(1, selectedEnd)
+        : 0;
+    final int rangeOutDisplay = rangeReady ? _mosaicOutFrameExclusive - 1 : 0;
 
     final List<Widget> controls = <Widget>[
       R3MicroLabel('STRUCTURE', theme: widget.theme, accent: true),
@@ -1369,19 +1451,51 @@ class _EditWorkspaceState extends State<EditWorkspace>
             ? null
             : () => _newEdit(model),
       ),
-      R3Button(
-        'NEW MOSAIC',
-        theme: widget.theme,
-        compact: true,
-        onPressed: model == null ||
-                selected == null ||
-                selectedEnd <= 0 ||
-                _playing ||
-                _startingPlayback ||
-                _exporting
-            ? null
-            : () => _newMosaic(model, selected),
-      ),
+      if (rangeReady) ...[
+        SizedBox(width: sc(5)),
+        R3MicroLabel('MOSAIC RANGE', theme: widget.theme, accent: true),
+        R3Button(
+          'SET IN',
+          theme: widget.theme,
+          compact: true,
+          onPressed: _playing || _startingPlayback || _exporting
+              ? null
+              : () => _markMosaicIn(selected, selectedEnd),
+        ),
+        R3Button(
+          'SET OUT',
+          theme: widget.theme,
+          compact: true,
+          onPressed: _playing || _startingPlayback || _exporting
+              ? null
+              : () => _markMosaicOut(selected, selectedEnd),
+        ),
+        R3Button(
+          'RESET',
+          theme: widget.theme,
+          compact: true,
+          onPressed: _playing || _startingPlayback || _exporting
+              ? null
+              : () => _resetMosaicRange(selected, selectedEnd),
+        ),
+        Text(
+          'IN F$_mosaicInFrame   OUT F$rangeOutDisplay   ${rangeDuration}F',
+          key: const ValueKey<String>('mosaic-source-range-readout'),
+          style: widget.theme.micro,
+        ),
+        R3Button(
+          'SEND TO MOSAIC',
+          theme: widget.theme,
+          compact: true,
+          kind: R3ButtonKind.primary,
+          onPressed: model == null ||
+                  _playing ||
+                  _startingPlayback ||
+                  _exporting
+              ? null
+              : () => _newMosaic(model, selected),
+        ),
+      ],
       if (mediaMode) ...[
         SizedBox(width: sc(5)),
         R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
