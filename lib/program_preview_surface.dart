@@ -38,6 +38,19 @@ class ProgramPreviewSurface extends StatefulWidget {
 }
 
 class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
+  static const List<String> _terminalFontFallbacks = <String>[
+    'Courier',
+    'Consolas',
+    'Courier New',
+    'monospace',
+  ];
+
+  /// Same baseline measurement used by TerminalPainter's glyph cache. The
+  /// structural hand-off is a different widget, but it must not invent a
+  /// different cursor rectangle on the frame where it takes over.
+  static final Map<(String, double), double> _cursorBaselines =
+      <(String, double), double>{};
+
   late List<StructuralSequencePlacement> _placements;
 
   @override
@@ -81,6 +94,43 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     );
   }
 
+  Size _terminalCursorFraction() {
+    final terminal = widget.scene.terminal;
+    final double fontSize = terminal.currentFontSize;
+    final (String, double) key = (widget.fontFamily, fontSize);
+
+    double? baseline = _cursorBaselines[key];
+    if (baseline == null) {
+      final TextPainter ref = TextPainter(
+        text: TextSpan(
+          text: 'M',
+          style: TextStyle(
+            fontFamily: widget.fontFamily,
+            fontFamilyFallback: _terminalFontFallbacks,
+            fontSize: fontSize,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      ref.layout();
+      baseline = ref.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+      ref.dispose();
+      _cursorBaselines[key] = baseline;
+    }
+
+    final double engineWidth = terminal.width > 0.0 ? terminal.width : 1.0;
+    final double engineHeight = terminal.height > 0.0 ? terminal.height : 1.0;
+
+    // Must mirror TerminalPainter exactly:
+    //   width  = currentFontSize * 0.5
+    //   height = resolved alphabetic baseline * 0.78
+    return Size(
+      (fontSize * 0.5) / engineWidth,
+      (baseline * 0.78) / engineHeight,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -114,6 +164,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
                   isPlaying: true,
                   theme: widget.theme,
                   wallpaper: widget.scene.wallpaper,
+                  terminalCursorFraction: _terminalCursorFraction(),
                 ),
               ),
           ],
