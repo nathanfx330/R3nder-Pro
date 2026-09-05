@@ -51,8 +51,7 @@ _Stats _measure(String source, {required int iterations}) {
     rootSink += ScriptCstDocument.parse(source).roots.length;
   }
 
-  final List<int> samplesUs = <int>[];
-  samplesUs.length = iterations;
+  final List<int> samplesUs = List<int>.filled(iterations, 0);
 
   for (int i = 0; i < iterations; i++) {
     final Stopwatch stopwatch = Stopwatch()..start();
