@@ -97,6 +97,12 @@ class EditVideoPreview extends StatefulWidget {
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
+  /// Fired once after this preview has an actual presentable picture, either
+  /// a native texture or a converted compositor image. Pending/blank states do
+  /// not count. Structural sequence presentation uses this to avoid revealing
+  /// an empty black client before frame zero is resident.
+  final VoidCallback? onFirstFrameReady;
+
   const EditVideoPreview({
     super.key,
     required this.source,
@@ -108,6 +114,7 @@ class EditVideoPreview extends StatefulWidget {
     this.fastPreview = false,
     this.backend,
     this.resolveSource,
+    this.onFirstFrameReady,
   }) : assert(
           (editId != null && structuralSource == null) ||
               (editId == null && structuralSource != null),
@@ -140,6 +147,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   int _requestSerial = 0;
   int _parkedScheduleGeneration = 0;
   bool _parkedRenderScheduled = false;
+  bool _firstFrameReadyReported = false;
 
   @override
   void initState() {
@@ -189,6 +197,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       _setNativeTexture(null);
       _disposeLayer();
       _replaceImage(null);
+      _firstFrameReadyReported = false;
       _epoch++;
       _scheduleParkedRender();
       return;
@@ -249,6 +258,12 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     if (_nativeTextureId.value != textureId) {
       _nativeTextureId.value = textureId;
     }
+  }
+
+  void _reportFirstFrameReady() {
+    if (_firstFrameReadyReported) return;
+    _firstFrameReadyReported = true;
+    widget.onFirstFrameReady?.call();
   }
 
   void _publishMetadata(_PreviewMetadata next) {
@@ -490,6 +505,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         _replaceImage(null);
         _setNativeTexture(textureId);
         _publishNativeMetadata(textureTarget, projectFrame, moving);
+        _reportFirstFrameReady();
         return;
       }
     }
@@ -605,6 +621,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     }
 
     _replaceImage(decoded);
+    _reportFirstFrameReady();
   }
 
   Future<ui.Image> _decodeRgba(
