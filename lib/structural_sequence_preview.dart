@@ -4,17 +4,12 @@
 // sequence. Source definitions remain owned by the EDIT/MOSAIC model; this
 // widget is only the presentation of the sequence-side [STRUCT:...] reference.
 //
-// STRUCT uses the same deterministic desktop choreography as R3nder's native
-// presentation windows: terminal zoom-out, window open, authored source hold,
-// window close, terminal zoom-in. The live structural compositor remains a
-// widget because its MLT decoder is persistent and frame-addressed; the shell
-// around it is presentation geometry only.
-//
-// The critical geometry rule is that STRUCT has one destination rectangle:
-// the final video-panel window. The terminal zooms directly from fullscreen to
-// that rectangle. The opening phase then changes ownership/content in place;
-// it does not shrink to a smaller parked terminal first and grow a second
-// window afterward. Closing is the exact reverse.
+// STRUCT uses deterministic desktop choreography around the persistent MLT
+// structural compositor. The terminal first resizes from fullscreen directly
+// to the final video-panel rectangle. The structural window then comes forward
+// from inside that rectangle while the terminal remains visible behind it.
+// This is deliberately a depth hand-off rather than a crossfade: geometry does
+// the visual work and opacity only softens the first/last few frames.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -76,6 +71,7 @@ class StructuralSequencePreview extends StatelessWidget {
 
           final Rect fullTerminal = Rect.fromLTWH(0, 0, width, height);
           final Rect presentationRect = _structuralTargetRect(width, height);
+          final Rect emergenceRect = _structuralEmergenceRect(presentationRect);
 
           Rect terminalRect = presentationRect;
           Rect structuralRect = presentationRect;
@@ -86,22 +82,24 @@ class StructuralSequencePreview extends StatelessWidget {
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              // STRUCT does not use the generic small parked-terminal target.
-              // The terminal heads straight for the rectangle the resulting
-              // video panel will occupy.
+              // Resize straight to the final panel geometry. There is no
+              // smaller parked-terminal waypoint for STRUCT.
               terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
               desktopOpacity = eased;
               terminalOpacity = 1.0;
               break;
 
             case StructuralSequenceStage.opening:
-              // Geometry is already final. This phase only hands visual
-              // ownership from the terminal shell to the structural shell.
+              // Keep the terminal fully present as the rear plane. The new
+              // window starts smaller/lower inside it and advances toward the
+              // viewer. Opacity reaches one during the first half, so the
+              // dominant cue is scale/translation rather than a dissolve.
               terminalRect = presentationRect;
-              structuralRect = presentationRect;
+              structuralRect = Rect.lerp(emergenceRect, presentationRect, eased)!;
               desktopOpacity = 1.0;
-              terminalOpacity = 1.0 - eased;
-              structuralOpacity = eased;
+              terminalOpacity = 1.0;
+              structuralOpacity = Curves.easeOutCubic
+                  .transform((linear * 2.2).clamp(0.0, 1.0));
               structuralWindowPresent = true;
               break;
 
@@ -115,13 +113,17 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.closing:
-              // Reverse the in-place ownership handoff. The rectangle does
-              // not move until zoom-in begins.
+              // Reverse the foreground emergence. The terminal is already
+              // sitting behind at the destination geometry, so when the
+              // foreground window recedes and clears there is a real object
+              // underneath it for zoom-in to pick up.
               terminalRect = presentationRect;
-              structuralRect = presentationRect;
+              structuralRect = Rect.lerp(presentationRect, emergenceRect, eased)!;
               desktopOpacity = 1.0;
-              terminalOpacity = eased;
-              structuralOpacity = 1.0 - eased;
+              terminalOpacity = 1.0;
+              structuralOpacity = Curves.easeInCubic.transform(
+                ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
+              );
               structuralWindowPresent = true;
               break;
 
@@ -182,7 +184,7 @@ class StructuralSequencePreview extends StatelessWidget {
 
   /// Final presentation rectangle. The client area itself is 16:9, and the
   /// title bar is added above it. This is both the terminal zoom target and the
-  /// structural window's showing geometry, so there is only one destination.
+  /// final structural-window geometry.
   static Rect _structuralTargetRect(double width, double height) {
     const double titleHeight = _StructuralWindow.titleHeight;
     final double maxW = width * 0.86;
@@ -203,6 +205,18 @@ class StructuralSequencePreview extends StatelessWidget {
       windowW,
       windowH,
     );
+  }
+
+  /// The foreground window's rear-plane geometry. It is deliberately not a
+  /// second destination. It lives inside the final panel rectangle and is
+  /// only the perspective cue for "coming forth": 84% scale, slightly lower.
+  static Rect _structuralEmergenceRect(Rect target) {
+    const double scale = 0.84;
+    final double w = target.width * scale;
+    final double h = target.height * scale;
+    final double x = target.center.dx - w / 2.0;
+    final double y = target.center.dy - h / 2.0 + target.height * 0.055;
+    return Rect.fromLTWH(x, y, w, h);
   }
 }
 
@@ -321,9 +335,10 @@ class _StructuralWindow extends StatelessWidget {
         border: Border.all(color: const Color(0xFF3B3938)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 24,
-            offset: Offset(0, 12),
+            color: Color(0x8A000000),
+            blurRadius: 30,
+            spreadRadius: 2,
+            offset: Offset(0, 16),
           ),
         ],
       ),
