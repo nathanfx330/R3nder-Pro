@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_model.dart';
+import 'package:r3nder/edit_surface_model.dart';
 import 'package:r3nder/edit_workspace.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/mosaic_surface_model.dart';
@@ -44,35 +45,69 @@ const String _source = '''[EDIT:main]
 [/EDIT]
 ''';
 
+const String _trimmedSource = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:base:video/base.mp4:3:3:8:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
 void main() {
-  test('createMosaicWithSource authors the requested source in frame', () {
-    final String next = createMosaicWithSource(
-      source: _source,
-      mosaicId: 'mosaic',
-      paneId: 'pane',
-      clipId: 'source',
-      structuralSource: 'EDIT.main',
-      inFrame: 4,
-      durationFrames: 6,
+  test('trimmed EDIT cut is copied exactly into a spatial mosaic pane', () {
+    String next = EditSurfaceDocument.parse(_source, 'main').trimStart(
+      'V1',
+      'base',
+      3,
+    );
+    next = EditSurfaceDocument.parse(next, 'main').trimEnd(
+      'V1',
+      'base',
+      11,
     );
 
-    final EditClip clip = EditDocumentModel.parse(next)
-        .mosaic('mosaic')
-        .pane('pane')
-        .clip('source');
+    EditDocumentModel model = EditDocumentModel.parse(next);
+    final EditClip cut = model.edit('main').track('V1').clip('base');
+    expect(cut.atFrame, 3);
+    expect(cut.inFrame, 3);
+    expect(cut.durationFrames, 8);
+    expect(cut.sourceFrameAtProjectOffset(cut.durationFrames - 1), 10);
 
-    expect(clip.source, 'EDIT.main');
-    expect(clip.atFrame, 0);
-    expect(clip.inFrame, 4);
-    expect(clip.durationFrames, 6);
+    next = createEmptyMosaic(source: next, mosaicId: 'mosaic');
+    MosaicSurfaceDocument mosaic =
+        MosaicSurfaceDocument.parse(next, 'mosaic');
+    expect(mosaic.mosaic.panes, hasLength(1));
+    expect(mosaic.mosaic.panes.single.clips, isEmpty);
+
+    next = mosaic.setPaneCount(3);
+    mosaic = MosaicSurfaceDocument.parse(next, 'mosaic');
+    expect(mosaic.mosaic.panes, hasLength(3));
+    expect(
+      mosaic.mosaic.panes.map((MosaicPane pane) => pane.id),
+      <String>['pane1', 'pane2', 'pane3'],
+    );
+
+    model = EditDocumentModel.parse(next);
+    final EditClip currentCut = model.edit('main').track('V1').clip('base');
+    next = MosaicSurfaceDocument.parse(next, 'mosaic').assignCut(
+      'pane1',
+      currentCut,
+    );
+
+    final EditClip assigned = EditDocumentModel.parse(next)
+        .mosaic('mosaic')
+        .pane('pane1')
+        .clip('base');
+    expect(assigned.source, 'video/base.mp4');
+    expect(assigned.atFrame, 0);
+    expect(assigned.inFrame, 3);
+    expect(assigned.durationFrames, 8);
+    expect(assigned.speed, ExactClipSpeed(1));
   });
 
   testWidgets(
-    'SET IN and SET OUT send only the marked edit range to a new mosaic',
+    'workspace shows cut trim data then assigns that cut to a pane',
     (WidgetTester tester) async {
-      // A SizedBox cannot make the test viewport larger than Flutter's default
-      // 800x600 surface. This workflow is a desktop editor interaction, so give
-      // it an explicit desktop-sized surface before laying the workspace out.
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -84,7 +119,7 @@ void main() {
             width: 1400,
             height: 900,
             child: EditWorkspace(
-              source: _source,
+              source: _trimmedSource,
               currentFrame: 3,
               theme: R3Theme.of(Colors.green),
               onSourceChanged: (String value) => latestSource = value,
@@ -97,38 +132,63 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('IN F0   OUT F19   20F'), findsOneWidget);
-
-      await tester.tap(find.text('SET IN'));
-      await tester.pump();
-      expect(find.text('IN F3   OUT F19   17F'), findsOneWidget);
-
-      final Finder ruler =
-          find.byKey(const ValueKey<String>('edit-timeline-scrub'));
-      expect(ruler, findsOneWidget);
-      final RenderBox rulerBox = tester.renderObject<RenderBox>(ruler);
-      await tester.tapAt(rulerBox.localToGlobal(const Offset(20, 10)));
+      await tester.tap(find.text('base'));
       await tester.pump();
 
-      await tester.tap(find.text('SET OUT'));
-      await tester.pump();
-      expect(find.text('IN F3   OUT F10   8F'), findsOneWidget);
+      expect(find.text('SOURCE IN  F3'), findsOneWidget);
+      expect(find.text('SOURCE OUT  F10'), findsOneWidget);
+      expect(find.text('CUT  8F'), findsOneWidget);
+      expect(find.text('TRIM IN'), findsOneWidget);
+      expect(find.text('TRIM OUT'), findsOneWidget);
+      expect(find.text('SEND TO MOSAIC'), findsNothing);
 
-      await tester.tap(find.text('SEND TO MOSAIC'));
+      await tester.tap(find.text('NEW MOSAIC'));
+      await tester.pump();
+
+      expect(find.text('1 PANE'), findsOneWidget);
+      expect(find.text('2 PANES'), findsOneWidget);
+      expect(find.text('3 PANES'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('mosaic-pane:pane1')),
+        findsOneWidget,
+      );
+      expect(find.text('AT FRAME'), findsNothing);
+      expect(find.text('DURATION'), findsNothing);
+
+      await tester.tap(find.text('2 PANES'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('mosaic-pane:pane1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('mosaic-pane:pane2')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('ASSIGN CUT').first);
+      await tester.pump();
+
+      final Finder cutChoice = find.byKey(
+        const ValueKey<String>('mosaic-cut:main:V1:base'),
+      );
+      expect(cutChoice, findsOneWidget);
+      await tester.tap(cutChoice);
       await tester.pump();
 
       expect(latestSource, isNotNull);
-      final EditDocumentModel model = EditDocumentModel.parse(latestSource!);
-      final EditClip clip =
-          model.mosaic('mosaic').pane('pane').clip('source');
-      expect(clip.source, 'EDIT.main');
-      expect(clip.inFrame, 3);
-      expect(clip.durationFrames, 8);
-
-      expect(
-        find.byKey(const ValueKey<String>('mosaic-pane:pane')),
-        findsOneWidget,
-      );
+      final EditClip assigned = EditDocumentModel.parse(latestSource!)
+          .mosaic('mosaic')
+          .pane('pane1')
+          .clip('base');
+      expect(assigned.source, 'video/base.mp4');
+      expect(assigned.atFrame, 0);
+      expect(assigned.inFrame, 3);
+      expect(assigned.durationFrames, 8);
+      expect(find.text('IN F3'), findsOneWidget);
+      expect(find.text('OUT F10'), findsOneWidget);
+      expect(find.text('CUT 8F'), findsOneWidget);
     },
   );
 }
