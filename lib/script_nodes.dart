@@ -39,17 +39,8 @@ import 'script_cst.dart';
 // the EDIT/MOSAIC bytes it points at.
 // =====================================================================
 
-/// Node type for a whitespace-only run between two tags. Hidden from the
-/// graph, always emitted verbatim, never editable.
 const String kSpacer = 'SPACER';
-
-/// Legacy structural marker retained for old callers/tests. New parses expose
-/// protected roots using their real visible type, EDIT or MOSAIC, while
-/// [ScriptNode.isStructural] is keyed by the protected-source metadata below.
 const String kStructural = 'STRUCTURAL';
-
-/// Node type for markup the tag grammar does not model: comments, menu
-/// definitions, MACRO_CFG lines. Edited as raw text, round-trips exactly.
 const String kRaw = 'RAW';
 
 const String _kStructuralSource = '__structural_source';
@@ -57,13 +48,6 @@ const String _kStructuralOwner = '__structural_owner';
 
 int _nodeSeq = 0;
 
-/// Bracketed constructs that are real markup but live outside [tagRegex].
-/// They are stripped, expanded, or projected by another source layer rather
-/// than typed, so presenting them as "typing text" would be a lie.
-///
-/// Macro patterns mirror ScriptParser.parseTemplateData. STRUCT is included in
-/// this same non-terminal pass because it is projected into sequence timing by
-/// script_pipeline.dart before TerminalEngine sees the document.
 final RegExp _macroRegex = RegExp(
   r'\[DEF_MENU:(?<menuId>[a-zA-Z0-9_-]+)\](?<menuBody>.*?)\[/DEF_MENU\]'
   r'|\[CALL:(?<callId>[a-zA-Z0-9_-]+)\]'
@@ -80,30 +64,14 @@ final RegExp _nonGrammarMarkup =
 final RegExp _structuralRootOpening =
     RegExp(r'\[(?:EDIT|MOSAIC)(?::[^\]\r\n]*)?\]');
 
-// ---------------------------------------------------------------------
-// Positional-optional tag emitter
-// ---------------------------------------------------------------------
-
-/// One optional, positional tag segment.
-///
-/// R3nder's grammar is positional: a segment can only be omitted if every
-/// segment after it is also omitted. [_emitTag] enforces that by finding
-/// the last segment that differs from its default, then back-filling every
-/// earlier segment with its default value.
 class _Opt {
   final String value;
   final String def;
-
-  /// Emitted when this segment must appear (something later is set) but
-  /// both value and default are empty. An empty segment would produce
-  /// "::" which the grammar rejects, so any segment that can be followed
-  /// by another declares a non-empty fallback.
   final String fallback;
 
   _Opt(this.value, this.def, {String? fallback}) : fallback = fallback ?? def;
 }
 
-/// Builds a tag from a required head segment plus positional optionals.
 String _emitTag(
   String name, {
   String? head,
@@ -124,19 +92,16 @@ String _emitTag(
     String v = opts[i].value.trim();
     if (v.isEmpty) v = opts[i].def;
     if (v.isEmpty) v = opts[i].fallback;
-
     assert(
       v.isNotEmpty,
       'Tag "$name" segment $i must emit a value: something after it is '
       'set, and positional grammar cannot skip it. Give that _Opt a '
       'non-empty def or fallback.',
     );
-
     b.write(':$v');
   }
 
   b.write(']');
-
   if (body != null && closer != null) {
     b.write(body);
     b.write('[/$closer]');
@@ -144,69 +109,35 @@ String _emitTag(
   return b.toString();
 }
 
-// ---------------------------------------------------------------------
-// Node data model
-// ---------------------------------------------------------------------
-
 class ScriptNode {
   final String id = 'n${_nodeSeq++}';
-
   String type;
-
-  /// The verbatim source slice this ordinary node was parsed from. Structural
-  /// cards use this as their compact graph summary; their canonical bytes live
-  /// in [_kStructuralSource] and always win serialization.
   String rawText;
-
-  /// TEXT nodes only: whitespace peeled off the front and back of the slice
-  /// so the editable body reads cleanly in the form. Reassembled on emit,
-  /// so blank lines around a paragraph survive exactly.
   String prefix = '';
   String suffix = '';
-
   Map<String, String> params = {};
   String body = '';
-
-  /// False until the user edits this node. Gates verbatim emission for normal
-  /// nodes. Protected structural cards ignore dirty and emit CST-owned source.
   bool dirty = false;
-
-  /// Document line span, recomputed after every change. STRUCTURAL nodes use
-  /// -1/-1 because their source lines exist in the document but own no
-  /// TerminalEngine frames.
   int startLine = 0;
   int endLine = 0;
-
-  /// Exact character span in the current emitted document. [startOffset] is
-  /// inclusive and [endOffset] is exclusive, matching String.substring.
-  /// These are recomputed metadata, never serialization state.
   int startOffset = 0;
   int endOffset = 0;
 
   ScriptNode({required this.type, required this.rawText});
 
   bool get isSpacer => type == kSpacer;
-
-  /// True for either the old opaque marker or an M16 visible protected root.
   bool get isStructural =>
       type == kStructural || params.containsKey(_kStructuralSource);
-
-  /// Structural roots are now visible in the node workspace. Their -1 runtime
-  /// line ownership still keeps them off the script timing ribbon.
   bool get isVisible => !isSpacer;
 
   String param(String k, [String fallback = '']) => params[k] ?? fallback;
 
   void set(String k, String v) {
-    // The generic node form is not an owner of nested structural syntax.
     if (isStructural) return;
     params[k] = v;
     dirty = true;
   }
 
-  /// Rebuilds this node's markup. Untouched ordinary nodes short-circuit to
-  /// their original slice. Structural cards always emit the exact root source
-  /// captured from CST, even if generic node UI tries to mark them dirty.
   String toMarkup() {
     if (isStructural) {
       final String source = param(_kStructuralSource, rawText);
@@ -215,22 +146,24 @@ class ScriptNode {
       return source;
     }
 
+    // Until STRUCT gets a dedicated source-picker form, its properties panel
+    // is the generic raw-markup editor. Preserve exactly what that editor wrote
+    // instead of regenerating from stale parse metadata.
+    if (type == 'STRUCT') return rawText;
+
     if (!dirty) return rawText;
 
     switch (type) {
       case kSpacer:
         return rawText;
-
       case 'TEXT':
         return '$prefix$body$suffix';
-
       case 'WIPE':
         return '[WIPE]';
       case 'PAUSE':
         return '[PAUSE:${param('frames', '30')}]';
       case 'SPEED':
         return '[SPEED:${param('speed', '1')}]';
-
       case 'SIZE':
         return '[SIZE:${param('size', 'DEFAULT')}]';
       case 'LEAD':
@@ -239,7 +172,6 @@ class ScriptNode {
         return '[VPAD:${param('vpad', '40')}]';
       case 'ALIGN':
         return '[ALIGN:${param('align', 'LEFT')}]';
-
       case 'COLOR':
         return '[${param('color', 'NORMAL')}]';
       case 'FLASH':
@@ -250,12 +182,10 @@ class ScriptNode {
         return '[INVERT:${param('invert', 'on')}]';
       case 'REDACT':
         return '[${param('redact', 'REDACT')}]';
-
       case 'BAR':
         return '[BAR:${param('width', '20')}:${param('frames', '60')}'
             ':${param('fill', '█')}:${param('empty', ' ')}'
             ':${param('brackets', '[]')}]';
-
       case 'REGION':
         return '[REGION:${param('id', 'region')}]';
       case 'REGION_END':
@@ -263,31 +193,26 @@ class ScriptNode {
       case 'SELECT':
         return _emitTag('SELECT',
             head: param('id', 'NONE'), opts: [_Opt(param('rgb'), '')]);
-
       case 'CONFIG':
         return '[CONFIG:${param('key', 'SIZE')}:${param('value')}]';
-
       case 'GALLERY':
         return _emitTag('GALLERY', head: param('folder'), opts: [
           _Opt(param('hold'), '90'),
           _Opt(param('transition'), 'CUT'),
           _Opt(param('title'), '', fallback: 'Image Viewer'),
         ]);
-
       case 'BROWSER':
         return _emitTag('BROWSER', head: param('folder'), opts: [
           _Opt(param('hold'), '150'),
           _Opt(param('title'), '', fallback: 'Web Browser'),
           _Opt(param('scroll'), 'SCROLL'),
         ]);
-
       case 'VIDEO':
         return _emitTag('VIDEO', head: param('folder'), opts: [
           _Opt(param('hold'), '60'),
           _Opt(param('title'), '', fallback: 'Image Viewer'),
           _Opt(param('fps'), '30'),
         ]);
-
       case 'APP':
         return _emitTag('APP', head: param('folder'), opts: [
           _Opt(param('hold'), '90'),
@@ -296,7 +221,6 @@ class ScriptNode {
           _Opt(param('pages'), '', fallback: '3'),
           _Opt(param('panes'), ''),
         ]);
-
       case 'CARD':
         return _emitTag('CARD',
             head: param('image'),
@@ -307,7 +231,6 @@ class ScriptNode {
             ],
             body: body,
             closer: 'CARD');
-
       case 'DOSSIER':
         final bool sideOnly = param('centerMode', 'GRID') == 'SIDE_ONLY';
         return _emitTag('DOSSIER',
@@ -322,7 +245,6 @@ class ScriptNode {
             ],
             body: body,
             closer: 'DOSSIER');
-
       case 'TIMELINE':
         return _emitTag('TIMELINE',
             opts: [
@@ -336,20 +258,17 @@ class ScriptNode {
             ],
             body: body,
             closer: 'TIMELINE');
-
       case 'SVG':
         return _emitTag('SVG', head: param('file'), opts: [
           _Opt(param('hold'), '60'),
           _Opt(param('rgb'), ''),
         ]);
-
       case 'SVGFLASH':
         return _emitTag('SVGFLASH', head: param('folder'), opts: [
           _Opt(param('framesPer'), '4'),
           _Opt(param('cycles'), '3'),
           _Opt(param('rgb'), ''),
         ]);
-
       case 'PHOTO':
         return _emitTag('PHOTO', head: param('file'), opts: [
           _Opt(param('hold'), '120'),
@@ -357,7 +276,6 @@ class ScriptNode {
           _Opt(param('rgb'), '', fallback: '0,255,0'),
           _Opt(param('release'), ''),
         ]);
-
       case 'IMG':
         return _emitTag('IMG', head: param('file'), opts: [
           _Opt(param('repeat'), '1'),
@@ -365,30 +283,20 @@ class ScriptNode {
           _Opt(param('framesPer'), '2'),
           _Opt(param('release'), '100'),
         ]);
-
       case 'SPRITE':
         return _emitTag('SPRITE',
             head: param('file'), opts: [_Opt(param('hold'), '30')]);
-
       case 'SPRITE_OFF':
         return '[SPRITE_OFF:${param('file')}]';
-
       case 'DEF_MENU':
         return '[DEF_MENU:${param('id', 'menu')}]$body[/DEF_MENU]';
-
       case 'CALL':
         return '[CALL:${param('menu')}]';
-
       case 'MENU_STATE':
         return '[MENU_STATE:${param('menu')}:${param('instance')}]';
-
       case 'MACRO_CFG':
         return '[MACRO_CFG:${param('instance')}:${param('item', 'NONE')}'
             ':${param('rgb', '0,255,0')}:${param('blink', '0')}]';
-
-      case 'STRUCT':
-        return '[STRUCT:${param('source')}]';
-
       default:
         return rawText;
     }
@@ -591,7 +499,6 @@ List<ScriptNode> parseScriptToNodes(String text) {
   return result;
 }
 
-/// Maps one non-terminal construct onto a typed node.
 ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
   final ScriptNode n = ScriptNode(type: kRaw, rawText: m.group(0) ?? '');
 
@@ -797,7 +704,6 @@ void assignNodeLineSpans(List<ScriptNode> nodes) {
   int line = 0;
   for (final n in nodes) {
     final String m = n.toMarkup();
-
     int total = 0;
     for (int i = 0; i < m.length; i++) {
       if (m.codeUnitAt(i) == 10) total++;
@@ -812,7 +718,6 @@ void assignNodeLineSpans(List<ScriptNode> nodes) {
           m.isNotEmpty && m.codeUnitAt(m.length - 1) == 10;
       n.endLine = line + (endsOnBreak ? total - 1 : total);
     }
-
     line += total;
   }
 }
