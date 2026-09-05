@@ -1,6 +1,6 @@
 // ./lib/edit_surface.dart
 //
-// M10 source-backed edit surface.
+// Source-backed EDIT cut/trim surface.
 //
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
@@ -8,6 +8,11 @@
 // During playback, the static timeline document does not rebuild every frame.
 // Integer edit state stays quantized while the playhead paints directly from
 // the exact rational ProjectClock position published at display cadence.
+//
+// Workspace voice/music beds deliberately do NOT draw here. This surface is
+// where authored video cuts are trimmed before they are assigned into higher
+// composition/sequencer structure. Main audio beds remain workspace playback
+// and export concerns rather than pretending to be clip-local cut material.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -29,9 +34,13 @@ class EditSurface extends StatefulWidget {
   final String editId;
   final int currentFrame;
   final bool isPlaying;
+
+  /// Kept for source compatibility with the workspace while M16 separates
+  /// cut authoring from composition audio. They are intentionally not drawn.
   final int voiceFrames;
   final int musicFrames;
   final bool musicLoops;
+
   final R3Theme theme;
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
@@ -64,7 +73,6 @@ class EditSurface extends StatefulWidget {
 
 class _EditSurfaceState extends State<EditSurface> {
   static final double _kTrackHeight = sc(66);
-  static final double _kAudioHeight = sc(24);
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
   static final double _kPreviewHeight = sc(230);
@@ -450,14 +458,12 @@ class _EditSurfaceState extends State<EditSurface> {
 
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
     final EditSurfaceClip? selected = _selected(document);
-    final int contentFrames = math.max(
-      document.projectFrameCount,
-      math.max(widget.voiceFrames, widget.musicFrames),
-    );
-    final double timelineContentHeight = _kRulerHeight +
-        tracks.length * _kTrackHeight +
-        (widget.voiceFrames > 0 ? _kAudioHeight : 0) +
-        (widget.musicFrames > 0 ? _kAudioHeight : 0);
+
+    // This is a CUT surface. Composition-level audio beds intentionally do not
+    // extend its ruler or create A1/A2 lanes.
+    final int contentFrames = document.projectFrameCount;
+    final double timelineContentHeight =
+        _kRulerHeight + tracks.length * _kTrackHeight;
 
     return Column(
       children: [
@@ -537,23 +543,6 @@ class _EditSurfaceState extends State<EditSurface> {
                                           for (final EditSurfaceTrack track
                                               in tracks)
                                             _buildTrackLane(track),
-                                          if (widget.voiceFrames > 0)
-                                            _buildAudioLane(
-                                              widget.voiceFrames,
-                                              'VOICE',
-                                              R3Theme.ribbonWindow,
-                                            ),
-                                          if (widget.musicFrames > 0)
-                                            _buildAudioLane(
-                                              math.min(
-                                                widget.musicFrames,
-                                                document.projectFrameCount,
-                                              ),
-                                              widget.musicLoops
-                                                  ? 'MUSIC LOOP'
-                                                  : 'MUSIC',
-                                              R3Theme.ribbonMedia,
-                                            ),
                                         ],
                                       ),
                                     ),
@@ -820,21 +809,8 @@ class _EditSurfaceState extends State<EditSurface> {
               ),
               child: Text(track.id, style: widget.theme.value),
             ),
-          if (widget.voiceFrames > 0) _audioLabel('A1'),
-          if (widget.musicFrames > 0) _audioLabel('A2'),
         ],
       ),
-    );
-  }
-
-  Widget _audioLabel(String text) {
-    return Container(
-      height: _kAudioHeight,
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: R3Theme.hairline)),
-      ),
-      child: Text(text, style: widget.theme.micro),
     );
   }
 
@@ -914,32 +890,6 @@ class _EditSurfaceState extends State<EditSurface> {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAudioLane(int frames, String label, Color color) {
-    return Container(
-      height: _kAudioHeight,
-      decoration: const BoxDecoration(
-        color: R3Theme.bg,
-        border: Border(top: BorderSide(color: R3Theme.hairline)),
-      ),
-      alignment: Alignment.centerLeft,
-      child: Container(
-        width: math.max(sc(2), frames * _pixelsPerFrame),
-        height: sc(12),
-        padding: EdgeInsets.symmetric(horizontal: sc(6)),
-        alignment: Alignment.centerLeft,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.45),
-          border: Border.all(color: color.withValues(alpha: 0.8)),
-          borderRadius: BorderRadius.circular(2),
-        ),
-        child: Text(
-          label,
-          style: widget.theme.micro.copyWith(color: R3Theme.textBright),
-        ),
       ),
     );
   }
