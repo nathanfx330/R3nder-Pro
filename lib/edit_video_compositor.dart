@@ -77,6 +77,9 @@ class EditVideoCompositor {
   static final RegExp _paneLumaDirective = RegExp(
     r'\[#EDIT_TRANSITION:LUMA:([^\]\r\n:]+):(\d+)\]',
   );
+  static final RegExp _paneCrossfadeOutDirective = RegExp(
+    r'\[#EDIT_TRANSITION_OUT:CROSSFADE:(\d+)\]',
+  );
 
   final EditDocumentModel model;
   final String source;
@@ -559,13 +562,23 @@ class EditVideoCompositor {
     if (layers.length == 1) {
       final _ActiveLayer only = layers.single;
       final MediaFrame frame = only.frame;
-      final EditTransition transition = only.clip.transition;
       final int projectOffset = time.frame - only.clip.atFrame;
-      final double progress = _transitionProgress(
+      final double incomingProgress = _transitionProgress(
         projectOffset,
-        transition.frames,
+        only.clip.transition.frames,
       );
-      if (transition.kind == EditTransitionKind.none || progress >= 1.0) {
+      final double outgoingOpacity = _outgoingTransitionOpacity(
+        projectOffset,
+        only.clip.durationFrames,
+        only.clip.outgoingTransition.frames,
+      );
+      final bool incomingComplete = only.clip.transition.kind ==
+              EditTransitionKind.none ||
+          incomingProgress >= 1.0;
+      final bool outgoingComplete = only.clip.outgoingTransition.kind ==
+              EditTransitionKind.none ||
+          outgoingOpacity >= 1.0;
+      if (incomingComplete && outgoingComplete) {
         return EditVideoCompositeResult(
           width: frame.width,
           height: frame.height,
@@ -582,17 +595,31 @@ class EditVideoCompositor {
     final Uint8List output = Uint8List(stride * height);
     final List<MediaFrame> contributors = <MediaFrame>[];
     MediaFrame? topFrame;
+    bool hasOpaqueBackground = false;
 
     for (final _ActiveLayer layer in layers) {
       final MediaFrame frame = layer.frame;
       if (frame.width != width || frame.height != height) continue;
 
       final int projectOffset = time.frame - layer.clip.atFrame;
-      final bool contributed = _blendWithTransition(
+      if (contributors.isEmpty &&
+          _needsBlackUnderlay(
+            layer.clip.transition,
+            layer.clip.outgoingTransition,
+            projectOffset,
+            layer.clip.durationFrames,
+          )) {
+        _fillOpaqueBlack(output);
+        hasOpaqueBackground = true;
+      }
+
+      final bool contributed = _blendWithTransitions(
         output,
         frame,
         layer.clip.transition,
+        layer.clip.outgoingTransition,
         projectOffset,
+        layer.clip.durationFrames,
         width,
         height,
       );
@@ -607,7 +634,7 @@ class EditVideoCompositor {
       width: width,
       height: height,
       stride: stride,
-      rgba: contributors.isEmpty ? null : output,
+      rgba: contributors.isEmpty && !hasOpaqueBackground ? null : output,
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: media.frames,
@@ -638,6 +665,7 @@ class EditVideoCompositor {
           frame: frame,
           clip: clip,
           transition: _transitionForPaneClip(clip),
+          outgoingTransition: _outgoingTransitionForPaneClip(clip),
           authoredIndex: index,
         ),
       );
@@ -660,11 +688,22 @@ class EditVideoCompositor {
     if (layers.length == 1) {
       final _PaneLayer only = layers.single;
       final int projectOffset = time.frame - only.clip.atFrame;
-      final double progress = _transitionProgress(
+      final double incomingProgress = _transitionProgress(
         projectOffset,
         only.transition.frames,
       );
-      if (only.transition.kind == EditTransitionKind.none || progress >= 1.0) {
+      final double outgoingOpacity = _outgoingTransitionOpacity(
+        projectOffset,
+        only.clip.durationFrames,
+        only.outgoingTransition.frames,
+      );
+      final bool incomingComplete = only.transition.kind ==
+              EditTransitionKind.none ||
+          incomingProgress >= 1.0;
+      final bool outgoingComplete = only.outgoingTransition.kind ==
+              EditTransitionKind.none ||
+          outgoingOpacity >= 1.0;
+      if (incomingComplete && outgoingComplete) {
         return EditVideoCompositeResult(
           width: only.frame.width,
           height: only.frame.height,
@@ -682,16 +721,31 @@ class EditVideoCompositor {
     final Uint8List output = Uint8List(stride * height);
     final List<MediaFrame> contributors = <MediaFrame>[];
     MediaFrame? topFrame;
+    bool hasOpaqueBackground = false;
 
     for (final _PaneLayer layer in layers) {
       final MediaFrame frame = layer.frame;
       if (frame.width != width || frame.height != height) continue;
       final int projectOffset = time.frame - layer.clip.atFrame;
-      final bool contributed = _blendWithTransition(
+
+      if (contributors.isEmpty &&
+          _needsBlackUnderlay(
+            layer.transition,
+            layer.outgoingTransition,
+            projectOffset,
+            layer.clip.durationFrames,
+          )) {
+        _fillOpaqueBlack(output);
+        hasOpaqueBackground = true;
+      }
+
+      final bool contributed = _blendWithTransitions(
         output,
         frame,
         layer.transition,
+        layer.outgoingTransition,
         projectOffset,
+        layer.clip.durationFrames,
         width,
         height,
       );
@@ -705,7 +759,7 @@ class EditVideoCompositor {
       width: width,
       height: height,
       stride: stride,
-      rgba: contributors.isEmpty ? null : output,
+      rgba: contributors.isEmpty && !hasOpaqueBackground ? null : output,
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: media.frames,
@@ -732,11 +786,13 @@ class EditVideoCompositor {
     );
   }
 
-  bool _blendWithTransition(
+  bool _blendWithTransitions(
     Uint8List output,
     MediaFrame frame,
     EditTransition transition,
+    EditTransition outgoingTransition,
     int projectOffset,
+    int clipDuration,
     int width,
     int height,
   ) {
@@ -744,15 +800,23 @@ class EditVideoCompositor {
       projectOffset,
       transition.frames,
     );
+    final double outgoingOpacity = outgoingTransition.kind ==
+            EditTransitionKind.crossfade
+        ? _outgoingTransitionOpacity(
+            projectOffset,
+            clipDuration,
+            outgoingTransition.frames,
+          )
+        : 1.0;
 
     switch (transition.kind) {
       case EditTransitionKind.none:
-        return _blendUniform(output, frame, 1.0);
+        return _blendUniform(output, frame, outgoingOpacity);
       case EditTransitionKind.crossfade:
-        return _blendUniform(output, frame, progress);
+        return _blendUniform(output, frame, progress * outgoingOpacity);
       case EditTransitionKind.luma:
         if (progress >= 1.0) {
-          return _blendUniform(output, frame, 1.0);
+          return _blendUniform(output, frame, outgoingOpacity);
         }
         if (progress <= 0.0 || transition.lumaSource.isEmpty) return false;
         final DecodedMediaFrame? mask = _decodeMask(
@@ -761,8 +825,33 @@ class EditVideoCompositor {
           height,
         );
         if (mask == null) return false;
-        return _blendLuma(output, frame, mask, progress);
+        return _blendLuma(
+          output,
+          frame,
+          mask,
+          progress,
+          outgoingOpacity,
+        );
     }
+  }
+
+  bool _needsBlackUnderlay(
+    EditTransition transition,
+    EditTransition outgoingTransition,
+    int projectOffset,
+    int clipDuration,
+  ) {
+    final bool incomingPartial = transition.kind != EditTransitionKind.none &&
+        _transitionProgress(projectOffset, transition.frames) < 1.0;
+    final bool outgoingPartial = outgoingTransition.kind ==
+            EditTransitionKind.crossfade &&
+        _outgoingTransitionOpacity(
+              projectOffset,
+              clipDuration,
+              outgoingTransition.frames,
+            ) <
+            1.0;
+    return incomingPartial || outgoingPartial;
   }
 
   EditTransition _transitionForPaneClip(EditClip clip) {
@@ -779,6 +868,13 @@ class EditVideoCompositor {
       );
     }
     return const EditTransition.none();
+  }
+
+  EditTransition _outgoingTransitionForPaneClip(EditClip clip) {
+    final RegExpMatch? crossfade =
+        _paneCrossfadeOutDirective.firstMatch(clip.block.innerSource);
+    if (crossfade == null) return const EditTransition.none();
+    return EditTransition.crossfade(int.parse(crossfade.group(1)!));
   }
 
   static List<ui.Rect> _mosaicLayout(int count) {
@@ -862,6 +958,29 @@ class EditVideoCompositor {
     return projectOffset / (frames - 1);
   }
 
+  static double _outgoingTransitionOpacity(
+    int projectOffset,
+    int clipDuration,
+    int frames,
+  ) {
+    if (frames <= 0 || clipDuration <= 0) return 1.0;
+    final int effectiveFrames = math.min(frames, clipDuration);
+    if (effectiveFrames <= 1) {
+      return projectOffset >= clipDuration - 1 ? 0.0 : 1.0;
+    }
+
+    final int start = clipDuration - effectiveFrames;
+    if (projectOffset < start) return 1.0;
+    if (projectOffset >= clipDuration - 1) return 0.0;
+    return (clipDuration - 1 - projectOffset) / (effectiveFrames - 1);
+  }
+
+  static void _fillOpaqueBlack(Uint8List destination) {
+    for (int i = 3; i < destination.length; i += 4) {
+      destination[i] = 255;
+    }
+  }
+
   static bool _blendUniform(
     Uint8List destination,
     MediaFrame source,
@@ -892,8 +1011,11 @@ class EditVideoCompositor {
     MediaFrame source,
     DecodedMediaFrame mask,
     double progress,
+    double opacity,
   ) {
-    if (source.rgba == null || progress <= 0.0) return false;
+    if (source.rgba == null || progress <= 0.0 || opacity <= 0.0) {
+      return false;
+    }
     if (mask.width != source.width || mask.height != source.height) return false;
 
     final Uint8List pixels = source.rgba!;
@@ -916,7 +1038,7 @@ class EditVideoCompositor {
                 (29 * mask.rgba[maskIndex + 2])) >>
             8;
         if (luma <= threshold &&
-            _blendPixel(destination, dst, pixels, src, 1.0)) {
+            _blendPixel(destination, dst, pixels, src, opacity)) {
           contributed = true;
         }
       }
@@ -1035,12 +1157,14 @@ class _PaneLayer {
   final MediaFrame frame;
   final EditClip clip;
   final EditTransition transition;
+  final EditTransition outgoingTransition;
   final int authoredIndex;
 
   const _PaneLayer({
     required this.frame,
     required this.clip,
     required this.transition,
+    required this.outgoingTransition,
     required this.authoredIndex,
   });
 }
