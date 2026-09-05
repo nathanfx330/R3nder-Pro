@@ -57,6 +57,7 @@ Widget _preview({
   required StructuralSequencePlacement placement,
   required _FakeBackend backend,
   required int localFrame,
+  Size? terminalCursorFraction = const Size(0.01, 0.02),
 }) {
   return MaterialApp(
     home: SizedBox(
@@ -69,7 +70,7 @@ Widget _preview({
         isPlaying: false,
         theme: R3Theme.of(Colors.green),
         wallpaper: null,
-        terminalCursorFraction: const Size(0.01, 0.02),
+        terminalCursorFraction: terminalCursorFraction,
         backend: backend,
         resolveSource: _resolve,
       ),
@@ -77,40 +78,79 @@ Widget _preview({
   );
 }
 
+Future<(Size, Size)> _measureCursorShrink(
+  WidgetTester tester, {
+  required StructuralSequencePlacement placement,
+  required _FakeBackend backend,
+  required Size? terminalCursorFraction,
+}) async {
+  final Finder cursor = find.byKey(
+    const ValueKey<String>('structural-terminal-cursor'),
+  );
+
+  await tester.pumpWidget(
+    _preview(
+      placement: placement,
+      backend: backend,
+      localFrame: 0,
+      terminalCursorFraction: terminalCursorFraction,
+    ),
+  );
+  await tester.pump();
+  final Size full = tester.getSize(cursor);
+
+  await tester.pumpWidget(
+    _preview(
+      placement: placement,
+      backend: backend,
+      localFrame: kStructuralZoomFrames - 1,
+      terminalCursorFraction: terminalCursorFraction,
+    ),
+  );
+  await tester.pump();
+  final Size shrunk = tester.getSize(cursor);
+
+  return (full, shrunk);
+}
+
 void main() {
-  testWidgets('structural terminal cursor keeps aspect while terminal shrinks',
+  testWidgets('structural terminal cursor keeps supplied aspect while terminal shrinks',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
-    final Finder cursor = find.byKey(
-      const ValueKey<String>('structural-terminal-cursor'),
+
+    final (Size full, Size shrunk) = await _measureCursorShrink(
+      tester,
+      placement: placement,
+      backend: backend,
+      terminalCursorFraction: const Size(0.01, 0.02),
     );
 
-    await tester.pumpWidget(
-      _preview(
-        placement: placement,
-        backend: backend,
-        localFrame: 0,
-      ),
-    );
-    await tester.pump();
-
-    final Size full = tester.getSize(cursor);
     expect(full.width, closeTo(8.0, 0.01));
     expect(full.height, closeTo(9.0, 0.01));
     final double fullAspect = full.width / full.height;
+    expect(shrunk.width, lessThan(full.width));
+    expect(shrunk.height, lessThan(full.height));
+    expect(shrunk.width / shrunk.height, closeTo(fullAspect, 0.01));
+  });
 
-    await tester.pumpWidget(
-      _preview(
-        placement: placement,
-        backend: backend,
-        localFrame: kStructuralZoomFrames - 1,
-      ),
+  testWidgets('editor fallback cursor also keeps aspect while terminal shrinks',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+
+    final (Size full, Size shrunk) = await _measureCursorShrink(
+      tester,
+      placement: placement,
+      backend: backend,
+      terminalCursorFraction: null,
     );
-    await tester.pump();
 
-    final Size shrunk = tester.getSize(cursor);
+    final double fullAspect = full.width / full.height;
+    expect(full.width, greaterThan(0.0));
+    expect(full.height, greaterThan(0.0));
     expect(shrunk.width, lessThan(full.width));
     expect(shrunk.height, lessThan(full.height));
     expect(shrunk.width / shrunk.height, closeTo(fullAspect, 0.01));
