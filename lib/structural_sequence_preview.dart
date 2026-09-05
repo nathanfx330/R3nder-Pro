@@ -7,9 +7,9 @@
 // STRUCT uses deterministic desktop choreography around the persistent MLT
 // structural compositor. The terminal first resizes from fullscreen directly
 // to the final video-panel rectangle. The structural window then comes forward
-// from inside that rectangle while the terminal remains visible behind it.
-// This is deliberately a depth hand-off rather than a crossfade: geometry does
-// the visual work and opacity only softens the first/last few frames.
+// from inside that rectangle while the terminal fades away behind it. Geometry
+// supplies the depth cue; the matched rear-plane fade makes the hand-off read
+// as one window yielding to another rather than two stacked windows.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -90,14 +90,15 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.opening:
-              // Keep the terminal fully present as the rear plane. The new
-              // window starts smaller/lower inside it and advances toward the
-              // viewer. Opacity reaches one during the first half, so the
-              // dominant cue is scale/translation rather than a dissolve.
+              // The structural window advances from the rear plane while the
+              // terminal yields behind it. Both cues share the same eased
+              // progress, so this reads as a single depth hand-off instead of
+              // a foreground move over a stubborn second window.
               terminalRect = presentationRect;
-              structuralRect = Rect.lerp(emergenceRect, presentationRect, eased)!;
+              structuralRect =
+                  Rect.lerp(emergenceRect, presentationRect, eased)!;
               desktopOpacity = 1.0;
-              terminalOpacity = 1.0;
+              terminalOpacity = 1.0 - eased;
               structuralOpacity = Curves.easeOutCubic
                   .transform((linear * 2.2).clamp(0.0, 1.0));
               structuralWindowPresent = true;
@@ -113,14 +114,14 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.closing:
-              // Reverse the foreground emergence. The terminal is already
-              // sitting behind at the destination geometry, so when the
-              // foreground window recedes and clears there is a real object
-              // underneath it for zoom-in to pick up.
+              // Exact reverse: the foreground window recedes while the rear
+              // terminal returns on the same timing curve. Zoom-in therefore
+              // inherits a fully restored terminal, not an abrupt replacement.
               terminalRect = presentationRect;
-              structuralRect = Rect.lerp(presentationRect, emergenceRect, eased)!;
+              structuralRect =
+                  Rect.lerp(presentationRect, emergenceRect, eased)!;
               desktopOpacity = 1.0;
-              terminalOpacity = 1.0;
+              terminalOpacity = eased;
               structuralOpacity = Curves.easeInCubic.transform(
                 ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
               );
@@ -146,6 +147,7 @@ class StructuralSequencePreview extends StatelessWidget {
                 Positioned.fromRect(
                   rect: terminalRect,
                   child: Opacity(
+                    key: const ValueKey<String>('structural-terminal-opacity'),
                     opacity: terminalOpacity.clamp(0.0, 1.0),
                     child: _TerminalGhost(
                       key: const ValueKey<String>('structural-terminal-window'),
