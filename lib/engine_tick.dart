@@ -15,6 +15,24 @@ extension _TerminalEngineTicking on TerminalEngine {
     // the SceneEngine until it clears.
     if (_pendingPresentation != null) return;
 
+    // INTERNAL STRUCT REGION LIFETIME.
+    //
+    // Preview/Bake projection writes `[REGION:STRUCTSEQ_*][PAUSE:*]`. The
+    // REGION is visible for one deterministic entry frame, remains live through
+    // the pause-completion frame, then disappears on the next free terminal
+    // tick before ordinary script content can inherit that region id.
+    //
+    // The "next token is PAUSE" check distinguishes the entry frame from the
+    // completion frame without another mutable counter. It also lets the
+    // top-level Preview derive local STRUCT time entirely from engine state.
+    final String? runtimeRegion = currentRegion;
+    if (runtimeRegion != null &&
+        runtimeRegion.startsWith('STRUCTSEQ_') &&
+        activePause == null &&
+        !text.startsWith('[PAUSE:', charIndex)) {
+      currentRegion = null;
+    }
+
     // SVG SHOW: the terminal screen is displaying a stencil. The show owns no
     // mutable timing counters: its visible step and completion are derived
     // from terminal frame age. On expiry either CUT into a chained SVG/PHOTO
@@ -393,7 +411,11 @@ extension _TerminalEngineTicking on TerminalEngine {
             final f = match.namedGroup('flash')!;
             flashStyle = f == 'OFF' ? null : f;
           } else if (match.namedGroup('regionId') != null) {
-            currentRegion = match.namedGroup('regionId');
+            final String regionId = match.namedGroup('regionId')!;
+            currentRegion = regionId;
+            // Reserved structural runtime regions own an explicit entry frame.
+            // Normal author REGION tags keep their historical no-break behavior.
+            if (regionId.startsWith('STRUCTSEQ_')) break;
           } else if (match.namedGroup('regionEnd') != null) {
             currentRegion = null;
           } else if (match.namedGroup('selId') != null) {
