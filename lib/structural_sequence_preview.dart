@@ -16,6 +16,12 @@
 // to become visible until EditVideoPreview reports that an actual presentable
 // image/texture is resident. That readiness gate prevents an empty black client
 // from flashing between the terminal and the first video frame.
+//
+// The terminal ghost also follows ScenePainter's native chrome rule: as the
+// terminal pulls away from fullscreen its title bar, corners, border, and
+// shadow grow in; on the return they collapse back to zero while the terminal
+// expands. The parked window therefore becomes the fullscreen terminal instead
+// of carrying a fixed title bar to the last frame and dropping it at the cut.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -134,18 +140,22 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           Rect structuralRect = presentationRect;
           double desktopOpacity = 1.0;
           double terminalOpacity = 0.0;
+          double terminalChrome = 1.0;
           double structuralOpacity = 0.0;
           bool structuralWindowPresent = false;
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              // Resize straight to the final panel geometry. The structural
-              // preview is mounted invisibly from the first STRUCT frame so it
-              // can decode frame zero before any foreground reveal begins.
+              // Resize straight to the final panel geometry. Chrome grows in
+              // with the pull-back, matching ScenePainter's native terminal
+              // zoom instead of appearing at full height on the first frame.
+              // The structural preview is mounted invisibly from the first
+              // STRUCT frame so frame zero can decode before foreground reveal.
               terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
               structuralRect = emergenceRect;
               desktopOpacity = eased;
               terminalOpacity = 1.0;
+              terminalChrome = eased;
               structuralOpacity = 0.0;
               structuralWindowPresent = true;
               break;
@@ -166,6 +176,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               )!;
               desktopOpacity = 1.0;
               terminalOpacity = 1.0 - handoffEased;
+              terminalChrome = 1.0;
               structuralOpacity = _firstFrameReady
                   ? Curves.easeOutCubic.transform(
                       (handoffLinear * 2.2).clamp(0.0, 1.0),
@@ -180,19 +191,21 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   _firstFrameReady ? presentationRect : emergenceRect;
               desktopOpacity = 1.0;
               terminalOpacity = _firstFrameReady ? 0.0 : 1.0;
+              terminalChrome = 1.0;
               structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
               structuralWindowPresent = true;
               break;
 
             case StructuralSequenceStage.closing:
-              // Exact reverse: the foreground window recedes while the rear
-              // terminal returns on the same timing curve. Zoom-in therefore
-              // inherits a fully restored terminal, not an abrupt replacement.
+              // Foreground recedes while the fully chromed parked terminal
+              // returns beneath it. The following zoom-in now inherits that
+              // exact chrome state and collapses it continuously to fullscreen.
               terminalRect = presentationRect;
               structuralRect =
                   Rect.lerp(presentationRect, emergenceRect, eased)!;
               desktopOpacity = 1.0;
               terminalOpacity = eased;
+              terminalChrome = 1.0;
               structuralOpacity = Curves.easeInCubic.transform(
                 ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
               );
@@ -200,9 +213,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.zoomIn:
+              // Native ScenePainter behavior: geometry grows to fullscreen at
+              // the same time chrome collapses. Title bar, corners, border and
+              // shadow therefore merge into terminal content rather than
+              // disappearing on the hand-off frame.
               terminalRect = Rect.lerp(presentationRect, fullTerminal, eased)!;
               desktopOpacity = 1.0 - eased;
               terminalOpacity = 1.0;
+              terminalChrome = 1.0 - eased;
               break;
           }
 
@@ -225,6 +243,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     child: _TerminalGhost(
                       key: const ValueKey<String>('structural-terminal-window'),
                       theme: widget.theme,
+                      chrome: terminalChrome.clamp(0.0, 1.0),
                     ),
                   ),
                 ),
@@ -336,42 +355,74 @@ class _DesktopPlate extends StatelessWidget {
 }
 
 class _TerminalGhost extends StatelessWidget {
-  final R3Theme theme;
+  static const double titleHeight = 38.0;
 
-  const _TerminalGhost({super.key, required this.theme});
+  final R3Theme theme;
+  final double chrome;
+
+  const _TerminalGhost({
+    super.key,
+    required this.theme,
+    required this.chrome,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final double c = chrome.clamp(0.0, 1.0);
+    final double barH = titleHeight * c;
+    final double outerRadius = 5.0 * c;
+    final double innerRadius = 4.0 * c;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF080909),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: const Color(0xFF3B3938)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 20,
-            offset: Offset(0, 10),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(outerRadius),
+        border: c > 0.001
+            ? Border.all(
+                color: const Color(0xFF3B3938).withValues(alpha: c),
+              )
+            : null,
+        boxShadow: c > 0.001
+            ? [
+                BoxShadow(
+                  color: const Color(0x66000000).withValues(alpha: 0.40 * c),
+                  blurRadius: 20 * c,
+                  offset: Offset(0, 10 * c),
+                ),
+              ]
+            : const [],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(innerRadius),
         child: Column(
           children: [
-            Container(
-              height: 38,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              color: const Color(0xFF33302F),
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'R3nder : Terminal Engine',
-                overflow: TextOverflow.ellipsis,
-                style: theme.micro.copyWith(
-                  color: const Color(0xFFBDB8B4),
+            if (barH > 0.01)
+              ClipRect(
+                child: SizedBox(
+                  key: const ValueKey<String>('structural-terminal-title-bar'),
+                  height: barH,
+                  child: ColoredBox(
+                    color: const Color(0xFF33302F).withValues(alpha: c),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 14 * c),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Opacity(
+                          opacity: c,
+                          child: Text(
+                            'R3nder : Terminal Engine',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: theme.micro.copyWith(
+                              color: const Color(0xFFBDB8B4),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
             Expanded(
               child: ColoredBox(
                 color: const Color(0xFF050706),
