@@ -2,10 +2,11 @@
 //
 // GUI surface for canonical MOSAIC / PANE / CLIP authoring.
 //
-// This widget owns only transient selection and dialog state. Every durable
-// operation goes through MosaicSurfaceDocument and immediately emits complete
-// script text. Preview is the same structural compositor used when MOSAIC is
-// nested inside an EDIT, driven by the parent EditWorkspace ProjectClock.
+// The script remains canonical, but the authoring abstraction is visual:
+// choose a one, two, or three-pane layout and assign already-authored EDIT cuts
+// to those panes. A pane assignment copies the cut's source IN, duration, and
+// speed at composition frame zero. Raw AT and DURATION fields are deliberately
+// not exposed here.
 
 import 'package:flutter/material.dart';
 
@@ -93,173 +94,123 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     }
   }
 
-  Future<void> _addPane(MosaicSurfaceDocument document) async {
-    if (document.mosaic.panes.length >= 3) {
-      setState(() => _error = 'A MOSAIC supports at most 3 panes.');
-      return;
+  List<_EditCutChoice> _editCuts(MosaicSurfaceDocument document) {
+    final List<_EditCutChoice> cuts = <_EditCutChoice>[];
+    for (final EditSequence edit in document.model.edits) {
+      for (final EditTrack track in edit.tracks) {
+        for (final EditClip clip in track.clips) {
+          cuts.add(
+            _EditCutChoice(
+              editId: edit.id,
+              trackId: track.id,
+              clip: clip,
+            ),
+          );
+        }
+      }
     }
-    final _SourcePlacement? placement = await _pickPlacement(
-      document,
-      title: 'Add pane source',
-      initialAt: 0,
-    );
-    if (placement == null || !mounted) return;
-
-    _commit((MosaicSurfaceDocument current) {
-      final String paneId = current.nextPaneId();
-      return current.addPane(
-        paneId: paneId,
-        clipId: 'source',
-        structuralSource: placement.source,
-        atFrame: placement.atFrame,
-        durationFrames: placement.durationFrames,
-      );
-    });
+    return cuts;
   }
 
-  Future<void> _addClip(
+  int _sourceOut(EditClip clip) =>
+      clip.sourceFrameAtProjectOffset(clip.durationFrames - 1);
+
+  Future<_EditCutChoice?> _pickCut(
     MosaicSurfaceDocument document,
-    MosaicPane pane,
+    int paneNumber,
   ) async {
-    final _SourcePlacement? placement = await _pickPlacement(
-      document,
-      title: 'Add clip to ${pane.id}',
-      initialAt: widget.currentFrame,
-    );
-    if (placement == null || !mounted) return;
-
-    _commit((MosaicSurfaceDocument current) {
-      return current.addClip(
-        paneId: pane.id,
-        clipId: current.nextClipId(pane.id),
-        structuralSource: placement.source,
-        atFrame: placement.atFrame,
-        inFrame: 0,
-        durationFrames: placement.durationFrames,
-      );
-    });
-  }
-
-  Future<_SourcePlacement?> _pickPlacement(
-    MosaicSurfaceDocument document, {
-    required String title,
-    required int initialAt,
-  }) async {
-    final List<StructuralSourceRef> choices =
-        document.availableStructuralSources();
-    if (choices.isEmpty) {
-      setState(() => _error = 'No EDIT or other MOSAIC source is available.');
+    final List<_EditCutChoice> cuts = _editCuts(document);
+    if (cuts.isEmpty) {
+      setState(() {
+        _error = 'No EDIT cuts exist yet. Trim a clip in EDIT first.';
+      });
       return null;
     }
 
-    String selected = choices.first.canonicalSource;
-    final TextEditingController atController =
-        TextEditingController(text: '$initialAt');
-    final TextEditingController durationController = TextEditingController(
-      text: '${document.model.structuralSourceFrameCount(choices.first)}',
-    );
-
-    final _SourcePlacement? result = await showDialog<_SourcePlacement>(
+    return showDialog<_EditCutChoice>(
       context: context,
       builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setDialogState) {
-            return AlertDialog(
-              backgroundColor: R3Theme.panel,
-              title: Text(title, style: widget.theme.value),
-              content: SizedBox(
-                width: sc(420),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('SOURCE', style: widget.theme.micro),
-                    DropdownButton<String>(
-                      value: selected,
-                      isExpanded: true,
-                      dropdownColor: R3Theme.panel,
-                      style: widget.theme.value,
-                      items: [
-                        for (final StructuralSourceRef ref in choices)
-                          DropdownMenuItem<String>(
-                            value: ref.canonicalSource,
-                            child: Text(ref.canonicalSource),
-                          ),
-                      ],
-                      onChanged: (String? value) {
-                        if (value == null) return;
-                        final StructuralSourceRef ref =
-                            StructuralSourceRef.tryParse(value)!;
-                        setDialogState(() {
-                          selected = value;
-                          durationController.text =
-                              '${document.model.structuralSourceFrameCount(ref)}';
-                        });
-                      },
+        return AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text('Assign cut to Pane $paneNumber', style: widget.theme.value),
+          content: SizedBox(
+            width: sc(620),
+            height: sc(390),
+            child: ListView.separated(
+              itemCount: cuts.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (BuildContext context, int index) {
+                final _EditCutChoice choice = cuts[index];
+                final EditClip clip = choice.clip;
+                return InkWell(
+                  key: ValueKey<String>(
+                    'mosaic-cut:${choice.editId}:${choice.trackId}:${clip.id}',
+                  ),
+                  onTap: () => Navigator.of(context).pop(choice),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: sc(8),
+                      vertical: sc(10),
                     ),
-                    SizedBox(height: sc(10)),
-                    Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: atController,
-                            keyboardType: TextInputType.number,
-                            style: widget.theme.value,
-                            decoration:
-                                const InputDecoration(labelText: 'AT FRAME'),
+                        Text(
+                          'EDIT ${choice.editId}  /  ${choice.trackId}  /  ${clip.id}',
+                          style: widget.theme.value.copyWith(
+                            color: widget.theme.accent,
                           ),
                         ),
-                        SizedBox(width: sc(12)),
-                        Expanded(
-                          child: TextField(
-                            controller: durationController,
-                            keyboardType: TextInputType.number,
-                            style: widget.theme.value,
-                            decoration:
-                                const InputDecoration(labelText: 'DURATION'),
-                          ),
+                        SizedBox(height: sc(4)),
+                        Text(
+                          clip.source,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: widget.theme.fine,
+                        ),
+                        SizedBox(height: sc(3)),
+                        Text(
+                          'IN F${clip.inFrame}   OUT F${_sourceOut(clip)}   '
+                          'CUT ${clip.durationFrames}F   ${clip.speed.canonicalMarkup}X',
+                          style: widget.theme.micro,
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('CANCEL'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    final int? at = int.tryParse(atController.text.trim());
-                    final int? duration =
-                        int.tryParse(durationController.text.trim());
-                    if (at == null ||
-                        at < 0 ||
-                        duration == null ||
-                        duration <= 0) {
-                      return;
-                    }
-                    Navigator.of(context).pop(
-                      _SourcePlacement(
-                        source: selected,
-                        atFrame: at,
-                        durationFrames: duration,
-                      ),
-                    );
-                  },
-                  child: const Text('ADD'),
-                ),
-              ],
-            );
-          },
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('CANCEL'),
+            ),
+          ],
         );
       },
     );
+  }
 
-    atController.dispose();
-    durationController.dispose();
-    return result;
+  Future<void> _assignPane(
+    MosaicSurfaceDocument document,
+    MosaicPane pane,
+    int paneNumber,
+  ) async {
+    final _EditCutChoice? choice = await _pickCut(document, paneNumber);
+    if (choice == null || !mounted) return;
+
+    _commit((MosaicSurfaceDocument current) {
+      return current.assignCut(pane.id, choice.clip);
+    });
+  }
+
+  void _setPaneCount(int count) {
+    _commit((MosaicSurfaceDocument current) => current.setPaneCount(count));
+  }
+
+  void _clearPane(MosaicPane pane) {
+    _commit((MosaicSurfaceDocument current) => current.clearPane(pane.id));
   }
 
   @override
@@ -275,11 +226,6 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        // The old fixed sc(230) monitor reserved 287.5 logical pixels at the
-        // current UI scale. Inside EditorScreen that could leave less than one
-        // compact control row for PANE authoring. The monitor is presentation,
-        // not project geometry, so it may shrink with the available workspace
-        // while the compositor still renders the same canonical frame.
         final double previewHeight = constraints.maxHeight.isFinite
             ? (constraints.maxHeight * 0.40)
                 .clamp(sc(100), sc(230))
@@ -300,45 +246,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 resolveSource: widget.resolveSource,
               ),
             ),
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(
-                horizontal: sc(10),
-                vertical: sc(7),
-              ),
-              decoration: const BoxDecoration(
-                color: R3Theme.panel,
-                border: Border(
-                  top: BorderSide(color: R3Theme.hairline),
-                  bottom: BorderSide(color: R3Theme.hairline),
-                ),
-              ),
-              child: Wrap(
-                spacing: sc(8),
-                runSpacing: sc(6),
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  R3MicroLabel(
-                    'MOSAIC ${mosaic.id}',
-                    theme: widget.theme,
-                    accent: true,
-                  ),
-                  Text(
-                    '${mosaic.panes.length} PANE${mosaic.panes.length == 1 ? '' : 'S'}   '
-                    '${mosaic.projectFrameCount} FRAMES',
-                    style: widget.theme.micro,
-                  ),
-                  R3Button(
-                    'ADD PANE',
-                    theme: widget.theme,
-                    compact: true,
-                    onPressed: mosaic.panes.length >= 3
-                        ? null
-                        : () => _addPane(document),
-                  ),
-                ],
-              ),
-            ),
+            _buildLayoutBar(mosaic),
             if (_error != null)
               Container(
                 width: double.infinity,
@@ -355,193 +263,272 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 ),
               ),
             Expanded(
-              child: mosaic.panes.isEmpty
-                  ? _message(
-                      'EMPTY MOSAIC\n\nADD PANE chooses an EDIT or MOSAIC source.',
-                    )
-                  : Padding(
-                      padding: EdgeInsets.all(sc(8)),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (int i = 0; i < mosaic.panes.length; i++) ...[
-                            if (i > 0) SizedBox(width: sc(8)),
-                            Expanded(
-                              flex: i == 0 && mosaic.panes.length > 1 ? 14 : 11,
-                              child: _buildPane(document, mosaic.panes[i]),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-            ),
-            if (end > 0)
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: sc(12),
-                  vertical: sc(5),
-                ),
-                decoration: const BoxDecoration(
-                  color: R3Theme.panel,
-                  border: Border(top: BorderSide(color: R3Theme.hairline)),
-                ),
-                child: Row(
-                  children: [
-                    Text('F$frame', style: widget.theme.micro),
-                    Expanded(
-                      child: Slider(
-                        value: frame.toDouble(),
-                        min: 0,
-                        max: (end - 1).toDouble(),
-                        onChanged: widget.isPlaying
-                            ? null
-                            : (double value) => widget.onSeek(value.round()),
-                      ),
-                    ),
-                    Text('/ $end', style: widget.theme.micro),
-                  ],
-                ),
+              child: Padding(
+                padding: EdgeInsets.all(sc(8)),
+                child: _buildPaneLayout(document, mosaic),
               ),
+            ),
+            if (end > 0) _buildPlayhead(frame, end),
           ],
         );
       },
     );
   }
 
-  Widget _buildPane(MosaicSurfaceDocument document, MosaicPane pane) {
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final bool compact = constraints.maxHeight < sc(120);
-        final bool headerOnly = constraints.maxHeight < sc(62);
-
-        return Container(
-          key: ValueKey<String>('mosaic-pane:${pane.id}'),
-          decoration: BoxDecoration(
-            color: R3Theme.bg,
-            border: Border.all(color: R3Theme.hairline),
-            borderRadius: BorderRadius.circular(4),
+  Widget _buildLayoutBar(MosaicSequence mosaic) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
+      decoration: const BoxDecoration(
+        color: R3Theme.panel,
+        border: Border(
+          top: BorderSide(color: R3Theme.hairline),
+          bottom: BorderSide(color: R3Theme.hairline),
+        ),
+      ),
+      child: Wrap(
+        spacing: sc(7),
+        runSpacing: sc(6),
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          R3MicroLabel(
+            'MOSAIC ${mosaic.id}',
+            theme: widget.theme,
+            accent: true,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: sc(8),
-                  vertical: compact ? sc(2) : sc(6),
-                ),
-                decoration: const BoxDecoration(
-                  color: R3Theme.panel,
-                  border: Border(
-                    bottom: BorderSide(color: R3Theme.hairline),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    // Dynamic ids keep their authored case. R3MicroLabel
-                    // uppercases its whole string, which turned pane id "pane"
-                    // into the confusing visible label "PANE PANE".
-                    Text(
-                      'PANE ${pane.id}',
-                      style: widget.theme.microAccent,
-                    ),
-                    const Spacer(),
-                    if (!headerOnly)
-                      R3Button(
-                        'ADD CLIP',
-                        theme: widget.theme,
-                        compact: true,
-                        onPressed: () => _addClip(document, pane),
-                      ),
-                  ],
-                ),
-              ),
-              if (!headerOnly)
-                Expanded(
-                  child: pane.clips.isEmpty
-                      ? Center(
-                          child: Text('NO CLIPS', style: widget.theme.micro),
-                        )
-                      : ListView.separated(
-                          padding: EdgeInsets.all(sc(7)),
-                          itemCount: pane.clips.length,
-                          separatorBuilder: (_, __) => SizedBox(height: sc(6)),
-                          itemBuilder: (BuildContext context, int index) {
-                            return _buildClip(
-                              document,
-                              pane,
-                              pane.clips[index],
-                            );
-                          },
-                        ),
-                ),
-            ],
+          SizedBox(width: sc(4)),
+          Text('LAYOUT', style: widget.theme.micro),
+          for (final int count in const <int>[1, 2, 3])
+            R3Button(
+              count == 1 ? '1 PANE' : '$count PANES',
+              theme: widget.theme,
+              compact: true,
+              kind: mosaic.panes.length == count
+                  ? R3ButtonKind.primary
+                  : R3ButtonKind.normal,
+              onPressed: widget.isPlaying || mosaic.panes.length == count
+                  ? null
+                  : () => _setPaneCount(count),
+            ),
+          SizedBox(width: sc(8)),
+          Text(
+            '${mosaic.projectFrameCount}F COMPOSITION',
+            style: widget.theme.micro,
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
-  Widget _buildClip(
+  Widget _buildPaneLayout(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+  ) {
+    if (mosaic.panes.isEmpty) {
+      return _message('CHOOSE A 1, 2, OR 3 PANE LAYOUT');
+    }
+
+    if (mosaic.panes.length == 1) {
+      return _buildPane(document, mosaic.panes[0], 1);
+    }
+
+    if (mosaic.panes.length == 2) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 14,
+            child: _buildPane(document, mosaic.panes[0], 1),
+          ),
+          SizedBox(width: sc(8)),
+          Expanded(
+            flex: 11,
+            child: _buildPane(document, mosaic.panes[1], 2),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 14,
+          child: _buildPane(document, mosaic.panes[0], 1),
+        ),
+        SizedBox(width: sc(8)),
+        Expanded(
+          flex: 11,
+          child: Column(
+            children: [
+              Expanded(
+                child: _buildPane(document, mosaic.panes[1], 2),
+              ),
+              SizedBox(height: sc(8)),
+              Expanded(
+                child: _buildPane(document, mosaic.panes[2], 3),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPane(
     MosaicSurfaceDocument document,
     MosaicPane pane,
-    EditClip clip,
+    int paneNumber,
   ) {
-    final List<StructuralSourceRef> choices =
-        document.availableStructuralSources();
-    final bool currentAvailable = choices.any(
-      (StructuralSourceRef ref) => ref.canonicalSource == clip.source,
-    );
-    final List<String> sources = <String>[
-      if (!currentAvailable) clip.source,
-      ...choices.map((StructuralSourceRef ref) => ref.canonicalSource),
-    ];
+    final EditClip? cut = pane.clips.isEmpty ? null : pane.clips.first;
+    final bool legacyMulti = pane.clips.length > 1;
 
     return Container(
-      key: ValueKey<String>('mosaic-clip:${pane.id}:${clip.id}'),
-      padding: EdgeInsets.all(sc(7)),
+      key: ValueKey<String>('mosaic-pane:${pane.id}'),
       decoration: BoxDecoration(
-        color: R3Theme.panel,
-        border: Border.all(color: R3Theme.hairline),
-        borderRadius: BorderRadius.circular(3),
+        color: R3Theme.bg,
+        border: Border.all(
+          color: cut == null ? R3Theme.hairline : widget.theme.accentDim,
+        ),
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Text(clip.id, style: widget.theme.value),
-              const Spacer(),
-              Text(
-                'AT ${clip.atFrame}   IN ${clip.inFrame}   '
-                'DUR ${clip.durationFrames}   ${clip.speed.canonicalMarkup}X',
-                style: widget.theme.micro,
-              ),
-            ],
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: sc(9), vertical: sc(7)),
+            decoration: const BoxDecoration(
+              color: R3Theme.panel,
+              border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  'PANE $paneNumber',
+                  style: widget.theme.microAccent,
+                ),
+                if (legacyMulti) ...[
+                  SizedBox(width: sc(8)),
+                  Text(
+                    'LEGACY ${pane.clips.length} CLIPS',
+                    style: widget.theme.micro.copyWith(color: R3Theme.warn),
+                  ),
+                ],
+                const Spacer(),
+                if (cut != null)
+                  R3Button(
+                    'CLEAR',
+                    theme: widget.theme,
+                    compact: true,
+                    onPressed: widget.isPlaying ? null : () => _clearPane(pane),
+                  ),
+                R3Button(
+                  cut == null ? 'ASSIGN CUT' : 'CHANGE CUT',
+                  theme: widget.theme,
+                  compact: true,
+                  kind: cut == null ? R3ButtonKind.primary : R3ButtonKind.normal,
+                  onPressed: widget.isPlaying
+                      ? null
+                      : () => _assignPane(document, pane, paneNumber),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: cut == null
+                ? InkWell(
+                    onTap: widget.isPlaying
+                        ? null
+                        : () => _assignPane(document, pane, paneNumber),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.add_to_queue,
+                            color: widget.theme.accentDim,
+                            size: sc(28),
+                          ),
+                          SizedBox(height: sc(8)),
+                          Text('EMPTY', style: widget.theme.value),
+                          SizedBox(height: sc(4)),
+                          Text(
+                            'Assign an already-trimmed EDIT cut',
+                            style: widget.theme.micro,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _buildAssignedCut(cut),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssignedCut(EditClip clip) {
+    final int out = _sourceOut(clip);
+    return Padding(
+      key: ValueKey<String>('mosaic-cut-assignment:${clip.id}'),
+      padding: EdgeInsets.all(sc(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            clip.id,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: widget.theme.value.copyWith(
+              color: widget.theme.accent,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           SizedBox(height: sc(5)),
-          DropdownButton<String>(
-            key: ValueKey<String>('mosaic-source:${pane.id}:${clip.id}'),
-            value: clip.source,
-            isExpanded: true,
-            dropdownColor: R3Theme.panel,
-            style: widget.theme.value,
-            underline: Container(height: 1, color: R3Theme.hairline),
-            items: [
-              for (final String source in sources)
-                DropdownMenuItem<String>(
-                  value: source,
-                  child: Text(source, overflow: TextOverflow.ellipsis),
-                ),
-            ],
-            onChanged: widget.isPlaying
-                ? null
-                : (String? value) {
-                    if (value == null || value == clip.source) return;
-                    _commit((MosaicSurfaceDocument current) {
-                      return current.setClipSource(pane.id, clip.id, value);
-                    });
-                  },
+          Text(
+            clip.source,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: widget.theme.fine.copyWith(color: R3Theme.textBright),
           ),
+          SizedBox(height: sc(10)),
+          Wrap(
+            spacing: sc(12),
+            runSpacing: sc(5),
+            children: [
+              Text('IN F${clip.inFrame}', style: widget.theme.microAccent),
+              Text('OUT F$out', style: widget.theme.microAccent),
+              Text('CUT ${clip.durationFrames}F', style: widget.theme.micro),
+              Text('${clip.speed.canonicalMarkup}X', style: widget.theme.micro),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayhead(int frame, int end) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: sc(12), vertical: sc(5)),
+      decoration: const BoxDecoration(
+        color: R3Theme.panel,
+        border: Border(top: BorderSide(color: R3Theme.hairline)),
+      ),
+      child: Row(
+        children: [
+          Text('MOSAIC PLAYHEAD  F$frame', style: widget.theme.micro),
+          Expanded(
+            child: Slider(
+              value: frame.toDouble(),
+              min: 0,
+              max: (end - 1).toDouble(),
+              onChanged: widget.isPlaying
+                  ? null
+                  : (double value) => widget.onSeek(value.round()),
+            ),
+          ),
+          Text('${end}F', style: widget.theme.micro),
         ],
       ),
     );
@@ -561,14 +548,14 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
   }
 }
 
-class _SourcePlacement {
-  final String source;
-  final int atFrame;
-  final int durationFrames;
+class _EditCutChoice {
+  final String editId;
+  final String trackId;
+  final EditClip clip;
 
-  const _SourcePlacement({
-    required this.source,
-    required this.atFrame,
-    required this.durationFrames,
+  const _EditCutChoice({
+    required this.editId,
+    required this.trackId,
+    required this.clip,
   });
 }
