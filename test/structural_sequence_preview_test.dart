@@ -89,7 +89,7 @@ void _expectSameRect(Rect a, Rect b) {
 }
 
 void main() {
-  testWidgets('zoom-out owns presentation time before source decoder opens',
+  testWidgets('zoom-out preloads first frame before structural window is visible',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
@@ -106,8 +106,30 @@ void main() {
 
     expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
     expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
-    expect(find.text('MOSAIC.wall'), findsNothing);
-    expect(backend.openCount, 0);
+
+    final Opacity hiddenStructural = tester.widget<Opacity>(
+      find.byKey(const ValueKey<String>('structural-window-opacity')),
+    );
+    expect(hiddenStructural.opacity, 0.0);
+    expect(backend.openCount, 1);
+    expect(backend.requestedFrames, contains(10));
+
+    // Enter opening with the same mounted EditVideoPreview. The backend must
+    // not reopen; the frame decoded invisibly during zoom-out is the frame
+    // revealed by the foreground emergence.
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralZoomFrames + 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(backend.openCount, 1);
+    expect(find.text('F0 / 20'), findsOneWidget);
+    expect(find.textContaining('SRC 10'), findsOneWidget);
+    expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
   });
 
   testWidgets('terminal zoom lands directly on final video-panel geometry',
