@@ -52,6 +52,7 @@ import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
+import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
@@ -475,9 +476,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         mode: ProjectClockMode.monotonic,
       );
 
-      // Source authoring is below the main sequence mix. Unless a specialist
-      // caller explicitly asks to inherit it, use ProjectClock directly and
-      // do not even open the workspace audio configuration.
       if (!widget.inheritWorkspaceAudio) {
         clock.playFrom(startTime);
         _activeAudioPlayer = null;
@@ -988,6 +986,25 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
+  void _addSelectedToSequence(
+    EditDocumentModel model,
+    StructuralSourceRef selected,
+  ) {
+    if (_importing || _playing || _startingPlayback || _exporting) return;
+    try {
+      if (!model.containsStructuralSource(selected)) {
+        throw StateError('No structural source named ${selected.canonicalSource}.');
+      }
+      final String next = appendStructuralSequencePlacement(
+        rawDocument: _workingSource,
+        sourceRef: selected,
+      );
+      _applySourceChange(next, selectSource: selected.canonicalSource);
+    } catch (error) {
+      setState(() => _error = '$error');
+    }
+  }
+
   Future<_StructuralExportChoice?> _chooseExportSettings() async {
     String resolution = '1080p';
     VideoExportFormat format = VideoExportFormat.h264Solid;
@@ -1380,6 +1397,24 @@ class _EditWorkspaceState extends State<EditWorkspace>
                 _exporting
             ? null
             : () => _newMosaic(model),
+      ),
+      SizedBox(width: sc(5)),
+      R3MicroLabel('SEQUENCE', theme: widget.theme, accent: true),
+      R3Button(
+        'ADD TO SEQUENCE',
+        key: const ValueKey<String>('add-structural-to-sequence'),
+        theme: widget.theme,
+        compact: true,
+        kind: R3ButtonKind.primary,
+        onPressed: model == null ||
+                selected == null ||
+                selectedEnd <= 0 ||
+                _importing ||
+                _playing ||
+                _startingPlayback ||
+                _exporting
+            ? null
+            : () => _addSelectedToSequence(model, selected),
       ),
       if (mediaMode) ...[
         SizedBox(width: sc(5)),
