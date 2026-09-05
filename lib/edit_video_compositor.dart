@@ -14,6 +14,12 @@
 // actual leaf decode outcomes through every EDIT/MOSAIC boundary so exact
 // offline export can reject an offline or adjacent frame even when a nested
 // composition still produced valid pixels from other layers.
+//
+// Graph lint is the first structural recursion gate. A second, explicit render
+// depth is carried through the recursive call stack as defense in depth. It is
+// never mutable compositor state: the same source, project time, output size,
+// and depth always reach the same branch, and no graph-lint mismatch can turn
+// into unbounded recursion.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -78,6 +84,11 @@ class EditVideoCompositor {
   final MediaDecoderBackend backend;
   final String Function(String source) resolveSource;
 
+  /// Independent runtime recursion ceiling. Production uses the same numeric
+  /// policy as the graph linter, but the guard is checked again inside the
+  /// recursive renderer rather than trusting precomputed graph analysis.
+  final int _maxRenderDepth;
+
   final EditLintResult _graphLint;
   final Map<String, EditSurfaceDocument> _surfaces =
       <String, EditSurfaceDocument>{};
@@ -92,9 +103,12 @@ class EditVideoCompositor {
     required this.mediaLayer,
     required this.backend,
     required this.resolveSource,
+    int maxRenderDepth = EditGraphLinter.defaultMaxNesting,
   })  : model = document.model,
         source = document.source,
+        _maxRenderDepth = maxRenderDepth,
         _graphLint = EditGraphLinter.lint(document.model) {
+    _checkRenderDepthConfiguration();
     _surfaces[document.editId] = document;
   }
 
@@ -105,8 +119,12 @@ class EditVideoCompositor {
     required this.mediaLayer,
     required this.backend,
     required this.resolveSource,
+    int maxRenderDepth = EditGraphLinter.defaultMaxNesting,
   })  : source = model.source,
-        _graphLint = EditGraphLinter.lint(model);
+        _maxRenderDepth = maxRenderDepth,
+        _graphLint = EditGraphLinter.lint(model) {
+    _checkRenderDepthConfiguration();
+  }
 
   /// Back-compatible exact EDIT composition.
   EditVideoCompositeResult render(
@@ -140,6 +158,7 @@ class EditVideoCompositor {
       time,
       size,
       nonBlocking: false,
+      depth: 1,
     );
   }
 
@@ -157,6 +176,7 @@ class EditVideoCompositor {
       time,
       size,
       nonBlocking: true,
+      depth: 1,
     );
   }
 
@@ -180,7 +200,10 @@ class EditVideoCompositor {
     ProjectTime time,
     ui.Size size, {
     required bool nonBlocking,
+    required int depth,
   }) {
+    _checkRenderDepth(ref, depth);
+
     switch (ref.kind) {
       case StructuralSourceKind.edit:
         return _renderEdit(
@@ -188,6 +211,7 @@ class EditVideoCompositor {
           time,
           size,
           nonBlocking: nonBlocking,
+          depth: depth,
         );
       case StructuralSourceKind.mosaic:
         return _renderMosaic(
@@ -195,6 +219,7 @@ class EditVideoCompositor {
           time,
           size,
           nonBlocking: nonBlocking,
+          depth: depth,
         );
     }
   }
@@ -204,6 +229,7 @@ class EditVideoCompositor {
     ProjectTime time,
     ui.Size size, {
     required bool nonBlocking,
+    required int depth,
   }) {
     final MediaRenderResult media = nonBlocking
         ? mediaLayer.renderAvailable(editId, time, size)
@@ -211,6 +237,7 @@ class EditVideoCompositor {
     final _ResolvedMediaRender resolved = _resolveStructuralFrames(
       media,
       nonBlocking: nonBlocking,
+      depth: depth,
     );
     return _composeEdit(
       resolved.media,
@@ -225,6 +252,7 @@ class EditVideoCompositor {
     ProjectTime time,
     ui.Size size, {
     required bool nonBlocking,
+    required int depth,
   }) {
     final int width = size.width.round();
     final int height = size.height.round();
@@ -273,6 +301,7 @@ class EditVideoCompositor {
       final _ResolvedMediaRender resolved = _resolveStructuralFrames(
         media,
         nonBlocking: nonBlocking,
+        depth: depth,
       );
       final EditVideoCompositeResult paneResult = _composePane(
         pane,
@@ -321,6 +350,7 @@ class EditVideoCompositor {
   _ResolvedMediaRender _resolveStructuralFrames(
     MediaRenderResult media, {
     required bool nonBlocking,
+    required int depth,
   }) {
     bool changed = false;
     final List<MediaFrame> frames = <MediaFrame>[];
@@ -384,6 +414,7 @@ class EditVideoCompositor {
         nestedTime,
         media.outputSize,
         nonBlocking: nonBlocking,
+        depth: depth + 1,
       );
 
       // Always preserve recursive leaf status, even when the nested source
@@ -939,6 +970,24 @@ class EditVideoCompositor {
     throw StateError(
       'Structural source graph is not renderable: ${issue.message} '
       'Path: ${issue.editPath.join(' -> ')}',
+    );
+  }
+
+  void _checkRenderDepthConfiguration() {
+    if (_maxRenderDepth <= 0) {
+      throw ArgumentError.value(
+        _maxRenderDepth,
+        'maxRenderDepth',
+        'Maximum structural render depth must be positive.',
+      );
+    }
+  }
+
+  void _checkRenderDepth(StructuralSourceRef ref, int depth) {
+    if (depth <= _maxRenderDepth) return;
+    throw StateError(
+      'Structural render recursion exceeds hard limit of $_maxRenderDepth '
+      'at "${ref.canonicalSource}" (depth $depth).',
     );
   }
 
