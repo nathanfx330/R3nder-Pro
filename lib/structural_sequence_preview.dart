@@ -12,10 +12,10 @@
 // as one window yielding to another rather than two stacked windows.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
-// window already exists at opacity zero during zoom-out, so the same mounted
-// EditVideoPreview owns the decoded first frame when foreground emergence
-// begins. Source time remains pinned at zero throughout opening and only starts
-// advancing after the window has settled.
+// window already exists at opacity zero during zoom-out, but it is not allowed
+// to become visible until EditVideoPreview reports that an actual presentable
+// image/texture is resident. That readiness gate prevents an empty black client
+// from flashing between the terminal and the first video frame.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -27,7 +27,7 @@ import 'media_layer.dart';
 import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
-class StructuralSequencePreview extends StatelessWidget {
+class StructuralSequencePreview extends StatefulWidget {
   final String rawDocument;
   final StructuralSequencePlacement placement;
 
@@ -57,12 +57,63 @@ class StructuralSequencePreview extends StatelessWidget {
   });
 
   @override
+  State<StructuralSequencePreview> createState() =>
+      _StructuralSequencePreviewState();
+}
+
+class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
+  bool _firstFrameReady = false;
+  int? _firstFrameReadyAt;
+
+  @override
+  void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final bool sourceChanged =
+        oldWidget.placement.sourceRef.canonicalSource !=
+                widget.placement.sourceRef.canonicalSource ||
+            oldWidget.rawDocument != widget.rawDocument ||
+            oldWidget.backend != widget.backend ||
+            oldWidget.resolveSource != widget.resolveSource;
+    if (sourceChanged) {
+      _firstFrameReady = false;
+      _firstFrameReadyAt = null;
+    }
+  }
+
+  void _handleFirstFrameReady() {
+    if (_firstFrameReady || !mounted) return;
+    setState(() {
+      _firstFrameReady = true;
+      _firstFrameReadyAt = widget.localFrame;
+    });
+  }
+
+  double _openingProgress(double authoredLinear) {
+    if (!_firstFrameReady) return 0.0;
+
+    final int readyAt = _firstFrameReadyAt ?? 0;
+    if (readyAt < kStructuralZoomFrames) {
+      return authoredLinear;
+    }
+
+    final int finalOpeningFrame = kStructuralEntryFrames - 1;
+    if (readyAt >= finalOpeningFrame) return 1.0;
+
+    return ((widget.localFrame - readyAt) /
+            (finalOpeningFrame - readyAt))
+        .clamp(0.0, 1.0);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final String source = placement.sourceRef.canonicalSource;
-    final StructuralSequenceStage stage = placement.stageAt(localFrame);
-    final double linear = placement.stageProgressAt(localFrame);
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final StructuralSequenceStage stage =
+        widget.placement.stageAt(widget.localFrame);
+    final double linear =
+        widget.placement.stageProgressAt(widget.localFrame);
     final double eased = Curves.easeInOutCubic.transform(linear);
-    final int sourceFrame = placement.sourceFrameAt(localFrame);
+    final int sourceFrame =
+        widget.placement.sourceFrameAt(widget.localFrame);
 
     return ColoredBox(
       color: Colors.black,
@@ -89,8 +140,8 @@ class StructuralSequencePreview extends StatelessWidget {
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
               // Resize straight to the final panel geometry. The structural
-              // window is already mounted, invisible, at its emergence rect so
-              // frame zero can decode before any part of it becomes visible.
+              // preview is mounted invisibly from the first STRUCT frame so it
+              // can decode frame zero before any foreground reveal begins.
               terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
               structuralRect = emergenceRect;
               desktopOpacity = eased;
@@ -100,26 +151,37 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.opening:
-              // The structural window advances from the rear plane while the
-              // terminal yields behind it. Both cues share the same eased
-              // progress, so this reads as a single depth hand-off instead of
-              // a foreground move over a stubborn second window.
+              // Do not expose an empty client. If frame zero is still warming,
+              // hold the rear terminal fully visible and the structural window
+              // fully hidden. Once picture is resident, spend the remaining
+              // opening frames on the same depth hand-off.
+              final double handoffLinear = _openingProgress(linear);
+              final double handoffEased =
+                  Curves.easeInOutCubic.transform(handoffLinear);
               terminalRect = presentationRect;
-              structuralRect =
-                  Rect.lerp(emergenceRect, presentationRect, eased)!;
+              structuralRect = Rect.lerp(
+                emergenceRect,
+                presentationRect,
+                handoffEased,
+              )!;
               desktopOpacity = 1.0;
-              terminalOpacity = 1.0 - eased;
-              structuralOpacity = Curves.easeOutCubic
-                  .transform((linear * 2.2).clamp(0.0, 1.0));
+              terminalOpacity = 1.0 - handoffEased;
+              structuralOpacity = _firstFrameReady
+                  ? Curves.easeOutCubic.transform(
+                      (handoffLinear * 2.2).clamp(0.0, 1.0),
+                    )
+                  : 0.0;
               structuralWindowPresent = true;
               break;
 
             case StructuralSequenceStage.showing:
               terminalRect = presentationRect;
-              structuralRect = presentationRect;
+              structuralRect = _firstFrameReady
+                  ? presentationRect
+                  : emergenceRect;
               desktopOpacity = 1.0;
-              terminalOpacity = 0.0;
-              structuralOpacity = 1.0;
+              terminalOpacity = _firstFrameReady ? 0.0 : 1.0;
+              structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
               structuralWindowPresent = true;
               break;
 
@@ -150,7 +212,7 @@ class StructuralSequencePreview extends StatelessWidget {
             children: [
               Opacity(
                 opacity: desktopOpacity.clamp(0.0, 1.0),
-                child: _DesktopPlate(wallpaper: wallpaper),
+                child: _DesktopPlate(wallpaper: widget.wallpaper),
               ),
 
               if (terminalOpacity > 0.001)
@@ -161,7 +223,7 @@ class StructuralSequencePreview extends StatelessWidget {
                     opacity: terminalOpacity.clamp(0.0, 1.0),
                     child: _TerminalGhost(
                       key: const ValueKey<String>('structural-terminal-window'),
-                      theme: theme,
+                      theme: widget.theme,
                     ),
                   ),
                 ),
@@ -175,18 +237,21 @@ class StructuralSequencePreview extends StatelessWidget {
                     child: _StructuralWindow(
                       key: const ValueKey<String>('structural-window-frame'),
                       source: source,
-                      rawDocument: rawDocument,
+                      rawDocument: widget.rawDocument,
                       sourceFrame: sourceFrame,
-                      sourceDurationFrames: placement.sourceDurationFrames,
-                      isPlaying: isPlaying &&
-                          stage == StructuralSequenceStage.showing,
+                      sourceDurationFrames:
+                          widget.placement.sourceDurationFrames,
+                      isPlaying: widget.isPlaying &&
+                          stage == StructuralSequenceStage.showing &&
+                          _firstFrameReady,
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
                           stage == StructuralSequenceStage.opening ||
                           stage == StructuralSequenceStage.showing ||
                           stage == StructuralSequenceStage.closing,
-                      theme: theme,
-                      backend: backend,
-                      resolveSource: resolveSource,
+                      theme: widget.theme,
+                      backend: widget.backend,
+                      resolveSource: widget.resolveSource,
+                      onFirstFrameReady: _handleFirstFrameReady,
                     ),
                   ),
                 ),
@@ -327,6 +392,7 @@ class _StructuralWindow extends StatelessWidget {
   final R3Theme theme;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
+  final VoidCallback onFirstFrameReady;
 
   const _StructuralWindow({
     super.key,
@@ -339,6 +405,7 @@ class _StructuralWindow extends StatelessWidget {
     required this.theme,
     required this.backend,
     required this.resolveSource,
+    required this.onFirstFrameReady,
   });
 
   @override
@@ -405,6 +472,7 @@ class _StructuralWindow extends StatelessWidget {
                         fastPreview: isPlaying,
                         backend: backend,
                         resolveSource: resolveSource,
+                        onFirstFrameReady: onFirstFrameReady,
                       )
                     : const SizedBox.expand(),
               ),
