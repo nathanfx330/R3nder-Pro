@@ -153,7 +153,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           // a fixed 38 widget pixels was much larger than the native title bar
           // in a reduced preview pane and visibly broke the hand-off.
           final double chromeScale = useNativeTerminal
-              ? _nativeChromeScale(renderFrame, liveScene)
+              ? _nativeChromeScale(renderFrame, liveScene!)
               : 1.0;
           final double titleHeight = _StructuralWindow.titleHeight * chromeScale;
 
@@ -277,8 +277,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       'structural-native-terminal-layer',
                     ),
                     painter: SceneStructuralTerminalPainter(
-                      scene: liveScene,
-                      fontFamily: liveFont,
+                      scene: liveScene!,
+                      fontFamily: liveFont!,
                       terminalRect: _rectFraction(terminalRect, renderFrame),
                       desktopOpacity: desktopOpacity,
                       terminalOpacity: terminalOpacity,
