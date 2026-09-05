@@ -8,18 +8,24 @@
 // MosaicSurfaceDocument. ProjectClock remains the sole playback authority for
 // whichever structural source is selected.
 //
+// Structural source authoring is below the main sequence mix. By default this
+// workspace previews and exports picture/source time only. The document-level
+// narration/music beds belong to TEXT sequence playback and are inherited here
+// only when a caller explicitly opts into the legacy integration seam.
+//
 // Playback follows the same timing rule as the terminal renderer: Flutter
 // vsync asks ProjectClock what project time is current. A Ticker does not
 // advance time itself. Integer project frames are published only when they
 // change for authored/edit semantics, while exact rational position is
 // published every vsync for smooth presentation paint.
 //
-// When a native libpulse bed is available, structural PLAY begins from SCRUB
-// rather than MONOTONIC. NativeAudioSink captures that exact authored point,
-// holds it through decoder/device prefill, then hands the SAME ProjectClock to
-// AUDIO authority only when samples become audible. PAUSE reverses the order:
-// the sink generation is stopped first, then SCRUB is reasserted, so a late
-// native release can never overwrite the parked frame.
+// When inherited workspace audio is explicitly enabled and a native libpulse
+// bed is available, structural PLAY begins from SCRUB rather than MONOTONIC.
+// NativeAudioSink captures that exact authored point, holds it through
+// decoder/device prefill, then hands the SAME ProjectClock to AUDIO authority
+// only when samples become audible. PAUSE reverses the order: the sink
+// generation is stopped first, then SCRUB is reasserted, so a late native
+// release can never overwrite the parked frame.
 
 import 'dart:async';
 import 'dart:convert';
@@ -150,10 +156,16 @@ class EditWorkspace extends StatefulWidget {
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
 
+  /// Structural source authoring sits below the TEXT sequence. Main narration
+  /// and music therefore do not belong here by default. This opt-in exists for
+  /// compatibility tests and specialist callers that explicitly want to hear
+  /// or bake the workspace-level mix against an isolated structural source.
+  final bool inheritWorkspaceAudio;
+
   /// Test seams. Production uses the GTK chooser, workspace MLT import, native
-  /// realtime ProjectClock adapter, borrowed app audio backend, active
-  /// workspace, structural exporter, native preview decoder, and workspace
-  /// media resolver.
+  /// realtime ProjectClock adapter, active workspace, structural exporter,
+  /// native preview decoder, and workspace media resolver. Audio seams are
+  /// consulted only when [inheritWorkspaceAudio] is true.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
@@ -175,6 +187,7 @@ class EditWorkspace extends StatefulWidget {
     this.voiceFrames = 0,
     this.musicFrames = 0,
     this.musicLoops = false,
+    this.inheritWorkspaceAudio = false,
     this.pickVideo,
     this.importVideo,
     this.playbackClockFactory,
@@ -461,6 +474,21 @@ class _EditWorkspaceState extends State<EditWorkspace>
         frame: start,
         mode: ProjectClockMode.monotonic,
       );
+
+      // Source authoring is below the main sequence mix. Unless a specialist
+      // caller explicitly asks to inherit it, use ProjectClock directly and
+      // do not even open the workspace audio configuration.
+      if (!widget.inheritWorkspaceAudio) {
+        clock.playFrom(startTime);
+        _activeAudioPlayer = null;
+        _commitPlaybackStarted(
+          generation,
+          source,
+          start,
+          startTime,
+        );
+        return;
+      }
 
       String? workspaceWarning;
       _WorkspaceAudioMix audioMix = const _WorkspaceAudioMix(
@@ -1106,7 +1134,15 @@ class _EditWorkspaceState extends State<EditWorkspace>
     try {
       final String workspace =
           (widget.workspaceRootResolver ?? resolveActiveWorkspaceRoot)();
-      final _WorkspaceAudioMix audioMix = _WorkspaceAudioMix.load(workspace);
+      final _WorkspaceAudioMix audioMix = widget.inheritWorkspaceAudio
+          ? _WorkspaceAudioMix.load(workspace)
+          : const _WorkspaceAudioMix(
+              audioPath: null,
+              audioGainDb: 0.0,
+              musicPath: null,
+              musicGainDb: 0.0,
+              musicLoop: false,
+            );
       final Directory outputDirectory = Directory(
         '$workspace${Platform.pathSeparator}output_frames',
       );
@@ -1430,7 +1466,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
             color: widget.theme.accentDim,
           ),
         ),
-        Text('SYNCING AUDIO', style: widget.theme.micro),
+        Text('STARTING', style: widget.theme.micro),
       ] else if (_exporting) ...[
         SizedBox(
           width: sc(13),
