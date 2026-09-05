@@ -20,9 +20,9 @@ import 'structural_sequence.dart';
 // preview shows frames the bake will never produce and the trust the
 // whole tool rests on is gone.
 //
-// It also blocked warming. Nothing outside the editor could precompute
-// an editor simulation, because nothing outside the editor knew how to
-// build the exact string the editor was going to run.
+// It also blocked warming. Nothing outside the editor could precompute an
+// editor simulation, because nothing outside the editor knew how to build
+// the exact string the editor was going to run.
 //
 // Pure in, pure out: no widget state, no filesystem, no engine. Both
 // callers get the same answer because there is only one answer.
@@ -103,10 +103,11 @@ class CompiledScript {
 ///
 /// A standalone `[STRUCT:EDIT.foo]` or `[STRUCT:MOSAIC.bar]` is different:
 /// that is a main-sequence placement. After the source definitions are removed,
-/// the projection replaces the placement with a PAUSE whose duration comes
-/// from the referenced source. TerminalEngine therefore owns the timing while
-/// the editor/render layer owns the structural pixels. The author never types a
-/// second duration for the same cut.
+/// the projection derives its timing from the referenced source. Editor
+/// line-map compilation writes a compensated PAUSE. Real Preview/Bake writes
+/// the same PAUSE preceded by an engine-internal REGION marker so the top-level
+/// Preview can discover which structural placement is live without a second
+/// clock. The author never types either implementation detail.
 ///
 /// [lineMarkers] injects an editor-only `[LINE:n]` at the head of each
 /// document line so the engine reports its read position back as a line
@@ -117,7 +118,10 @@ class CompiledScript {
 /// expansion rewrites line structure. Injecting after would number lines
 /// that do not exist in the document the author is looking at.
 CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
-  final String projected = _engineProjectionSource(rawText);
+  final String projected = _engineProjectionSource(
+    rawText,
+    runtimeMarkers: !lineMarkers,
+  );
   final String marked =
       lineMarkers ? injectLineMarkers(projected) : projected;
 
@@ -158,7 +162,10 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
 /// Sequence placements are projected only AFTER source roots are gone. That is
 /// what prevents a `[STRUCT:...]` accidentally written inside an EDIT/MOSAIC
 /// definition from consuming main-sequence time.
-String _engineProjectionSource(String rawText) {
+String _engineProjectionSource(
+  String rawText, {
+  required bool runtimeMarkers,
+}) {
   final bool hasStructuralRoots = RegExp(
     r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]',
   ).hasMatch(rawText);
@@ -180,6 +187,7 @@ String _engineProjectionSource(String rawText) {
   return projectStructuralSequencePlacements(
     rawDocument: rawText,
     projectedSource: projected,
+    runtimeMarkers: runtimeMarkers,
   );
 }
 
