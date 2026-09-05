@@ -356,4 +356,71 @@ void main() {
     );
     expect(client.width / client.height, closeTo(16.0 / 9.0, 0.01));
   });
+
+  testWidgets('terminal title bar collapses into fullscreen during structural return',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+    final int zoomInStart = placement.contentEndFrameExclusive +
+        kStructuralWindowFrames;
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: zoomInStart,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(placement.stageAt(zoomInStart), StructuralSequenceStage.zoomIn);
+    final Rect terminalStart = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
+    final double barStart = tester.getSize(
+      find.byKey(const ValueKey<String>('structural-terminal-title-bar')),
+    ).height;
+    expect(barStart, closeTo(38.0, 0.01));
+
+    final int zoomInMiddle = zoomInStart + (kStructuralZoomFrames ~/ 2);
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: zoomInMiddle,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect terminalMiddle = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
+    final double barMiddle = tester.getSize(
+      find.byKey(const ValueKey<String>('structural-terminal-title-bar')),
+    ).height;
+    expect(terminalMiddle.width, greaterThan(terminalStart.width));
+    expect(terminalMiddle.height, greaterThan(terminalStart.height));
+    expect(barMiddle, greaterThan(0.0));
+    expect(barMiddle, lessThan(barStart));
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: placement.durationFrames - 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect terminalEnd = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
+    expect(terminalEnd.width, greaterThan(terminalMiddle.width));
+    expect(terminalEnd.height, greaterThan(terminalMiddle.height));
+    expect(
+      find.byKey(const ValueKey<String>('structural-terminal-title-bar')),
+      findsNothing,
+    );
+  });
 }
