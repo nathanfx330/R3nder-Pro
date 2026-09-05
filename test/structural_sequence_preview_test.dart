@@ -49,10 +49,7 @@ class _FakeDecoder implements MediaDecoder {
   void dispose() {}
 }
 
-void main() {
-  testWidgets('TEXT structural window renders MOSAIC at placement-local frame',
-      (WidgetTester tester) async {
-    const String source = '''[MOSAIC:wall]
+const String _source = '''[MOSAIC:wall]
 [PANE:pane1]
 [CLIP:base:video/base.mp4:0:10:20:1]
 [/CLIP]
@@ -61,26 +58,62 @@ void main() {
 [STRUCT:MOSAIC.wall]
 ''';
 
+Widget _buildPreview({
+  required StructuralSequencePlacement placement,
+  required _FakeBackend backend,
+  required int localFrame,
+}) {
+  return MaterialApp(
+    home: SizedBox(
+      width: 800,
+      height: 500,
+      child: StructuralSequencePreview(
+        rawDocument: _source,
+        placement: placement,
+        localFrame: localFrame,
+        isPlaying: false,
+        theme: R3Theme.of(Colors.green),
+        wallpaper: null,
+        backend: backend,
+        resolveSource: (String value) => '/workspace/$value',
+      ),
+    ),
+  );
+}
+
+void main() {
+  testWidgets('zoom-out owns presentation time before source decoder opens',
+      (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
-        parseStructuralSequencePlacements(source).single;
+        parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: SizedBox(
-          width: 800,
-          height: 500,
-          child: StructuralSequencePreview(
-            rawDocument: source,
-            placement: placement,
-            localFrame: 5,
-            isPlaying: false,
-            theme: R3Theme.of(Colors.green),
-            wallpaper: null,
-            backend: backend,
-            resolveSource: (String value) => '/workspace/$value',
-          ),
-        ),
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: 5,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
+    expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
+    expect(find.text('MOSAIC.wall'), findsNothing);
+    expect(backend.openCount, 0);
+  });
+
+  testWidgets('showing stage renders MOSAIC at source-local frame in 16:9 client',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralEntryFrames + 5,
       ),
     );
     await tester.pumpAndSettle();
@@ -90,5 +123,10 @@ void main() {
     expect(backend.openCount, 1);
     expect(backend.requestedFrames, contains(15));
     expect(find.textContaining('SRC 15'), findsOneWidget);
+
+    final Size client = tester.getSize(
+      find.byKey(const ValueKey<String>('sequence-preview:MOSAIC.wall')),
+    );
+    expect(client.width / client.height, closeTo(16.0 / 9.0, 0.01));
   });
 }
