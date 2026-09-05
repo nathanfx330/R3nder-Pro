@@ -58,9 +58,6 @@ const String _source = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall]
 ''';
 
-const ValueKey<String> _readyKey =
-    ValueKey<String>('structural-first-frame-ready');
-
 String _resolveTestSource(String value) => '/workspace/$value';
 
 Widget _buildPreview({
@@ -98,18 +95,29 @@ Future<void> _preloadFirstFrame(
       localFrame: 5,
     ),
   );
-
-  // Decoder request is not the readiness boundary. The transition waits until
-  // RGBA conversion has produced a presentable ui.Image and the parent has
-  // latched that state. Pump until that exact readiness marker is in the tree.
-  for (int i = 0; i < 50 && find.byKey(_readyKey).evaluate().isEmpty; i++) {
-    await tester.pump(const Duration(milliseconds: 2));
-  }
+  await tester.pumpAndSettle();
 
   expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
   expect(backend.openCount, 1);
   expect(backend.requestedFrames, contains(10));
-  expect(find.byKey(_readyKey), findsOneWidget);
+
+  // ui.decodeImageFromPixels completes on the engine async loop rather than
+  // Flutter's scheduled-frame queue. pumpAndSettle() can therefore return
+  // while the RGBA -> ui.Image conversion is still in flight. Yield to that
+  // loop, then pump the setState triggered by onFirstFrameReady. Stop as soon
+  // as the same readiness marker used by the product appears.
+  final Finder ready = find.byKey(
+    const ValueKey<String>('structural-first-frame-ready'),
+  );
+  for (int attempt = 0; attempt < 50 && ready.evaluate().isEmpty; attempt++) {
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+  }
+
+  expect(ready, findsOneWidget);
+  await tester.pumpAndSettle();
 }
 
 void _expectSameRect(Rect a, Rect b) {
@@ -148,7 +156,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(backend.openCount, 1);
-    expect(find.byKey(_readyKey), findsOneWidget);
     expect(find.text('F0 / 20'), findsOneWidget);
     expect(find.textContaining('SRC 10'), findsOneWidget);
     expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
@@ -211,7 +218,6 @@ void main() {
       placement.stageAt(kStructuralZoomFrames + 1),
       StructuralSequenceStage.opening,
     );
-    expect(find.byKey(_readyKey), findsOneWidget);
     expect(find.text('F0 / 20'), findsOneWidget);
     expect(find.textContaining('SRC 10'), findsOneWidget);
     expect(backend.requestedFrames, isNotEmpty);
@@ -226,7 +232,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(_readyKey), findsOneWidget);
     expect(find.text('F0 / 20'), findsOneWidget);
     expect(find.textContaining('SRC 10'), findsOneWidget);
     expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
@@ -248,8 +253,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-
-    expect(find.byKey(_readyKey), findsOneWidget);
 
     final Rect rear = tester.getRect(
       find.byKey(const ValueKey<String>('structural-terminal-window')),
@@ -277,8 +280,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-
-    expect(find.byKey(_readyKey), findsOneWidget);
 
     final Rect emergenceMiddle = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
@@ -344,7 +345,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(_readyKey), findsOneWidget);
     expect(find.text('MOSAIC.wall'), findsOneWidget);
     expect(find.text('F5 / 20'), findsOneWidget);
     expect(backend.openCount, 1);
