@@ -54,6 +54,12 @@ class StructuralSequencePreview extends StatefulWidget {
   final R3Theme theme;
   final ui.Image? wallpaper;
 
+  /// Width/height of the live terminal cursor expressed as fractions of the
+  /// terminal engine canvas. Top-level PREVIEW supplies this so the structural
+  /// terminal ghost inherits the exact cursor proportions visible on the frame
+  /// immediately before the hand-off. Null keeps the legacy editor/test ghost.
+  final Size? terminalCursorFraction;
+
   /// Optional seams used by focused widget tests and alternate decoders. The
   /// normal TEXT editor leaves both null and therefore uses the same persistent
   /// MLT backend and workspace resolver as the EDIT surface.
@@ -68,6 +74,7 @@ class StructuralSequencePreview extends StatefulWidget {
     required this.isPlaying,
     required this.theme,
     required this.wallpaper,
+    this.terminalCursorFraction,
     this.backend,
     this.resolveSource,
   });
@@ -240,6 +247,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       key: const ValueKey<String>('structural-terminal-window'),
                       theme: widget.theme,
                       chrome: terminalChrome.clamp(0.0, 1.0),
+                      cursorFraction: widget.terminalCursorFraction,
                     ),
                   ),
                 ),
@@ -378,11 +386,13 @@ class _TerminalGhost extends StatelessWidget {
 
   final R3Theme theme;
   final double chrome;
+  final Size? cursorFraction;
 
   const _TerminalGhost({
     super.key,
     required this.theme,
     required this.chrome,
+    required this.cursorFraction,
   });
 
   @override
@@ -445,13 +455,26 @@ class _TerminalGhost extends StatelessWidget {
             Expanded(
               child: ColoredBox(
                 color: const Color(0xFF050706),
-                child: Align(
-                  alignment: const Alignment(-0.94, -0.88),
-                  child: Container(
-                    width: 7,
-                    height: 14,
-                    color: theme.accent,
-                  ),
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    final Size? fraction = cursorFraction;
+                    final double cursorW = fraction == null
+                        ? 7.0
+                        : constraints.maxWidth * fraction.width;
+                    final double cursorH = fraction == null
+                        ? 14.0
+                        : constraints.maxHeight * fraction.height;
+
+                    return Align(
+                      alignment: const Alignment(-0.94, -0.88),
+                      child: Container(
+                        key: const ValueKey<String>('structural-terminal-cursor'),
+                        width: cursorW,
+                        height: cursorH,
+                        color: theme.accent,
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
