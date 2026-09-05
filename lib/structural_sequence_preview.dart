@@ -10,6 +10,11 @@
 // from inside that rectangle while the terminal fades away behind it. Geometry
 // supplies the depth cue; the matched rear-plane fade makes the hand-off read
 // as one window yielding to another rather than two stacked windows.
+//
+// The first structural frame is decoded during the opening stage and held
+// still while the new window comes forward. Source time begins advancing only
+// after the window has settled, so the presentation never opens onto an
+// artificial black client before picture appears.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -169,7 +174,8 @@ class StructuralSequencePreview extends StatelessWidget {
                       sourceDurationFrames: placement.sourceDurationFrames,
                       isPlaying: isPlaying &&
                           stage == StructuralSequenceStage.showing,
-                      showVideo: stage == StructuralSequenceStage.showing ||
+                      showVideo: stage == StructuralSequenceStage.opening ||
+                          stage == StructuralSequenceStage.showing ||
                           stage == StructuralSequenceStage.closing,
                       theme: theme,
                       backend: backend,
