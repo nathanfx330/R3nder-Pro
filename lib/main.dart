@@ -16,6 +16,7 @@ import 'scene_evaluator.dart';
 import 'program_preview_surface.dart';
 import 'exporter.dart';
 import 'editor_screen.dart';
+import 'edit_video_preview.dart';
 import 'app_info.dart';
 import 'asset_manager.dart';
 import 'audio_bed.dart';
@@ -1687,6 +1688,11 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       fps: engineFps,
       width: w.toInt(),
       height: h.toInt(),
+      // Whole-program STRUCT bake uses the same live editor buffer and the
+      // same workspace resolver as Preview. This deliberately does not reread
+      // the template from disk: _docText may contain unsaved editor changes.
+      structuralDocument: _docText,
+      resolveStructuralSource: resolveWorkspaceMediaSource,
       // Export never touches the preview player. ffmpeg takes the original
       // file as a second input and muxes it, so the bake gets full source
       // quality and full channel count regardless of what the preview pipe
