@@ -32,6 +32,11 @@ import 'script_cst.dart';
 // than allowing the generic node form to reinterpret TRACK / PANE / CLIP.
 // The visible card is therefore a view of structural source, not a second
 // structural database.
+//
+// STRUCT is the sequence-side reference to one of those protected roots. It is
+// ordinary reorderable document markup, not a protected source definition, so
+// NODES may move, duplicate, delete, or retarget it without taking ownership of
+// the EDIT/MOSAIC bytes it points at.
 // =====================================================================
 
 /// Node type for a whitespace-only run between two tags. Hidden from the
@@ -53,26 +58,24 @@ const String _kStructuralOwner = '__structural_owner';
 int _nodeSeq = 0;
 
 /// Bracketed constructs that are real markup but live outside [tagRegex].
-/// They are stripped or expanded by the preprocessor rather than typed, so
-/// presenting them as "typing text" would be a lie.
-/// Macro markup, which lives outside [tagRegex] because the preprocessor
-/// expands it before the parser ever runs.
+/// They are stripped, expanded, or projected by another source layer rather
+/// than typed, so presenting them as "typing text" would be a lie.
 ///
-/// The patterns mirror the ones in ScriptParser.parseTemplateData exactly.
-/// They have to: if the node editor and the template parser disagree about
-/// what a menu looks like, the editor will happily write something the
-/// dashboard cannot read back.
+/// Macro patterns mirror ScriptParser.parseTemplateData. STRUCT is included in
+/// this same non-terminal pass because it is projected into sequence timing by
+/// script_pipeline.dart before TerminalEngine sees the document.
 final RegExp _macroRegex = RegExp(
   r'\[DEF_MENU:(?<menuId>[a-zA-Z0-9_-]+)\](?<menuBody>.*?)\[/DEF_MENU\]'
   r'|\[CALL:(?<callId>[a-zA-Z0-9_-]+)\]'
   r'|\[MENU_STATE:(?<msMenu>[a-zA-Z0-9_-]+):(?<msInstance>[a-zA-Z0-9_-]+)\]'
   r'|\[MACRO_CFG:(?<cfgId>[a-zA-Z0-9_-]+):(?<cfgItem>[a-zA-Z0-9_-]+|NONE)'
-  r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]',
+  r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]'
+  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)\]',
   dotAll: true,
 );
 
 final RegExp _nonGrammarMarkup =
-    RegExp(r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE)');
+    RegExp(r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE|STRUCT)');
 
 final RegExp _structuralRootOpening =
     RegExp(r'\[(?:EDIT|MOSAIC)(?::[^\]\r\n]*)?\]');
@@ -122,19 +125,6 @@ String _emitTag(
     if (v.isEmpty) v = opts[i].def;
     if (v.isEmpty) v = opts[i].fallback;
 
-    // A SEGMENT THAT CANNOT RESOLVE BREAKS THE TAG SILENTLY.
-    //
-    // Positional grammar means reaching segment N requires emitting every
-    // segment before it. If one of those resolves to nothing we write a
-    // bare "::", which tagRegex rejects, so the whole construct stops
-    // matching and types onto the screen as literal text. The document
-    // still round-trips, the node panel still looks right, and the damage
-    // only shows up in the render.
-    //
-    // [APP] is seven segments deep now and `panes` sits at the end, so any
-    // future tail makes this more likely, not less. An assert turns a
-    // silent grammar break into a failure at the moment the offending
-    // _Opt is written, which is the only moment anyone can act on it.
     assert(
       v.isNotEmpty,
       'Tag "$name" segment $i must emit a value: something after it is '
@@ -221,10 +211,6 @@ class ScriptNode {
     if (isStructural) {
       final String source = param(_kStructuralSource, rawText);
       final String owner = param(_kStructuralOwner, id);
-      // Generic duplicate creates a new node id while copying params. It must
-      // not clone a canonical root with the same structural id. Treat that
-      // accidental duplicate as no source rather than manufacturing an invalid
-      // second EDIT/MOSAIC root.
       if (owner != id && params.containsKey(_kStructuralSource)) return '';
       return source;
     }
@@ -238,7 +224,6 @@ class ScriptNode {
       case 'TEXT':
         return '$prefix$body$suffix';
 
-      // --- Core typing controls -----------------------------------
       case 'WIPE':
         return '[WIPE]';
       case 'PAUSE':
@@ -246,7 +231,6 @@ class ScriptNode {
       case 'SPEED':
         return '[SPEED:${param('speed', '1')}]';
 
-      // --- Text formatting ----------------------------------------
       case 'SIZE':
         return '[SIZE:${param('size', 'DEFAULT')}]';
       case 'LEAD':
@@ -256,7 +240,6 @@ class ScriptNode {
       case 'ALIGN':
         return '[ALIGN:${param('align', 'LEFT')}]';
 
-      // --- Color and effects --------------------------------------
       case 'COLOR':
         return '[${param('color', 'NORMAL')}]';
       case 'FLASH':
@@ -268,16 +251,11 @@ class ScriptNode {
       case 'REDACT':
         return '[${param('redact', 'REDACT')}]';
 
-      // --- Progress bar -------------------------------------------
-      // Always emitted in full form. bFill and bEmpty accept the empty
-      // string as a legal value, so the "omit when default" rule cannot be
-      // applied to them without ambiguity.
       case 'BAR':
         return '[BAR:${param('width', '20')}:${param('frames', '60')}'
             ':${param('fill', '█')}:${param('empty', ' ')}'
             ':${param('brackets', '[]')}]';
 
-      // --- Regions and selection ----------------------------------
       case 'REGION':
         return '[REGION:${param('id', 'region')}]';
       case 'REGION_END':
@@ -286,11 +264,9 @@ class ScriptNode {
         return _emitTag('SELECT',
             head: param('id', 'NONE'), opts: [_Opt(param('rgb'), '')]);
 
-      // --- Config -------------------------------------------------
       case 'CONFIG':
         return '[CONFIG:${param('key', 'SIZE')}:${param('value')}]';
 
-      // --- Desktop presentations ----------------------------------
       case 'GALLERY':
         return _emitTag('GALLERY', head: param('folder'), opts: [
           _Opt(param('hold'), '90'),
@@ -301,10 +277,6 @@ class ScriptNode {
       case 'BROWSER':
         return _emitTag('BROWSER', head: param('folder'), opts: [
           _Opt(param('hold'), '150'),
-          // Fallback rather than default: the scroll mode sits behind the
-          // title, so changing scroll on a title-less BROWSER node must
-          // back-fill the runtime's own default rather than emit nothing
-          // and break the tag into literal text.
           _Opt(param('title'), '', fallback: 'Web Browser'),
           _Opt(param('scroll'), 'SCROLL'),
         ]);
@@ -312,9 +284,6 @@ class ScriptNode {
       case 'VIDEO':
         return _emitTag('VIDEO', head: param('folder'), opts: [
           _Opt(param('hold'), '60'),
-          // FPS is positional after the title. If the user changes FPS on an
-          // old title-less VIDEO node, back-fill the title with the runtime's
-          // existing default so changing FPS does not also rename the window.
           _Opt(param('title'), '', fallback: 'Image Viewer'),
           _Opt(param('fps'), '30'),
         ]);
@@ -324,14 +293,7 @@ class ScriptNode {
           _Opt(param('hold'), '90'),
           _Opt(param('title'), '', fallback: 'App'),
           _Opt(param('layout'), 'GRID'),
-          // No default: an absent page plan means default chunking, and
-          // emitting one would put a value on every APP tag in every
-          // document the first time it was touched.
-          // If authored pane structure follows it, back-fill with the
-          // existing implicit default of three panes per page so positional
-          // grammar stays legal without changing the shot.
           _Opt(param('pages'), '', fallback: '3'),
-          // Empty preserves the legacy one-image-per-pane behavior.
           _Opt(param('panes'), ''),
         ]);
 
@@ -367,12 +329,6 @@ class ScriptNode {
               _Opt(param('hold'), '240'),
               _Opt(param('rgb'), '30,30,38'),
               _Opt(param('heading'), '', fallback: 'TIMELINE'),
-              // NONE, not empty. tlStage is [a-zA-Z0-9_\-/]+ in the
-              // grammar, so it cannot match nothing: emitting an empty
-              // segment to reach thumbW or gap writes "::" and the whole
-              // TIMELINE stops matching, typing onto the screen as literal
-              // text. The engine treats an unresolvable stage folder as
-              // absent, which is what an author leaving it blank meant.
               _Opt(param('stage'), '', fallback: 'NONE'),
               _Opt(param('thumbW'), '150'),
               _Opt(param('gap'), '40'),
@@ -381,7 +337,6 @@ class ScriptNode {
             body: body,
             closer: 'TIMELINE');
 
-      // --- In-terminal stencils -----------------------------------
       case 'SVG':
         return _emitTag('SVG', head: param('file'), opts: [
           _Opt(param('hold'), '60'),
@@ -399,11 +354,6 @@ class ScriptNode {
         return _emitTag('PHOTO', head: param('file'), opts: [
           _Opt(param('hold'), '120'),
           _Opt(param('channel'), 'R'),
-          // Same trap as TIMELINE stage: photoRgb is \d+,\d+,\d+ and
-          // cannot be empty, so reaching `release` past an unset tint used
-          // to emit "::" and break the tag. 0,0,0 is not a neutral colour,
-          // so the fallback is the engine's own default pen tint, which is
-          // what an author who never set one is already seeing.
           _Opt(param('rgb'), '', fallback: '0,255,0'),
           _Opt(param('release'), ''),
         ]);
@@ -423,7 +373,6 @@ class ScriptNode {
       case 'SPRITE_OFF':
         return '[SPRITE_OFF:${param('file')}]';
 
-      // --- Macro menus --------------------------------------------
       case 'DEF_MENU':
         return '[DEF_MENU:${param('id', 'menu')}]$body[/DEF_MENU]';
 
@@ -436,6 +385,9 @@ class ScriptNode {
       case 'MACRO_CFG':
         return '[MACRO_CFG:${param('instance')}:${param('item', 'NONE')}'
             ':${param('rgb', '0,255,0')}:${param('blink', '0')}]';
+
+      case 'STRUCT':
+        return '[STRUCT:${param('source')}]';
 
       default:
         return rawText;
@@ -498,10 +450,6 @@ List<ScriptCstBlock> _structuralRootsForNodeParsing(String text) {
   try {
     return ScriptCstDocument.parse(text).roots;
   } on ScriptCstFormatException {
-    // Node mode is also a repair surface. A malformed structural block must
-    // remain byte-for-byte editable as ordinary source instead of preventing
-    // the document from opening. Runtime/model validation can still report the
-    // structural error through its normal path.
     return const <ScriptCstBlock>[];
   }
 }
@@ -569,25 +517,6 @@ ScriptNode _nodeFromStructuralRoot(ScriptCstBlock root) {
   return node;
 }
 
-// =====================================================================
-// SCRIPT PARSING
-//
-// Top level and pure: text in, nodes out, no widget state touched. Two
-// consumers need it. The node workspace turns the decomposition into a
-// form; the script ribbon in text mode turns it into blocks on a time
-// axis. Making the second one mount a node workspace it never renders,
-// or keeping a second copy of the parser, would both be worse than a
-// function that never needed to be a method in the first place.
-//
-// Every character of the input lands in exactly one node, which is what
-// makes the round trip lossless and what lets the ribbon assume its
-// blocks tile the document without gaps.
-//
-// Structural roots participate in that tiling as one protected hit each. They
-// dominate any tag or macro-looking text nested inside their owned source,
-// which keeps the generic node grammar from taking ownership away from CST.
-// =====================================================================
-
 List<ScriptNode> parseScriptToNodes(String text) {
   final List<ScriptNode> result = [];
   int lastEnd = 0;
@@ -598,14 +527,11 @@ List<ScriptNode> parseScriptToNodes(String text) {
     final ScriptNode n = ScriptNode(type: 'TEXT', rawText: slice);
 
     if (slice.trim().isEmpty) {
-      // Pure whitespace: a spacer. Hidden, never regenerated.
       n.type = kSpacer;
       result.add(n);
       return;
     }
 
-    // Peel the surrounding whitespace off so the editable body reads
-    // cleanly, and keep it for reassembly on emit.
     int s = 0;
     int e = slice.length;
     while (s < e && _isWs(slice.codeUnitAt(s))) {
@@ -618,8 +544,6 @@ List<ScriptNode> parseScriptToNodes(String text) {
     n.body = slice.substring(s, e);
     n.suffix = slice.substring(e);
 
-    // Bracketed constructs outside the tag grammar are markup, not typed
-    // copy. Label them RAW so the form does not imply they will type.
     if (_nonGrammarMarkup.hasMatch(n.body)) n.type = kRaw;
 
     result.add(n);
@@ -643,8 +567,6 @@ List<ScriptNode> parseScriptToNodes(String text) {
   });
 
   for (final _NodeParseHit hit in hits) {
-    // A structural root wins ownership over any generic tag or macro match in
-    // its body. Once its exact span has been emitted, nested hits fall here.
     if (hit.start < lastEnd) continue;
 
     if (hit.start > lastEnd) {
@@ -669,7 +591,7 @@ List<ScriptNode> parseScriptToNodes(String text) {
   return result;
 }
 
-/// Maps one macro construct onto a typed node.
+/// Maps one non-terminal construct onto a typed node.
 ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
   final ScriptNode n = ScriptNode(type: kRaw, rawText: m.group(0) ?? '');
 
@@ -698,6 +620,9 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
     n.params['item'] = g('cfgItem') ?? 'NONE';
     n.params['rgb'] = g('cfgRgb') ?? '0,255,0';
     n.params['blink'] = g('cfgBlink') ?? '0';
+  } else if (g('structSource') != null) {
+    n.type = 'STRUCT';
+    n.params['source'] = g('structSource')!;
   }
 
   return n;
@@ -705,9 +630,6 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
 
 bool _isWs(int c) => c == 32 || c == 9 || c == 10 || c == 13;
 
-/// Maps one tag match onto a typed node. Every named group in the tag
-/// grammar is covered; anything unrecognized falls through to RAW, which
-/// stays editable as markup and round-trips verbatim.
 ScriptNode _nodeFromMatch(RegExpMatch m) {
   final ScriptNode n = ScriptNode(type: kRaw, rawText: m.group(0) ?? '');
 
@@ -723,12 +645,9 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
     n.params[k] = v ?? fallback;
   }
 
-  // --- Core typing controls -------------------------------------
   if (g('wipe') != null) {
     n.type = 'WIPE';
   } else if (g('line') != null) {
-    // Editor-injected playback marker. It should never reach a saved
-    // document, but if one does, keep it hidden and verbatim.
     n.type = kSpacer;
   } else if (g('pause') != null) {
     n.type = 'PAUSE';
@@ -736,10 +655,7 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
   } else if (g('speed') != null) {
     n.type = 'SPEED';
     p('speed', g('speed'), '1');
-  }
-
-  // --- Text formatting ------------------------------------------
-  else if (g('size') != null) {
+  } else if (g('size') != null) {
     n.type = 'SIZE';
     p('size', g('size'), 'DEFAULT');
   } else if (g('lead') != null) {
@@ -751,10 +667,7 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
   } else if (g('align') != null) {
     n.type = 'ALIGN';
     p('align', g('align'), 'LEFT');
-  }
-
-  // --- Color and effects ----------------------------------------
-  else if (g('color') != null) {
+  } else if (g('color') != null) {
     n.type = 'COLOR';
     p('color', g('color'), 'NORMAL');
   } else if (g('flash') != null) {
@@ -769,20 +682,14 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
   } else if (g('redact') != null) {
     n.type = 'REDACT';
     p('redact', g('redact'), 'REDACT');
-  }
-
-  // --- Progress bar ---------------------------------------------
-  else if (g('bW') != null) {
+  } else if (g('bW') != null) {
     n.type = 'BAR';
     p('width', g('bW'), '20');
     p('frames', g('bF'), '60');
     p('fill', g('bFill'), '█');
     p('empty', g('bEmpty'), ' ');
     p('brackets', g('bBrack'), '[]');
-  }
-
-  // --- Regions and selection ------------------------------------
-  else if (g('regionId') != null) {
+  } else if (g('regionId') != null) {
     n.type = 'REGION';
     p('id', g('regionId'), 'region');
   } else if (g('regionEnd') != null) {
@@ -791,17 +698,11 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
     n.type = 'SELECT';
     p('id', g('selId'), 'NONE');
     p('rgb', g('selBg'));
-  }
-
-  // --- Config ----------------------------------------------------
-  else if (g('configKey') != null) {
+  } else if (g('configKey') != null) {
     n.type = 'CONFIG';
     p('key', g('configKey'), 'SIZE');
     p('value', g('configVal'));
-  }
-
-  // --- Desktop presentations -------------------------------------
-  else if (g('galFolder') != null) {
+  } else if (g('galFolder') != null) {
     n.type = 'GALLERY';
     p('folder', g('galFolder'));
     p('hold', g('galHold'), '90');
@@ -855,10 +756,7 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
     p('gap', g('tlGap'), '40');
     p('focus', g('tlFocus'));
     n.body = g('tlBody') ?? '';
-  }
-
-  // --- In-terminal stencils --------------------------------------
-  else if (g('svgfFolder') != null) {
+  } else if (g('svgfFolder') != null) {
     n.type = 'SVGFLASH';
     p('folder', g('svgfFolder'));
     p('framesPer', g('svgfFrames'), '4');
@@ -895,23 +793,6 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
   return n;
 }
 
-/// Stamps each node with the document line range its markup occupies.
-///
-/// Must run after any edit and before anything asks a node where it lives.
-/// The spans are what tie the three views together: the panel scrolls to a
-/// line, the ribbon maps frames to lines to nodes, and click-to-jump goes
-/// the other way.
-///
-/// STRUCTURAL nodes advance the document line counter but receive -1/-1.
-/// Their authored lines are real source coordinates, yet compileScript removes
-/// those roots before TerminalEngine runs, so no runtime frame may belong to
-/// them. This also prevents a structural root later on the same physical line
-/// from stealing frame attribution from a preceding PAUSE or presentation tag.
-///
-/// [endLine] is inclusive, and a node whose markup ends on a newline does
-/// not claim the line after it. Getting that off by one would put every
-/// later node's span one line out, which reads as the ribbon highlighting
-/// the block next to the one you are actually on.
 void assignNodeLineSpans(List<ScriptNode> nodes) {
   int line = 0;
   for (final n in nodes) {
@@ -936,14 +817,6 @@ void assignNodeLineSpans(List<ScriptNode> nodes) {
   }
 }
 
-/// Stamps every node with its exact character range in the current emitted
-/// document. The spans tile the document with no gaps or overlaps and use the
-/// same start-inclusive, end-exclusive convention as String.substring.
-///
-/// This deliberately derives from [toMarkup] after edits instead of retaining
-/// stale parse offsets. Changing one node's authored length therefore shifts
-/// every following node to its new exact source position without rewriting
-/// any of them.
 void assignNodeSourceSpans(List<ScriptNode> nodes) {
   int offset = 0;
   for (final ScriptNode node in nodes) {
