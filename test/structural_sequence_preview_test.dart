@@ -145,7 +145,7 @@ void main() {
     expect(backend.openCount, 0);
   });
 
-  testWidgets('structural window comes forward from terminal rear plane',
+  testWidgets('structural window comes forward while terminal fades behind it',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
@@ -166,11 +166,14 @@ void main() {
     final Rect emergenceStart = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
+    final Opacity terminalStart = tester.widget<Opacity>(
+      find.byKey(const ValueKey<String>('structural-terminal-opacity')),
+    );
 
     expect(emergenceStart.width, lessThan(rear.width));
     expect(emergenceStart.height, lessThan(rear.height));
     expect(emergenceStart.top, greaterThan(rear.top));
-    expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
+    expect(terminalStart.opacity, closeTo(1.0, 0.001));
     expect(backend.openCount, 0);
 
     final int middleFrame =
@@ -187,10 +190,15 @@ void main() {
     final Rect emergenceMiddle = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
+    final Opacity terminalMiddle = tester.widget<Opacity>(
+      find.byKey(const ValueKey<String>('structural-terminal-opacity')),
+    );
+
     expect(emergenceMiddle.width, greaterThan(emergenceStart.width));
     expect(emergenceMiddle.height, greaterThan(emergenceStart.height));
     expect(emergenceMiddle.top, lessThan(emergenceStart.top));
-    expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
+    expect(terminalMiddle.opacity, greaterThan(0.0));
+    expect(terminalMiddle.opacity, lessThan(1.0));
     expect(backend.openCount, 0);
 
     await tester.pumpWidget(
@@ -206,6 +214,10 @@ void main() {
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
     _expectSameRect(emergenceEnd, rear);
+    expect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+      findsNothing,
+    );
 
     await tester.pumpWidget(
       _buildPreview(
