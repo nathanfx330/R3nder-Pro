@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'edit_video_preview.dart';
+import 'media_layer.dart';
 import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
@@ -20,6 +21,12 @@ class StructuralSequencePreview extends StatelessWidget {
   final R3Theme theme;
   final ui.Image? wallpaper;
 
+  /// Optional seams used by focused widget tests and alternate decoders. The
+  /// normal TEXT editor leaves both null and therefore uses the same persistent
+  /// MLT backend and workspace resolver as the EDIT surface.
+  final MediaDecoderBackend? backend;
+  final String Function(String source)? resolveSource;
+
   const StructuralSequencePreview({
     super.key,
     required this.rawDocument,
@@ -28,6 +35,8 @@ class StructuralSequencePreview extends StatelessWidget {
     required this.isPlaying,
     required this.theme,
     required this.wallpaper,
+    this.backend,
+    this.resolveSource,
   });
 
   @override
@@ -111,6 +120,8 @@ class StructuralSequencePreview extends StatelessWidget {
                             theme: theme,
                             isPlaying: isPlaying,
                             fastPreview: isPlaying,
+                            backend: backend,
+                            resolveSource: resolveSource,
                           ),
                         ),
                       ),
