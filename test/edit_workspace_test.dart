@@ -358,7 +358,7 @@ void main() {
   });
 
   testWidgets(
-    'libpulse structural PLAY hands exact ProjectClock point to workspace mix',
+    'explicit inherited structural PLAY hands exact ProjectClock point to workspace mix',
     (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1000, 700));
       addTearDown(() async {
@@ -421,6 +421,7 @@ void main() {
                 onSeek: (int frame) => lastSeek = frame,
                 backend: _PreviewBackend(),
                 resolveSource: _previewResolve,
+                inheritWorkspaceAudio: true,
                 workspaceRootResolver: () => temp.path,
                 playbackClockFactory: (RationalFrameRate rate) {
                   clock = _FakePlaybackClock(rate);
@@ -583,7 +584,7 @@ void main() {
   });
 
   testWidgets(
-    'EXPORT sends selected MOSAIC root and workspace audio mix to structural exporter',
+    'explicit inherited EXPORT sends selected MOSAIC root and workspace audio mix',
     (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 760));
       addTearDown(() async {
@@ -651,6 +652,7 @@ void main() {
                   resolvedPreviewSources.add(value);
                   return '/preview/$value';
                 },
+                inheritWorkspaceAudio: true,
                 workspaceRootResolver: () => temp.path,
                 exportSource: ({
                   required String source,
