@@ -70,6 +70,7 @@ class ScriptLinter {
     'CLIP', '/CLIP',
     'MOSAIC', '/MOSAIC',
     'PANE', '/PANE',
+    'STRUCT',
   };
 
   /// Every tag keyword the grammar knows.
