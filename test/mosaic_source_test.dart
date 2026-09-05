@@ -150,7 +150,16 @@ AFTER
     expect(compiled.engineText, isNot(contains('[MOSAIC:wall]')));
     expect(compiled.engineText, isNot(contains('[PANE:left]')));
     expect(compiled.engineText, isNot(contains('[EDIT:main]')));
-    expect(compiled.engineText.split('\n').length, source.split('\n').length);
+
+    // Preview/Bake intentionally remove structural metadata from runtime
+    // layout instead of preserving one blank line per authored metadata line.
+    // The editor still needs authored line identity, so its projection keeps
+    // those coordinates long enough to inject the original [LINE:n] markers.
+    final CompiledScript editorCompiled =
+        compileScript(source, lineMarkers: true);
+    expect(editorCompiled.engineText, contains('[LINE:0]BEFORE'));
+    expect(editorCompiled.engineText, contains('[LINE:7]MIDDLE'));
+    expect(editorCompiled.engineText, contains('[LINE:14]AFTER'));
   });
 
   test('MOSAIC is one composition and caps at three panes', () {
