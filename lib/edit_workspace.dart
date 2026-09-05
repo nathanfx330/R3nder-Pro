@@ -1030,7 +1030,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                       ],
                       onChanged: (VideoExportFormat? value) {
                         if (value == null) return;
-                        setDialogState(() => format = value),
+                        setDialogState(() => format = value);
                       },
                     ),
                   ],
