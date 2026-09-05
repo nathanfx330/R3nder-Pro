@@ -117,6 +117,26 @@ AFTER
         if (root.existsSync()) root.deleteSync(recursive: true);
       });
 
+      // ui.decodeImageFromPixels, Picture.toImage and Image.toByteData are
+      // engine callbacks, not fake-clock work. Awaiting them directly inside
+      // testWidgets can deadlock because the widget test zone owns time. Keep
+      // the test a widget test for Flutter painting, but cross that boundary
+      // explicitly whenever we ask the engine to materialize pixels.
+      Future<ui.Image?> renderStructural() {
+        return tester.runAsync<ui.Image?>(() async {
+          return renderer.renderIfActive(
+            scene: scene,
+            fontFamily: 'monospace',
+          );
+        });
+      }
+
+      Future<ByteData?> readRgba(ui.Image image) {
+        return tester.runAsync<ByteData?>(() async {
+          return image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        });
+      }
+
       final CompiledScript compiled = compileScript(source, lineMarkers: false);
       await scene.setup(
         templateText: compiled.engineText,
@@ -139,10 +159,7 @@ AFTER
       );
 
       expect(renderer.hasPlacements, isTrue);
-      expect(await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      ), isNull);
+      expect(await renderStructural(), isNull);
 
       int? firstStructProjectFrame;
       int? showingProjectFrame;
@@ -182,25 +199,18 @@ AFTER
       final int before = firstStruct - 1;
       expect(before, greaterThanOrEqualTo(0));
       scene.evaluate(ProjectTime(frame: before, mode: ProjectClockMode.scrub));
-      expect(await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      ), isNull);
+      expect(await renderStructural(), isNull);
 
       // The first SHOWING frame is authored source frame zero.
       scene.evaluate(
         ProjectTime(frame: showing, mode: ProjectClockMode.scrub),
       );
-      final ui.Image? composited = await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      );
+      final ui.Image? composited = await renderStructural();
       expect(composited, isNotNull);
       expect(backend.requests['leaf.mp4'], <int>[0]);
       expect(backend.opens, 1);
 
-      final ByteData? raw =
-          await composited!.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final ByteData? raw = await readRgba(composited!);
       expect(raw, isNotNull);
       final Uint8List bytes = raw!.buffer.asUint8List(
         raw.offsetInBytes,
@@ -215,10 +225,7 @@ AFTER
       scene.evaluate(
         ProjectTime(frame: showing + 1, mode: ProjectClockMode.scrub),
       );
-      final ui.Image? next = await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      );
+      final ui.Image? next = await renderStructural();
       expect(next, isNotNull);
       expect(backend.requests['leaf.mp4'], <int>[0, 1]);
       next!.dispose();
@@ -242,10 +249,7 @@ AFTER
       scene.evaluate(
         ProjectTime(frame: firstFrameAfterStruct!, mode: ProjectClockMode.scrub),
       );
-      expect(await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      ), isNull);
+      expect(await renderStructural(), isNull);
     },
   );
 }
