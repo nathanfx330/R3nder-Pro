@@ -49,6 +49,9 @@ class EditTransition {
 
   bool get isNone => kind == EditTransitionKind.none;
 
+  /// Historical transition markup is the incoming edge. Keeping this spelling
+  /// preserves every existing EDIT source while the GUI gains explicit edge
+  /// ownership.
   String get directive {
     switch (kind) {
       case EditTransitionKind.none:
@@ -57,6 +60,17 @@ class EditTransition {
         return '[#EDIT_TRANSITION:CROSSFADE:$frames]';
       case EditTransitionKind.luma:
         return '[#EDIT_TRANSITION:LUMA:$lumaSource:$frames]';
+    }
+  }
+
+  String get outgoingDirective {
+    switch (kind) {
+      case EditTransitionKind.none:
+        return '';
+      case EditTransitionKind.crossfade:
+        return '[#EDIT_TRANSITION_OUT:CROSSFADE:$frames]';
+      case EditTransitionKind.luma:
+        throw StateError('Outgoing luma transitions are not supported.');
     }
   }
 
@@ -75,13 +89,20 @@ class EditSurfaceClip {
   final String editId;
   final String trackId;
   final EditClip clip;
+
+  /// Incoming transition. This remains named [transition] for source/API
+  /// compatibility with the original M10 surface.
   final EditTransition transition;
+
+  /// Explicit transition owned by the clip's right edge.
+  final EditTransition outgoingTransition;
 
   const EditSurfaceClip({
     required this.editId,
     required this.trackId,
     required this.clip,
     required this.transition,
+    this.outgoingTransition = const EditTransition.none(),
   });
 
   String get id => clip.id;
@@ -159,8 +180,13 @@ String createEditWithClip({
 }
 
 class EditSurfaceDocument {
-  static final RegExp _transitionLine = RegExp(
+  static final RegExp _incomingTransitionLine = RegExp(
     r'^[ \t]*\[#EDIT_TRANSITION:(CROSSFADE:\d+|LUMA:[^:\r\n\]]+:\d+)\][ \t]*(\r?\n)?',
+    multiLine: true,
+  );
+
+  static final RegExp _outgoingTransitionLine = RegExp(
+    r'^[ \t]*\[#EDIT_TRANSITION_OUT:CROSSFADE:\d+\][ \t]*(\r?\n)?',
     multiLine: true,
   );
 
@@ -170,6 +196,10 @@ class EditSurfaceDocument {
 
   static final RegExp _lumaDirective = RegExp(
     r'\[#EDIT_TRANSITION:LUMA:([^\]\r\n:]+):(\d+)\]',
+  );
+
+  static final RegExp _outgoingCrossfadeDirective = RegExp(
+    r'\[#EDIT_TRANSITION_OUT:CROSSFADE:(\d+)\]',
   );
 
   final EditDocumentModel model;
@@ -196,6 +226,8 @@ class EditSurfaceDocument {
             trackId: track.id,
             clip: clip,
             transition: _parseTransition(clip.block.innerSource),
+            outgoingTransition:
+                _parseOutgoingTransition(clip.block.innerSource),
           ),
         );
       }
@@ -410,6 +442,8 @@ class EditSurfaceDocument {
     return model.rewriteClip(selected.clip, speed: speed);
   }
 
+  /// Sets the incoming (left-edge) transition. This is the original M10 API
+  /// and therefore keeps the historical EDIT_TRANSITION directive spelling.
   String setTransition(
     String trackId,
     String clipId,
@@ -419,7 +453,7 @@ class EditSurfaceDocument {
     _validateTransition(transition, selected.durationFrames);
 
     final String body = selected.clip.block.innerSource;
-    final String cleaned = body.replaceFirst(_transitionLine, '');
+    final String cleaned = body.replaceFirst(_incomingTransitionLine, '');
     final String replacement = transition.isNone
         ? cleaned
         : _insertTransitionDirective(
@@ -427,6 +461,38 @@ class EditSurfaceDocument {
             selected.clip,
             cleaned,
             transition.directive,
+          );
+
+    return model.cst.replaceInnerSource(selected.clip.block, replacement);
+  }
+
+  /// Sets the outgoing (right-edge) crossfade independently from the incoming
+  /// transition. The separate directive prevents one edge edit from silently
+  /// overwriting the other.
+  String setOutgoingTransition(
+    String trackId,
+    String clipId,
+    EditTransition transition,
+  ) {
+    final EditSurfaceClip selected = clip(trackId, clipId);
+    _validateTransition(transition, selected.durationFrames);
+    if (!transition.isNone && transition.kind != EditTransitionKind.crossfade) {
+      throw ArgumentError.value(
+        transition.kind,
+        'transition.kind',
+        'Only outgoing crossfade is currently supported.',
+      );
+    }
+
+    final String body = selected.clip.block.innerSource;
+    final String cleaned = body.replaceFirst(_outgoingTransitionLine, '');
+    final String replacement = transition.isNone
+        ? cleaned
+        : _insertTransitionDirective(
+            source,
+            selected.clip,
+            cleaned,
+            transition.outgoingDirective,
           );
 
     return model.cst.replaceInnerSource(selected.clip.block, replacement);
@@ -469,8 +535,11 @@ class EditSurfaceDocument {
       speed: editClip.speed,
     );
 
-    final String leftBody = editClip.block.innerSource;
-    final String rightBody = leftBody.replaceFirst(_transitionLine, '');
+    // Edge ownership survives a split: the original IN stays with the left
+    // segment and the original OUT moves with the right segment.
+    final String body = editClip.block.innerSource;
+    final String leftBody = body.replaceFirst(_outgoingTransitionLine, '');
+    final String rightBody = body.replaceFirst(_incomingTransitionLine, '');
     final String replacement = '$leftOpening$leftBody[/CLIP]\n'
         '$indent$rightOpening$rightBody[/CLIP]';
 
@@ -492,6 +561,13 @@ class EditSurfaceDocument {
     }
 
     return const EditTransition.none();
+  }
+
+  static EditTransition _parseOutgoingTransition(String body) {
+    final RegExpMatch? crossfade =
+        _outgoingCrossfadeDirective.firstMatch(body);
+    if (crossfade == null) return const EditTransition.none();
+    return EditTransition.crossfade(int.parse(crossfade.group(1)!));
   }
 
   static void _validateTransition(EditTransition transition, int clipDuration) {
