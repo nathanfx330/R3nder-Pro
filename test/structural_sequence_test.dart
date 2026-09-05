@@ -61,23 +61,31 @@ Outro
     );
   });
 
-  test('compile removes definitions and schedules full STRUCT presentation', () {
+  test('compile compensates PAUSE framing while preserving full STRUCT duration', () {
     final compiled = compileScript(source);
 
     expect(compiled.engineText, isNot(contains('[EDIT:main]')));
     expect(compiled.engineText, isNot(contains('[MOSAIC:wall]')));
     expect(compiled.engineText, isNot(contains('[STRUCT:MOSAIC.wall]')));
-    expect(compiled.engineText, contains('[PAUSE:80]'));
+    expect(
+      compiled.engineText,
+      contains('[PAUSE:${80 - kStructuralProjectionFramingFrames}]'),
+    );
     expect(compiled.engineText, contains('Intro'));
     expect(compiled.engineText, contains('Outro'));
   });
 
-  test('editor line markers keep full placement on its authored line', () {
+  test('editor line markers use the same compensated STRUCT projection', () {
     final compiled = compileScript(source, lineMarkers: true);
-    expect(compiled.engineText, contains('[LINE:13][PAUSE:80]'));
+    expect(
+      compiled.engineText,
+      contains(
+        '[LINE:13][PAUSE:${80 - kStructuralProjectionFramingFrames}]',
+      ),
+    );
   });
 
-  test('missing structural source burns one frame instead of typing markup', () {
+  test('missing structural source burns fallback timing instead of markup', () {
     const String missing = '''Before
 [STRUCT:MOSAIC.missing]
 After
