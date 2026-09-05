@@ -19,7 +19,8 @@ class SwatchSpan {
 
 /// A custom text controller that allows us to highlight a specific line
 /// dynamically based on the engine's playback head, highlight search results,
-/// and provide interactive RGB color swatches inline.
+/// provide interactive RGB color swatches inline, and make the structural
+/// video language visibly distinct from terminal/presentation markup.
 class EditorTextController extends TextEditingController {
   int highlightedLine = -1;
   // Transparent enough that the cursor shines through; neutral so it sits
@@ -68,6 +69,17 @@ class EditorTextController extends TextEditingController {
   /// is lookahead so it stays outside the highlighted range.
   static final RegExp _colorPattern =
       RegExp(r':(\d{1,3},\d{1,3},\d{1,3})(?=:|\])');
+
+  /// Structural video markup is deliberately outside the terminal tag grammar.
+  /// It still deserves first-class lexical treatment in TEXT mode. The CST and
+  /// EditDocumentModel own its semantics; this regex is presentation only.
+  static final RegExp _structuralTagPattern = RegExp(
+    r'\[(?:/)?(?:EDIT|TRACK|CLIP|MOSAIC|PANE)(?::[^\]\r\n]*)?\]',
+  );
+
+  /// A cool steel/cyan tone keeps structural video markup distinct from both
+  /// the phosphor text and the amber missing-asset signal.
+  static const Color _structuralColor = Color(0xFF69AFC9);
 
   /// Every valid colour literal in the current text.
   ///
@@ -138,22 +150,36 @@ class EditorTextController extends TextEditingController {
 
     // We use a character-by-character styling array to elegantly handle
     // overlapping highlights (e.g. search intersecting with a color swatch).
-    List<Color?> bgColors = List.filled(len, null);
-    List<Color?> fgColors = List.filled(len, null);
-    List<FontWeight?> fontWeights = List.filled(len, null);
-    List<bool> problems = List.filled(len, false);
+    final List<Color?> bgColors = List<Color?>.filled(len, null);
+    final List<Color?> fgColors = List<Color?>.filled(len, null);
+    final List<FontWeight?> fontWeights =
+        List<FontWeight?>.filled(len, null);
+    final List<bool> problems = List<bool>.filled(len, false);
 
     // 1. Line Highlight
     int globalOffset = 0;
     final List<String> lines = text.split('\n');
     for (int i = 0; i < lines.length; i++) {
-      int lineLen = lines[i].length + (i < lines.length - 1 ? 1 : 0);
+      final int lineLen = lines[i].length + (i < lines.length - 1 ? 1 : 0);
       if (i == highlightedLine) {
         for (int j = 0; j < lineLen; j++) {
           if (globalOffset + j < len) bgColors[globalOffset + j] = highlightColor;
         }
       }
       globalOffset += lineLen;
+    }
+
+    // 1.25 Structural video language.
+    //
+    // EDIT / TRACK / CLIP and MOSAIC / PANE are canonical source structures,
+    // not terminal copy. Giving the full tag a semantic colour makes that
+    // distinction visible while typing without claiming parser ownership here.
+    // Actual missing-asset/problem styling runs after this and therefore wins.
+    for (final RegExpMatch match in _structuralTagPattern.allMatches(text)) {
+      for (int j = match.start; j < match.end && j < len; j++) {
+        fgColors[j] = _structuralColor;
+        fontWeights[j] = FontWeight.w700;
+      }
     }
 
     // 1.5 Unresolved asset references.
@@ -187,17 +213,17 @@ class EditorTextController extends TextEditingController {
       }
     }
 
-    // 3. Search Matches (Search overrides color swatches visually)
+    // 3. Search Matches (Search overrides syntax and color swatches visually)
     if (searchQuery.isNotEmpty) {
       final matches = RegExp(RegExp.escape(searchQuery), caseSensitive: false)
           .allMatches(text)
           .toList();
       for (int mIdx = 0; mIdx < matches.length; mIdx++) {
         final m = matches[mIdx];
-        bool isActive = mIdx == currentSearchIndex;
-        Color sBg =
+        final bool isActive = mIdx == currentSearchIndex;
+        final Color sBg =
             isActive ? Colors.orange : Colors.yellow.withValues(alpha: 0.4);
-        Color sFg = isActive ? Colors.black : (style?.color ?? Colors.white);
+        final Color sFg = isActive ? Colors.black : (style?.color ?? Colors.white);
 
         for (int j = m.start; j < m.end; j++) {
           if (j < len) {
@@ -210,7 +236,7 @@ class EditorTextController extends TextEditingController {
     }
 
     // 4. Build contiguous TextSpans
-    List<InlineSpan> spans = [];
+    final List<InlineSpan> spans = <InlineSpan>[];
     int currentSpanStart = 0;
     Color? currentBg = bgColors[0];
     Color? currentFg = fgColors[0];
@@ -218,7 +244,7 @@ class EditorTextController extends TextEditingController {
     bool currentProblem = problems[0];
 
     for (int i = 1; i <= len; i++) {
-      bool changed = i == len ||
+      final bool changed = i == len ||
           bgColors[i] != currentBg ||
           fgColors[i] != currentFg ||
           fontWeights[i] != currentWeight ||
@@ -226,9 +252,13 @@ class EditorTextController extends TextEditingController {
 
       if (changed) {
         TextStyle spanStyle = style ?? const TextStyle();
-        if (currentBg != null) spanStyle = spanStyle.copyWith(backgroundColor: currentBg);
+        if (currentBg != null) {
+          spanStyle = spanStyle.copyWith(backgroundColor: currentBg);
+        }
         if (currentFg != null) spanStyle = spanStyle.copyWith(color: currentFg);
-        if (currentWeight != null) spanStyle = spanStyle.copyWith(fontWeight: currentWeight);
+        if (currentWeight != null) {
+          spanStyle = spanStyle.copyWith(fontWeight: currentWeight);
+        }
         if (currentProblem) {
           spanStyle = spanStyle.copyWith(
             decoration: TextDecoration.underline,
