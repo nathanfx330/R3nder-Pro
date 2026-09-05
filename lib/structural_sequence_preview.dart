@@ -20,11 +20,13 @@
 // decode had completed immediately. A slow machine can reveal late, but it
 // cannot invent a different transition curve.
 //
-// The terminal ghost also follows ScenePainter's native chrome rule: as the
-// terminal pulls away from fullscreen its title bar, corners, border, and
-// shadow grow in; on the return they collapse back to zero while the terminal
-// expands. The parked window therefore becomes the fullscreen terminal instead
-// of carrying a fixed title bar to the last frame and dropping it at the cut.
+// When the caller supplies the live SceneEngine + terminal font, the terminal
+// portion of the transition is NOT reconstructed here. ScenePainter's native
+// desktop and terminal-window renderer draws it directly. That preserves the
+// actual authored terminal theme, font, cursor, title, wallpaper/chroma plate,
+// Yaru chrome, and exact fullscreen pixels across the hand-off. The simplified
+// Flutter ghost remains only as a fallback seam for isolated widget tests and
+// alternate callers that do not own a SceneEngine.
 //
 // The editor preview pane is not the render frame. ScenePainter letterboxes the
 // 16:9 engine canvas inside whatever space the editor gives it. Structural
@@ -40,6 +42,8 @@ import 'package:flutter/material.dart';
 
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
+import 'scene_engine.dart';
+import 'scene_painter.dart';
 import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
@@ -54,10 +58,14 @@ class StructuralSequencePreview extends StatefulWidget {
   final R3Theme theme;
   final ui.Image? wallpaper;
 
-  /// Width/height of the live terminal cursor expressed as fractions of the
-  /// terminal engine canvas. PREVIEW and EDIT can supply this so the structural
-  /// terminal ghost starts with the exact cursor dimensions visible on the
-  /// frame immediately before the hand-off. Null uses a proportional fallback.
+  /// Live terminal source for a pixel-continuous hand-off. When both this and
+  /// [terminalFontFamily] are present, ScenePainter draws the terminal/desktop
+  /// layer and this widget never substitutes the simplified terminal ghost.
+  final SceneEngine? terminalScene;
+  final String? terminalFontFamily;
+
+  /// Legacy/focused-test seam for the simplified ghost when no live terminal
+  /// scene is supplied. Production PREVIEW and EDIT should supply a live scene.
   final Size? terminalCursorFraction;
 
   /// Optional seams used by focused widget tests and alternate decoders. The
@@ -74,6 +82,8 @@ class StructuralSequencePreview extends StatefulWidget {
     required this.isPlaying,
     required this.theme,
     required this.wallpaper,
+    this.terminalScene,
+    this.terminalFontFamily,
     this.terminalCursorFraction,
     this.backend,
     this.resolveSource,
@@ -223,11 +233,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
-          // Cursor shape is part of the hand-off, not chrome. Start from the
-          // cursor's exact full-terminal dimensions, then apply ONE uniform
-          // scale derived from terminal width. Using the ghost client width
-          // and height independently made the cursor stretch as the title bar
-          // grew, and made the return snap back to ScenePainter's real cursor.
+          final SceneEngine? liveScene = widget.terminalScene;
+          final String? liveFont = widget.terminalFontFamily;
+          final bool useNativeTerminal =
+              liveScene != null && liveFont != null && liveFont.isNotEmpty;
+
+          // Fallback ghost only. Production passes the real SceneEngine and
+          // therefore never needs to approximate cursor metrics or theme.
           final Size cursorFraction = widget.terminalCursorFraction ??
               _TerminalGhost.fallbackCursorFraction;
           final double terminalScale = fullTerminal.width > 0.0
@@ -241,31 +253,57 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              Positioned.fromRect(
-                key: const ValueKey<String>('structural-desktop-positioned'),
-                rect: renderFrame,
-                child: Opacity(
-                  key: const ValueKey<String>('structural-desktop-layer'),
-                  opacity: desktopOpacity.clamp(0.0, 1.0),
-                  child: _DesktopPlate(wallpaper: widget.wallpaper),
-                ),
-              ),
-
-              if (terminalOpacity > 0.001)
-                Positioned.fromRect(
-                  key: const ValueKey<String>('structural-terminal-positioned'),
-                  rect: terminalRect,
-                  child: Opacity(
-                    key: const ValueKey<String>('structural-terminal-opacity'),
-                    opacity: terminalOpacity.clamp(0.0, 1.0),
-                    child: _TerminalGhost(
-                      key: const ValueKey<String>('structural-terminal-window'),
-                      theme: widget.theme,
-                      chrome: terminalChrome.clamp(0.0, 1.0),
-                      cursorSize: terminalCursorSize,
+              if (useNativeTerminal)
+                Positioned.fill(
+                  key: const ValueKey<String>(
+                    'structural-native-terminal-positioned',
+                  ),
+                  child: CustomPaint(
+                    key: const ValueKey<String>(
+                      'structural-native-terminal-layer',
+                    ),
+                    painter: SceneStructuralTerminalPainter(
+                      scene: liveScene,
+                      fontFamily: liveFont,
+                      terminalRect: _rectFraction(terminalRect, renderFrame),
+                      desktopOpacity: desktopOpacity,
+                      terminalOpacity: terminalOpacity,
+                      terminalChrome: terminalChrome,
                     ),
                   ),
+                )
+              else ...[
+                Positioned.fromRect(
+                  key: const ValueKey<String>('structural-desktop-positioned'),
+                  rect: renderFrame,
+                  child: Opacity(
+                    key: const ValueKey<String>('structural-desktop-layer'),
+                    opacity: desktopOpacity.clamp(0.0, 1.0),
+                    child: _DesktopPlate(wallpaper: widget.wallpaper),
+                  ),
                 ),
+                if (terminalOpacity > 0.001)
+                  Positioned.fromRect(
+                    key: const ValueKey<String>(
+                      'structural-terminal-positioned',
+                    ),
+                    rect: terminalRect,
+                    child: Opacity(
+                      key: const ValueKey<String>(
+                        'structural-terminal-opacity',
+                      ),
+                      opacity: terminalOpacity.clamp(0.0, 1.0),
+                      child: _TerminalGhost(
+                        key: const ValueKey<String>(
+                          'structural-terminal-window',
+                        ),
+                        theme: widget.theme,
+                        chrome: terminalChrome.clamp(0.0, 1.0),
+                        cursorSize: terminalCursorSize,
+                      ),
+                    ),
+                  ),
+              ],
 
               if (structuralWindowPresent)
                 Positioned.fromRect(
@@ -309,6 +347,19 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           );
         },
       ),
+    );
+  }
+
+  /// Maps a widget-space rectangle onto the fitted engine frame as 0..1
+  /// coordinates. SceneStructuralTerminalPainter converts this back into the
+  /// live SceneEngine's logical pixels before invoking the native renderer.
+  static Rect _rectFraction(Rect rect, Rect frame) {
+    if (frame.width <= 0.0 || frame.height <= 0.0) return Rect.zero;
+    return Rect.fromLTRB(
+      (rect.left - frame.left) / frame.width,
+      (rect.top - frame.top) / frame.height,
+      (rect.right - frame.left) / frame.width,
+      (rect.bottom - frame.top) / frame.height,
     );
   }
 
