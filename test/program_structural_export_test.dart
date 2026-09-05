@@ -174,10 +174,12 @@ AFTER
 
       expect(firstStructProjectFrame, isNotNull);
       expect(showingProjectFrame, isNotNull);
+      final int firstStruct = firstStructProjectFrame!;
+      final int showing = showingProjectFrame!;
 
       // One frame before the runtime marker must stay on the historical
       // SceneCompositor path. The structural renderer is an override only.
-      final int before = firstStructProjectFrame! - 1;
+      final int before = firstStruct - 1;
       expect(before, greaterThanOrEqualTo(0));
       scene.evaluate(ProjectTime(frame: before, mode: ProjectClockMode.scrub));
       expect(await renderer.renderIfActive(
@@ -187,7 +189,7 @@ AFTER
 
       // The first SHOWING frame is authored source frame zero.
       scene.evaluate(
-        ProjectTime(frame: showingProjectFrame!, mode: ProjectClockMode.scrub),
+        ProjectTime(frame: showing, mode: ProjectClockMode.scrub),
       );
       final ui.Image? composited = await renderer.renderIfActive(
         scene: scene,
@@ -211,7 +213,7 @@ AFTER
       // Advance one project frame. Exact source-frame ownership must advance
       // with authored STRUCT time, never with decoder completion order.
       scene.evaluate(
-        ProjectTime(frame: showingProjectFrame + 1, mode: ProjectClockMode.scrub),
+        ProjectTime(frame: showing + 1, mode: ProjectClockMode.scrub),
       );
       final ui.Image? next = await renderer.renderIfActive(
         scene: scene,
@@ -224,7 +226,7 @@ AFTER
       // Find the first project frame after the reserved STRUCT runtime region.
       // Do not assume a hidden parser-tax here; the runtime marker itself is
       // the public contract the exporter observes.
-      for (int projectFrame = showingProjectFrame + 1;
+      for (int projectFrame = showing + 1;
           projectFrame < 300;
           projectFrame++) {
         scene.evaluate(
