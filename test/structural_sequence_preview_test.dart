@@ -58,6 +58,8 @@ const String _source = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall]
 ''';
 
+String _resolveTestSource(String value) => '/workspace/$value';
+
 Widget _buildPreview({
   required StructuralSequencePlacement placement,
   required _FakeBackend backend,
@@ -75,7 +77,7 @@ Widget _buildPreview({
         theme: R3Theme.of(Colors.green),
         wallpaper: null,
         backend: backend,
-        resolveSource: (String value) => '/workspace/$value',
+        resolveSource: _resolveTestSource,
       ),
     ),
   );
@@ -114,9 +116,9 @@ void main() {
     expect(backend.openCount, 1);
     expect(backend.requestedFrames, contains(10));
 
-    // Enter opening with the same mounted EditVideoPreview. The backend must
-    // not reopen; the frame decoded invisibly during zoom-out is the frame
-    // revealed by the foreground emergence.
+    // Enter opening with the same mounted EditVideoPreview and the same
+    // resolver function identity. The backend must not reopen; the frame
+    // decoded invisibly during zoom-out is the frame revealed by emergence.
     await tester.pumpWidget(
       _buildPreview(
         placement: placement,
