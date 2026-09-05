@@ -81,6 +81,13 @@ Widget _buildPreview({
   );
 }
 
+void _expectSameRect(Rect a, Rect b) {
+  expect(a.left, closeTo(b.left, 0.01));
+  expect(a.top, closeTo(b.top, 0.01));
+  expect(a.width, closeTo(b.width, 0.01));
+  expect(a.height, closeTo(b.height, 0.01));
+}
+
 void main() {
   testWidgets('zoom-out owns presentation time before source decoder opens',
       (WidgetTester tester) async {
@@ -103,11 +110,24 @@ void main() {
     expect(backend.openCount, 0);
   });
 
-  testWidgets('structural opening starts at parked terminal and ends at show rect',
+  testWidgets('terminal zoom lands directly on final video-panel geometry',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralZoomFrames - 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect zoomTarget = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
 
     await tester.pumpWidget(
       _buildPreview(
@@ -123,17 +143,15 @@ void main() {
       StructuralSequenceStage.opening,
     );
 
-    final Rect parked = tester.getRect(
+    final Rect openingTerminal = tester.getRect(
       find.byKey(const ValueKey<String>('structural-terminal-window')),
     );
-    final Rect openingStart = tester.getRect(
+    final Rect openingStructural = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
 
-    expect(openingStart.left, closeTo(parked.left, 0.01));
-    expect(openingStart.top, closeTo(parked.top, 0.01));
-    expect(openingStart.width, closeTo(parked.width, 0.01));
-    expect(openingStart.height, closeTo(parked.height, 0.01));
+    _expectSameRect(zoomTarget, openingTerminal);
+    _expectSameRect(openingTerminal, openingStructural);
     expect(backend.openCount, 0);
 
     await tester.pumpWidget(
@@ -148,6 +166,7 @@ void main() {
     final Rect openingEnd = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
+    _expectSameRect(openingStructural, openingEnd);
 
     await tester.pumpWidget(
       _buildPreview(
@@ -161,11 +180,7 @@ void main() {
     final Rect showingStart = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
-
-    expect(showingStart.left, closeTo(openingEnd.left, 0.01));
-    expect(showingStart.top, closeTo(openingEnd.top, 0.01));
-    expect(showingStart.width, closeTo(openingEnd.width, 0.01));
-    expect(showingStart.height, closeTo(openingEnd.height, 0.01));
+    _expectSameRect(openingEnd, showingStart);
   });
 
   testWidgets('showing stage renders MOSAIC at source-local frame in 16:9 client',
