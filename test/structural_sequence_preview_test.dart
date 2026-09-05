@@ -103,6 +103,71 @@ void main() {
     expect(backend.openCount, 0);
   });
 
+  testWidgets('structural opening starts at parked terminal and ends at show rect',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralZoomFrames,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      placement.stageAt(kStructuralZoomFrames),
+      StructuralSequenceStage.opening,
+    );
+
+    final Rect parked = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
+    final Rect openingStart = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-window-frame')),
+    );
+
+    expect(openingStart.left, closeTo(parked.left, 0.01));
+    expect(openingStart.top, closeTo(parked.top, 0.01));
+    expect(openingStart.width, closeTo(parked.width, 0.01));
+    expect(openingStart.height, closeTo(parked.height, 0.01));
+    expect(backend.openCount, 0);
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralEntryFrames - 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect openingEnd = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-window-frame')),
+    );
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralEntryFrames,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect showingStart = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-window-frame')),
+    );
+
+    expect(showingStart.left, closeTo(openingEnd.left, 0.01));
+    expect(showingStart.top, closeTo(openingEnd.top, 0.01));
+    expect(showingStart.width, closeTo(openingEnd.width, 0.01));
+    expect(showingStart.height, closeTo(openingEnd.height, 0.01));
+  });
+
   testWidgets('showing stage renders MOSAIC at source-local frame in 16:9 client',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
