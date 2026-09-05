@@ -40,6 +40,19 @@ void main() {
   testWidgets(
     'structural export receives the same injected media resolver as preview',
     (WidgetTester tester) async {
+      // This test is about the preview/export resolver seam, not compact-window
+      // layout. The workspace below was always authored as 1200x760, but a
+      // widget test defaults to an 800x600 root viewport. A child SizedBox
+      // cannot enlarge that root, so without an explicit test viewport the
+      // M16 toolbar wraps and leaves EditSurface less vertical room than this
+      // seam test intended. Make the declared workspace size real.
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1200, 760);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
       final Directory temp = Directory(
         '${Directory.systemTemp.path}${Platform.pathSeparator}'
         'r3nder_export_resolver_${pid}_${DateTime.now().microsecondsSinceEpoch}',
