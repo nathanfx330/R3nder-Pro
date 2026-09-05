@@ -201,9 +201,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
   EditPlaybackClock? _playClock;
   AudioBedPlayer? _activeAudioPlayer;
   String? _selectedSourceRef;
-  String? _mosaicRangeSourceRef;
-  int _mosaicInFrame = 0;
-  int _mosaicOutFrameExclusive = 0;
   bool _importing = false;
   bool _playing = false;
   bool _startingPlayback = false;
@@ -278,10 +275,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _playbackFrame.dispose();
     _playbackExact.dispose();
 
-    // The player is borrowed from main and must not be disposed here. If this
-    // workspace was the one using it, stop that generation first and only then
-    // release the ProjectClock handle. NativeAudioSink may still need the
-    // handle while its feeder is quiescing.
     final AudioBedPlayer? player = _activeAudioPlayer;
     _activeAudioPlayer = null;
     final EditPlaybackClock? clock = _playClock;
@@ -367,32 +360,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     return fallback;
   }
 
-  void _ensureMosaicRange(StructuralSourceRef? selected, int sourceEnd) {
-    final String? sourceRef = selected?.canonicalSource;
-    if (sourceRef == null || sourceEnd <= 0) {
-      _mosaicRangeSourceRef = sourceRef;
-      _mosaicInFrame = 0;
-      _mosaicOutFrameExclusive = 0;
-      return;
-    }
-
-    if (_mosaicRangeSourceRef != sourceRef) {
-      _mosaicRangeSourceRef = sourceRef;
-      _mosaicInFrame = 0;
-      _mosaicOutFrameExclusive = sourceEnd;
-      return;
-    }
-
-    if (_mosaicInFrame < 0) _mosaicInFrame = 0;
-    if (_mosaicInFrame >= sourceEnd) _mosaicInFrame = sourceEnd - 1;
-    if (_mosaicOutFrameExclusive > sourceEnd) {
-      _mosaicOutFrameExclusive = sourceEnd;
-    }
-    if (_mosaicOutFrameExclusive <= _mosaicInFrame) {
-      _mosaicOutFrameExclusive = _mosaicInFrame + 1;
-    }
-  }
-
   void _refreshSourceSelectionAndEnd() {
     try {
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
@@ -400,10 +367,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _cachedSourceEndFrame = selected == null
           ? 0
           : model.structuralSourceFrameCount(selected);
-      _ensureMosaicRange(selected, _cachedSourceEndFrame);
     } catch (_) {
       _cachedSourceEndFrame = 0;
-      _ensureMosaicRange(null, 0);
     }
   }
 
@@ -436,9 +401,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       }
     }
 
-    // Falling back to the full authored seek remains correct for an infinite
-    // stream_loop; it simply asks ffmpeg to discard more decoded loops. The
-    // probe is an optimization that reduces that lead-in to one cycle.
     return _musicDurationSec > 0.0
         ? loopedSeek(startSec, _musicDurationSec)
         : startSec;
@@ -522,8 +484,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final String? music = _existingAudioPath(audioMix.musicPath);
       final String? primary = bed ?? music;
 
-      // No usable audio is an ordinary structural playback state. The same
-      // ProjectClock simply runs MONOTONIC as it did before M13.
       if (player == null || primary == null) {
         if (generation != _transportGeneration || !mounted) return;
         clock.playFrom(startTime);
@@ -562,10 +522,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         if (generation != _transportGeneration || !mounted) return;
       }
 
-      // This hold is load bearing for native audio. NativeAudioSink captures
-      // the active clock synchronously in its constructor inside player.play.
-      // Decoder startup and libpulse prefill therefore happen behind the exact
-      // authored point rather than while picture time races ahead.
       clock.holdAt(startTime.withMode(ProjectClockMode.scrub));
       _activeAudioPlayer = player;
 
@@ -592,15 +548,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
       if (generation != _transportGeneration || !mounted) return;
 
       if (!player.isPlaying) {
-        // Missing/failed audio is survivable. Release the prefill hold and let
-        // picture continue silently rather than turning a valid edit into a
-        // dead transport.
         _activeAudioPlayer = null;
         clock.playFrom(startTime);
       } else if (player.backendName != 'libpulse') {
-        // aplay has no native sample counter to own ProjectClock. Start the
-        // sole project clock only after the subprocess sink exists, minimizing
-        // startup skew without inventing a second timeline authority.
         clock.playFrom(startTime);
       }
 
@@ -684,9 +634,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (clock != null) {
       try {
         frame = clock.sample().frame.clamp(0, _sourceEndFrame());
-      } catch (_) {
-        // Holding the last locally visible frame is a safe fallback.
-      }
+      } catch (_) {}
     }
     _stopPlaybackAt(frame, publish: true, traceReason: 'pause');
   }
@@ -700,9 +648,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           mode: ProjectClockMode.scrub,
         ),
       );
-    } catch (_) {
-      // UI state still stops even if the optional realtime clock vanished.
-    }
+    } catch (_) {}
   }
 
   void _stopPlaybackAt(
@@ -731,9 +677,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (player == null) {
       _holdClockAt(clock, safeFrame);
     } else {
-      // NativeAudioSink releases AUDIO back to MONOTONIC while it flushes.
-      // Reasserting SCRUB before that release would be overwritten, so the
-      // ordering is stop generation first, exact hold second.
       unawaited(() async {
         try {
           await player.stop();
@@ -783,7 +726,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     setState(() {
       _selectedSourceRef = ref.canonicalSource;
       _cachedSourceEndFrame = model.structuralSourceFrameCount(ref);
-      _ensureMosaicRange(ref, _cachedSourceEndFrame);
       _displayFrame = _displayFrame.clamp(0, _cachedSourceEndFrame);
       _lastPolledPlaybackFrame = _displayFrame;
       _publishPlaybackFrame(_displayFrame, playing: false);
@@ -905,56 +847,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _applySourceChange(next, selectSource: 'EDIT.$id');
   }
 
-  void _markMosaicIn(StructuralSourceRef selected, int sourceEnd) {
-    if (sourceEnd <= 0) return;
-    final int frame = _displayFrame.clamp(0, sourceEnd - 1);
-    setState(() {
-      _ensureMosaicRange(selected, sourceEnd);
-      _mosaicInFrame = frame;
-      if (_mosaicOutFrameExclusive <= frame) {
-        _mosaicOutFrameExclusive = frame + 1;
-      }
-      _error = null;
-    });
-  }
-
-  void _markMosaicOut(StructuralSourceRef selected, int sourceEnd) {
-    if (sourceEnd <= 0) return;
-    final int frame = _displayFrame.clamp(0, sourceEnd - 1);
-    final int outExclusive = frame + 1;
-    setState(() {
-      _ensureMosaicRange(selected, sourceEnd);
-      _mosaicOutFrameExclusive = outExclusive;
-      if (_mosaicInFrame >= outExclusive) {
-        _mosaicInFrame = outExclusive - 1;
-      }
-      _error = null;
-    });
-  }
-
-  void _resetMosaicRange(StructuralSourceRef selected, int sourceEnd) {
-    if (sourceEnd <= 0) return;
-    setState(() {
-      _mosaicRangeSourceRef = selected.canonicalSource;
-      _mosaicInFrame = 0;
-      _mosaicOutFrameExclusive = sourceEnd;
-      _error = null;
-    });
-  }
-
-  void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
+  void _newMosaic(EditDocumentModel model) {
     if (_exporting || _startingPlayback) return;
-    final int sourceEnd = model.structuralSourceFrameCount(selected);
-    if (sourceEnd <= 0) {
-      setState(() => _error = '${selected.canonicalSource} has no authored frames.');
-      return;
-    }
-
-    _ensureMosaicRange(selected, sourceEnd);
-    final int inFrame = _mosaicInFrame.clamp(0, sourceEnd - 1);
-    final int outFrameExclusive =
-        _mosaicOutFrameExclusive.clamp(inFrame + 1, sourceEnd);
-    final int duration = outFrameExclusive - inFrame;
 
     final Set<String> ids =
         model.mosaics.map((MosaicSequence mosaic) => mosaic.id).toSet();
@@ -966,14 +860,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
 
     try {
-      final String next = createMosaicWithSource(
+      final String next = createEmptyMosaic(
         source: _workingSource,
         mosaicId: id,
-        paneId: 'pane',
-        clipId: 'source',
-        structuralSource: selected.canonicalSource,
-        inFrame: inFrame,
-        durationFrames: duration,
       );
       _applySourceChange(next, selectSource: 'MOSAIC.$id');
     } catch (error) {
@@ -1141,7 +1030,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                       ],
                       onChanged: (VideoExportFormat? value) {
                         if (value == null) return;
-                        setDialogState(() => format = value);
+                        setDialogState(() => format = value),
                       },
                     ),
                   ],
@@ -1385,7 +1274,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _cachedSourceEndFrame = selected == null
           ? 0
           : model.structuralSourceFrameCount(selected);
-      _ensureMosaicRange(selected, _cachedSourceEndFrame);
       return model;
     } catch (error) {
       _error ??= '$error';
@@ -1405,11 +1293,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final List<StructuralSourceRef> refs =
         model == null ? const <StructuralSourceRef>[] : _structuralSources(model);
     final bool mediaMode = selected == null || edit != null;
-    final bool rangeReady = selected != null && selectedEnd > 0;
-    final int rangeDuration = rangeReady
-        ? (_mosaicOutFrameExclusive - _mosaicInFrame).clamp(1, selectedEnd)
-        : 0;
-    final int rangeOutDisplay = rangeReady ? _mosaicOutFrameExclusive - 1 : 0;
 
     final List<Widget> controls = <Widget>[
       R3MicroLabel('STRUCTURE', theme: widget.theme, accent: true),
@@ -1451,51 +1334,17 @@ class _EditWorkspaceState extends State<EditWorkspace>
             ? null
             : () => _newEdit(model),
       ),
-      if (rangeReady) ...[
-        SizedBox(width: sc(5)),
-        R3MicroLabel('MOSAIC RANGE', theme: widget.theme, accent: true),
-        R3Button(
-          'SET IN',
-          theme: widget.theme,
-          compact: true,
-          onPressed: _playing || _startingPlayback || _exporting
-              ? null
-              : () => _markMosaicIn(selected, selectedEnd),
-        ),
-        R3Button(
-          'SET OUT',
-          theme: widget.theme,
-          compact: true,
-          onPressed: _playing || _startingPlayback || _exporting
-              ? null
-              : () => _markMosaicOut(selected, selectedEnd),
-        ),
-        R3Button(
-          'RESET',
-          theme: widget.theme,
-          compact: true,
-          onPressed: _playing || _startingPlayback || _exporting
-              ? null
-              : () => _resetMosaicRange(selected, selectedEnd),
-        ),
-        Text(
-          'IN F$_mosaicInFrame   OUT F$rangeOutDisplay   ${rangeDuration}F',
-          key: const ValueKey<String>('mosaic-source-range-readout'),
-          style: widget.theme.micro,
-        ),
-        R3Button(
-          'SEND TO MOSAIC',
-          theme: widget.theme,
-          compact: true,
-          kind: R3ButtonKind.primary,
-          onPressed: model == null ||
-                  _playing ||
-                  _startingPlayback ||
-                  _exporting
-              ? null
-              : () => _newMosaic(model, selected),
-        ),
-      ],
+      R3Button(
+        'NEW MOSAIC',
+        theme: widget.theme,
+        compact: true,
+        onPressed: model == null ||
+                _playing ||
+                _startingPlayback ||
+                _exporting
+            ? null
+            : () => _newMosaic(model),
+      ),
       if (mediaMode) ...[
         SizedBox(width: sc(5)),
         R3MicroLabel('MEDIA', theme: widget.theme, accent: true),
