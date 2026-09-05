@@ -22,6 +22,13 @@
 // shadow grow in; on the return they collapse back to zero while the terminal
 // expands. The parked window therefore becomes the fullscreen terminal instead
 // of carrying a fixed title bar to the last frame and dropping it at the cut.
+//
+// The editor preview pane is not the render frame. ScenePainter letterboxes the
+// 16:9 engine canvas inside whatever space the editor gives it. Structural
+// choreography must live inside that same fitted rectangle or its "fullscreen"
+// terminal grows into the editor letterbox and snaps back when ScenePainter
+// takes over. R3nder's supported 1080p and 4K formats are both 16:9, so the
+// fitted render frame is shared by both resolutions.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -68,6 +75,8 @@ class StructuralSequencePreview extends StatefulWidget {
 }
 
 class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
+  static const double _renderAspect = 16.0 / 9.0;
+
   bool _firstFrameReady = false;
   int? _firstFrameReadyAt;
 
@@ -132,8 +141,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               ? constraints.maxHeight
               : 720.0;
 
-          final Rect fullTerminal = Rect.fromLTWH(0, 0, width, height);
-          final Rect presentationRect = _structuralTargetRect(width, height);
+          final Rect renderFrame = _fittedRenderFrame(width, height);
+          final Rect fullTerminal = renderFrame;
+          final Rect presentationRect = _structuralTargetRect(renderFrame);
           final Rect emergenceRect = _structuralEmergenceRect(presentationRect);
 
           Rect terminalRect = presentationRect;
@@ -213,10 +223,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.zoomIn:
-              // Native ScenePainter behavior: geometry grows to fullscreen at
-              // the same time chrome collapses. Title bar, corners, border and
-              // shadow therefore merge into terminal content rather than
-              // disappearing on the hand-off frame.
+              // Native ScenePainter behavior inside the fitted render frame:
+              // geometry grows to the output canvas at the same time chrome
+              // collapses. It never expands into the editor's letterbox.
               terminalRect = Rect.lerp(presentationRect, fullTerminal, eased)!;
               desktopOpacity = 1.0 - eased;
               terminalOpacity = 1.0;
@@ -227,10 +236,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              Opacity(
-                key: const ValueKey<String>('structural-desktop-layer'),
-                opacity: desktopOpacity.clamp(0.0, 1.0),
-                child: _DesktopPlate(wallpaper: widget.wallpaper),
+              Positioned.fromRect(
+                key: const ValueKey<String>('structural-desktop-positioned'),
+                rect: renderFrame,
+                child: Opacity(
+                  key: const ValueKey<String>('structural-desktop-layer'),
+                  opacity: desktopOpacity.clamp(0.0, 1.0),
+                  child: _DesktopPlate(wallpaper: widget.wallpaper),
+                ),
               ),
 
               if (terminalOpacity > 0.001)
@@ -293,13 +306,36 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// Final presentation rectangle. The client area itself is 16:9, and the
-  /// title bar is added above it. This is both the terminal zoom target and the
-  /// final structural-window geometry.
-  static Rect _structuralTargetRect(double width, double height) {
+  /// Fits the 16:9 engine canvas into the editor preview without stretching.
+  /// The surrounding space remains the outer black ColoredBox, exactly like
+  /// ScenePainter's preview letterbox.
+  static Rect _fittedRenderFrame(double width, double height) {
+    if (width <= 0.0 || height <= 0.0) {
+      return Rect.fromLTWH(0, 0, math.max(width, 0.0), math.max(height, 0.0));
+    }
+
+    double frameW = width;
+    double frameH = frameW / _renderAspect;
+    if (frameH > height) {
+      frameH = height;
+      frameW = frameH * _renderAspect;
+    }
+
+    return Rect.fromLTWH(
+      (width - frameW) / 2.0,
+      (height - frameH) / 2.0,
+      frameW,
+      frameH,
+    );
+  }
+
+  /// Final presentation rectangle inside the fitted render frame. The client
+  /// area itself is 16:9, and the title bar is added above it. This is both
+  /// the terminal zoom target and the final structural-window geometry.
+  static Rect _structuralTargetRect(Rect frame) {
     const double titleHeight = _StructuralWindow.titleHeight;
-    final double maxW = width * 0.86;
-    final double maxH = height * 0.78;
+    final double maxW = frame.width * 0.86;
+    final double maxH = frame.height * 0.78;
 
     double clientW = maxW;
     double clientH = clientW * 9.0 / 16.0;
@@ -311,8 +347,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final double windowW = clientW;
     final double windowH = clientH + titleHeight;
     return Rect.fromLTWH(
-      (width - windowW) / 2.0,
-      (height - windowH) / 2.0,
+      frame.left + (frame.width - windowW) / 2.0,
+      frame.top + (frame.height - windowH) / 2.0,
       windowW,
       windowH,
     );
