@@ -83,6 +83,24 @@ Widget _buildPreview({
   );
 }
 
+Future<void> _preloadFirstFrame(
+  WidgetTester tester,
+  StructuralSequencePlacement placement,
+  _FakeBackend backend,
+) async {
+  await tester.pumpWidget(
+    _buildPreview(
+      placement: placement,
+      backend: backend,
+      localFrame: 5,
+    ),
+  );
+  await tester.pumpAndSettle();
+  expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
+  expect(backend.openCount, 1);
+  expect(backend.requestedFrames, contains(10));
+}
+
 void _expectSameRect(Rect a, Rect b) {
   expect(a.left, closeTo(b.left, 0.01));
   expect(a.top, closeTo(b.top, 0.01));
@@ -97,24 +115,14 @@ void main() {
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
 
-    await tester.pumpWidget(
-      _buildPreview(
-        placement: placement,
-        backend: backend,
-        localFrame: 5,
-      ),
-    );
-    await tester.pumpAndSettle();
+    await _preloadFirstFrame(tester, placement, backend);
 
-    expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
     expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
 
     final Opacity hiddenStructural = tester.widget<Opacity>(
       find.byKey(const ValueKey<String>('structural-window-opacity')),
     );
     expect(hiddenStructural.opacity, 0.0);
-    expect(backend.openCount, 1);
-    expect(backend.requestedFrames, contains(10));
 
     // Enter opening with the same mounted EditVideoPreview and the same
     // resolver function identity. The backend must not reopen; the frame
@@ -176,6 +184,8 @@ void main() {
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
 
+    await _preloadFirstFrame(tester, placement, backend);
+
     await tester.pumpWidget(
       _buildPreview(
         placement: placement,
@@ -213,6 +223,8 @@ void main() {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
+
+    await _preloadFirstFrame(tester, placement, backend);
 
     await tester.pumpWidget(
       _buildPreview(
@@ -302,6 +314,8 @@ void main() {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
+
+    await _preloadFirstFrame(tester, placement, backend);
 
     await tester.pumpWidget(
       _buildPreview(
