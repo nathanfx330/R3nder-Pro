@@ -1,8 +1,8 @@
-# R3nder Pro: From ProjectClock to Structural Video Round-Trip
+# R3nder Pro: From ProjectClock to Structural Video Preview and Bake Parity
 
-This document records the development path that led R3nder Pro from a terminal-driven renderer with a new timing foundation to a system that can author reusable video structures, place them into the main TEXT sequence, present them as desktop windows, play them, and return cleanly to the terminal.
+This document records the development path that led R3nder Pro from a terminal-driven renderer with a new timing foundation to a system that can author reusable video structures, place them into the main TEXT sequence, present them as desktop windows, play them in both EDIT and top-level PREVIEW, bake those same structural frames into the final program, and return cleanly to the terminal.
 
-It happened over several working sessions and many branches. The important part is not the number of commits. It is the sequence of architectural decisions that made the final round-trip possible.
+It happened over several working sessions and many branches. The important part is not the number of commits. It is the sequence of architectural decisions that made the final round-trip and eventual preview/bake parity possible.
 
 The short version is:
 
@@ -25,7 +25,15 @@ EDIT and MOSAIC as reusable sources
     ↓
 STRUCT as a main-sequence placement
     ↓
-TEXT → desktop → structural video → terminal
+editor-side structural round-trip
+    ↓
+top-level PREVIEW runtime bridge
+    ↓
+real themed terminal handoff
+    ↓
+whole-program STRUCT BAKE
+    ↓
+PREVIEW frame N ≈ BAKE frame N
 ```
 
 The final result looks simple. Getting there was not.
@@ -578,9 +586,9 @@ The return finally read as one object changing state rather than one window bein
 
 ---
 
-## 17. The last seam: fullscreen meant the wrong rectangle
+## 17. The last editor-side seam: fullscreen meant the wrong rectangle
 
-One final mismatch remained.
+One final mismatch remained in the editor-side structural preview.
 
 The terminal return looked correct until it reached “fullscreen,” because structural preview was using the entire editor preview widget as the fullscreen rectangle.
 
@@ -603,13 +611,13 @@ The structural desktop, terminal, and video choreography were moved inside the s
 
 The letterbox remains outside the program frame, exactly as it does for normal preview.
 
-That removed the last visible geometry mismatch.
+That removed the last visible editor-side geometry mismatch.
 
 ---
 
-## 18. The round-trip
+## 18. The first round-trip
 
-At the end of this sequence, we successfully completed the first clean structural video call round-trip:
+At the end of M16, we successfully completed the first clean structural video call round-trip inside the **EDIT window**, the mode with the script text editor and its own preview pane:
 
 ```text
 TEXT / terminal
@@ -637,13 +645,15 @@ No title-bar pop.
 
 No letterbox overshoot.
 
-That is the milestone.
+That was the first major milestone.
 
-R3nder Pro can now take a reusable structural video source, call it from the main program, give it a real presentation lifecycle, and return to the terminal cleanly.
+R3nder Pro could take a reusable structural video source, call it from the main program, give it a real presentation lifecycle, and return to the terminal cleanly inside the editor environment.
+
+But one assumption was still hiding in plain sight: **EDIT preview and top-level PREVIEW were not the same runtime path.**
 
 ---
 
-## 19. What this changed about R3nder Pro
+## 19. What the first round-trip changed about R3nder Pro
 
 Before this milestone, R3nder had several powerful subsystems:
 
@@ -655,9 +665,9 @@ Before this milestone, R3nder had several powerful subsystems:
 - structural composition;
 - a GUI editor.
 
-After this milestone, those systems can participate in one continuous program.
+After this milestone, those systems could participate in one continuous program inside the editor.
 
-The key model is now:
+The key model was now:
 
 ```text
 EDIT
@@ -675,25 +685,581 @@ TEXT
 
 That is a much stronger architecture than making every feature a special case inside one timeline.
 
-It gives R3nder a vocabulary for building programs out of reusable visual structures.
+It gave R3nder a vocabulary for building programs out of reusable visual structures.
 
 ---
 
-## 20. What is still not finished
+## 20. M16.1: readiness became a visibility gate, never a clock
 
-This milestone is substantial, but it is not the end of the structural-video work.
+After the first round-trip, we hardened the rules that made the choreography deterministic.
 
-### Whole-program export parity
+An earlier implementation had allowed first-frame decode completion to influence opening geometry by remembering the frame on which readiness arrived.
 
-The TEXT editor now has structural timing, GUI placement, and structural preview. Structural sources can be exported in isolation.
+That was rejected.
 
-The remaining major step is to make whole-program bake/export evaluate the active STRUCT source through the same structural frame provider used by preview, so exported scene frames contain the same structural pixels and desktop choreography seen in the editor.
+The invariant became:
 
-That should not become a second implementation of structural timing. Preview and bake need one evaluator contract.
+> Readiness may suppress visibility. It may never alter authored geometry or authored time.
 
-### Terminal ghost fidelity
+And, equivalently:
 
-The structural handoff still uses a simplified terminal ghost rather than the exact live TerminalPainter content. Geometry and chrome behavior are now correct, but perfect visual parity would eventually mean sharing more of the real ScenePainter terminal presentation path.
+> If decode is late, preview can be late. Project time is not.
+
+The structural window now evaluates its geometry from the authored current frame regardless of when decode finishes. Until a presentable frame is resident, the foreground stays hidden. Once ready, it reveals at the geometry belonging to the current authored project frame.
+
+This removed a machine-speed dependency from the presentation model.
+
+### Resolved empty is not pending
+
+The same pass also clarified another important state boundary.
+
+These are not the same:
+
+```text
+PENDING decode
+resolved picture
+resolved empty frame
+offline/error
+```
+
+A resolved empty structural frame is finished evaluation even though it has no picture. A pending decode is not.
+
+`EditVideoPreview` now reports first resolved state for stable picture, stable empty, and stable failure cases, while a genuinely pending decode continues waiting.
+
+### Hard recursion depth
+
+Nested EDIT/MOSAIC sources also received a runtime recursion ceiling independent of graph linting.
+
+The default remains eight structural levels. The root is depth 1, depth 8 is allowed, depth 9 is a hard stop.
+
+That means malformed or adversarial nesting cannot recurse forever even if it reaches the renderer through a path that did not run the normal linter first.
+
+The full repository suite passed after this hardening and M16.1 was merged into `main` at commit:
+
+```text
+875678f  Merge post-M16 determinism and recursion hardening
+```
+
+---
+
+## 21. M16.2 began with a correction: PREVIEW is not the editor preview pane
+
+The next breakthrough started with a naming mistake.
+
+We had been talking about “preview” as if there were one preview path. There are actually two user-facing modes:
+
+```text
+EDIT mode / Edit Window
+    contains the script text editor
+    also contains an editor-side preview pane
+
+PREVIEW mode
+    separate top-level program playback/viewer
+    no script text editor
+```
+
+The first structural round-trip worked in the editor-side preview pane.
+
+Top-level PREVIEW did not work at all.
+
+Once the distinction was made explicit, the reason became obvious in the code.
+
+Top-level PREVIEW was still simply:
+
+```text
+_setupScene()
+→ compile script
+→ SceneEngine
+→ ScenePainter
+```
+
+There was no structural layer in that path.
+
+The editor worked because its preview pane explicitly mounted `StructuralSequencePreview`.
+
+This was not a small bug in STRUCT. Top-level PREVIEW had simply never been wired to structural video.
+
+---
+
+## 22. The runtime REGION bridge gave PREVIEW structural identity without a second clock
+
+The fix had to preserve the strongest rule in the project: **SceneEngine remains the authority on main-sequence time.**
+
+We did not want a second structural playhead living beside it.
+
+The solution was an engine-internal runtime marker built on the terminal's existing REGION channel.
+
+The author still writes only:
+
+```text
+[STRUCT:EDIT.foo]
+```
+
+For real PREVIEW and BAKE compilation, that placement projects internally into a reserved structural REGION plus the compensated PAUSE that already owns its timing.
+
+Conceptually:
+
+```text
+[REGION:STRUCTSEQ_<placement>_<duration>][PAUSE:<compensated>]
+```
+
+The terminal exposes `currentRegion`, so top-level PREVIEW can ask:
+
+```text
+which STRUCT placement is active?
+what is its authored duration?
+how far through its PAUSE-owned event are we?
+```
+
+From that, it derives the exact structural local frame.
+
+The new top-level bridge became:
+
+```text
+ProgramPreviewSurface
+    paints normal ScenePainter program image
+    reads SceneEngine.currentRegion
+    resolves active STRUCT placement
+    derives local structural frame from engine pause state
+    overlays StructuralSequencePreview
+```
+
+No second main-sequence clock was introduced.
+
+No user-visible parser syntax was added.
+
+And `SPEED:MAX` received a regression so the internal marker and its PAUSE could not collapse into one engine tick.
+
+---
+
+## 23. Structural metadata had to consume zero terminal layout
+
+Once top-level PREVIEW actually understood STRUCT, another old behavior suddenly became visible.
+
+While PREVIEW crossed an EDIT/MOSAIC definition, the blinking cursor walked down the screen even though the structural metadata itself was not supposed to appear.
+
+The source definitions had been projected out by replacing every non-newline character with nothing while preserving all of their newlines.
+
+That made sense for the editor line map, which needs authored raw-line identity.
+
+It was wrong for runtime PREVIEW and BAKE.
+
+A hidden EDIT definition with ten lines was effectively becoming ten blank terminal lines.
+
+The corrected rule became:
+
+```text
+runtime PREVIEW / BAKE
+    structural definitions consume zero pixels
+    structural definitions consume zero terminal rows
+    structural definitions consume zero program ticks
+
+editor simulation
+    raw line coordinates are preserved long enough
+    to inject [LINE:n] ownership markers
+```
+
+Runtime structural roots are now replaced by one internal parser-stripped comment token rather than a run of blank lines.
+
+That fixed the walking cursor without sacrificing editor line ownership.
+
+It also invalidated one older test that expected runtime line count to equal authored source line count. The final full-suite pass later caught that stale assertion, and the test was updated to verify the real two-part contract instead.
+
+---
+
+## 24. The cursor seam revealed that the terminal ghost itself was the wrong abstraction
+
+Top-level PREVIEW was now “a lot better,” but the handoff still had a visible cursor problem.
+
+The cursor became taller and changed aspect as the terminal moved toward the MOSAIC window.
+
+The first diagnosis was straightforward: the simplified structural terminal ghost used a fixed cursor:
+
+```text
+7 × 14 pixels
+```
+
+The real terminal cursor is derived from the current font size and the resolved font baseline.
+
+PREVIEW was changed to supply exact live terminal cursor proportions.
+
+That fixed PREVIEW.
+
+Then the same problem became obvious in EDIT.
+
+A proportional fallback improved it, but the cursor still changed size when the handoff switched between the real terminal and the simplified ghost.
+
+That was the clue that the cursor was not really the root problem.
+
+The transition was still doing this:
+
+```text
+real themed terminal
+→ reconstructed terminal ghost
+→ structural window
+→ reconstructed terminal ghost
+→ real themed terminal
+```
+
+Even perfect cursor math could not make that truly seamless.
+
+### The correct fix: stop impersonating the terminal
+
+`ScenePainter` already had the real terminal window renderer.
+
+So the structural handoff was changed to reuse the actual live terminal renderer rather than rebuilding its appearance in Flutter widgets.
+
+Production EDIT and PREVIEW now supply the live `SceneEngine` and terminal font to the structural presentation layer.
+
+During the transition, the terminal side is painted through the same ScenePainter/TerminalPainter path as normal program rendering.
+
+That means structural handoff inherits the real:
+
+- terminal background;
+- phosphor/text color;
+- font;
+- cursor;
+- configured window title;
+- Yaru/theme chrome;
+- wallpaper/chroma plate;
+- border;
+- corners;
+- shadow.
+
+This was the point where the terminal transition stopped approximating R3nder's visual language and actually became part of it.
+
+The result was immediate: the remaining cursor jump disappeared, the active terminal theme carried through the transition, and EDIT and PREVIEW finally spoke the same visual language.
+
+---
+
+## 25. Native chrome exposed one more editor geometry mismatch
+
+Reusing the real terminal renderer also revealed a subtle size mismatch in the structural foreground window.
+
+The structural window had been using a fixed 38-pixel title bar in widget space.
+
+ScenePainter's native chrome is specified in logical engine pixels and then scaled into the preview.
+
+In a smaller editor pane, the real terminal title bar could therefore be much smaller than 38 widget pixels while the structural foreground window still used the full 38.
+
+That created another handoff discontinuity.
+
+The structural foreground chrome was changed to use the same engine-to-preview scale as the native terminal.
+
+Now, at the handoff boundary:
+
+```text
+terminal chrome scale
+=
+structural window chrome scale
+```
+
+The visual system was finally continuous in both modes.
+
+---
+
+## 26. Whole-program BAKE: STRUCT had to enter the exporter without creating a second renderer model
+
+Once PREVIEW was correct, the remaining major gap was whole-program export.
+
+Structural sources could already be exported in isolation, but `SceneExporter` still rendered every program frame through the ordinary SceneCompositor/ScenePainter path.
+
+It never asked whether the engine was currently inside a STRUCT runtime region.
+
+The bake target became simple:
+
+```text
+PREVIEW frame N
+≈
+BAKE frame N
+```
+
+The implementation reused the pieces that already existed instead of inventing another timeline:
+
+```text
+SceneEngine evaluates project frame N
+        ↓
+current STRUCT runtime REGION
+        ↓
+placement index + exact local frame
+        ↓
+StructuralSourceFrameRenderer
+        ↓
+exact authored source frame
+        ↓
+structural desktop/window choreography
+        ↓
+real ScenePainter terminal/desktop underneath
+        ↓
+final RGBA frame to existing ffmpeg export pipe
+```
+
+The main application passes BAKE the raw authored document and the same workspace media resolver used by PREVIEW.
+
+That matters because relative media paths must resolve against the active workspace, not against whatever directory happened to launch the application.
+
+The exporter keeps its historical path outside STRUCT. The structural compositor is an override only while a valid structural runtime marker is active.
+
+Decoder speed may make export take longer. It does not move project time or substitute a neighbouring media frame.
+
+---
+
+## 27. The bake test taught us where not to test pixels
+
+The first whole-program bake test tried to prove the entire final `ui.Image` under `flutter_test`.
+
+It hung.
+
+An attempted `runAsync` wrapper still hung until the external timeout killed the test process, which produced misleading shutdown errors such as:
+
+```text
+Bad state: Cannot close sink while adding stream.
+```
+
+Those errors were not the product bug. They were fallout from terminating Flutter's test harness while an engine image callback was still outstanding.
+
+The lesson was to test the deterministic contract at the correct layer.
+
+The focused bake gate was rewritten to avoid `ui.Image` creation entirely. It now proves synchronously:
+
+```text
+compileScript
+→ SceneEngine runtime REGION
+→ correct placement
+→ correct local structural frame
+→ correct source frame
+→ StructuralSourceFrameRenderer
+→ decoder receives frame 0
+→ next project frame receives frame 1
+→ runtime REGION eventually ends
+```
+
+That test completed immediately:
+
+```text
+00:00 +1: All tests passed!
+```
+
+The real running application became the pixel-level integration test, which is where the final raster path actually matters.
+
+---
+
+## 28. The first real bake worked, and then exposed a normalized-coordinate aspect bug
+
+The first real whole-program bake succeeded.
+
+The video played smoothly.
+
+But the structural player window in the baked file was much wider than the same window in EDIT and PREVIEW. It was wide enough that the 16:9 video acquired obvious pillar bars inside the player.
+
+This looked like a video framing problem.
+
+It was actually a coordinate-system bug.
+
+### PREVIEW computed geometry in pixels
+
+The preview target window uses the real render-frame dimensions:
+
+```text
+max width  = 86% of frame width
+max height = 78% of frame height
+```
+
+It creates a 16:9 client in pixel space, adds the title bar, then applies the vertical cap if necessary.
+
+### BAKE had copied the same-looking formula into normalized coordinates
+
+After X and Y were independently normalized to 0..1, BAKE still did conceptually:
+
+```text
+clientHeight = clientWidth × 9 / 16
+```
+
+That is wrong in normalized space because one normalized X unit and one normalized Y unit do not represent the same number of pixels on a 16:9 frame.
+
+For a nominal width of 0.86, BAKE calculated a normalized client height of about 0.484 and concluded it was comfortably below the vertical cap.
+
+So the baked player remained about 86% of frame width.
+
+PREVIEW's correct pixel-space calculation was constrained by height and produced a player around 74.5% of frame width.
+
+That was exactly the visible mismatch.
+
+### The fix
+
+BAKE now computes the structural target rectangle in real output pixels first, using the same 16:9 client and title-bar constraints as PREVIEW, and only then normalizes the finished rectangle for ScenePainter.
+
+A geometry regression locks the rule at both 1080p and 4K.
+
+The next bake matched PREVIEW.
+
+The pillar bars caused by the oversized client disappeared.
+
+That was the final visual parity bug.
+
+---
+
+## 29. The real validation: a longer authored program
+
+The short bake proved the mechanism.
+
+The more important validation came next: a longer real script was run through the complete path.
+
+It behaved correctly.
+
+That matters because a longer program exercises far more than the isolated STRUCT event:
+
+- earlier and later TEXT state;
+- more engine timing;
+- real terminal content;
+- structural source lookup;
+- desktop handoff;
+- exact media frame progression;
+- return to TEXT;
+- exporter continuity across many ordinary frames around the structural event.
+
+The result was described simply:
+
+> “ran it through my longer script and it did perfectly”
+
+At that point the feature had moved beyond a focused demo.
+
+It was behaving as part of an authored R3nder program.
+
+---
+
+## 30. The final regression gate caught one stale assumption, then went fully green
+
+The final full repository run initially produced one failure:
+
+```text
+Expected: 16
+Actual:   6
+```
+
+The failing MOSAIC test still expected runtime compilation to preserve one output line for every structural metadata line.
+
+That expectation described the old placeholder-newline behavior that had caused the top-level PREVIEW cursor to walk down the screen.
+
+Production behavior was correct.
+
+The stale test was updated to verify the real contract instead:
+
+```text
+runtime PREVIEW / BAKE
+    structural metadata removed from terminal layout
+
+editor simulation
+    authored raw line ownership preserved through [LINE:n]
+```
+
+The full suite then completed:
+
+```text
+00:42 +163: All tests passed!
+```
+
+That became the merge gate.
+
+---
+
+## 31. The parity checkpoint
+
+PR #3, **Complete STRUCT preview and bake parity**, merged the M16.2 branch into `main`.
+
+The merge commit is:
+
+```text
+8f32e685356ee70e8a017aa8557c0d08c9d5bd88
+```
+
+The PR contained 39 commits across 20 changed files.
+
+The validation recorded at merge time was:
+
+```text
+long real-world script preview: visually validated
+long real-world script bake:    visually validated
+whole-program STRUCT bake:      matches PREVIEW
+full repository suite:          163 / 163 passed
+```
+
+This is the point worth preserving:
+
+> R3nder Pro successfully round-trips structural video through the main TEXT program in both EDIT and top-level PREVIEW, and bakes that same authored structural presentation into the final program.
+
+The earlier checkpoint was “STRUCT can round-trip.”
+
+The new checkpoint is stronger:
+
+```text
+EDIT preview
+    = same structural language
+
+PREVIEW mode
+    = same structural language
+
+BAKE
+    = same project-time structural language
+```
+
+The structural path is no longer an editor-only feature.
+
+It is part of the program renderer.
+
+---
+
+## 32. What this means architecturally now
+
+The current execution model is:
+
+```text
+TEXT
+    top-level program order
+    narration/music ownership
+    SceneEngine project-time authority
+
+STRUCT
+    sequence placement
+    presentation lifecycle
+    runtime identity through engine REGION
+
+EDIT
+    reusable temporal source
+    exact source/project frame mapping
+
+MOSAIC
+    reusable spatial source
+
+MLT
+    persistent leaf-media decoding
+
+R3nder compositor
+    structural recursion
+    geometry
+    source composition
+    final pixels
+```
+
+The crucial part is that PREVIEW and BAKE do not each own a separate structural clock.
+
+They observe the same SceneEngine-authored STRUCT runtime event and derive the same local structural frame from it.
+
+The media backend can be slower or faster. The project frame does not move because of that.
+
+That is the architecture we were trying to reach when ProjectClock work began.
+
+---
+
+## 33. What remains after preview/bake parity
+
+The largest structural-video gap from the previous version of this document is now closed.
+
+Whole-program export parity is no longer future work.
+
+The fake-terminal fidelity issue is also no longer a production limitation. EDIT and PREVIEW now use the real live terminal renderer during structural handoff.
+
+What remains is primarily authoring polish and diagnostics rather than a missing execution path.
 
 ### STRUCT node polish
 
@@ -709,9 +1275,22 @@ STRUCT is a real NODES item, but its property UI can become more specific:
 
 An unresolved STRUCT reference currently falls back safely rather than crashing, but a specific lint finding should make the authoring error explicit.
 
+### More complex real-world bake coverage
+
+The long-script validation was a meaningful application test. Future milestones can extend that matrix across:
+
+- several STRUCT events in one program;
+- mixed EDIT and MOSAIC placements;
+- nested structural sources near the recursion ceiling;
+- 4K bake;
+- more terminal themes and desktop configurations;
+- explicit media-offline cases.
+
+These are hardening and authoring improvements around a path that now exists end-to-end.
+
 ---
 
-## 21. Engineering lessons from the journey
+## 34. Engineering lessons from the journey
 
 A few principles survived every stage of this work.
 
@@ -721,6 +1300,8 @@ Project time, audio time, source time, and presentation time can be different co
 
 Most later bugs became tractable because the system had integer-frame ownership instead of accumulated timing guesses.
 
+The PREVIEW/BAKE work reinforced this again: both consume the SceneEngine-owned runtime STRUCT marker rather than inventing their own sequence playheads.
+
 ### Definition and execution are different concepts
 
 EDIT and MOSAIC definitions do not run merely because they exist.
@@ -728,6 +1309,8 @@ EDIT and MOSAIC definitions do not run merely because they exist.
 STRUCT is the execution site.
 
 That single distinction kept reusable source authoring separate from main-program order.
+
+The metadata cursor bug sharpened this further: definitions also do not consume runtime terminal **layout** merely because they occupy authored source lines.
 
 ### A visual seam is often an ownership bug
 
@@ -738,23 +1321,55 @@ The problems that looked like animation polish repeatedly turned out to be deepe
 - ribbon gap: runtime-frame ownership;
 - audio duplication: mix ownership;
 - title-bar pop: chrome ownership;
-- letterbox snap: render-frame ownership.
+- editor letterbox snap: render-frame ownership;
+- PREVIEW doing nothing: runtime-path ownership;
+- walking cursor: metadata/layout ownership;
+- cursor/theme jump: terminal-renderer ownership;
+- wide baked player: coordinate-system ownership.
 
 The final animation became smooth because those ownership boundaries became explicit, not because more easing curves were added.
 
-### Tests have to model the real lifecycle
+### Readiness is not time
 
-Several tests initially gave misleading results because they jumped directly into a later frame or assumed `pumpAndSettle()` meant native image conversion had completed.
+A decoder finishing on frame 10 instead of frame 3 cannot be allowed to re-author the transition.
 
-The most useful tests became the ones that followed the same lifecycle as the application:
+Readiness can decide whether a foreground is visible.
+
+It cannot decide where authored project time is.
+
+This distinction is now one of the most important determinism rules in structural preview.
+
+### Preview and bake should share contracts, not copied appearances
+
+Several bugs came from code that looked mathematically equivalent but lived in a different coordinate system or renderer path.
+
+The strongest fixes reused the real contract:
+
+- real ScenePainter terminal rendering rather than a better fake terminal;
+- SceneEngine runtime REGION rather than a parallel STRUCT timer;
+- exact StructuralSourceFrameRenderer frames rather than media-playback time;
+- pixel-space target geometry before bake normalization rather than copied normalized aspect math.
+
+### Tests have to model the real lifecycle at the correct layer
+
+Several tests initially gave misleading results because they jumped directly into a later frame, assumed `pumpAndSettle()` meant native image conversion had completed, or tried to force engine raster callbacks through `flutter_test`.
+
+The useful split became:
 
 ```text
-mount
-→ preload
-→ wait for real frame readiness
-→ advance transition
-→ assert decoder identity and geometry
+unit/focused tests
+    deterministic ownership
+    frame mapping
+    geometry
+    decoder requests
+
+running application
+    real raster integration
+    visual continuity
+    actual encoded output
 ```
+
+The final bake test became better when it stopped trying to prove pixels in the wrong test environment.
 
 ### Persistent media means persistent widget identity too
 
@@ -766,20 +1381,48 @@ Backend lifetime and Flutter element lifetime are part of the same playback syst
 
 Backend tests can prove a model is internally consistent. They cannot prove the model feels like one tool.
 
-M16 exposed issues that only existed when all layers were visible together. That was not a distraction from architecture. It was the next level of architecture testing.
+M16 exposed issues that only existed when all layers were visible together. M16.2 did the same again when the editor path was compared with top-level PREVIEW and then with BAKE.
+
+That was not a distraction from architecture. It was the next level of architecture testing.
 
 ---
 
-## 22. The checkpoint
+## 35. The journey to this point
 
-The M16 GUI integration branch grew to 69 commits beyond the previous main checkpoint before merge.
+The project began this arc by asking a basic question: can R3nder have a trustworthy clock underneath a media system?
 
-The final focused gate for the structural round-trip passed, and the completed path was verified visually in the running Linux application.
+That question eventually became:
 
-This is the point worth preserving:
+```text
+Can a reusable authored video structure
+live inside the same deterministic program
+as the terminal itself?
+```
 
-> R3nder Pro successfully round-tripped a structural video call through the main TEXT program and back to the terminal.
+The answer now is yes.
 
-The project is no longer only accumulating editing features.
+Not just in an isolated EDIT preview.
 
-It now has a coherent execution model that connects them.
+Not just in a structural-source exporter.
+
+But through the whole program path:
+
+```text
+TEXT
+→ terminal pulls back
+→ real themed terminal becomes a desktop window
+→ STRUCT window emerges
+→ exact EDIT/MOSAIC frames play
+→ STRUCT recedes
+→ the same terminal returns
+→ TEXT continues
+→ the same event bakes into the encoded program
+```
+
+That path survived a longer real script and the entire 163-test repository suite.
+
+This is the current checkpoint.
+
+R3nder Pro is no longer only accumulating editing features.
+
+It now has a coherent execution model that connects authored text, structural video, live preview, and final bake.
