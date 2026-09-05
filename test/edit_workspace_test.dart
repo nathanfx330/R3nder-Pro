@@ -358,7 +358,7 @@ void main() {
   });
 
   testWidgets(
-    'libpulse structural PLAY hands exact ProjectClock point to workspace mix',
+    'explicit inherited structural PLAY hands exact ProjectClock point to workspace mix',
     (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1000, 700));
       addTearDown(() async {
@@ -421,6 +421,7 @@ void main() {
                 onSeek: (int frame) => lastSeek = frame,
                 backend: _PreviewBackend(),
                 resolveSource: _previewResolve,
+                inheritWorkspaceAudio: true,
                 workspaceRootResolver: () => temp.path,
                 playbackClockFactory: (RationalFrameRate rate) {
                   clock = _FakePlaybackClock(rate);
@@ -491,6 +492,11 @@ void main() {
 
   testWidgets('GUI can build MOSAIC from EDIT then use MOSAIC as EDIT CLIP source',
       (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 760));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
     String latest = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:base:video/base.mp4:0:0:60:1]
@@ -523,9 +529,28 @@ void main() {
 
     EditDocumentModel model = EditDocumentModel.parse(latest);
     expect(model.mosaics, hasLength(1));
-    expect(model.mosaic('mosaic').pane('pane').clip('source').source, 'EDIT.main');
+    expect(model.mosaic('mosaic').pane('pane1').clips, isEmpty);
     expect(find.textContaining('MOSAIC mosaic'), findsWidgets);
-    expect(find.textContaining('PANE pane'), findsOneWidget);
+    expect(find.text('PANE 1'), findsOneWidget);
+    expect(find.text('ASSIGN CUT'), findsOneWidget);
+
+    await tester.tap(find.text('ASSIGN CUT'));
+    await tester.pumpAndSettle();
+
+    final Finder cutDialog = find.byType(AlertDialog);
+    expect(cutDialog, findsOneWidget);
+    final Finder cutChoice = find.byKey(
+      const ValueKey<String>('mosaic-cut:main:V1:base'),
+    );
+    expect(cutChoice, findsOneWidget);
+    await tester.tap(cutChoice);
+    await tester.pumpAndSettle();
+
+    model = EditDocumentModel.parse(latest);
+    final EditClip paneCut = model.mosaic('mosaic').pane('pane1').clip('base');
+    expect(paneCut.source, 'video/base.mp4');
+    expect(paneCut.inFrame, 0);
+    expect(paneCut.durationFrames, 60);
 
     await tester.tap(find.text('NEW EDIT'));
     await tester.pumpAndSettle();
@@ -559,8 +584,13 @@ void main() {
   });
 
   testWidgets(
-    'EXPORT sends selected MOSAIC root and workspace audio mix to structural exporter',
+    'explicit inherited EXPORT sends selected MOSAIC root and workspace audio mix',
     (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 760));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+
       final Directory temp = Directory(
         '${Directory.systemTemp.path}${Platform.pathSeparator}'
         'r3nder_edit_workspace_export_${pid}_${DateTime.now().microsecondsSinceEpoch}',
@@ -622,6 +652,7 @@ void main() {
                   resolvedPreviewSources.add(value);
                   return '/preview/$value';
                 },
+                inheritWorkspaceAudio: true,
                 workspaceRootResolver: () => temp.path,
                 exportSource: ({
                   required String source,

@@ -8,18 +8,24 @@
 // MosaicSurfaceDocument. ProjectClock remains the sole playback authority for
 // whichever structural source is selected.
 //
+// Structural source authoring is below the main sequence mix. By default this
+// workspace previews and exports picture/source time only. The document-level
+// narration/music beds belong to TEXT sequence playback and are inherited here
+// only when a caller explicitly opts into the legacy integration seam.
+//
 // Playback follows the same timing rule as the terminal renderer: Flutter
 // vsync asks ProjectClock what project time is current. A Ticker does not
 // advance time itself. Integer project frames are published only when they
 // change for authored/edit semantics, while exact rational position is
 // published every vsync for smooth presentation paint.
 //
-// When a native libpulse bed is available, structural PLAY begins from SCRUB
-// rather than MONOTONIC. NativeAudioSink captures that exact authored point,
-// holds it through decoder/device prefill, then hands the SAME ProjectClock to
-// AUDIO authority only when samples become audible. PAUSE reverses the order:
-// the sink generation is stopped first, then SCRUB is reasserted, so a late
-// native release can never overwrite the parked frame.
+// When inherited workspace audio is explicitly enabled and a native libpulse
+// bed is available, structural PLAY begins from SCRUB rather than MONOTONIC.
+// NativeAudioSink captures that exact authored point, holds it through
+// decoder/device prefill, then hands the SAME ProjectClock to AUDIO authority
+// only when samples become audible. PAUSE reverses the order: the sink
+// generation is stopped first, then SCRUB is reasserted, so a late native
+// release can never overwrite the parked frame.
 
 import 'dart:async';
 import 'dart:convert';
@@ -46,6 +52,7 @@ import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
+import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
@@ -150,10 +157,16 @@ class EditWorkspace extends StatefulWidget {
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
 
+  /// Structural source authoring sits below the TEXT sequence. Main narration
+  /// and music therefore do not belong here by default. This opt-in exists for
+  /// compatibility tests and specialist callers that explicitly want to hear
+  /// or bake the workspace-level mix against an isolated structural source.
+  final bool inheritWorkspaceAudio;
+
   /// Test seams. Production uses the GTK chooser, workspace MLT import, native
-  /// realtime ProjectClock adapter, borrowed app audio backend, active
-  /// workspace, structural exporter, native preview decoder, and workspace
-  /// media resolver.
+  /// realtime ProjectClock adapter, active workspace, structural exporter,
+  /// native preview decoder, and workspace media resolver. Audio seams are
+  /// consulted only when [inheritWorkspaceAudio] is true.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
@@ -175,6 +188,7 @@ class EditWorkspace extends StatefulWidget {
     this.voiceFrames = 0,
     this.musicFrames = 0,
     this.musicLoops = false,
+    this.inheritWorkspaceAudio = false,
     this.pickVideo,
     this.importVideo,
     this.playbackClockFactory,
@@ -275,10 +289,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _playbackFrame.dispose();
     _playbackExact.dispose();
 
-    // The player is borrowed from main and must not be disposed here. If this
-    // workspace was the one using it, stop that generation first and only then
-    // release the ProjectClock handle. NativeAudioSink may still need the
-    // handle while its feeder is quiescing.
     final AudioBedPlayer? player = _activeAudioPlayer;
     _activeAudioPlayer = null;
     final EditPlaybackClock? clock = _playClock;
@@ -405,9 +415,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       }
     }
 
-    // Falling back to the full authored seek remains correct for an infinite
-    // stream_loop; it simply asks ffmpeg to discard more decoded loops. The
-    // probe is an optimization that reduces that lead-in to one cycle.
     return _musicDurationSec > 0.0
         ? loopedSeek(startSec, _musicDurationSec)
         : startSec;
@@ -469,6 +476,18 @@ class _EditWorkspaceState extends State<EditWorkspace>
         mode: ProjectClockMode.monotonic,
       );
 
+      if (!widget.inheritWorkspaceAudio) {
+        clock.playFrom(startTime);
+        _activeAudioPlayer = null;
+        _commitPlaybackStarted(
+          generation,
+          source,
+          start,
+          startTime,
+        );
+        return;
+      }
+
       String? workspaceWarning;
       _WorkspaceAudioMix audioMix = const _WorkspaceAudioMix(
         audioPath: null,
@@ -491,8 +510,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final String? music = _existingAudioPath(audioMix.musicPath);
       final String? primary = bed ?? music;
 
-      // No usable audio is an ordinary structural playback state. The same
-      // ProjectClock simply runs MONOTONIC as it did before M13.
       if (player == null || primary == null) {
         if (generation != _transportGeneration || !mounted) return;
         clock.playFrom(startTime);
@@ -531,10 +548,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         if (generation != _transportGeneration || !mounted) return;
       }
 
-      // This hold is load bearing for native audio. NativeAudioSink captures
-      // the active clock synchronously in its constructor inside player.play.
-      // Decoder startup and libpulse prefill therefore happen behind the exact
-      // authored point rather than while picture time races ahead.
       clock.holdAt(startTime.withMode(ProjectClockMode.scrub));
       _activeAudioPlayer = player;
 
@@ -561,15 +574,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
       if (generation != _transportGeneration || !mounted) return;
 
       if (!player.isPlaying) {
-        // Missing/failed audio is survivable. Release the prefill hold and let
-        // picture continue silently rather than turning a valid edit into a
-        // dead transport.
         _activeAudioPlayer = null;
         clock.playFrom(startTime);
       } else if (player.backendName != 'libpulse') {
-        // aplay has no native sample counter to own ProjectClock. Start the
-        // sole project clock only after the subprocess sink exists, minimizing
-        // startup skew without inventing a second timeline authority.
         clock.playFrom(startTime);
       }
 
@@ -653,9 +660,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (clock != null) {
       try {
         frame = clock.sample().frame.clamp(0, _sourceEndFrame());
-      } catch (_) {
-        // Holding the last locally visible frame is a safe fallback.
-      }
+      } catch (_) {}
     }
     _stopPlaybackAt(frame, publish: true, traceReason: 'pause');
   }
@@ -669,9 +674,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
           mode: ProjectClockMode.scrub,
         ),
       );
-    } catch (_) {
-      // UI state still stops even if the optional realtime clock vanished.
-    }
+    } catch (_) {}
   }
 
   void _stopPlaybackAt(
@@ -700,9 +703,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
     if (player == null) {
       _holdClockAt(clock, safeFrame);
     } else {
-      // NativeAudioSink releases AUDIO back to MONOTONIC while it flushes.
-      // Reasserting SCRUB before that release would be overwritten, so the
-      // ordering is stop generation first, exact hold second.
       unawaited(() async {
         try {
           await player.stop();
@@ -873,13 +873,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _applySourceChange(next, selectSource: 'EDIT.$id');
   }
 
-  void _newMosaic(EditDocumentModel model, StructuralSourceRef selected) {
+  void _newMosaic(EditDocumentModel model) {
     if (_exporting || _startingPlayback) return;
-    final int duration = model.structuralSourceFrameCount(selected);
-    if (duration <= 0) {
-      setState(() => _error = '${selected.canonicalSource} has no authored frames.');
-      return;
-    }
 
     final Set<String> ids =
         model.mosaics.map((MosaicSequence mosaic) => mosaic.id).toSet();
@@ -891,13 +886,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
 
     try {
-      final String next = createMosaicWithSource(
+      final String next = createEmptyMosaic(
         source: _workingSource,
         mosaicId: id,
-        paneId: 'pane',
-        clipId: 'source',
-        structuralSource: selected.canonicalSource,
-        durationFrames: duration,
       );
       _applySourceChange(next, selectSource: 'MOSAIC.$id');
     } catch (error) {
@@ -990,6 +981,25 @@ class _EditWorkspaceState extends State<EditWorkspace>
         throw StateError('${issue.message} Path: ${issue.editPath.join(' -> ')}');
       }
       _applySourceChange(next, selectSource: 'EDIT.${edit.id}');
+    } catch (error) {
+      setState(() => _error = '$error');
+    }
+  }
+
+  void _addSelectedToSequence(
+    EditDocumentModel model,
+    StructuralSourceRef selected,
+  ) {
+    if (_importing || _playing || _startingPlayback || _exporting) return;
+    try {
+      if (!model.containsStructuralSource(selected)) {
+        throw StateError('No structural source named ${selected.canonicalSource}.');
+      }
+      final String next = appendStructuralSequencePlacement(
+        rawDocument: _workingSource,
+        sourceRef: selected,
+      );
+      _applySourceChange(next, selectSource: selected.canonicalSource);
     } catch (error) {
       setState(() => _error = '$error');
     }
@@ -1141,7 +1151,15 @@ class _EditWorkspaceState extends State<EditWorkspace>
     try {
       final String workspace =
           (widget.workspaceRootResolver ?? resolveActiveWorkspaceRoot)();
-      final _WorkspaceAudioMix audioMix = _WorkspaceAudioMix.load(workspace);
+      final _WorkspaceAudioMix audioMix = widget.inheritWorkspaceAudio
+          ? _WorkspaceAudioMix.load(workspace)
+          : const _WorkspaceAudioMix(
+              audioPath: null,
+              audioGainDb: 0.0,
+              musicPath: null,
+              musicGainDb: 0.0,
+              musicLoop: false,
+            );
       final Directory outputDirectory = Directory(
         '$workspace${Platform.pathSeparator}output_frames',
       );
@@ -1374,13 +1392,29 @@ class _EditWorkspaceState extends State<EditWorkspace>
         theme: widget.theme,
         compact: true,
         onPressed: model == null ||
-                selected == null ||
-                selectedEnd <= 0 ||
                 _playing ||
                 _startingPlayback ||
                 _exporting
             ? null
-            : () => _newMosaic(model, selected),
+            : () => _newMosaic(model),
+      ),
+      SizedBox(width: sc(5)),
+      R3MicroLabel('SEQUENCE', theme: widget.theme, accent: true),
+      R3Button(
+        'ADD TO SEQUENCE',
+        key: const ValueKey<String>('add-structural-to-sequence'),
+        theme: widget.theme,
+        compact: true,
+        kind: R3ButtonKind.primary,
+        onPressed: model == null ||
+                selected == null ||
+                selectedEnd <= 0 ||
+                _importing ||
+                _playing ||
+                _startingPlayback ||
+                _exporting
+            ? null
+            : () => _addSelectedToSequence(model, selected),
       ),
       if (mediaMode) ...[
         SizedBox(width: sc(5)),
@@ -1467,7 +1501,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
             color: widget.theme.accentDim,
           ),
         ),
-        Text('SYNCING AUDIO', style: widget.theme.micro),
+        Text('STARTING', style: widget.theme.micro),
       ] else if (_exporting) ...[
         SizedBox(
           width: sc(13),

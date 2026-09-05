@@ -1,6 +1,6 @@
 // ./lib/edit_surface.dart
 //
-// M10 source-backed edit surface.
+// Source-backed EDIT cut/trim surface.
 //
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
@@ -8,6 +8,11 @@
 // During playback, the static timeline document does not rebuild every frame.
 // Integer edit state stays quantized while the playhead paints directly from
 // the exact rational ProjectClock position published at display cadence.
+//
+// Workspace voice/music beds deliberately do NOT draw here. This surface is
+// where authored video cuts are trimmed before they are assigned into higher
+// composition/sequencer structure. Main audio beds remain workspace playback
+// and export concerns rather than pretending to be clip-local cut material.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -29,9 +34,13 @@ class EditSurface extends StatefulWidget {
   final String editId;
   final int currentFrame;
   final bool isPlaying;
+
+  /// Kept for source compatibility with the workspace while M16 separates
+  /// cut authoring from composition audio. They are intentionally not drawn.
   final int voiceFrames;
   final int musicFrames;
   final bool musicLoops;
+
   final R3Theme theme;
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
@@ -64,7 +73,6 @@ class EditSurface extends StatefulWidget {
 
 class _EditSurfaceState extends State<EditSurface> {
   static final double _kTrackHeight = sc(66);
-  static final double _kAudioHeight = sc(24);
   static final double _kRulerHeight = sc(30);
   static final double _kLabelWidth = sc(74);
   static final double _kPreviewHeight = sc(230);
@@ -208,6 +216,42 @@ class _EditSurfaceState extends State<EditSurface> {
       _selectedTrackId = clip.trackId;
       _selectedClipId = clip.id;
       _error = null;
+    });
+  }
+
+  int _sourceOutFrame(EditSurfaceClip clip) {
+    return clip.clip.sourceFrameAtProjectOffset(clip.durationFrames - 1);
+  }
+
+  void _trimInToPlayhead(EditSurfaceDocument document) {
+    final EditSurfaceClip? selected = _selected(document);
+    if (selected == null) return;
+    final int frame = _effectiveFrame;
+    if (frame <= selected.atFrame || frame >= selected.endFrameExclusive) {
+      setState(() {
+        _error = 'Park the playhead inside the selected CLIP to trim its IN.';
+      });
+      return;
+    }
+
+    _commit((EditSurfaceDocument current) {
+      return current.trimStart(selected.trackId, selected.id, frame);
+    });
+  }
+
+  void _trimOutToPlayhead(EditSurfaceDocument document) {
+    final EditSurfaceClip? selected = _selected(document);
+    if (selected == null) return;
+    final int frame = _effectiveFrame;
+    if (frame < selected.atFrame || frame >= selected.endFrameExclusive - 1) {
+      setState(() {
+        _error = 'Park the playhead before the selected CLIP end to trim its OUT.';
+      });
+      return;
+    }
+
+    _commit((EditSurfaceDocument current) {
+      return current.trimEnd(selected.trackId, selected.id, frame + 1);
     });
   }
 
@@ -414,14 +458,12 @@ class _EditSurfaceState extends State<EditSurface> {
 
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
     final EditSurfaceClip? selected = _selected(document);
-    final int contentFrames = math.max(
-      document.projectFrameCount,
-      math.max(widget.voiceFrames, widget.musicFrames),
-    );
-    final double timelineContentHeight = _kRulerHeight +
-        tracks.length * _kTrackHeight +
-        (widget.voiceFrames > 0 ? _kAudioHeight : 0) +
-        (widget.musicFrames > 0 ? _kAudioHeight : 0);
+
+    // This is a CUT surface. Composition-level audio beds intentionally do not
+    // extend its ruler or create A1/A2 lanes.
+    final int contentFrames = document.projectFrameCount;
+    final double timelineContentHeight =
+        _kRulerHeight + tracks.length * _kTrackHeight;
 
     return Column(
       children: [
@@ -501,23 +543,6 @@ class _EditSurfaceState extends State<EditSurface> {
                                           for (final EditSurfaceTrack track
                                               in tracks)
                                             _buildTrackLane(track),
-                                          if (widget.voiceFrames > 0)
-                                            _buildAudioLane(
-                                              widget.voiceFrames,
-                                              'VOICE',
-                                              R3Theme.ribbonWindow,
-                                            ),
-                                          if (widget.musicFrames > 0)
-                                            _buildAudioLane(
-                                              math.min(
-                                                widget.musicFrames,
-                                                document.projectFrameCount,
-                                              ),
-                                              widget.musicLoops
-                                                  ? 'MUSIC LOOP'
-                                                  : 'MUSIC',
-                                              R3Theme.ribbonMedia,
-                                            ),
                                         ],
                                       ),
                                     ),
@@ -569,6 +594,8 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceClip? selected,
   ) {
     final int frame = _effectiveFrame;
+    final int? sourceOut = selected == null ? null : _sourceOutFrame(selected);
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
@@ -590,10 +617,8 @@ class _EditSurfaceState extends State<EditSurface> {
               Expanded(
                 child: Text(
                   selected == null
-                      ? 'SELECT A CLIP'
-                      : '${selected.trackId}  ${selected.id}    '
-                          'AT ${selected.atFrame}   IN ${selected.inFrame}   '
-                          'DUR ${selected.durationFrames}   ${selected.speed}X',
+                      ? 'SELECT A CLIP TO TRIM'
+                      : '${selected.id}   ${selected.source}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: selected == null
@@ -605,6 +630,35 @@ class _EditSurfaceState extends State<EditSurface> {
               Text('${document.projectFrameCount}F', style: widget.theme.micro),
             ],
           ),
+          if (selected != null) ...[
+            SizedBox(height: sc(6)),
+            Wrap(
+              spacing: sc(10),
+              runSpacing: sc(4),
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'SOURCE IN  F${selected.inFrame}',
+                  key: const ValueKey<String>('edit-selected-source-in'),
+                  style: widget.theme.microAccent,
+                ),
+                Text(
+                  'SOURCE OUT  F$sourceOut',
+                  key: const ValueKey<String>('edit-selected-source-out'),
+                  style: widget.theme.microAccent,
+                ),
+                Text(
+                  'CUT  ${selected.durationFrames}F',
+                  key: const ValueKey<String>('edit-selected-cut-duration'),
+                  style: widget.theme.micro.copyWith(color: R3Theme.textBright),
+                ),
+                Text(
+                  'TRACK ${selected.trackId}   SPEED ${selected.speed}X',
+                  style: widget.theme.micro,
+                ),
+              ],
+            ),
+          ],
           SizedBox(height: sc(6)),
           Wrap(
             spacing: sc(4),
@@ -613,6 +667,20 @@ class _EditSurfaceState extends State<EditSurface> {
             children: [
               if (selected != null) ...[
                 _toolButton(
+                  'TRIM IN',
+                  onPressed: frame > selected.atFrame &&
+                          frame < selected.endFrameExclusive
+                      ? () => _trimInToPlayhead(document)
+                      : null,
+                ),
+                _toolButton(
+                  'TRIM OUT',
+                  onPressed: frame >= selected.atFrame &&
+                          frame < selected.endFrameExclusive - 1
+                      ? () => _trimOutToPlayhead(document)
+                      : null,
+                ),
+                _toolButton(
                   'SPLIT',
                   onPressed: frame > selected.atFrame &&
                           frame < selected.endFrameExclusive
@@ -620,7 +688,7 @@ class _EditSurfaceState extends State<EditSurface> {
                       : null,
                 ),
                 _toolButton(
-                  'SLIP 1',
+                  'SLIP -1',
                   onPressed: selected.inFrame > 0
                       ? () => _commit((EditSurfaceDocument current) {
                             return current.slipClip(
@@ -741,21 +809,8 @@ class _EditSurfaceState extends State<EditSurface> {
               ),
               child: Text(track.id, style: widget.theme.value),
             ),
-          if (widget.voiceFrames > 0) _audioLabel('A1'),
-          if (widget.musicFrames > 0) _audioLabel('A2'),
         ],
       ),
-    );
-  }
-
-  Widget _audioLabel(String text) {
-    return Container(
-      height: _kAudioHeight,
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: R3Theme.hairline)),
-      ),
-      child: Text(text, style: widget.theme.micro),
     );
   }
 
@@ -835,32 +890,6 @@ class _EditSurfaceState extends State<EditSurface> {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAudioLane(int frames, String label, Color color) {
-    return Container(
-      height: _kAudioHeight,
-      decoration: const BoxDecoration(
-        color: R3Theme.bg,
-        border: Border(top: BorderSide(color: R3Theme.hairline)),
-      ),
-      alignment: Alignment.centerLeft,
-      child: Container(
-        width: math.max(sc(2), frames * _pixelsPerFrame),
-        height: sc(12),
-        padding: EdgeInsets.symmetric(horizontal: sc(6)),
-        alignment: Alignment.centerLeft,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.45),
-          border: Border.all(color: color.withValues(alpha: 0.8)),
-          borderRadius: BorderRadius.circular(2),
-        ),
-        child: Text(
-          label,
-          style: widget.theme.micro.copyWith(color: R3Theme.textBright),
-        ),
       ),
     );
   }
@@ -1012,6 +1041,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     final Color fill = widget.selected
         ? widget.theme.accentFaint
         : R3Theme.ribbonMedia.withValues(alpha: 0.22);
+    final int sourceOut = widget.clip.clip.sourceFrameAtProjectOffset(
+      widget.clip.durationFrames - 1,
+    );
 
     return Transform.translate(
       offset: Offset(moveOffset, 0),
@@ -1048,7 +1080,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                       SizedBox(height: sc(2)),
                       Text(
                         '${widget.clip.source}   IN ${widget.clip.inFrame}   '
-                        '${widget.clip.speed}X',
+                        'OUT $sourceOut   ${widget.clip.durationFrames}F',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: widget.theme.micro,

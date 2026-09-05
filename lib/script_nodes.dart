@@ -12,37 +12,47 @@ import 'script_cst.dart';
 // ROUND-TRIP CONTRACT
 //
 // The node list covers 100% of the document buffer with no gaps and no
-// overlaps. Every node holds the verbatim source slice it was parsed
-// from in [ScriptNode.rawText] and emits that slice unchanged until the
-// user actually edits it (dirty == false means "emit rawText").
+// overlaps. Every ordinary node holds the verbatim source slice it was parsed
+// from in [ScriptNode.rawText] and emits that slice unchanged until the user
+// actually edits it (dirty == false means "emit rawText").
 //
 // Because coverage is total and text nodes carry their own newlines, the
 // composer joins with the EMPTY string, never '\n'. Consequence: opening
 // node mode and touching nothing produces a byte-identical document, and
-// editing one node rewrites exactly that node's span. Frame counts and
-// typed layout cannot drift out from under the writer.
+// editing one ordinary node rewrites exactly that node's span. Frame counts
+// and typed layout cannot drift out from under the writer.
 //
 // Whitespace-only slices between tags become hidden SPACER nodes. They
 // are never shown in the graph and never regenerated, so blank lines and
 // indentation survive verbatim.
 //
-// EDIT and MOSAIC roots are also hidden, but for a different reason. They
-// are canonical structural source owned by ScriptCstDocument and edited by
-// their dedicated surfaces. They remain one exact opaque node here so the
-// generic node editor cannot reinterpret their nested bytes as terminal copy.
+// EDIT and MOSAIC roots are different. ScriptCstDocument owns their nested
+// bytes, but M16 makes the roots visible in NODES as protected structural
+// cards. Each card still serializes the exact CST-owned root source rather
+// than allowing the generic node form to reinterpret TRACK / PANE / CLIP.
+// The visible card is therefore a view of structural source, not a second
+// structural database.
+//
+// STRUCT placements are different again: they are main-sequence references to
+// those protected roots. They are ordinary reorderable nodes because moving a
+// placement changes sequence order, not the EDIT/MOSAIC source definition.
 // =====================================================================
 
 /// Node type for a whitespace-only run between two tags. Hidden from the
 /// graph, always emitted verbatim, never editable.
 const String kSpacer = 'SPACER';
 
-/// One complete EDIT or MOSAIC CST root. Hidden from the generic node graph,
-/// emitted verbatim, and never granted terminal runtime line ownership.
+/// Legacy structural marker retained for old callers/tests. New parses expose
+/// protected roots using their real visible type, EDIT or MOSAIC, while
+/// [ScriptNode.isStructural] is keyed by the protected-source metadata below.
 const String kStructural = 'STRUCTURAL';
 
 /// Node type for markup the tag grammar does not model: comments, menu
 /// definitions, MACRO_CFG lines. Edited as raw text, round-trips exactly.
 const String kRaw = 'RAW';
+
+const String _kStructuralSource = '__structural_source';
+const String _kStructuralOwner = '__structural_owner';
 
 int _nodeSeq = 0;
 
@@ -56,17 +66,22 @@ int _nodeSeq = 0;
 /// They have to: if the node editor and the template parser disagree about
 /// what a menu looks like, the editor will happily write something the
 /// dashboard cannot read back.
+///
+/// STRUCT is included in the same non-terminal pass even though it is not a
+/// macro: script_pipeline projects it into main-sequence timing before the
+/// TerminalEngine ever sees the document.
 final RegExp _macroRegex = RegExp(
   r'\[DEF_MENU:(?<menuId>[a-zA-Z0-9_-]+)\](?<menuBody>.*?)\[/DEF_MENU\]'
   r'|\[CALL:(?<callId>[a-zA-Z0-9_-]+)\]'
   r'|\[MENU_STATE:(?<msMenu>[a-zA-Z0-9_-]+):(?<msInstance>[a-zA-Z0-9_-]+)\]'
   r'|\[MACRO_CFG:(?<cfgId>[a-zA-Z0-9_-]+):(?<cfgItem>[a-zA-Z0-9_-]+|NONE)'
-  r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]',
+  r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]'
+  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)\]',
   dotAll: true,
 );
 
-final RegExp _nonGrammarMarkup = RegExp(
-    r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE)');
+final RegExp _nonGrammarMarkup =
+    RegExp(r'^\[(#|/?DEF_MENU|/?ITEM|MACRO_CFG|CALL|MENU_STATE|STRUCT)');
 
 final RegExp _structuralRootOpening =
     RegExp(r'\[(?:EDIT|MOSAIC)(?::[^\]\r\n]*)?\]');
@@ -157,9 +172,9 @@ class ScriptNode {
 
   String type;
 
-  /// The verbatim source slice this node was parsed from. Emitted unchanged
-  /// while [dirty] is false, which is what makes an untouched document
-  /// round-trip byte for byte.
+  /// The verbatim source slice this ordinary node was parsed from. Structural
+  /// cards use this as their compact graph summary; their canonical bytes live
+  /// in [_kStructuralSource] and always win serialization.
   String rawText;
 
   /// TEXT nodes only: whitespace peeled off the front and back of the slice
@@ -171,12 +186,13 @@ class ScriptNode {
   Map<String, String> params = {};
   String body = '';
 
-  /// False until the user edits this node. Gates verbatim emission.
+  /// False until the user edits this node. Gates verbatim emission for normal
+  /// nodes. Protected structural cards ignore dirty and emit CST-owned source.
   bool dirty = false;
 
-  /// Document line span, recomputed after every change. Drives the playback
-  /// highlight and the auto-scroll. STRUCTURAL nodes use -1/-1 because their
-  /// source lines exist in the document but own no TerminalEngine frames.
+  /// Document line span, recomputed after every change. STRUCTURAL nodes use
+  /// -1/-1 because their source lines exist in the document but own no
+  /// TerminalEngine frames.
   int startLine = 0;
   int endLine = 0;
 
@@ -189,25 +205,43 @@ class ScriptNode {
   ScriptNode({required this.type, required this.rawText});
 
   bool get isSpacer => type == kSpacer;
-  bool get isStructural => type == kStructural;
-  bool get isVisible => !isSpacer && !isStructural;
+
+  /// True for either the old opaque marker or an M16 visible protected root.
+  bool get isStructural =>
+      type == kStructural || params.containsKey(_kStructuralSource);
+
+  /// Structural roots are now visible in the node workspace. Their -1 runtime
+  /// line ownership still keeps them off the script timing ribbon.
+  bool get isVisible => !isSpacer;
 
   String param(String k, [String fallback = '']) => params[k] ?? fallback;
 
   void set(String k, String v) {
+    // The generic node form is not an owner of nested structural syntax.
+    if (isStructural) return;
     params[k] = v;
     dirty = true;
   }
 
-  /// Rebuilds this node's markup. Untouched nodes short-circuit to their
-  /// original slice, so nothing the form does not model can be damaged by
-  /// simply visiting node mode.
+  /// Rebuilds this node's markup. Untouched ordinary nodes short-circuit to
+  /// their original slice. Structural cards always emit the exact root source
+  /// captured from CST, even if generic node UI tries to mark them dirty.
   String toMarkup() {
+    if (isStructural) {
+      final String source = param(_kStructuralSource, rawText);
+      final String owner = param(_kStructuralOwner, id);
+      // Generic duplicate creates a new node id while copying params. It must
+      // not clone a canonical root with the same structural id. Treat that
+      // accidental duplicate as no source rather than manufacturing an invalid
+      // second EDIT/MOSAIC root.
+      if (owner != id && params.containsKey(_kStructuralSource)) return '';
+      return source;
+    }
+
     if (!dirty) return rawText;
 
     switch (type) {
       case kSpacer:
-      case kStructural:
         return rawText;
 
       case 'TEXT':
@@ -249,7 +283,7 @@ class ScriptNode {
       // applied to them without ambiguity.
       case 'BAR':
         return '[BAR:${param('width', '20')}:${param('frames', '60')}'
-            ':${param('fill', '\u2588')}:${param('empty', ' ')}'
+            ':${param('fill', '█')}:${param('empty', ' ')}'
             ':${param('brackets', '[]')}]';
 
       // --- Regions and selection ----------------------------------
@@ -424,7 +458,7 @@ class _NodeParseHit {
   final int priority;
   final RegExpMatch? match;
   final bool macro;
-  final bool structural;
+  final ScriptCstBlock? structuralBlock;
 
   const _NodeParseHit._({
     required this.start,
@@ -432,16 +466,18 @@ class _NodeParseHit {
     required this.priority,
     required this.match,
     required this.macro,
-    required this.structural,
+    required this.structuralBlock,
   });
 
-  factory _NodeParseHit.structural(int start, int end) => _NodeParseHit._(
-        start: start,
-        end: end,
+  bool get structural => structuralBlock != null;
+
+  factory _NodeParseHit.structural(ScriptCstBlock block) => _NodeParseHit._(
+        start: block.startOffset,
+        end: block.endOffset,
         priority: 0,
         match: null,
         macro: false,
-        structural: true,
+        structuralBlock: block,
       );
 
   factory _NodeParseHit.tag(RegExpMatch match) => _NodeParseHit._(
@@ -450,7 +486,7 @@ class _NodeParseHit {
         priority: 1,
         match: match,
         macro: false,
-        structural: false,
+        structuralBlock: null,
       );
 
   factory _NodeParseHit.macro(RegExpMatch match) => _NodeParseHit._(
@@ -459,7 +495,7 @@ class _NodeParseHit {
         priority: 2,
         match: match,
         macro: true,
-        structural: false,
+        structuralBlock: null,
       );
 }
 
@@ -479,6 +515,69 @@ List<ScriptCstBlock> _structuralRootsForNodeParsing(String text) {
   }
 }
 
+String _structuralSummary(ScriptCstBlock root) {
+  final String id = root.header.trim();
+
+  if (root.type == 'EDIT') {
+    final List<ScriptCstBlock> tracks = root.children
+        .where((ScriptCstBlock child) => child.type == 'TRACK')
+        .toList(growable: false);
+    int cuts = 0;
+    final List<String> trackIds = <String>[];
+    final List<String> clipIds = <String>[];
+    for (final ScriptCstBlock track in tracks) {
+      trackIds.add(track.header.trim());
+      for (final ScriptCstBlock child in track.children) {
+        if (child.type != 'CLIP') continue;
+        cuts++;
+        final String header = child.header.trim();
+        final int colon = header.indexOf(':');
+        clipIds.add(colon < 0 ? header : header.substring(0, colon));
+      }
+    }
+    final String tracksLabel = trackIds.isEmpty ? 'NO TRACKS' : trackIds.join(' + ');
+    final String cutsLabel = cuts == 1 ? '1 CUT' : '$cuts CUTS';
+    final String clips = clipIds.isEmpty ? '' : ' · ${clipIds.take(3).join(', ')}';
+    return '$id · $tracksLabel · $cutsLabel$clips';
+  }
+
+  final List<ScriptCstBlock> panes = root.children
+      .where((ScriptCstBlock child) => child.type == 'PANE')
+      .toList(growable: false);
+  int assigned = 0;
+  final List<String> paneAssignments = <String>[];
+  for (final ScriptCstBlock pane in panes) {
+    final List<ScriptCstBlock> clips = pane.children
+        .where((ScriptCstBlock child) => child.type == 'CLIP')
+        .toList(growable: false);
+    assigned += clips.length;
+    final String paneId = pane.header.trim();
+    if (clips.isEmpty) {
+      paneAssignments.add('$paneId empty');
+    } else {
+      final String header = clips.first.header.trim();
+      final int colon = header.indexOf(':');
+      final String clipId = colon < 0 ? header : header.substring(0, colon);
+      paneAssignments.add('$paneId ← $clipId');
+    }
+  }
+  final String paneLabel = panes.length == 1 ? '1 PANE' : '${panes.length} PANES';
+  final String assignmentLabel = assigned == 1 ? '1 ASSIGNED' : '$assigned ASSIGNED';
+  final String detail = paneAssignments.isEmpty ? '' : ' · ${paneAssignments.join(' · ')}';
+  return '$id · $paneLabel · $assignmentLabel$detail';
+}
+
+ScriptNode _nodeFromStructuralRoot(ScriptCstBlock root) {
+  final ScriptNode node = ScriptNode(
+    type: root.type,
+    rawText: _structuralSummary(root),
+  );
+  node.params[_kStructuralSource] = root.rawSource;
+  node.params[_kStructuralOwner] = node.id;
+  node.params['id'] = root.header.trim();
+  return node;
+}
+
 // =====================================================================
 // SCRIPT PARSING
 //
@@ -493,7 +592,7 @@ List<ScriptCstBlock> _structuralRootsForNodeParsing(String text) {
 // makes the round trip lossless and what lets the ribbon assume its
 // blocks tile the document without gaps.
 //
-// Structural roots participate in that tiling as one opaque hit each. They
+// Structural roots participate in that tiling as one protected hit each. They
 // dominate any tag or macro-looking text nested inside their owned source,
 // which keeps the generic node grammar from taking ownership away from CST.
 // =====================================================================
@@ -537,7 +636,7 @@ List<ScriptNode> parseScriptToNodes(String text) {
 
   final List<_NodeParseHit> hits = <_NodeParseHit>[
     for (final ScriptCstBlock root in _structuralRootsForNodeParsing(text))
-      _NodeParseHit.structural(root.startOffset, root.endOffset),
+      _NodeParseHit.structural(root),
     for (final RegExpMatch match in tagRegex.allMatches(text))
       _NodeParseHit.tag(match),
     for (final RegExpMatch match in _macroRegex.allMatches(text))
@@ -562,12 +661,7 @@ List<ScriptNode> parseScriptToNodes(String text) {
     }
 
     if (hit.structural) {
-      result.add(
-        ScriptNode(
-          type: kStructural,
-          rawText: text.substring(hit.start, hit.end),
-        ),
-      );
+      result.add(_nodeFromStructuralRoot(hit.structuralBlock!));
     } else {
       final RegExpMatch match = hit.match!;
       result.add(
@@ -613,6 +707,9 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
     n.params['item'] = g('cfgItem') ?? 'NONE';
     n.params['rgb'] = g('cfgRgb') ?? '0,255,0';
     n.params['blink'] = g('cfgBlink') ?? '0';
+  } else if (g('structSource') != null) {
+    n.type = 'STRUCT';
+    n.params['source'] = g('structSource')!;
   }
 
   return n;
@@ -691,7 +788,7 @@ ScriptNode _nodeFromMatch(RegExpMatch m) {
     n.type = 'BAR';
     p('width', g('bW'), '20');
     p('frames', g('bF'), '60');
-    p('fill', g('bFill'), '\u2588');
+    p('fill', g('bFill'), '█');
     p('empty', g('bEmpty'), ' ');
     p('brackets', g('bBrack'), '[]');
   }

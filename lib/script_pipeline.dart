@@ -2,6 +2,7 @@
 
 import 'parser.dart';
 import 'script_cst.dart';
+import 'structural_sequence.dart';
 
 // =====================================================================
 // WHY THIS EXISTS
@@ -100,6 +101,13 @@ class CompiledScript {
 /// [LINE:n] markers continue to refer to raw document line numbers even though
 /// the source graph itself does not run in TerminalEngine.
 ///
+/// A standalone `[STRUCT:EDIT.foo]` or `[STRUCT:MOSAIC.bar]` is different:
+/// that is a main-sequence placement. After the source definitions are removed,
+/// the projection replaces the placement with a PAUSE whose duration comes
+/// from the referenced source. TerminalEngine therefore owns the timing while
+/// the editor/render layer owns the structural pixels. The author never types a
+/// second duration for the same cut.
+///
 /// [lineMarkers] injects an editor-only `[LINE:n]` at the head of each
 /// document line so the engine reports its read position back as a line
 /// number. Preview and bake pass false; the editor passes true.
@@ -146,26 +154,33 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
 /// Source spans come from the nested CST, so this removes structural roots
 /// rather than trying to match nested blocks with a regular expression. Roots
 /// are replaced from right to left so every original offset remains valid.
+///
+/// Sequence placements are projected only AFTER source roots are gone. That is
+/// what prevents a `[STRUCT:...]` accidentally written inside an EDIT/MOSAIC
+/// definition from consuming main-sequence time.
 String _engineProjectionSource(String rawText) {
-  if (!RegExp(r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]')
-      .hasMatch(rawText)) {
-    return rawText;
-  }
-
-  final ScriptCstDocument cst = ScriptCstDocument.parse(rawText);
-  if (cst.roots.isEmpty) return rawText;
+  final bool hasStructuralRoots = RegExp(
+    r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]',
+  ).hasMatch(rawText);
 
   String projected = rawText;
-  for (final ScriptCstBlock root in cst.roots.reversed) {
-    final String owned = rawText.substring(root.startOffset, root.endOffset);
-    final String blankLines = owned.replaceAll(RegExp(r'[^\r\n]'), '');
-    projected = projected.replaceRange(
-      root.startOffset,
-      root.endOffset,
-      blankLines,
-    );
+  if (hasStructuralRoots) {
+    final ScriptCstDocument cst = ScriptCstDocument.parse(rawText);
+    for (final ScriptCstBlock root in cst.roots.reversed) {
+      final String owned = rawText.substring(root.startOffset, root.endOffset);
+      final String blankLines = owned.replaceAll(RegExp(r'[^\r\n]'), '');
+      projected = projected.replaceRange(
+        root.startOffset,
+        root.endOffset,
+        blankLines,
+      );
+    }
   }
-  return projected;
+
+  return projectStructuralSequencePlacements(
+    rawDocument: rawText,
+    projectedSource: projected,
+  );
 }
 
 /// Prefixes each line with `[LINE:n]`, n being its 0-based index.

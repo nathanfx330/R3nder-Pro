@@ -7,9 +7,45 @@
 // model, and runs the mixed EDIT/MOSAIC graph linter before returning source.
 // Authored CLIP duration remains explicit project time and is never inferred
 // from a referenced EDIT or MOSAIC after the clip has been created.
+//
+// M16 adds the author-facing pane model on top of that exact representation:
+// an EDIT clip is already a cut, so assigning it to a MOSAIC pane copies its
+// source, source IN, duration, and speed at pane time zero. The GUI therefore
+// never needs to ask an author for raw AT or DURATION values just to populate a
+// visual pane.
 
 import 'edit_linter.dart';
 import 'edit_model.dart';
+
+String createEmptyMosaic({
+  required String source,
+  required String mosaicId,
+}) {
+  _validateId('MOSAIC', mosaicId);
+
+  final EditDocumentModel model = EditDocumentModel.parse(source);
+  if (model.mosaics.any((MosaicSequence mosaic) => mosaic.id == mosaicId)) {
+    throw StateError('MOSAIC "$mosaicId" already exists.');
+  }
+
+  final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+  final StringBuffer out = StringBuffer(source);
+  if (source.isNotEmpty &&
+      !source.endsWith('\n') &&
+      !source.endsWith('\r')) {
+    out.write(newline);
+  }
+
+  out
+    ..write('[MOSAIC:$mosaicId]$newline')
+    ..write('  [PANE:pane1]$newline')
+    ..write('  [/PANE]$newline')
+    ..write('[/MOSAIC]$newline');
+
+  final String next = out.toString();
+  _validateRenderable(next);
+  return next;
+}
 
 String createMosaicWithSource({
   required String source,
@@ -17,11 +53,19 @@ String createMosaicWithSource({
   required String paneId,
   required String clipId,
   required String structuralSource,
+  int inFrame = 0,
   required int durationFrames,
 }) {
   _validateId('MOSAIC', mosaicId);
   _validateId('PANE', paneId);
   _validateId('CLIP', clipId);
+  if (inFrame < 0) {
+    throw ArgumentError.value(
+      inFrame,
+      'inFrame',
+      'MOSAIC source in frame must be non-negative.',
+    );
+  }
   if (durationFrames <= 0) {
     throw ArgumentError.value(
       durationFrames,
@@ -38,6 +82,13 @@ String createMosaicWithSource({
     model,
     structuralSource,
   );
+  final int sourceFrames = model.structuralSourceFrameCount(ref);
+  if (inFrame >= sourceFrames || inFrame + durationFrames > sourceFrames) {
+    throw ArgumentError(
+      'MOSAIC source range $inFrame..${inFrame + durationFrames} exceeds '
+      '${ref.canonicalSource} ($sourceFrames frames).',
+    );
+  }
 
   final String newline = source.contains('\r\n') ? '\r\n' : '\n';
   final StringBuffer out = StringBuffer(source);
@@ -50,7 +101,7 @@ String createMosaicWithSource({
     ..write('[MOSAIC:$mosaicId]$newline')
     ..write('  [PANE:$paneId]$newline')
     ..write(
-      '    [CLIP:$clipId:${ref.canonicalSource}:0:0:$durationFrames:1]$newline',
+      '    [CLIP:$clipId:${ref.canonicalSource}:0:$inFrame:$durationFrames:1]$newline',
     )
     ..write('    [/CLIP]$newline')
     ..write('  [/PANE]$newline')
@@ -118,6 +169,90 @@ class MosaicSurfaceDocument {
         if (other.id != mosaicId)
           StructuralSourceRef.tryParse('MOSAIC.${other.id}')!,
     ]);
+  }
+
+  /// Sets the visible composition to one, two, or three pane slots.
+  ///
+  /// Existing panes are retained from the front. Growing appends empty panes;
+  /// shrinking removes trailing panes. This is layout authoring, so there is no
+  /// project-frame parameter involved.
+  String setPaneCount(int count) {
+    if (count < 1 || count > 3) {
+      throw ArgumentError.value(count, 'count', 'MOSAIC pane count must be 1, 2, or 3.');
+    }
+    if (count == mosaic.panes.length) return source;
+
+    String next = source;
+
+    while (MosaicSurfaceDocument.parse(next, mosaicId).mosaic.panes.length >
+        count) {
+      final MosaicSurfaceDocument current =
+          MosaicSurfaceDocument.parse(next, mosaicId);
+      final MosaicPane remove = current.mosaic.panes.last;
+      next = current.model.cst.replaceBlock(remove.block, '');
+      _validateRenderable(next);
+    }
+
+    while (MosaicSurfaceDocument.parse(next, mosaicId).mosaic.panes.length <
+        count) {
+      final MosaicSurfaceDocument current =
+          MosaicSurfaceDocument.parse(next, mosaicId);
+      final int ordinal = current.mosaic.panes.length + 1;
+      String paneId = 'pane$ordinal';
+      if (current.mosaic.panes.any((MosaicPane p) => p.id == paneId)) {
+        paneId = current.nextPaneId('pane');
+      }
+
+      final String newline = next.contains('\r\n') ? '\r\n' : '\n';
+      final int close = current.mosaic.block.closeStartOffset;
+      final String indent = _lineIndentAt(next, close);
+      final String paneIndent = '$indent  ';
+      final String insertion = '$paneIndent[PANE:$paneId]$newline'
+          '$paneIndent[/PANE]$newline'
+          '$indent';
+      next = current.model.cst.insertBeforeClosingTag(
+        current.mosaic.block,
+        insertion,
+      );
+      _validateRenderable(next);
+    }
+
+    return next;
+  }
+
+  /// Replaces one pane with the already-authored cut represented by [cut].
+  ///
+  /// The cut remains source-backed. No new media object or duration is
+  /// invented: source, IN, duration, and speed are copied verbatim from the
+  /// EDIT clip and the pane starts it at composition frame zero.
+  String assignCut(String paneId, EditClip cut) {
+    final MosaicPane target = pane(paneId);
+    _validateId('CLIP', cut.id);
+
+    final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+    final String paneIndent = _lineIndentAt(source, target.block.closeStartOffset);
+    final String clipIndent = '$paneIndent  ';
+    final String body = '$newline'
+        '$clipIndent[CLIP:${cut.id}:${cut.source}:0:${cut.inFrame}:'
+        '${cut.durationFrames}:${cut.speed.canonicalMarkup}]$newline'
+        '$clipIndent[/CLIP]$newline'
+        '$paneIndent';
+
+    final String next = model.cst.replaceInnerSource(target.block, body);
+    _validateRenderable(next);
+    return next;
+  }
+
+  String clearPane(String paneId) {
+    final MosaicPane target = pane(paneId);
+    final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+    final String paneIndent = _lineIndentAt(source, target.block.closeStartOffset);
+    final String next = model.cst.replaceInnerSource(
+      target.block,
+      '$newline$paneIndent',
+    );
+    _validateRenderable(next);
+    return next;
   }
 
   String setClipSource(

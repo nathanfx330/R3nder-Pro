@@ -21,6 +21,8 @@ import 'editor_text_controller.dart';
 import 'editor_tag_menu.dart'; // Added import for the tag menu
 import 'script_lint.dart';
 import 'edit_workspace.dart';
+import 'structural_sequence.dart';
+import 'structural_sequence_preview.dart';
 
 /// Wraps ScenePainter for the editor preview. ScenePainter already always
 /// repaints, but the editor keeps its own delegate so preview-specific
@@ -472,7 +474,6 @@ class _EditorScreenState extends State<EditorScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Color Preview Box
                     Container(
                       width: double.infinity,
                       height: sc(60),
@@ -491,9 +492,6 @@ class _EditorScreenState extends State<EditorScreen> {
                       ),
                     ),
                     SizedBox(height: sc(14)),
-
-                    // Channel sliders (fixed R/G/B colors, since channel
-                    // semantics never re-tint with the phosphor).
                     _buildChannelSlider(t, "R", red, const Color(0xFFFF5555),
                         (v) {
                       setDialogState(() => red = v);
@@ -523,22 +521,17 @@ class _EditorScreenState extends State<EditorScreen> {
     );
 
     if (apply == true) {
-      // Replace the old text with the new RGB value
       final String newRgb = "$red,$green,$blue";
       final String currentText = _textController.text;
       final String newText = currentText.replaceRange(start, end, newRgb);
 
       _textController.value = TextEditingValue(
         text: newText,
-        // Keep the cursor positioned right after the inserted color
         selection: TextSelection.collapsed(offset: start + newRgb.length),
       );
     }
   }
 
-  /// Mixer-style channel slider for the color picker: channel letter,
-  /// draggable thin track, live value. Same interaction pattern as
-  /// R3Slider but with a fixed channel color.
   Widget _buildChannelSlider(R3Theme t, String label, int val,
       Color channelColor, ValueChanged<int> onChanged) {
     final double frac = (val / 255).clamp(0.0, 1.0);
@@ -603,23 +596,6 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
-  // Full-Frame Preview
-  // ---------------------------------------------------------------------
-
-  /// Swaps the workspace between the split view and preview-only.
-  ///
-  /// F11 rather than a bare letter, and not by preference. The script field
-  /// is autofocused and character input reaches it regardless of what an
-  /// ancestor Focus does with the key event, so a bare F would toggle the
-  /// view AND type an f into the document. Every shortcut this editor owns
-  /// is either a modifier combination or a key with no character (Tab,
-  /// Escape, Ctrl+F), and this one has to be as well.
-  ///
-  /// Both overlays that could be open live in the pane about to disappear,
-  /// so both are torn down here rather than left set with nothing on
-  /// screen. Focus is handed over explicitly in both directions: see
-  /// [_previewFocusNode].
   void _togglePreviewFull() {
     if (!_isTextMode) return;
 
@@ -644,10 +620,6 @@ class _EditorScreenState extends State<EditorScreen> {
       _editorFocusNode.requestFocus();
     }
   }
-
-  // ---------------------------------------------------------------------
-  // Search Features
-  // ---------------------------------------------------------------------
 
   void _toggleSearch() {
     setState(() {
@@ -707,23 +679,14 @@ class _EditorScreenState extends State<EditorScreen> {
 
     if (_currentSearchIndex < matches.length) {
       final m = matches[_currentSearchIndex];
-
-      // Select the text (this would auto-scroll if the TextField had focus)
       _textController.selection = TextSelection(
         baseOffset: m.start,
         extentOffset: m.end,
       );
 
-      // Force scroll since focus is on the search bar
       if (_scrollController.hasClients) {
-        // Find which line the match is on
         final int line = _lineOfOffset(_textController.text, m.start);
-
-        // Uses the SAME metrics the TextField is styled with, so the
-        // computed offset stays exact at any uiScale.
         final double lineHeight = _editorFontSize * _editorLineHeightMult;
-
-        // Calculate raw offset, minus a bit of padding to keep it near the top
         double targetOffset = (line * lineHeight) - sc(80);
         if (targetOffset < 0) targetOffset = 0;
 
@@ -738,10 +701,6 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     }
   }
-
-  // ---------------------------------------------------------------------
-  // Nuke-Style Tag Palette
-  // ---------------------------------------------------------------------
 
   void _openTagMenu() {
     setState(() {
@@ -758,9 +717,6 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _insertTag(TagSnippet snippet) {
-    // Computed entries never reach the literal insert path below: their
-    // insertText is a stand-in so the palette self-check has something
-    // that parses, not something to write.
     if (snippet.action != null) {
       _runTagAction(snippet.action!);
       _closeTagMenu();
@@ -769,19 +725,13 @@ class _EditorScreenState extends State<EditorScreen> {
 
     final text = _textController.text;
     final selection = _textController.selection;
-
-    // Determine bounds for replacement
     final int start = selection.isValid && selection.start >= 0 ? selection.start : text.length;
     final int end = selection.isValid && selection.end >= 0 ? selection.end : text.length;
-
-    // Replace current selection (or insert at cursor) with the snippet
     final String newText = text.replaceRange(start, end, snippet.insertText);
 
-    // Default: cursor placed at the very end of the newly inserted text
     int nextCursor = start + snippet.insertText.length;
     TextSelection nextSelection = TextSelection.collapsed(offset: nextCursor);
 
-    // Auto-select placeholder dummy text if defined
     if (snippet.placeholder != null) {
       final int pIndex = snippet.insertText.indexOf(snippet.placeholder!);
       if (pIndex != -1) {
@@ -800,17 +750,6 @@ class _EditorScreenState extends State<EditorScreen> {
     _closeTagMenu();
   }
 
-  // ---------------------------------------------------------------------
-  // Playhead-relative authoring
-  //
-  // Both of these turn the scrubber into an authoring instrument rather
-  // than a review one: park the playhead where you want a beat to land,
-  // and let the tool work out the arithmetic. That arithmetic is the whole
-  // value. Reading a frame count off the transport, subtracting where the
-  // caret currently falls, and typing the difference by hand is exactly
-  // the kind of sum that is easy and tedious and wrong at 2am.
-  // ---------------------------------------------------------------------
-
   void _runTagAction(TagAction action) {
     switch (action) {
       case TagAction.pauseToPlayhead:
@@ -822,13 +761,6 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  /// First frame at which the engine is typing on [line], or null if it
-  /// never reaches it.
-  ///
-  /// _rawLineAtFrame is frame to line; this is the inverse, and it is a
-  /// scan rather than a map because the relation is not one to one. A line
-  /// can span many frames, and a line holding only tags may consume none
-  /// at all, so the answer wanted is the first frame at or past it.
   int? _frameAtLine(int line) {
     for (int f = 0; f < _rawLineAtFrame.length; f++) {
       if (_rawLineAtFrame[f] >= line) return f;
@@ -836,7 +768,6 @@ class _EditorScreenState extends State<EditorScreen> {
     return null;
   }
 
-  /// Document line containing [offset].
   int _lineAtOffset(String text, int offset) {
     final int end = offset.clamp(0, text.length);
     int line = 0;
@@ -846,12 +777,6 @@ class _EditorScreenState extends State<EditorScreen> {
     return line;
   }
 
-  /// Inserts a [PAUSE] at the caret sized so the content after it starts
-  /// exactly at the playhead.
-  ///
-  /// The pause pushes everything downstream later by its own length, which
-  /// is the point: park the scrubber where a line should land, put the
-  /// caret before that line, and the gap fills itself.
   void _pauseToPlayhead() {
     if (_isSimulating || _totalFrames <= 0) {
       _toast('Still simulating');
@@ -871,8 +796,6 @@ class _EditorScreenState extends State<EditorScreen> {
 
     final int frames = _currentFrame - arrival;
     if (frames <= 0) {
-      // Backwards is not an error worth a dialog, it is a misread of where
-      // the playhead is. Say which way round it is and let them move it.
       _toast('Playhead is at $_currentFrame, this line already starts at '
           '$arrival. Move the playhead later.');
       return;
@@ -886,17 +809,6 @@ class _EditorScreenState extends State<EditorScreen> {
     _toast('Held $frames frames to reach the playhead');
   }
 
-  /// The [PAUSE] block under the playhead, if splitting it would leave at
-  /// least one frame on each side.
-  ///
-  /// One definition, used by both the action and the button that offers
-  /// it. A button whose enabled state is computed separately from the
-  /// thing it triggers is a button that eventually lies: offered when the
-  /// action would refuse, or greyed when it would work.
-  ///
-  /// The ribbon already knows every block's frame span and document index,
-  /// computed from the same simulation the playhead moves through, so this
-  /// is a lookup rather than a search.
   RibbonBlock? _splittablePause() {
     if (_isSimulating || _totalFrames <= 0) return null;
     for (final RibbonBlock b in _ribbonBlocks) {
@@ -904,8 +816,6 @@ class _EditorScreenState extends State<EditorScreen> {
       if (_currentFrame < b.startFrame || _currentFrame >= b.endFrame) {
         continue;
       }
-      // Both halves must survive. A split at the very first frame would
-      // emit [PAUSE:0], which holds nothing and reads as a stray tag.
       if (_currentFrame - b.startFrame < 1) return null;
       if (b.endFrame - _currentFrame < 1) return null;
       return b;
@@ -913,12 +823,6 @@ class _EditorScreenState extends State<EditorScreen> {
     return null;
   }
 
-  /// Splits the [PAUSE] the playhead is inside into two that sum to it.
-  ///
-  /// Nothing is re-timed. Two pause tags on consecutive lines are merged by
-  /// stripFormattingNewlines into one content line before the engine sees
-  /// them, so the split is invisible until something is typed between the
-  /// halves, which is exactly when the author wants it to count.
   void _splitPauseAtPlayhead() {
     if (_isSimulating || _totalFrames <= 0) {
       _toast('Still simulating');
@@ -934,11 +838,6 @@ class _EditorScreenState extends State<EditorScreen> {
     final int before = _currentFrame - hit.startFrame;
     final int after = hit.endFrame - _currentFrame;
 
-    // Nodes tile the document with no gaps, so a node's character offset is
-    // the sum of the raw text before it. That is also why the split must be
-    // spliced back through rawText rather than rebuilt from parameters:
-    // an untouched node re-emits verbatim, and rewriting one that was only
-    // being read would normalise the author's formatting as collateral.
     final List<ScriptNode> nodes = parseScriptToNodes(_textController.text);
     if (hit.nodeIndex < 0 || hit.nodeIndex >= nodes.length) {
       _toast('Document moved since the last simulation, try again');
@@ -967,16 +866,12 @@ class _EditorScreenState extends State<EditorScreen> {
 
     _textController.value = TextEditingValue(
       text: _textController.text.replaceRange(tagStart, tagEnd, replacement),
-      // Caret lands on the blank line between the halves, ready to type.
       selection:
           TextSelection.collapsed(offset: tagStart + head.length + 1),
     );
     _toast('Split into $before and $after frames');
   }
 
-  /// Brief non-modal feedback. These actions either work or explain
-  /// themselves in one line; a dialog for "the playhead is on the wrong
-  /// side of the caret" would be worse than the problem.
   void _toast(String message) {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -989,16 +884,6 @@ class _EditorScreenState extends State<EditorScreen> {
       ));
   }
 
-  // ---------------------------------------------------------------------
-  // Simulation
-  // ---------------------------------------------------------------------
-
-  /// Runs the full bake pipeline on the current document text, measures the
-  /// Character ranges of tags pointing at assets that are not on disk.
-  ///
-  /// Only the opening tag is marked, not the body: a CARD or DOSSIER match
-  /// runs through its closing tag, and painting a paragraph of copy amber
-  /// because a cover image is missing would be noise rather than signal.
   List<(int, int)> _computeAssetProblems(String text) {
     final List<(int, int)> out = [];
 
@@ -1036,8 +921,6 @@ class _EditorScreenState extends State<EditorScreen> {
       check(g('spritePath'), AssetSlot.spriteFile);
       check(g('spriteOff'), AssetSlot.spriteFile);
 
-      // The wallpaper is an ordinary file in images/, but it only counts as
-      // an asset reference when the key is DESKTOP.
       if ((g('configKey') ?? '').toUpperCase() == 'DESKTOP') {
         check(g('configVal'), AssetSlot.rasterFile);
       }
@@ -1051,11 +934,6 @@ class _EditorScreenState extends State<EditorScreen> {
     return out;
   }
 
-  /// Scrolls the editor so [line] (0-based) sits a third of the way down
-  /// the viewport, and drops the caret on it.
-  ///
-  /// Uses the shared document layout rather than line * lineHeight, which
-  /// would land in the wrong place on any script containing a wrapped line.
   void _jumpToLine(int line) {
     if (!_scrollController.hasClients) return;
 
@@ -1081,35 +959,18 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  /// total frame count (recording the read-head map for click-to-jump),
-  /// then re-simulates to [targetFrame] (clamped).
   Future<void> _resimulate({required int targetFrame}) async {
-    // An edit invalidates the scene the play timer is ticking. Stopping here
-    // also silences the bed, which would otherwise keep running against a
-    // timeline that no longer exists.
     if (_isPlaying) _stopPlayback();
 
     final int gen = ++_simGeneration;
     final String docText = _textController.text;
-
-    // Lint and asset markers on the same debounce as the simulation.
-    // Findings drive the red markers in the gutter, which is what turns
-    // "Line 258" in the warning strip from a number you have to hunt for
-    // into somewhere you can look.
     _refreshDiagnostics(docText);
 
     setState(() => _isSimulating = true);
 
-    // ONE SIMULATION FUNCTION, shared with the dashboard warm-up. Line
-    // marking, macro expansion, engine setup, and the measuring pass all
-    // live in runEditorSimulation, so a warm main prepared is provably the
-    // simulation this screen would otherwise have run itself. Two code
-    // paths computing "the same" simulation is the arrangement that works
-    // until it silently does not.
     final EditorSimResult sim =
         await runEditorSimulation(_scene, _request(docText));
 
-    // A newer edit superseded this run while images were loading: bail.
     if (gen != _simGeneration || !mounted) return;
 
     final int total = sim.totalFrames;
@@ -1117,19 +978,6 @@ class _EditorScreenState extends State<EditorScreen> {
     _rawLineAtFrame = sim.rawLineAtFrame;
     _ribbonBlocks = sim.ribbonBlocks;
 
-    // Pass 2: land on the requested frame.
-    //
-    // Skipped entirely when the target IS the end, which is exactly what
-    // opening the editor asks for (kMaxSimFrames, clamped down to total).
-    // Pass 1 ticked a freshly reset scene `total` times and left it there,
-    // so the scene is ALREADY in the state a reset plus `total` ticks
-    // would produce. Replaying it was not an approximation being avoided,
-    // it was the same arithmetic run twice, and on a script with any
-    // length to it that doubled the wait before the editor was usable.
-    //
-    // Determinism is untouched: this drops a redundant recomputation of a
-    // state the engine is already in, and every other target still resets
-    // and replays exactly as before.
     final int clamped = targetFrame.clamp(0, _totalFrames);
     if (clamped != total) {
       _scene.reset();
@@ -1140,7 +988,6 @@ class _EditorScreenState extends State<EditorScreen> {
     _currentFrame = clamped;
     _updateHighlight();
 
-    // Make sure search results are correct if text length changed
     if (_isSearching && _searchQuery.isNotEmpty) {
       _matchCount = RegExp(RegExp.escape(_searchQuery), caseSensitive: false)
           .allMatches(_textController.text)
@@ -1173,17 +1020,11 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {});
   }
 
-  // ---------------------------------------------------------------------
-  // Click-to-jump
-  // ---------------------------------------------------------------------
-
-  /// Jumps the preview to the frame where the given raw document line begins.
   void _jumpToCursorLine(int lineIdx) {
     if (_isSimulating || _rawLineAtFrame.isEmpty) return;
 
     int targetFrame = -1;
 
-    // Exact match: First frame where this line is active
     for (int i = 0; i < _rawLineAtFrame.length; i++) {
       if (_rawLineAtFrame[i] == lineIdx) {
         targetFrame = i;
@@ -1191,8 +1032,6 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     }
 
-    // Fallback: If this line was 0 frames long (just tags/comments), find
-    // the very next line that DID take up time.
     if (targetFrame == -1) {
       for (int i = 0; i < _rawLineAtFrame.length; i++) {
         if (_rawLineAtFrame[i] > lineIdx) {
@@ -1208,32 +1047,12 @@ class _EditorScreenState extends State<EditorScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Playback
-  // ---------------------------------------------------------------------
-
-  /// Starts both beds from [frame]. The editor never previews the preroll, so
-  /// frame and bed position are the same timebase with no offset.
-  ///
-  /// Both tracks go to one call and are summed inside a single ffmpeg, not
-  /// started as two pipelines: two would be two wall clocks fighting over one
-  /// sink, drifting against each other differently on every scrub.
-  ///
-  /// The trim is what keeps this honest. A score is normally longer than the
-  /// cut it plays under, and the bake cuts it at picture end, so playing it
-  /// past the last frame here would let the editor imply a tail the file does
-  /// not contain. Voice needs no such guard, because the end hold already
-  /// stretched to cover it. Which is why the remaining length is read off
-  /// _totalFrames rather than off either track.
   void _startBedAt(int frame) {
     final AudioBedPlayer? player = widget.bedPlayer;
     final String? bed = widget.bedPath;
     final String? music = widget.musicPath;
     if (player == null) return;
 
-    // Whichever track is definitely there takes the primary slot, the same
-    // rule main and the exporter use. A workspace with a score and no
-    // narration is an ordinary configuration.
     final String? primary = bed ?? music;
     if (primary == null) return;
     final bool bedIsPrimary = bed != null;
@@ -1249,19 +1068,11 @@ class _EditorScreenState extends State<EditorScreen> {
             musicPath: bedIsPrimary ? music : null,
             musicGainDb: widget.musicGainDb,
             musicLoop: widget.musicLoop,
-            // Phase rather than position: a loop scrubbed to frame N sits at
-            // N modulo the track length. Without this, clicking a line halfway
-            // down the script would start the score from its opening bar and
-            // the preview would report a musical position the bake will not
-            // have.
             musicSeekSec: widget.musicLoop
                 ? loopedSeek(frame / engineFps, widget.musicDurationSec)
                 : null,
             durationSec: remaining > 0 ? remaining / engineFps : null)
-        .catchError((_) {
-      // A sink that vanished mid-session should not take the editor with
-      // it. Silence is a survivable failure here.
-    }));
+        .catchError((_) {}));
   }
 
   void _stopBed() {
@@ -1275,7 +1086,6 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     if (_isSimulating) return;
 
-    // Restart from the top if parked on the final frame.
     if (_currentFrame >= _totalFrames) {
       _scene.reset();
       _currentFrame = 0;
@@ -1286,20 +1096,8 @@ class _EditorScreenState extends State<EditorScreen> {
     _playStartFrame = _currentFrame;
     _playClock = Stopwatch()..start();
 
-    // Bed and video start on the same instant and then both follow their own
-    // clocks. ffmpeg seeks to the current frame's position, so hitting play
-    // parked on a line drops you into the voiceover at that exact word,
-    // which is the whole point of having the bed in here.
     _startBedAt(_currentFrame);
 
-    // Wall-clock mastered rather than a fixed 33ms period. Timer.periodic
-    // drifts whenever a callback overruns, and it overruns constantly on
-    // dense frames. Video alone could absorb that; against audio it cannot,
-    // because the sink keeps perfect time and the picture would slide off it.
-    //
-    // The 8ms period only sets how often the clock is consulted. Frame count
-    // comes from elapsed time, so the cadence is honest on any machine, and
-    // catch-up converges: 30 frames per 8ms callback is far above realtime.
     _playTimer = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mounted) return;
 
@@ -1321,8 +1119,8 @@ class _EditorScreenState extends State<EditorScreen> {
       }
 
       int behind = target - _currentFrame;
-      if (behind <= 0) return; // Callback landed between engine frames.
-      if (behind > engineFps) behind = engineFps; // Burst limiter.
+      if (behind <= 0) return;
+      if (behind > engineFps) behind = engineFps;
 
       for (int i = 0; i < behind; i++) {
         _scene.tick();
@@ -1344,28 +1142,6 @@ class _EditorScreenState extends State<EditorScreen> {
     if (mounted) setState(() {});
   }
 
-  // ---------------------------------------------------------------------
-  // Editing & saving
-  // ---------------------------------------------------------------------
-
-  /// Files moved on disk without the script changing, so the scene is
-  /// holding images it decoded at setup and will keep drawing them.
-  ///
-  /// Two ways this differs from the text-edit path.
-  ///
-  /// It does NOT set [_isDirty]. Nothing in the buffer changed, and marking
-  /// the document dirty would ask the author to save a file that is already
-  /// identical to what is on disk.
-  ///
-  /// It holds the current frame instead of snapping to the end. A text edit
-  /// snaps because the new content is usually at the point of the edit and
-  /// you want to see it; an asset change is almost always made while looking
-  /// at the exact frame that shows the problem, so throwing that position
-  /// away would be the opposite of helpful.
-  ///
-  /// Debounced on the same timer as edits. Recycling four photos out of a
-  /// gallery in quick succession should cost one reload, not four, and each
-  /// one re-decodes every referenced image in the script.
   void _onAssetsChanged() {
     _debounce?.cancel();
     _debounce = Timer(_debounceDelay, () {
@@ -1374,17 +1150,6 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
-  /// Double-tap on a ribbon block: open that node's parameters.
-  ///
-  /// Flipping to node mode is the whole point. The strip is the map, and
-  /// the node panel is where you actually change something, so a block you
-  /// can see the shape of but not act on would be a readout rather than a
-  /// tool.
-  ///
-  /// The index survives the mode flip because both sides run
-  /// [parseScriptToNodes] over the same text, and it walks the document in
-  /// order, so node N here is node N there. Ids would not: they come from a
-  /// global counter that never resets, so two parses never share one.
   void _openNodeFromRibbon(int nodeIndex) {
     _stopPlayback();
     setState(() {
@@ -1395,9 +1160,6 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
-  /// Routes controller changes: real text edits go to the dirty/debounce
-  /// path; selection-only changes (clicks, arrow keys) go to click-to-jump
-  /// when the cursor lands on a different line.
   void _onControllerChanged() {
     final String text = _textController.text;
 
@@ -1408,16 +1170,12 @@ class _EditorScreenState extends State<EditorScreen> {
       _stopPlayback();
       _debounce?.cancel();
       _debounce = Timer(_debounceDelay, () {
-        // After an edit, snap to the end so new content is immediately visible.
         _resimulate(targetFrame: kMaxSimFrames);
       });
-      // Track the line so the post-edit cursor position doesn't immediately
-      // trigger a jump on the next selection event.
       _lastCursorLine = _lineOfOffset(text, _textController.selection.baseOffset);
       return;
     }
 
-    // Selection-only change.
     final int offset = _textController.selection.baseOffset;
     if (offset < 0) return;
     final int line = _lineOfOffset(text, offset);
@@ -1432,7 +1190,7 @@ class _EditorScreenState extends State<EditorScreen> {
     final int end = offset.clamp(0, text.length);
     int count = 0;
     for (int i = 0; i < end; i++) {
-      if (text.codeUnitAt(i) == 10) count++; // '\n'
+      if (text.codeUnitAt(i) == 10) count++;
     }
     return count;
   }
@@ -1453,10 +1211,6 @@ class _EditorScreenState extends State<EditorScreen> {
     _stopPlayback();
     widget.onClose(_textController.text);
   }
-
-  // ---------------------------------------------------------------------
-  // Build (View Toggle Logic)
-  // ---------------------------------------------------------------------
 
   void _setEditorView(String label) {
     final bool nodeMode = label == 'NODES';
@@ -1539,35 +1293,25 @@ class _EditorScreenState extends State<EditorScreen> {
     final String fileName = widget.templatePath.split(Platform.pathSeparator).last;
 
     return Focus(
-      autofocus: true, // Needs true to capture the Tab key universally!
+      autofocus: true,
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
-          // Full-frame preview. Handled before everything else so it works
-          // from either pane and whether or not the field has focus.
           if (event.logicalKey == LogicalKeyboardKey.f11) {
             _togglePreviewFull();
             return KeyEventResult.handled;
           }
 
-          // Tab Interception! Trigger the Node Palette!
-          // Not while full frame: the palette draws into the script pane,
-          // so opening it there would set the flag with nothing on screen.
           if (event.logicalKey == LogicalKeyboardKey.tab &&
               _isTextMode &&
               !_isPreviewFull) {
             if (!_isTagMenuOpen) {
               _openTagMenu();
             } else {
-              // Cycle down if already open
               _tagMenuKey.currentState?.cycleSelection();
             }
             return KeyEventResult.handled;
           }
 
-          // Close editor or close search/menu on ESC.
-          // Full frame joins the same unwind chain: Escape gives back the
-          // script before it gives back the menu, so the key never skips a
-          // step the user can see.
           if (event.logicalKey == LogicalKeyboardKey.escape) {
             if (_isTagMenuOpen) {
               _closeTagMenu();
@@ -1581,13 +1325,8 @@ class _EditorScreenState extends State<EditorScreen> {
             return KeyEventResult.handled;
           }
 
-          // Ctrl+F or Cmd+F for Search
           if (event.logicalKey == LogicalKeyboardKey.keyF &&
               (HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed)) {
-            // Search draws in the script pane, so asking for it while full
-            // frame is a request for the script back. Do that rather than
-            // setting a flag with no visible field, which reads as the
-            // shortcut being broken.
             if (_isPreviewFull) _togglePreviewFull();
             if (_isTextMode && !_isSearching) {
               _toggleSearch();
@@ -1601,7 +1340,6 @@ class _EditorScreenState extends State<EditorScreen> {
       },
       child: Column(
         children: [
-          // --- Top bar ---
           Container(
             padding: EdgeInsets.symmetric(horizontal: sc(14), vertical: sc(8)),
             decoration: const BoxDecoration(
@@ -1621,7 +1359,6 @@ class _EditorScreenState extends State<EditorScreen> {
                 ],
 
                 SizedBox(width: sc(20)),
-                // Mode Toggle
                 Container(
                   decoration: BoxDecoration(
                     color: R3Theme.bg,
@@ -1650,9 +1387,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     (_lintFindings.isNotEmpty || _scene.warnings.isNotEmpty))
                   Expanded(
                     child: Builder(builder: (ctx) {
-                      // Lint findings outrank asset warnings: a missing
-                      // folder announces itself by rendering nothing, while
-                      // a stray tag looks exactly like content.
                       final bool isLint = _lintFindings.isNotEmpty;
                       final String msg = isLint
                           ? _lintFindings.first.label
@@ -1671,8 +1405,6 @@ class _EditorScreenState extends State<EditorScreen> {
                         ),
                       );
 
-                      // A line number you cannot navigate to is not much
-                      // help, so clicking the message goes there in TEXT.
                       if (!isLint || !_isTextMode) return label;
                       return MouseRegion(
                         cursor: SystemMouseCursors.click,
@@ -1717,8 +1449,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     ),
                   ),
 
-                // A shortcut nobody can see is a shortcut nobody finds, and
-                // this one has no menu entry anywhere else.
                 if (_isTextMode)
                   InkWell(
                     onTap: _togglePreviewFull,
@@ -1754,7 +1484,6 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ),
 
-          // --- Main Application Area ---
           Expanded(
             child: _isEditMode
                 ? _buildEditWorkspace()
@@ -1778,7 +1507,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     : _buildTextWorkspace(),
           ),
 
-          // --- Transport bar (Text mode only) ---
           if (_isTextMode)
             Container(
               padding: EdgeInsets.symmetric(horizontal: sc(14), vertical: sc(8)),
@@ -1789,22 +1517,6 @@ class _EditorScreenState extends State<EditorScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Its own lane above the transport, not drawn over the
-                  // scrubber. The scrubber answers "where am I"; this
-                  // answers "what is this made of". Stacking them would
-                  // make the first question harder to read to make the
-                  // second one fit.
-                  //
-                  // UNCONDITIONAL. This lane used to be gated on
-                  // _totalFrames, which is zero until the first simulation
-                  // resolves: the strip materialized half a second after
-                  // the rest of the editor, grew the transport bar by its
-                  // own height, and shoved the script pane up with it.
-                  // Nothing was slow, the container simply did not exist
-                  // yet. Its height depends only on bedFrames, which is a
-                  // widget property known at construction, so reserving
-                  // the space costs nothing and turns an arrival into a
-                  // fill.
                   ScriptRibbon(
                     blocks: _ribbonBlocks,
                     currentFrame: _currentFrame,
@@ -1814,9 +1526,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     bedFrames: widget.bedTargetFrames,
                     musicFrames: widget.musicFrames,
                     musicLoops: widget.musicLoop,
-                    // Not yet simulated is the same thing as mid-simulation
-                    // as far as gestures go: there is nothing behind the
-                    // strip to seek into.
                     simulating: _isSimulating || _totalFrames <= 0,
                     onSeek: (f) {
                       _stopPlayback();
@@ -1870,16 +1579,54 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
-  // Text Workspace
-  // ---------------------------------------------------------------------
+  StructuralSequencePlacement? _activeStructuralPlacement() {
+    if (_rawLineAtFrame.isEmpty ||
+        _currentFrame < 0 ||
+        _currentFrame >= _rawLineAtFrame.length) {
+      return null;
+    }
 
-  /// The preview surface itself, identical in both layouts.
-  ///
-  /// ScenePainter fits uniformly and centres into whatever bounds it is
-  /// given, so the wider pane letterboxes rather than stretching: full
-  /// frame shows a bigger picture, never a differently shaped one.
+    final int line = _rawLineAtFrame[_currentFrame];
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_textController.text);
+    for (final StructuralSequencePlacement placement in placements) {
+      if (placement.lineIndex == line && placement.resolves) {
+        return placement;
+      }
+    }
+    return null;
+  }
+
+  int _structuralLocalFrame(StructuralSequencePlacement placement) {
+    if (_rawLineAtFrame.isEmpty || _currentFrame >= _rawLineAtFrame.length) {
+      return 0;
+    }
+
+    int first = _currentFrame;
+    while (first > 0 &&
+        _rawLineAtFrame[first - 1] == placement.lineIndex) {
+      first--;
+    }
+
+    return (_currentFrame - first)
+        .clamp(0, placement.durationFrames - 1)
+        .toInt();
+  }
+
   Widget _buildPreviewPane() {
+    final StructuralSequencePlacement? placement =
+        _activeStructuralPlacement();
+    if (placement != null) {
+      return StructuralSequencePreview(
+        rawDocument: _textController.text,
+        placement: placement,
+        localFrame: _structuralLocalFrame(placement),
+        isPlaying: _isPlaying,
+        theme: _t,
+        wallpaper: _scene.wallpaper,
+      );
+    }
+
     return Container(
       color: Colors.black,
       child: CustomPaint(
@@ -1893,8 +1640,6 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget _buildTextWorkspace() {
     final t = _t;
 
-    // Preview-only. The transport and ribbon are not here to hide: they sit
-    // in the parent Column, so they survive this branch untouched.
     if (_isPreviewFull) {
       return Focus(
         focusNode: _previewFocusNode,
@@ -1997,16 +1742,11 @@ class _EditorScreenState extends State<EditorScreen> {
                               color: const Color(0xFFD0D0DA),
                             );
 
-                            // Width the gutter needs for the largest line
-                            // number, so it does not jump as the script
-                            // crosses 100 or 1000 lines.
                             final int lineCount =
                                 '\n'.allMatches(_textController.text).length + 1;
                             final double gutterW =
                                 sc(18) + sc(8.0) * '$lineCount'.length;
                             final double gap = sc(10);
-                            // Estimate until the real width is measured,
-                            // then use the measurement.
                             final double estimate =
                                 constraints.maxWidth - gutterW - gap;
                             final double textW =
@@ -2021,8 +1761,6 @@ class _EditorScreenState extends State<EditorScreen> {
                                 SizedBox(
                                   width: gutterW,
                                   child: AnimatedBuilder(
-                                    // Repaint on scroll so the numbers track
-                                    // the text rather than lagging it.
                                     animation: _scrollController,
                                     builder: (_, _) => CustomPaint(
                                       painter: _GutterPainter(
@@ -2056,19 +1794,6 @@ class _EditorScreenState extends State<EditorScreen> {
                                     cursorRadius: const Radius.circular(2),
                                     maxLines: null,
                                     expands: true,
-                                    // Colour swatches are hit-tested here
-                                    // rather than carrying gesture
-                                    // recognizers on their spans. A
-                                    // recognizer inside an editable field
-                                    // trips a RenderEditable assertion and
-                                    // takes the render subtree with it; it
-                                    // only ever showed in debug builds,
-                                    // because release strips the assert.
-                                    //
-                                    // onTap fires after the field has
-                                    // resolved the click to a caret
-                                    // offset, so the offset is exactly
-                                    // where the user pointed.
                                     onTap: () {
                                       final SwatchSpan? hit =
                                           _textController.swatchAt(
@@ -2137,34 +1862,13 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  /// How much picture runs past the end of the voiceover, which is the one
-  /// number that says whether the script still owes choreography.
-  ///
-  /// The engine stretches its end hold to cover a longer bed, so _totalFrames
-  /// is never less than the bed. When the two are equal the bed drove the
-  /// length, meaning the script ran out first and the tail is dead air on a
-  /// blinking cursor. That is worth flagging; a couple of seconds of overhang
-  /// is just the ordinary end hold and is not.
-  /// Bed overhang readout. Present from the first frame whenever a bed is
-  /// attached, in a reserved box.
-  ///
-  /// The width is fixed for two reasons. The obvious one is that this used
-  /// to render nothing until the simulation resolved and then appear,
-  /// shunting the frame counter sideways at the same moment the ribbon was
-  /// growing the bar downward. The less obvious one is that the label
-  /// changes length as you edit ("VO OVERRUNS SCRIPT" against "+3.2S AFTER
-  /// VO"), so without a reserved box the counter would keep twitching long
-  /// after the editor finished opening.
   Widget _buildBedReadout(R3Theme t) {
     final int bed = widget.bedTargetFrames;
-    // No bed is a stable answer from construction, so nothing to reserve.
     if (bed <= 0) return const SizedBox.shrink();
 
     final bool known = _totalFrames > 0;
     final int overhang = _totalFrames - bed;
     final bool bedDrivesLength = overhang <= 0;
-
-    // Below kEndHoldFrames the picture ends effectively with the voiceover.
     final bool short = overhang < kEndHoldFrames;
 
     final String label = !known
@@ -2184,10 +1888,6 @@ class _EditorScreenState extends State<EditorScreen> {
       child: Padding(
         padding: EdgeInsets.only(right: sc(12)),
         child: Row(
-          // Start, not end. Pinning the icon to the left of the reserved
-          // box means it holds still while the label grows into the space
-          // beside it. Ending would make the icon itself walk left as the
-          // text arrived, which is the same jump moved one element over.
           mainAxisAlignment: MainAxisAlignment.start,
           children: [
             Icon(Icons.graphic_eq, size: sc(13), color: color),
@@ -2205,20 +1905,6 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  /// Split-the-pause-under-the-playhead, sitting with the transport rather
-  /// than buried in the tag palette.
-  ///
-  /// It belongs here because it is a scrubber gesture in everything but
-  /// name: park the playhead inside a held beat, cut it, type into the
-  /// gap. Making the author open a menu to act on where the playhead
-  /// already is puts two steps between the intent and the edit.
-  ///
-  /// Enablement comes from _splittablePause, the same call the action
-  /// makes, so the button cannot offer something the action would refuse.
-  /// Disabled it stays visible rather than vanishing: a control that
-  /// appears and disappears as the playhead moves is harder to aim at than
-  /// one that simply dims, and its presence is a hint that parking inside
-  /// a pause does something.
   Widget _buildSplitPauseButton(R3Theme t) {
     final RibbonBlock? target = _splittablePause();
     final bool enabled = target != null;
@@ -2253,9 +1939,6 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  /// Width of the transport playhead. Named because it is used three
-  /// times in one expression and a bare number in a clamp is where
-  /// off-by-half-a-mark bugs live.
   static final double _kPlayheadW = sc(4);
 
   Widget _buildScrubber(R3Theme t) {
@@ -2294,18 +1977,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     color: enabled ? t.accentDim : R3Theme.hairline,
                   ),
                 ),
-                // PLAYHEAD.
-                //
-                // Deliberately the heaviest mark in the transport. The
-                // ribbon above is a dense, colourful strip and the eye goes
-                // there first, so a 2px hairline down here read as
-                // decoration rather than as the thing to grab. The scrub
-                // target should be the most obvious object in its own row.
-                //
-                // Centred on the position, so the mark straddles the frame
-                // it reports instead of sitting a pixel to its right. The
-                // clamp keeps the full width on screen at both ends rather
-                // than letting half of it slide off.
                 Positioned(
                   left: (frac * w - _kPlayheadW / 2)
                       .clamp(0.0, w - _kPlayheadW),
@@ -2328,30 +1999,12 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 }
 
-// =====================================================================
-// EDITOR LINE LAYOUT
-//
-// Getting a gutter to line up under soft wrapping is only hard if you try
-// to re-derive the layout. Measuring each line on its own is wrong in
-// principle, not just in practice: the field lays out the WHOLE string at
-// once, and per-line measurement cannot see that.
-//
-// So this lays out the entire document with one TextPainter, using the
-// same style and width the field uses, and then asks it where each line
-// actually starts. That is Flutter's own line breaking, on the real
-// string, so it cannot disagree with what is on screen.
-//
-// The layout is cached on (text, width) and reused across scroll frames,
-// so scrolling costs nothing and only an edit or a resize pays for it.
-// =====================================================================
-
 class _EditorLineLayout {
   String _text = '';
   double _width = -1;
   TextPainter? _painter;
   List<int> _lineStarts = const [];
 
-  /// Character offsets of each logical line start.
   static List<int> _computeLineStarts(String text) {
     final List<int> starts = [0];
     for (int i = 0; i < text.length; i++) {
@@ -2376,9 +2029,6 @@ class _EditorLineLayout {
 
   int get lineCount => _lineStarts.length;
 
-  /// Y offset of the first visual row of logical line [line], in content
-  /// coordinates. Asks the painter directly rather than multiplying a line
-  /// height by an index, which is what breaks the moment anything wraps.
   double yForLine(int line) {
     final TextPainter? p = _painter;
     if (p == null || line < 0 || line >= _lineStarts.length) return 0;
@@ -2388,13 +2038,8 @@ class _EditorLineLayout {
         .dy;
   }
 
-  /// Total laid-out height, for clamping scroll targets.
   double get height => _painter?.height ?? 0;
 }
-
-// =====================================================================
-// LINE NUMBER GUTTER
-// =====================================================================
 
 class _GutterPainter extends CustomPainter {
   final _EditorLineLayout layout;
@@ -2403,13 +2048,8 @@ class _GutterPainter extends CustomPainter {
   final double textWidth;
   final TextStyle style;
   final double lineHeight;
-
-  /// 0-based line the engine is currently executing, or -1.
   final int activeLine;
-
-  /// 0-based lines the linter flagged.
   final Set<int> problemLines;
-
   final Color accent;
 
   const _GutterPainter({
@@ -2435,8 +2075,8 @@ class _GutterPainter extends CustomPainter {
     for (int i = 0; i < layout.lineCount; i++) {
       final double y = layout.yForLine(i) - scrollOffset;
 
-      if (y > size.height) break; // Past the bottom.
-      if (y + lineHeight < 0) continue; // Scrolled off the top.
+      if (y > size.height) break;
+      if (y + lineHeight < 0) continue;
 
       final bool isActive = i == activeLine;
       final bool isProblem = problemLines.contains(i);
@@ -2463,8 +2103,6 @@ class _GutterPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
 
-      // Vertically centred in the first row of the line, so a wrapped line
-      // keeps its number beside where it actually begins.
       tp.paint(
         canvas,
         Offset(size.width - tp.width - sc(6), y + (lineHeight - tp.height) / 2),
