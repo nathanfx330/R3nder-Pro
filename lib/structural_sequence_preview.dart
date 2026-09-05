@@ -57,7 +57,8 @@ class StructuralSequencePreview extends StatefulWidget {
   /// Width/height of the live terminal cursor expressed as fractions of the
   /// terminal engine canvas. Top-level PREVIEW supplies this so the structural
   /// terminal ghost inherits the exact cursor proportions visible on the frame
-  /// immediately before the hand-off. Null keeps the legacy editor/test ghost.
+  /// immediately before the hand-off. Null uses the same proportional fallback
+  /// in editor/test contexts instead of reverting to a fixed-pixel cursor.
   final Size? terminalCursorFraction;
 
   /// Optional seams used by focused widget tests and alternate decoders. The
@@ -383,6 +384,7 @@ class _DesktopPlate extends StatelessWidget {
 
 class _TerminalGhost extends StatelessWidget {
   static const double titleHeight = 38.0;
+  static const Size _fallbackCursorFraction = Size(0.01, 0.02);
 
   final R3Theme theme;
   final double chrome;
@@ -457,13 +459,12 @@ class _TerminalGhost extends StatelessWidget {
                 color: const Color(0xFF050706),
                 child: LayoutBuilder(
                   builder: (BuildContext context, BoxConstraints constraints) {
-                    final Size? fraction = cursorFraction;
-                    final double cursorW = fraction == null
-                        ? 7.0
-                        : constraints.maxWidth * fraction.width;
-                    final double cursorH = fraction == null
-                        ? 14.0
-                        : constraints.maxHeight * fraction.height;
+                    final Size fraction =
+                        cursorFraction ?? _fallbackCursorFraction;
+                    final double cursorW =
+                        constraints.maxWidth * fraction.width;
+                    final double cursorH =
+                        constraints.maxHeight * fraction.height;
 
                     return Align(
                       alignment: const Alignment(-0.94, -0.88),
