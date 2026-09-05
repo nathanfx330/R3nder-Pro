@@ -7,22 +7,54 @@
 // [STRUCT:EDIT.foo] or [STRUCT:MOSAIC.bar] line is the sequence-side reference
 // that says "play this source here".
 //
-// The placement carries no authored duration. Its length comes from the source
-// definition itself, which keeps the trim/cut layer below the main sequence and
-// prevents the same shot from having two independent frame-count fields.
+// The placement carries no authored duration. Its source hold comes from the
+// definition itself. The main-sequence event also owns the same deterministic
+// desktop reveal/open/close/restore budget used by the simulated window
+// manager, so a STRUCT placement behaves like a presentation instead of a
+// silent pause with a widget swapped on top of it.
 
 import 'edit_model.dart';
+import 'scene_engine.dart';
 
 final RegExp _placementLine = RegExp(
   r'^(?<indent>[ \t]*)\[STRUCT:(?<source>(?:EDIT|MOSAIC)\.[A-Za-z0-9_-]+)\](?<trail>[ \t]*)$',
   multiLine: true,
 );
 
+/// A structural source uses the same terminal-to-desktop and window-open
+/// timing as the rest of R3nder's desktop presentations.
+const int kStructuralZoomFrames = kZoomAnimFrames;
+const int kStructuralWindowFrames = kWindowAnimFrames;
+const int kStructuralEntryFrames =
+    kStructuralZoomFrames + kStructuralWindowFrames;
+const int kStructuralExitFrames =
+    kStructuralWindowFrames + kStructuralZoomFrames;
+
+enum StructuralSequenceStage {
+  zoomOut,
+  opening,
+  showing,
+  closing,
+  zoomIn,
+}
+
+int structuralSequenceDurationForSource(int sourceFrames) {
+  if (sourceFrames <= 0) return 0;
+  return kStructuralEntryFrames + sourceFrames + kStructuralExitFrames;
+}
+
 class StructuralSequencePlacement {
   final StructuralSourceRef sourceRef;
   final int lineIndex;
   final int startOffset;
   final int endOffset;
+
+  /// Authored source duration from EDIT/MOSAIC. This is the number of frames
+  /// the structural compositor itself advances.
+  final int sourceDurationFrames;
+
+  /// Full main-sequence duration including desktop reveal/open/close/restore.
+  /// This is what TerminalEngine burns as the placement's PAUSE projection.
   final int durationFrames;
 
   const StructuralSequencePlacement({
@@ -30,11 +62,66 @@ class StructuralSequencePlacement {
     required this.lineIndex,
     required this.startOffset,
     required this.endOffset,
+    required this.sourceDurationFrames,
     required this.durationFrames,
   });
 
-  bool get resolves => durationFrames > 0;
+  bool get resolves => sourceDurationFrames > 0;
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
+
+  int get contentStartFrame => kStructuralEntryFrames;
+  int get contentEndFrameExclusive => contentStartFrame + sourceDurationFrames;
+
+  StructuralSequenceStage stageAt(int sequenceFrame) {
+    final int f = sequenceFrame
+        .clamp(0, durationFrames > 0 ? durationFrames - 1 : 0)
+        .toInt();
+    if (f < kStructuralZoomFrames) return StructuralSequenceStage.zoomOut;
+    if (f < kStructuralEntryFrames) return StructuralSequenceStage.opening;
+    if (f < contentEndFrameExclusive) return StructuralSequenceStage.showing;
+    if (f < contentEndFrameExclusive + kStructuralWindowFrames) {
+      return StructuralSequenceStage.closing;
+    }
+    return StructuralSequenceStage.zoomIn;
+  }
+
+  int stageFrameAt(int sequenceFrame) {
+    final int f = sequenceFrame
+        .clamp(0, durationFrames > 0 ? durationFrames - 1 : 0)
+        .toInt();
+    switch (stageAt(f)) {
+      case StructuralSequenceStage.zoomOut:
+        return f;
+      case StructuralSequenceStage.opening:
+        return f - kStructuralZoomFrames;
+      case StructuralSequenceStage.showing:
+        return f - contentStartFrame;
+      case StructuralSequenceStage.closing:
+        return f - contentEndFrameExclusive;
+      case StructuralSequenceStage.zoomIn:
+        return f - contentEndFrameExclusive - kStructuralWindowFrames;
+    }
+  }
+
+  double stageProgressAt(int sequenceFrame) {
+    final StructuralSequenceStage stage = stageAt(sequenceFrame);
+    final int frames = switch (stage) {
+      StructuralSequenceStage.zoomOut || StructuralSequenceStage.zoomIn =>
+        kStructuralZoomFrames,
+      StructuralSequenceStage.opening || StructuralSequenceStage.closing =>
+        kStructuralWindowFrames,
+      StructuralSequenceStage.showing => sourceDurationFrames,
+    };
+    if (frames <= 1) return 1.0;
+    return (stageFrameAt(sequenceFrame) / (frames - 1)).clamp(0.0, 1.0);
+  }
+
+  int sourceFrameAt(int sequenceFrame) {
+    if (sourceDurationFrames <= 0) return 0;
+    return (sequenceFrame - contentStartFrame)
+        .clamp(0, sourceDurationFrames - 1)
+        .toInt();
+  }
 }
 
 List<int> _lineStarts(String source) {
@@ -86,12 +173,12 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         StructuralSourceRef.tryParse(match.namedGroup('source') ?? '');
     if (ref == null || ref.id.isEmpty) continue;
 
-    int duration = 0;
+    int sourceDuration = 0;
     if (model != null && model.containsStructuralSource(ref)) {
       try {
-        duration = model.structuralSourceFrameCount(ref);
+        sourceDuration = model.structuralSourceFrameCount(ref);
       } catch (_) {
-        duration = 0;
+        sourceDuration = 0;
       }
     }
 
@@ -101,7 +188,8 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         lineIndex: _lineForOffset(starts, match.start),
         startOffset: match.start,
         endOffset: match.end,
-        durationFrames: duration,
+        sourceDurationFrames: sourceDuration,
+        durationFrames: structuralSequenceDurationForSource(sourceDuration),
       ),
     );
   }
@@ -142,13 +230,12 @@ String appendStructuralSequencePlacement({
 }
 
 /// Replaces sequence placements in an already root-stripped engine projection
-/// with ordinary PAUSE tags of the exact structural-source duration.
+/// with ordinary PAUSE tags covering the full structural presentation event.
 ///
-/// TerminalEngine therefore owns timing exactly as it already does for every
-/// other hold, while EDIT/MOSAIC rendering remains a separate presentation
-/// layer. Definitions were removed before this function is called, so a
-/// placement authored inside a source block can never accidentally schedule
-/// the source definition itself.
+/// The source itself still owns only its authored frames. The PAUSE also buys
+/// the deterministic terminal zoom and window open/close frames, which keeps
+/// the main sequence, narration bed, scrubber, and visible desktop transition
+/// on one shared frame count.
 String projectStructuralSequencePlacements({
   required String rawDocument,
   required String projectedSource,
@@ -163,18 +250,20 @@ String projectStructuralSequencePlacements({
     final StructuralSourceRef? ref =
         StructuralSourceRef.tryParse(match.namedGroup('source') ?? '');
 
-    int duration = 0;
+    int sourceDuration = 0;
     if (ref != null && ref.id.isNotEmpty && model != null) {
       if (model.containsStructuralSource(ref)) {
         try {
-          duration = model.structuralSourceFrameCount(ref);
+          sourceDuration = model.structuralSourceFrameCount(ref);
         } catch (_) {
-          duration = 0;
+          sourceDuration = 0;
         }
       }
     }
 
-    if (duration <= 0) duration = 1;
+    final int duration = sourceDuration > 0
+        ? structuralSequenceDurationForSource(sourceDuration)
+        : 1;
 
     final String indent = match.namedGroup('indent') ?? '';
     final String trail = match.namedGroup('trail') ?? '';
