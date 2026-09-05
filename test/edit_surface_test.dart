@@ -23,6 +23,8 @@ Widget _host({
           source: _source,
           editId: 'main',
           currentFrame: currentFrame,
+          // Workspace audio can still be present upstream. The cut surface
+          // deliberately does not draw it as if it were clip-local material.
           voiceFrames: 70,
           musicFrames: 120,
           musicLoops: false,
@@ -36,7 +38,7 @@ Widget _host({
 }
 
 void main() {
-  testWidgets('surface renders V1 V2 clips and existing audio lanes',
+  testWidgets('surface renders only video cut tracks, not composition audio beds',
       (WidgetTester tester) async {
     await tester.pumpWidget(_host(onSourceChanged: (_) {}));
     await tester.pumpAndSettle();
@@ -45,10 +47,10 @@ void main() {
     expect(find.text('V1'), findsOneWidget);
     expect(find.text('intro'), findsOneWidget);
     expect(find.text('overlay'), findsOneWidget);
-    expect(find.text('A1'), findsOneWidget);
-    expect(find.text('A2'), findsOneWidget);
-    expect(find.text('VOICE'), findsOneWidget);
-    expect(find.text('MUSIC'), findsOneWidget);
+    expect(find.text('A1'), findsNothing);
+    expect(find.text('A2'), findsNothing);
+    expect(find.text('VOICE'), findsNothing);
+    expect(find.text('MUSIC'), findsNothing);
   });
 
   testWidgets('dragging clip body serializes new at frame into script',
