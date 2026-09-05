@@ -176,9 +176,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
             case StructuralSequenceStage.showing:
               terminalRect = presentationRect;
-              structuralRect = _firstFrameReady
-                  ? presentationRect
-                  : emergenceRect;
+              structuralRect =
+                  _firstFrameReady ? presentationRect : emergenceRect;
               desktopOpacity = 1.0;
               terminalOpacity = _firstFrameReady ? 0.0 : 1.0;
               structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
@@ -253,6 +252,15 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
                     ),
+                  ),
+                ),
+
+              if (_firstFrameReady)
+                const Positioned(
+                  left: 0,
+                  top: 0,
+                  child: SizedBox.shrink(
+                    key: ValueKey<String>('structural-first-frame-ready'),
                   ),
                 ),
             ],
