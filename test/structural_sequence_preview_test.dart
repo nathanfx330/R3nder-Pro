@@ -142,7 +142,46 @@ void main() {
       find.byKey(const ValueKey<String>('structural-terminal-window')),
     );
     _expectSameRect(zoomTarget, openingTerminal);
-    expect(backend.openCount, 0);
+    expect(backend.openCount, 1);
+    expect(backend.requestedFrames, contains(10));
+  });
+
+  testWidgets('opening holds first structural video frame while window comes forward',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralZoomFrames + 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      placement.stageAt(kStructuralZoomFrames + 1),
+      StructuralSequenceStage.opening,
+    );
+    expect(find.text('F0 / 20'), findsOneWidget);
+    expect(find.textContaining('SRC 10'), findsOneWidget);
+    expect(backend.requestedFrames, isNotEmpty);
+    expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralEntryFrames - 1,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('F0 / 20'), findsOneWidget);
+    expect(find.textContaining('SRC 10'), findsOneWidget);
+    expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
   });
 
   testWidgets('structural window comes forward while terminal fades behind it',
@@ -174,7 +213,7 @@ void main() {
     expect(emergenceStart.height, lessThan(rear.height));
     expect(emergenceStart.top, greaterThan(rear.top));
     expect(terminalStart.opacity, closeTo(1.0, 0.001));
-    expect(backend.openCount, 0);
+    expect(backend.requestedFrames, contains(10));
 
     final int middleFrame =
         kStructuralZoomFrames + (kStructuralWindowFrames ~/ 2);
@@ -199,7 +238,7 @@ void main() {
     expect(emergenceMiddle.top, lessThan(emergenceStart.top));
     expect(terminalMiddle.opacity, greaterThan(0.0));
     expect(terminalMiddle.opacity, lessThan(1.0));
-    expect(backend.openCount, 0);
+    expect(backend.requestedFrames.every((int frame) => frame == 10), isTrue);
 
     await tester.pumpWidget(
       _buildPreview(
