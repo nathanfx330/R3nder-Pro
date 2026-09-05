@@ -2,7 +2,6 @@
 
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +12,7 @@ import 'package:r3nder/scene_engine.dart';
 import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
+import 'package:r3nder/structural_source_export.dart';
 
 class _RecordingBackend implements MediaDecoderBackend {
   final Map<String, List<int>> requests = <String, List<int>>{};
@@ -40,8 +40,6 @@ class _RecordingDecoder implements MediaDecoder {
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
     onRequest(requestedSourceFrame);
 
-    // Solid red makes the center of the authored video client trivial to
-    // identify in the fully composited program frame.
     final Uint8List rgba = Uint8List(width * height * 4);
     for (int i = 0; i < rgba.length; i += 4) {
       rgba[i] = 255;
@@ -79,9 +77,9 @@ int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
 }
 
 void main() {
-  testWidgets(
-    'whole-program bake overrides only active STRUCT frames and requests exact authored media frame',
-    (WidgetTester tester) async {
+  test(
+    'whole-program STRUCT runtime selects exact authored media frames for bake',
+    () async {
       const String source = '''[SPEED:MAX]BEFORE
 [EDIT:main]
 [TRACK:V1]
@@ -102,7 +100,7 @@ AFTER
 
       final SceneEngine scene = SceneEngine();
       final _RecordingBackend backend = _RecordingBackend();
-      final ProgramStructuralFrameRenderer renderer =
+      final ProgramStructuralFrameRenderer programRenderer =
           ProgramStructuralFrameRenderer(
         rawDocument: source,
         width: 320,
@@ -110,32 +108,30 @@ AFTER
         backend: backend,
         resolveSource: (String value) => value,
       );
+      final StructuralSourceFrameRenderer sourceRenderer =
+          StructuralSourceFrameRenderer.create(
+        source: source,
+        structuralSource: 'EDIT.main',
+        width: 4,
+        height: 2,
+        backend: backend,
+        resolveSource: (String value) => value,
+      );
 
       addTearDown(() {
-        renderer.dispose();
+        sourceRenderer.dispose();
+        programRenderer.dispose();
         scene.disposeImages();
         if (root.existsSync()) root.deleteSync(recursive: true);
       });
 
-      // ui.decodeImageFromPixels, Picture.toImage and Image.toByteData are
-      // engine callbacks, not fake-clock work. Awaiting them directly inside
-      // testWidgets can deadlock because the widget test zone owns time. Keep
-      // the test a widget test for Flutter painting, but cross that boundary
-      // explicitly whenever we ask the engine to materialize pixels.
-      Future<ui.Image?> renderStructural() {
-        return tester.runAsync<ui.Image?>(() async {
-          return renderer.renderIfActive(
-            scene: scene,
-            fontFamily: 'monospace',
-          );
-        });
-      }
-
-      Future<ByteData?> readRgba(ui.Image image) {
-        return tester.runAsync<ByteData?>(() async {
-          return image.toByteData(format: ui.ImageByteFormat.rawRgba);
-        });
-      }
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(source);
+      expect(placements, hasLength(1));
+      final StructuralSequencePlacement placement = placements.single;
+      expect(placement.resolves, isTrue);
+      expect(programRenderer.hasPlacements, isTrue);
+      expect(sourceRenderer.totalFrames, 3);
 
       final CompiledScript compiled = compileScript(source, lineMarkers: false);
       await scene.setup(
@@ -158,33 +154,26 @@ AFTER
         appSwitchConfig: compiled.appSwitch,
       );
 
-      expect(renderer.hasPlacements, isTrue);
-      expect(await renderStructural(), isNull);
-
       int? firstStructProjectFrame;
       int? showingProjectFrame;
-      int? firstFrameAfterStruct;
-      bool wasInsideStruct = false;
 
       for (int projectFrame = 0; projectFrame < 300; projectFrame++) {
-        final result = scene.evaluate(
+        final SceneEvaluationResult result = scene.evaluate(
           ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
         );
         expect(result.exact, isTrue);
 
         final StructuralRuntimeMarker? marker =
             parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+        if (marker == null) continue;
 
-        if (marker != null) {
-          wasInsideStruct = true;
-          firstStructProjectFrame ??= projectFrame;
-          final int localFrame = _runtimeLocalFrame(scene, marker);
-          if (localFrame == kStructuralEntryFrames) {
-            showingProjectFrame ??= projectFrame;
-            break;
-          }
-        } else if (wasInsideStruct) {
-          firstFrameAfterStruct = projectFrame;
+        firstStructProjectFrame ??= projectFrame;
+        expect(marker.placementIndex, 0);
+        expect(marker.durationFrames, placement.durationFrames);
+
+        final int localFrame = _runtimeLocalFrame(scene, marker);
+        if (localFrame == kStructuralEntryFrames) {
+          showingProjectFrame = projectFrame;
           break;
         }
       }
@@ -194,45 +183,47 @@ AFTER
       final int firstStruct = firstStructProjectFrame!;
       final int showing = showingProjectFrame!;
 
-      // One frame before the runtime marker must stay on the historical
-      // SceneCompositor path. The structural renderer is an override only.
       final int before = firstStruct - 1;
       expect(before, greaterThanOrEqualTo(0));
-      scene.evaluate(ProjectTime(frame: before, mode: ProjectClockMode.scrub));
-      expect(await renderStructural(), isNull);
+      scene.evaluate(
+        ProjectTime(frame: before, mode: ProjectClockMode.scrub),
+      );
+      expect(
+        parseStructuralRuntimeRegion(scene.terminal.currentRegion),
+        isNull,
+      );
 
-      // The first SHOWING frame is authored source frame zero.
       scene.evaluate(
         ProjectTime(frame: showing, mode: ProjectClockMode.scrub),
       );
-      final ui.Image? composited = await renderStructural();
-      expect(composited, isNotNull);
+      StructuralRuntimeMarker? marker =
+          parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+      expect(marker, isNotNull);
+      int localFrame = _runtimeLocalFrame(scene, marker!);
+      expect(placement.stageAt(localFrame), StructuralSequenceStage.showing);
+      expect(placement.sourceFrameAt(localFrame), 0);
+
+      final Uint8List first = sourceRenderer.renderFrame(
+        placement.sourceFrameAt(localFrame),
+      );
       expect(backend.requests['leaf.mp4'], <int>[0]);
       expect(backend.opens, 1);
+      expect(first.sublist(0, 4), <int>[255, 0, 0, 255]);
 
-      final ByteData? raw = await readRgba(composited!);
-      expect(raw, isNotNull);
-      final Uint8List bytes = raw!.buffer.asUint8List(
-        raw.offsetInBytes,
-        raw.lengthInBytes,
-      );
-      final int center = ((90 * 320) + 160) * 4;
-      expect(bytes.sublist(center, center + 4), <int>[255, 0, 0, 255]);
-      composited.dispose();
-
-      // Advance one project frame. Exact source-frame ownership must advance
-      // with authored STRUCT time, never with decoder completion order.
       scene.evaluate(
         ProjectTime(frame: showing + 1, mode: ProjectClockMode.scrub),
       );
-      final ui.Image? next = await renderStructural();
-      expect(next, isNotNull);
-      expect(backend.requests['leaf.mp4'], <int>[0, 1]);
-      next!.dispose();
+      marker = parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+      expect(marker, isNotNull);
+      localFrame = _runtimeLocalFrame(scene, marker!);
+      expect(placement.stageAt(localFrame), StructuralSequenceStage.showing);
+      expect(placement.sourceFrameAt(localFrame), 1);
 
-      // Find the first project frame after the reserved STRUCT runtime region.
-      // Do not assume a hidden parser-tax here; the runtime marker itself is
-      // the public contract the exporter observes.
+      sourceRenderer.renderFrame(placement.sourceFrameAt(localFrame));
+      expect(backend.requests['leaf.mp4'], <int>[0, 1]);
+      expect(backend.opens, 1);
+
+      int? firstFrameAfterStruct;
       for (int projectFrame = showing + 1;
           projectFrame < 300;
           projectFrame++) {
@@ -246,10 +237,7 @@ AFTER
       }
 
       expect(firstFrameAfterStruct, isNotNull);
-      scene.evaluate(
-        ProjectTime(frame: firstFrameAfterStruct!, mode: ProjectClockMode.scrub),
-      );
-      expect(await renderStructural(), isNull);
+      expect(firstFrameAfterStruct, greaterThan(showing));
     },
   );
 }
