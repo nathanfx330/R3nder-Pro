@@ -83,8 +83,9 @@ void main() {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
     final _FakeBackend backend = _FakeBackend();
-    const Finder cursor =
-        KeyedSubtreeFinder(ValueKey<String>('structural-terminal-cursor'));
+    final Finder cursor = find.byKey(
+      const ValueKey<String>('structural-terminal-cursor'),
+    );
 
     await tester.pumpWidget(
       _preview(
