@@ -55,10 +55,9 @@ class StructuralSequencePreview extends StatefulWidget {
   final ui.Image? wallpaper;
 
   /// Width/height of the live terminal cursor expressed as fractions of the
-  /// terminal engine canvas. Top-level PREVIEW supplies this so the structural
-  /// terminal ghost inherits the exact cursor proportions visible on the frame
-  /// immediately before the hand-off. Null uses the same proportional fallback
-  /// in editor/test contexts instead of reverting to a fixed-pixel cursor.
+  /// terminal engine canvas. PREVIEW and EDIT can supply this so the structural
+  /// terminal ghost starts with the exact cursor dimensions visible on the
+  /// frame immediately before the hand-off. Null uses a proportional fallback.
   final Size? terminalCursorFraction;
 
   /// Optional seams used by focused widget tests and alternate decoders. The
@@ -224,6 +223,21 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
+          // Cursor shape is part of the hand-off, not chrome. Start from the
+          // cursor's exact full-terminal dimensions, then apply ONE uniform
+          // scale derived from terminal width. Using the ghost client width
+          // and height independently made the cursor stretch as the title bar
+          // grew, and made the return snap back to ScenePainter's real cursor.
+          final Size cursorFraction = widget.terminalCursorFraction ??
+              _TerminalGhost.fallbackCursorFraction;
+          final double terminalScale = fullTerminal.width > 0.0
+              ? terminalRect.width / fullTerminal.width
+              : 1.0;
+          final Size terminalCursorSize = Size(
+            fullTerminal.width * cursorFraction.width * terminalScale,
+            fullTerminal.height * cursorFraction.height * terminalScale,
+          );
+
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -248,7 +262,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       key: const ValueKey<String>('structural-terminal-window'),
                       theme: widget.theme,
                       chrome: terminalChrome.clamp(0.0, 1.0),
-                      cursorFraction: widget.terminalCursorFraction,
+                      cursorSize: terminalCursorSize,
                     ),
                   ),
                 ),
@@ -384,17 +398,17 @@ class _DesktopPlate extends StatelessWidget {
 
 class _TerminalGhost extends StatelessWidget {
   static const double titleHeight = 38.0;
-  static const Size _fallbackCursorFraction = Size(0.01, 0.02);
+  static const Size fallbackCursorFraction = Size(0.01, 0.02);
 
   final R3Theme theme;
   final double chrome;
-  final Size? cursorFraction;
+  final Size cursorSize;
 
   const _TerminalGhost({
     super.key,
     required this.theme,
     required this.chrome,
-    required this.cursorFraction,
+    required this.cursorSize,
   });
 
   @override
@@ -457,25 +471,14 @@ class _TerminalGhost extends StatelessWidget {
             Expanded(
               child: ColoredBox(
                 color: const Color(0xFF050706),
-                child: LayoutBuilder(
-                  builder: (BuildContext context, BoxConstraints constraints) {
-                    final Size fraction =
-                        cursorFraction ?? _fallbackCursorFraction;
-                    final double cursorW =
-                        constraints.maxWidth * fraction.width;
-                    final double cursorH =
-                        constraints.maxHeight * fraction.height;
-
-                    return Align(
-                      alignment: const Alignment(-0.94, -0.88),
-                      child: Container(
-                        key: const ValueKey<String>('structural-terminal-cursor'),
-                        width: cursorW,
-                        height: cursorH,
-                        color: theme.accent,
-                      ),
-                    );
-                  },
+                child: Align(
+                  alignment: const Alignment(-0.94, -0.88),
+                  child: Container(
+                    key: const ValueKey<String>('structural-terminal-cursor'),
+                    width: cursorSize.width,
+                    height: cursorSize.height,
+                    color: theme.accent,
+                  ),
                 ),
               ),
             ),
