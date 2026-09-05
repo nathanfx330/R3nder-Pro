@@ -76,14 +76,20 @@ void main() {
   test('generic edits cannot rewrite protected structural source', () {
     const String source = '''[EDIT:cut]\n  [TRACK:V1]\n    [CLIP:a:video/a.mp4:0:0:60:1]\n    [/CLIP]\n  [/TRACK]\n[/EDIT]\n''';
 
-    final ScriptNode node =
-        parseScriptToNodes(source).singleWhere((ScriptNode node) => node.isStructural);
+    final ScriptCstDocument cst = ScriptCstDocument.parse(source);
+    final List<ScriptNode> nodes = parseScriptToNodes(source);
+    final ScriptNode structural =
+        nodes.singleWhere((ScriptNode node) => node.isStructural);
 
-    node.rawText = 'not structural source';
-    node.dirty = true;
-    node.set('id', 'changed');
+    structural.rawText = 'not structural source';
+    structural.dirty = true;
+    structural.set('id', 'changed');
 
-    expect(node.toMarkup(), source);
+    // The protected node owns exactly the CST root. The newline after the
+    // closer belongs to the following spacer node so whole-document round
+    // trip remains lossless without widening structural ownership.
+    expect(structural.toMarkup(), cst.roots.single.rawSource);
+    expect(_compose(nodes), source);
   });
 
   test('malformed structural source falls back to lossless repair text', () {
