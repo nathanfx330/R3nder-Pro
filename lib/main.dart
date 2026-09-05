@@ -13,7 +13,7 @@ import 'project_clock.dart';
 import 'parser.dart';
 import 'scene_engine.dart';
 import 'scene_evaluator.dart';
-import 'scene_painter.dart';
+import 'program_preview_surface.dart';
 import 'exporter.dart';
 import 'editor_screen.dart';
 import 'app_info.dart';
@@ -1347,7 +1347,6 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     // Nothing is lost by refusing: returning to the dashboard schedules a
     // warm anyway, through _applyTemplateText on close.
     if (_currentState == AppState.editor) return;
-
     if (kProfileWarm) {
       diag('warm', 'scheduled (gen $_warmGeneration, state $_currentState)');
     }
@@ -2685,21 +2684,14 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       child: Stack(
         children: [
           // The Actual Scene Render (terminal fullscreen, or desktop + windows)
-          ListenableBuilder(
-            listenable: _projectClock,
-            builder: (context, _) {
-              return LayoutBuilder(
-                builder: (ctx, constraints) {
-                  return CustomPaint(
-                    size: Size.infinite,
-                    painter: ScenePainter(
-                      scene: _scene,
-                      fontFamily: _activeFont,
-                    ),
-                  );
-                },
-              );
-            },
+          Positioned.fill(
+            child: ProgramPreviewSurface(
+              repaint: _projectClock,
+              scene: _scene,
+              rawDocument: _docText,
+              fontFamily: _activeFont,
+              theme: _t,
+            ),
           ),
 
           // HUD overlay
