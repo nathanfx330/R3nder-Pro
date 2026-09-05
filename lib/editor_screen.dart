@@ -243,6 +243,18 @@ class _EditorScreenState extends State<EditorScreen> {
   static final double _editorFontSize = sc(14.0);
   static const double _editorLineHeightMult = 1.4;
 
+  /// The structural terminal ghost must inherit the same cursor rectangle as
+  /// the real TerminalPainter. This is the same font fallback stack and the
+  /// same baseline cache used by top-level PREVIEW's hand-off calculation.
+  static const List<String> _terminalFontFallbacks = <String>[
+    'Courier',
+    'Consolas',
+    'Courier New',
+    'monospace',
+  ];
+  static final Map<(String, double), double> _terminalCursorBaselines =
+      <(String, double), double>{};
+
   /// 0-based lines the linter flagged, refreshed with every simulation.
   Set<int> _lintLines = {};
 
@@ -1613,6 +1625,43 @@ class _EditorScreenState extends State<EditorScreen> {
         .toInt();
   }
 
+  Size _terminalCursorFraction() {
+    final terminal = _scene.terminal;
+    final double fontSize = terminal.currentFontSize;
+    final (String, double) key = (widget.fontFamily, fontSize);
+
+    double? baseline = _terminalCursorBaselines[key];
+    if (baseline == null) {
+      final TextPainter ref = TextPainter(
+        text: TextSpan(
+          text: 'M',
+          style: TextStyle(
+            fontFamily: widget.fontFamily,
+            fontFamilyFallback: _terminalFontFallbacks,
+            fontSize: fontSize,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      ref.layout();
+      baseline = ref.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+      ref.dispose();
+      _terminalCursorBaselines[key] = baseline;
+    }
+
+    final double engineWidth = terminal.width > 0.0 ? terminal.width : 1.0;
+    final double engineHeight = terminal.height > 0.0 ? terminal.height : 1.0;
+
+    // Mirror TerminalPainter exactly. StructuralSequencePreview then applies
+    // one uniform geometric scale as the terminal pulls back, so neither the
+    // initial hand-off nor the animated cursor can change aspect.
+    return Size(
+      (fontSize * 0.5) / engineWidth,
+      (baseline * 0.78) / engineHeight,
+    );
+  }
+
   Widget _buildPreviewPane() {
     final StructuralSequencePlacement? placement =
         _activeStructuralPlacement();
@@ -1624,6 +1673,9 @@ class _EditorScreenState extends State<EditorScreen> {
         isPlaying: _isPlaying,
         theme: _t,
         wallpaper: _scene.wallpaper,
+        terminalScene: _scene,
+        terminalFontFamily: widget.fontFamily,
+        terminalCursorFraction: _terminalCursorFraction(),
       );
     }
 

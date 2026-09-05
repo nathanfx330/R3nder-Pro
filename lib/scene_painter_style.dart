@@ -216,3 +216,99 @@ const double _kAppCaptionMaxBandFrac = 0.34;
 
 const Color _kAppCaptionText = Color(0xFFE8E4E0);
 const Color _kAppCaptionCredit = Color(0xFF9A9490);
+
+/// Structural sequence bridge for the terminal/desktop portion of a STRUCT
+/// presentation. This deliberately lives inside ScenePainter's library so it
+/// can reuse the exact native desktop and terminal-window drawing functions
+/// instead of approximating them in Flutter widgets.
+///
+/// [terminalRect] is normalized to the fitted engine frame: 0,0 is the top
+/// left of the engine canvas and 1,1 is its bottom right. The painter maps it
+/// back into logical engine coordinates before calling ScenePainter's native
+/// helpers. At terminalRect=(0,0,1,1), chrome=0, desktopOpacity=0 the pixels are
+/// the same fullscreen terminal ScenePainter produces immediately outside a
+/// structural event. That identity is what makes the hand-off seamless.
+class SceneStructuralTerminalPainter extends CustomPainter {
+  final SceneEngine scene;
+  final String fontFamily;
+  final Rect terminalRect;
+  final double desktopOpacity;
+  final double terminalOpacity;
+  final double terminalChrome;
+
+  const SceneStructuralTerminalPainter({
+    required this.scene,
+    required this.fontFamily,
+    required this.terminalRect,
+    required this.desktopOpacity,
+    required this.terminalOpacity,
+    required this.terminalChrome,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double engineW = scene.width;
+    final double engineH = scene.height;
+    if (engineW <= 0.0 || engineH <= 0.0) return;
+
+    final double drawW = size.width.isFinite ? size.width : engineW;
+    final double drawH = size.height.isFinite ? size.height : engineH;
+    if (drawW <= 0.0 || drawH <= 0.0) return;
+
+    final double fit = math.min(drawW / engineW, drawH / engineH);
+    final ScenePainter native =
+        ScenePainter(scene: scene, fontFamily: fontFamily);
+
+    canvas.save();
+
+    if (!scene.transparentBackdrop) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, drawW, drawH),
+        Paint()..color = const Color(0xFF000000),
+      );
+    }
+
+    canvas.translate(
+      (drawW - engineW * fit) / 2.0,
+      (drawH - engineH * fit) / 2.0,
+    );
+    canvas.scale(fit, fit);
+    canvas.clipRect(Rect.fromLTWH(0, 0, engineW, engineH));
+
+    if (desktopOpacity > 0.001) {
+      native._drawDesktopBackground(
+        canvas,
+        engineW,
+        engineH,
+        opacity: desktopOpacity.clamp(0.0, 1.0),
+      );
+    }
+
+    if (terminalOpacity > 0.001) {
+      final Rect logicalTerminal = Rect.fromLTRB(
+        terminalRect.left * engineW,
+        terminalRect.top * engineH,
+        terminalRect.right * engineW,
+        terminalRect.bottom * engineH,
+      );
+      native._drawTerminalWindowAt(
+        canvas,
+        logicalTerminal,
+        engineW,
+        scene.terminal.scale,
+        chrome: terminalChrome.clamp(0.0, 1.0),
+        opacity: terminalOpacity.clamp(0.0, 1.0),
+      );
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant SceneStructuralTerminalPainter oldDelegate) {
+    // SceneEngine and TerminalEngine are mutable frame-state containers. Even
+    // when the instance identity is unchanged, the text buffer, cursor blink,
+    // colors, wallpaper, and phase-facing terminal state may have advanced.
+    return true;
+  }
+}

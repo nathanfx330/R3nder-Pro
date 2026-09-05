@@ -1,6 +1,7 @@
 // ./test/edit_compile_projection_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/parser.dart';
 import 'package:r3nder/script_lint.dart';
 import 'package:r3nder/script_pipeline.dart';
 
@@ -24,6 +25,24 @@ AFTER
     expect(compiled.engineText, isNot(contains('[TRACK:V1]')));
     expect(compiled.engineText, isNot(contains('[CLIP:intro')));
     expect(compiled.engineText, isNot(contains('video/intro.mp4')));
+  });
+
+  test('runtime EDIT metadata does not create terminal blank lines', () {
+    const String source = '''BEFORE
+[EDIT:main]
+  [TRACK:V1]
+    [CLIP:intro:video/intro.mp4:0:0:30:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+AFTER
+''';
+
+    final CompiledScript compiled = compileScript(source);
+    final String preprocessed =
+        ScriptParser.preprocessScript(compiled.engineText);
+
+    expect(preprocessed, 'BEFORE\nAFTER\n');
   });
 
   test('EDIT projection preserves raw document line numbers', () {

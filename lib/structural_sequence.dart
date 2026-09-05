@@ -21,6 +21,10 @@ final RegExp _placementLine = RegExp(
   multiLine: true,
 );
 
+final RegExp _runtimeRegionPattern = RegExp(
+  r'^STRUCTSEQ_(?<index>\d+)_(?<duration>\d+)$',
+);
+
 /// A structural source uses the same terminal-to-desktop and window-open
 /// timing as the rest of R3nder's desktop presentations.
 const int kStructuralZoomFrames = kZoomAnimFrames;
@@ -29,6 +33,17 @@ const int kStructuralEntryFrames =
     kStructuralZoomFrames + kStructuralWindowFrames;
 const int kStructuralExitFrames =
     kStructuralWindowFrames + kStructuralZoomFrames;
+
+/// A standalone `[PAUSE:N]` line occupies two scene ticks beyond N in the
+/// editor line-map execution path: entering the pause and advancing past the
+/// line. STRUCT owns an exact presentation budget, so its projected PAUSE
+/// argument compensates for those framing ticks instead of silently stretching
+/// every structural call by two frames.
+const int kStructuralProjectionFramingFrames = 2;
+
+/// Prefix reserved for the engine-internal region used by real Preview/Bake.
+/// It fits the existing REGION grammar, so no author-visible tag is added.
+const String kStructuralRuntimeRegionPrefix = 'STRUCTSEQ_';
 
 enum StructuralSequenceStage {
   zoomOut,
@@ -43,6 +58,83 @@ int structuralSequenceDurationForSource(int sourceFrames) {
   return kStructuralEntryFrames + sourceFrames + kStructuralExitFrames;
 }
 
+int _projectedPauseFramesForEvent(int eventFrames) {
+  if (eventFrames <= 0) return 1;
+  final int pauseFrames = eventFrames - kStructuralProjectionFramingFrames;
+  return pauseFrames > 0 ? pauseFrames : 1;
+}
+
+/// Engine-visible identity for one live structural placement.
+///
+/// Preview/Bake compilation writes this into an internal REGION id before the
+/// timing PAUSE. The terminal already exposes currentRegion, so the top-level
+/// Preview can discover the active placement without a second line-map clock.
+class StructuralRuntimeMarker {
+  final int placementIndex;
+  final int durationFrames;
+
+  const StructuralRuntimeMarker({
+    required this.placementIndex,
+    required this.durationFrames,
+  });
+
+  String get regionId =>
+      '$kStructuralRuntimeRegionPrefix${placementIndex}_$durationFrames';
+}
+
+StructuralRuntimeMarker? parseStructuralRuntimeRegion(String? regionId) {
+  if (regionId == null) return null;
+  final RegExpMatch? match = _runtimeRegionPattern.firstMatch(regionId);
+  if (match == null) return null;
+
+  final int? index = int.tryParse(match.namedGroup('index') ?? '');
+  final int? duration = int.tryParse(match.namedGroup('duration') ?? '');
+  if (index == null || index < 0 || duration == null || duration <= 0) {
+    return null;
+  }
+
+  return StructuralRuntimeMarker(
+    placementIndex: index,
+    durationFrames: duration,
+  );
+}
+
+/// Resolves the authored STRUCT local frame from terminal pause state.
+///
+/// Runtime projection is deliberately two deterministic parser phases:
+///
+///   frame 0  REGION marker
+///   frame 1  PAUSE entry
+///   frame 2+ explicit pause age
+///
+/// The REGION is kept through the tick that completes the pause, so the final
+/// authored structural frame remains visible. On the next free terminal tick
+/// engine_tick.dart clears the reserved region before ordinary script content
+/// resumes.
+int structuralRuntimeLocalFrame({
+  required StructuralRuntimeMarker marker,
+  required int pauseFramesRemaining,
+  required bool awaitingPauseTag,
+}) {
+  final int duration = marker.durationFrames;
+  if (duration <= 1) return 0;
+
+  // Immediately after the REGION marker has been parsed, the internal PAUSE
+  // is still the next token. That exact frame is authored local frame zero.
+  if (awaitingPauseTag) return 0;
+
+  if (pauseFramesRemaining > 0) {
+    final int pauseBudget = _projectedPauseFramesForEvent(duration);
+    return (1 + (pauseBudget - pauseFramesRemaining))
+        .clamp(0, duration - 1)
+        .toInt();
+  }
+
+  // The pause-completion tick intentionally keeps the structural REGION alive
+  // for one paint. That is the final authored frame, not a stale extra hold.
+  return duration - 1;
+}
+
 class StructuralSequencePlacement {
   final StructuralSourceRef sourceRef;
   final int lineIndex;
@@ -54,7 +146,7 @@ class StructuralSequencePlacement {
   final int sourceDurationFrames;
 
   /// Full main-sequence duration including desktop reveal/open/close/restore.
-  /// This is what TerminalEngine burns as the placement's PAUSE projection.
+  /// This is the exact scene-time budget of the STRUCT event.
   final int durationFrames;
 
   const StructuralSequencePlacement({
@@ -159,7 +251,7 @@ EditDocumentModel? _tryModel(String rawDocument) {
 /// Invalid or temporarily incomplete structural source definitions do not make
 /// the text editor crash while the author is typing. Their placements remain
 /// visible with duration 0 so diagnostics can report them and the engine
-/// projection can burn a single harmless frame instead of typing literal
+/// projection can burn a small harmless fallback instead of typing literal
 /// markup onto screen.
 List<StructuralSequencePlacement> parseStructuralSequencePlacements(
   String rawDocument,
@@ -229,16 +321,28 @@ String appendStructuralSequencePlacement({
   return out.toString();
 }
 
-/// Replaces sequence placements in an already root-stripped engine projection
-/// with ordinary PAUSE tags covering the full structural presentation event.
+/// Replaces sequence placements in an already root-stripped engine projection.
 ///
-/// The source itself still owns only its authored frames. The PAUSE also buys
-/// the deterministic terminal zoom and window open/close frames, which keeps
-/// the main sequence, narration bed, scrubber, and visible desktop transition
-/// on one shared frame count.
+/// Editor line-map compilation uses a plain compensated PAUSE so its authored
+/// line continues to own exactly the STRUCT event budget. Real Preview/Bake
+/// compilation can request [runtimeMarkers], which writes an internal REGION
+/// immediately before the same compensated PAUSE:
+///
+///   [REGION:STRUCTSEQ_0_383][PAUSE:381]
+///
+/// engine_tick.dart treats that reserved REGION as a one-frame structural
+/// entry marker and clears it immediately after the pause completes. That
+/// gives the top-level Preview an engine-owned active placement and local time
+/// without changing author syntax, adding a second clock, or teaching MLT to
+/// own sequence time.
+///
+/// Sequence placements are projected only after source definitions are gone,
+/// so a `[STRUCT:...]` accidentally written inside a definition cannot schedule
+/// itself into main program time.
 String projectStructuralSequencePlacements({
   required String rawDocument,
   required String projectedSource,
+  bool runtimeMarkers = false,
 }) {
   final EditDocumentModel? model = _tryModel(rawDocument);
   final List<RegExpMatch> matches =
@@ -246,7 +350,8 @@ String projectStructuralSequencePlacements({
   if (matches.isEmpty) return projectedSource;
 
   String out = projectedSource;
-  for (final RegExpMatch match in matches.reversed) {
+  for (int index = matches.length - 1; index >= 0; index--) {
+    final RegExpMatch match = matches[index];
     final StructuralSourceRef? ref =
         StructuralSourceRef.tryParse(match.namedGroup('source') ?? '');
 
@@ -261,16 +366,30 @@ String projectStructuralSequencePlacements({
       }
     }
 
-    final int duration = sourceDuration > 0
+    final int eventDuration = sourceDuration > 0
         ? structuralSequenceDurationForSource(sourceDuration)
-        : 1;
+        : 0;
+    final int pauseFrames = _projectedPauseFramesForEvent(eventDuration);
 
     final String indent = match.namedGroup('indent') ?? '';
     final String trail = match.namedGroup('trail') ?? '';
+
+    String replacement;
+    if (runtimeMarkers && eventDuration > 0) {
+      final StructuralRuntimeMarker runtime = StructuralRuntimeMarker(
+        placementIndex: index,
+        durationFrames: eventDuration,
+      );
+      replacement =
+          '$indent[REGION:${runtime.regionId}][PAUSE:$pauseFrames]$trail';
+    } else {
+      replacement = '$indent[PAUSE:$pauseFrames]$trail';
+    }
+
     out = out.replaceRange(
       match.start,
       match.end,
-      '$indent[PAUSE:$duration]$trail',
+      replacement,
     );
   }
   return out;

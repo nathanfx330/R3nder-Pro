@@ -95,18 +95,21 @@ class CompiledScript {
 /// Compiles [rawText] into engine-ready text.
 ///
 /// EDIT / TRACK / CLIP and MOSAIC / PANE / CLIP are authored project
-/// structure, not terminal content. They remain byte-for-byte in [rawText],
-/// but the engine projection replaces each complete structural root with only
-/// its newline characters. Keeping those newlines is what lets editor
-/// [LINE:n] markers continue to refer to raw document line numbers even though
-/// the source graph itself does not run in TerminalEngine.
+/// structure, not terminal content. They remain byte-for-byte in [rawText].
+/// Editor compilation preserves their newline coordinates long enough to
+/// inject [LINE:n] markers; those control-only lines are then folded away by
+/// ScriptParser preprocessing and therefore never move the visible cursor.
+/// Real Preview/Bake has no need for raw-line addressing, so each structural
+/// root becomes one parser-stripped internal comment instead. Structural
+/// definitions therefore consume no terminal layout and no program time.
 ///
 /// A standalone `[STRUCT:EDIT.foo]` or `[STRUCT:MOSAIC.bar]` is different:
 /// that is a main-sequence placement. After the source definitions are removed,
-/// the projection replaces the placement with a PAUSE whose duration comes
-/// from the referenced source. TerminalEngine therefore owns the timing while
-/// the editor/render layer owns the structural pixels. The author never types a
-/// second duration for the same cut.
+/// the projection derives its timing from the referenced source. Editor
+/// line-map compilation writes a compensated PAUSE. Real Preview/Bake writes
+/// the same PAUSE preceded by an engine-internal REGION marker so the top-level
+/// Preview can discover which structural placement is live without a second
+/// clock. The author never types either implementation detail.
 ///
 /// [lineMarkers] injects an editor-only `[LINE:n]` at the head of each
 /// document line so the engine reports its read position back as a line
@@ -117,7 +120,10 @@ class CompiledScript {
 /// expansion rewrites line structure. Injecting after would number lines
 /// that do not exist in the document the author is looking at.
 CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
-  final String projected = _engineProjectionSource(rawText);
+  final String projected = _engineProjectionSource(
+    rawText,
+    runtimeMarkers: !lineMarkers,
+  );
   final String marked =
       lineMarkers ? injectLineMarkers(projected) : projected;
 
@@ -149,7 +155,7 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
 }
 
 /// Builds the terminal engine projection while preserving authored line
-/// coordinates.
+/// coordinates only for the editor path that actually needs them.
 ///
 /// Source spans come from the nested CST, so this removes structural roots
 /// rather than trying to match nested blocks with a regular expression. Roots
@@ -158,7 +164,10 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
 /// Sequence placements are projected only AFTER source roots are gone. That is
 /// what prevents a `[STRUCT:...]` accidentally written inside an EDIT/MOSAIC
 /// definition from consuming main-sequence time.
-String _engineProjectionSource(String rawText) {
+String _engineProjectionSource(
+  String rawText, {
+  required bool runtimeMarkers,
+}) {
   final bool hasStructuralRoots = RegExp(
     r'\[(?:EDIT|TRACK|MOSAIC|PANE|CLIP)(?::[^\]\r\n]*)?\]',
   ).hasMatch(rawText);
@@ -167,12 +176,27 @@ String _engineProjectionSource(String rawText) {
   if (hasStructuralRoots) {
     final ScriptCstDocument cst = ScriptCstDocument.parse(rawText);
     for (final ScriptCstBlock root in cst.roots.reversed) {
-      final String owned = rawText.substring(root.startOffset, root.endOffset);
-      final String blankLines = owned.replaceAll(RegExp(r'[^\r\n]'), '');
+      final String replacement;
+      if (runtimeMarkers) {
+        // Preview and bake do not address raw document lines. A structural
+        // definition is metadata, so leave one internal comment token for the
+        // normal parser cleanup to remove together with the following line
+        // break. Unlike a run of empty placeholder lines, this cannot move the
+        // terminal cursor or burn scene ticks before the next authored event.
+        replacement = '[#R3NDER_STRUCTURAL_SOURCE]';
+      } else {
+        // Editor line markers are injected after projection. Preserve the raw
+        // newline coordinates long enough for [LINE:n] to retain authored line
+        // numbers; preprocessing later folds those control-only lines into the
+        // next runnable line, so they still do not move the visible cursor.
+        final String owned =
+            rawText.substring(root.startOffset, root.endOffset);
+        replacement = owned.replaceAll(RegExp(r'[^\r\n]'), '');
+      }
       projected = projected.replaceRange(
         root.startOffset,
         root.endOffset,
-        blankLines,
+        replacement,
       );
     }
   }
@@ -180,6 +204,7 @@ String _engineProjectionSource(String rawText) {
   return projectStructuralSequencePlacements(
     rawDocument: rawText,
     projectedSource: projected,
+    runtimeMarkers: runtimeMarkers,
   );
 }
 

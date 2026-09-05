@@ -61,23 +61,46 @@ Outro
     );
   });
 
-  test('compile removes definitions and schedules full STRUCT presentation', () {
+  test('preview and bake compile an internal runtime STRUCT marker', () {
     final compiled = compileScript(source);
 
     expect(compiled.engineText, isNot(contains('[EDIT:main]')));
     expect(compiled.engineText, isNot(contains('[MOSAIC:wall]')));
     expect(compiled.engineText, isNot(contains('[STRUCT:MOSAIC.wall]')));
-    expect(compiled.engineText, contains('[PAUSE:80]'));
+    expect(
+      compiled.engineText,
+      contains(
+        '[REGION:STRUCTSEQ_0_80]'
+        '[PAUSE:${80 - kStructuralProjectionFramingFrames}]',
+      ),
+    );
     expect(compiled.engineText, contains('Intro'));
     expect(compiled.engineText, contains('Outro'));
   });
 
-  test('editor line markers keep full placement on its authored line', () {
+  test('editor line map keeps plain compensated STRUCT projection', () {
     final compiled = compileScript(source, lineMarkers: true);
-    expect(compiled.engineText, contains('[LINE:13][PAUSE:80]'));
+    expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
+    expect(
+      compiled.engineText,
+      contains(
+        '[LINE:13][PAUSE:${80 - kStructuralProjectionFramingFrames}]',
+      ),
+    );
   });
 
-  test('missing structural source burns one frame instead of typing markup', () {
+  test('runtime marker round-trips placement index and duration', () {
+    final StructuralRuntimeMarker marker = parseStructuralRuntimeRegion(
+      'STRUCTSEQ_7_383',
+    )!;
+
+    expect(marker.placementIndex, 7);
+    expect(marker.durationFrames, 383);
+    expect(marker.regionId, 'STRUCTSEQ_7_383');
+    expect(parseStructuralRuntimeRegion('ordinary_region'), isNull);
+  });
+
+  test('missing structural source burns fallback timing instead of markup', () {
     const String missing = '''Before
 [STRUCT:MOSAIC.missing]
 After
@@ -91,6 +114,7 @@ After
 
     final compiled = compileScript(missing);
     expect(compiled.engineText, isNot(contains('[STRUCT:')));
+    expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
     expect(compiled.engineText, contains('[PAUSE:1]'));
   });
 }

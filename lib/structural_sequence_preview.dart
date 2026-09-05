@@ -20,11 +20,14 @@
 // decode had completed immediately. A slow machine can reveal late, but it
 // cannot invent a different transition curve.
 //
-// The terminal ghost also follows ScenePainter's native chrome rule: as the
-// terminal pulls away from fullscreen its title bar, corners, border, and
-// shadow grow in; on the return they collapse back to zero while the terminal
-// expands. The parked window therefore becomes the fullscreen terminal instead
-// of carrying a fixed title bar to the last frame and dropping it at the cut.
+// When the caller supplies the live SceneEngine + terminal font, the terminal
+// portion of the transition is NOT reconstructed here. ScenePainter's native
+// desktop and terminal-window renderer draws it directly. That preserves the
+// actual authored terminal theme, font, cursor, title, wallpaper/chroma plate,
+// Yaru chrome, and exact fullscreen pixels across the hand-off. The structural
+// foreground window also scales its chrome from that same engine-to-preview
+// ratio, so a small editor pane does not get a 38-widget-pixel title bar while
+// the real terminal beside it is using a scaled native title bar.
 //
 // The editor preview pane is not the render frame. ScenePainter letterboxes the
 // 16:9 engine canvas inside whatever space the editor gives it. Structural
@@ -40,6 +43,8 @@ import 'package:flutter/material.dart';
 
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
+import 'scene_engine.dart';
+import 'scene_painter.dart';
 import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
@@ -53,6 +58,16 @@ class StructuralSequencePreview extends StatefulWidget {
   final bool isPlaying;
   final R3Theme theme;
   final ui.Image? wallpaper;
+
+  /// Live terminal source for a pixel-continuous hand-off. When both this and
+  /// [terminalFontFamily] are present, ScenePainter draws the terminal/desktop
+  /// layer and this widget never substitutes the simplified terminal ghost.
+  final SceneEngine? terminalScene;
+  final String? terminalFontFamily;
+
+  /// Legacy/focused-test seam for the simplified ghost when no live terminal
+  /// scene is supplied. Production PREVIEW and EDIT should supply a live scene.
+  final Size? terminalCursorFraction;
 
   /// Optional seams used by focused widget tests and alternate decoders. The
   /// normal TEXT editor leaves both null and therefore uses the same persistent
@@ -68,6 +83,9 @@ class StructuralSequencePreview extends StatefulWidget {
     required this.isPlaying,
     required this.theme,
     required this.wallpaper,
+    this.terminalScene,
+    this.terminalFontFamily,
+    this.terminalCursorFraction,
     this.backend,
     this.resolveSource,
   });
@@ -124,8 +142,26 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               : 720.0;
 
           final Rect renderFrame = _fittedRenderFrame(width, height);
+          final SceneEngine? liveScene = widget.terminalScene;
+          final String? liveFont = widget.terminalFontFamily;
+          final bool useNativeTerminal =
+              liveScene != null && liveFont != null && liveFont.isNotEmpty;
+
+          // ScenePainter expresses chrome in logical engine pixels and then
+          // applies the engine-to-widget fit. Reuse that exact conversion for
+          // the foreground structural window. This is load-bearing in EDIT:
+          // a fixed 38 widget pixels was much larger than the native title bar
+          // in a reduced preview pane and visibly broke the hand-off.
+          final double chromeScale = useNativeTerminal
+              ? _nativeChromeScale(renderFrame, liveScene!)
+              : 1.0;
+          final double titleHeight = _StructuralWindow.titleHeight * chromeScale;
+
           final Rect fullTerminal = renderFrame;
-          final Rect presentationRect = _structuralTargetRect(renderFrame);
+          final Rect presentationRect = _structuralTargetRect(
+            renderFrame,
+            titleHeight: titleHeight,
+          );
           final Rect emergenceRect = _structuralEmergenceRect(presentationRect);
 
           Rect terminalRect = presentationRect;
@@ -216,33 +252,72 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
+          // Fallback ghost only. Production passes the real SceneEngine and
+          // therefore never needs to approximate cursor metrics or theme.
+          final Size cursorFraction = widget.terminalCursorFraction ??
+              _TerminalGhost.fallbackCursorFraction;
+          final double terminalScale = fullTerminal.width > 0.0
+              ? terminalRect.width / fullTerminal.width
+              : 1.0;
+          final Size terminalCursorSize = Size(
+            fullTerminal.width * cursorFraction.width * terminalScale,
+            fullTerminal.height * cursorFraction.height * terminalScale,
+          );
+
           return Stack(
             fit: StackFit.expand,
             children: [
-              Positioned.fromRect(
-                key: const ValueKey<String>('structural-desktop-positioned'),
-                rect: renderFrame,
-                child: Opacity(
-                  key: const ValueKey<String>('structural-desktop-layer'),
-                  opacity: desktopOpacity.clamp(0.0, 1.0),
-                  child: _DesktopPlate(wallpaper: widget.wallpaper),
-                ),
-              ),
-
-              if (terminalOpacity > 0.001)
-                Positioned.fromRect(
-                  key: const ValueKey<String>('structural-terminal-positioned'),
-                  rect: terminalRect,
-                  child: Opacity(
-                    key: const ValueKey<String>('structural-terminal-opacity'),
-                    opacity: terminalOpacity.clamp(0.0, 1.0),
-                    child: _TerminalGhost(
-                      key: const ValueKey<String>('structural-terminal-window'),
-                      theme: widget.theme,
-                      chrome: terminalChrome.clamp(0.0, 1.0),
+              if (useNativeTerminal)
+                Positioned.fill(
+                  key: const ValueKey<String>(
+                    'structural-native-terminal-positioned',
+                  ),
+                  child: CustomPaint(
+                    key: const ValueKey<String>(
+                      'structural-native-terminal-layer',
+                    ),
+                    painter: SceneStructuralTerminalPainter(
+                      scene: liveScene!,
+                      fontFamily: liveFont!,
+                      terminalRect: _rectFraction(terminalRect, renderFrame),
+                      desktopOpacity: desktopOpacity,
+                      terminalOpacity: terminalOpacity,
+                      terminalChrome: terminalChrome,
                     ),
                   ),
+                )
+              else ...[
+                Positioned.fromRect(
+                  key: const ValueKey<String>('structural-desktop-positioned'),
+                  rect: renderFrame,
+                  child: Opacity(
+                    key: const ValueKey<String>('structural-desktop-layer'),
+                    opacity: desktopOpacity.clamp(0.0, 1.0),
+                    child: _DesktopPlate(wallpaper: widget.wallpaper),
+                  ),
                 ),
+                if (terminalOpacity > 0.001)
+                  Positioned.fromRect(
+                    key: const ValueKey<String>(
+                      'structural-terminal-positioned',
+                    ),
+                    rect: terminalRect,
+                    child: Opacity(
+                      key: const ValueKey<String>(
+                        'structural-terminal-opacity',
+                      ),
+                      opacity: terminalOpacity.clamp(0.0, 1.0),
+                      child: _TerminalGhost(
+                        key: const ValueKey<String>(
+                          'structural-terminal-window',
+                        ),
+                        theme: widget.theme,
+                        chrome: terminalChrome.clamp(0.0, 1.0),
+                        cursorSize: terminalCursorSize,
+                      ),
+                    ),
+                  ),
+              ],
 
               if (structuralWindowPresent)
                 Positioned.fromRect(
@@ -266,6 +341,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                           stage == StructuralSequenceStage.showing ||
                           stage == StructuralSequenceStage.closing,
                       theme: widget.theme,
+                      chromeScale: chromeScale,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
@@ -286,6 +362,29 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           );
         },
       ),
+    );
+  }
+
+  /// Native chrome is specified in logical engine pixels. This converts one
+  /// logical style pixel into widget pixels using the exact ScenePainter fit.
+  /// 1080p uses terminal.scale=1; 4K uses terminal.scale=2, so both produce
+  /// the same apparent chrome size at the same preview dimensions.
+  static double _nativeChromeScale(Rect renderFrame, SceneEngine scene) {
+    final double engineWidth = scene.width;
+    if (engineWidth <= 0.0 || renderFrame.width <= 0.0) return 1.0;
+    return scene.terminal.scale * renderFrame.width / engineWidth;
+  }
+
+  /// Maps a widget-space rectangle onto the fitted engine frame as 0..1
+  /// coordinates. SceneStructuralTerminalPainter converts this back into the
+  /// live SceneEngine's logical pixels before invoking the native renderer.
+  static Rect _rectFraction(Rect rect, Rect frame) {
+    if (frame.width <= 0.0 || frame.height <= 0.0) return Rect.zero;
+    return Rect.fromLTRB(
+      (rect.left - frame.left) / frame.width,
+      (rect.top - frame.top) / frame.height,
+      (rect.right - frame.left) / frame.width,
+      (rect.bottom - frame.top) / frame.height,
     );
   }
 
@@ -313,10 +412,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   }
 
   /// Final presentation rectangle inside the fitted render frame. The client
-  /// area itself is 16:9, and the title bar is added above it. This is both
-  /// the terminal zoom target and the final structural-window geometry.
-  static Rect _structuralTargetRect(Rect frame) {
-    const double titleHeight = _StructuralWindow.titleHeight;
+  /// area itself is 16:9, and [titleHeight] is added above it. Production uses
+  /// the ScenePainter-scaled native title height; fallback widget tests retain
+  /// the historical 38-widget-pixel geometry.
+  static Rect _structuralTargetRect(
+    Rect frame, {
+    double titleHeight = _StructuralWindow.titleHeight,
+  }) {
     final double maxW = frame.width * 0.86;
     final double maxH = frame.height * 0.78;
 
@@ -375,14 +477,17 @@ class _DesktopPlate extends StatelessWidget {
 
 class _TerminalGhost extends StatelessWidget {
   static const double titleHeight = 38.0;
+  static const Size fallbackCursorFraction = Size(0.01, 0.02);
 
   final R3Theme theme;
   final double chrome;
+  final Size cursorSize;
 
   const _TerminalGhost({
     super.key,
     required this.theme,
     required this.chrome,
+    required this.cursorSize,
   });
 
   @override
@@ -448,8 +553,9 @@ class _TerminalGhost extends StatelessWidget {
                 child: Align(
                   alignment: const Alignment(-0.94, -0.88),
                   child: Container(
-                    width: 7,
-                    height: 14,
+                    key: const ValueKey<String>('structural-terminal-cursor'),
+                    width: cursorSize.width,
+                    height: cursorSize.height,
                     color: theme.accent,
                   ),
                 ),
@@ -472,6 +578,7 @@ class _StructuralWindow extends StatelessWidget {
   final bool isPlaying;
   final bool showVideo;
   final R3Theme theme;
+  final double chromeScale;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback onFirstFrameReady;
@@ -485,6 +592,7 @@ class _StructuralWindow extends StatelessWidget {
     required this.isPlaying,
     required this.showVideo,
     required this.theme,
+    required this.chromeScale,
     required this.backend,
     required this.resolveSource,
     required this.onFirstFrameReady,
@@ -492,31 +600,40 @@ class _StructuralWindow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double s = chromeScale > 0.0 ? chromeScale : 1.0;
+    final double barH = titleHeight * s;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF171717),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: const Color(0xFF3B3938)),
-        boxShadow: const [
+        borderRadius: BorderRadius.circular(5 * s),
+        border: Border.all(
+          color: const Color(0xFF3B3938),
+          width: math.max(0.5, s),
+        ),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x8A000000),
-            blurRadius: 30,
-            spreadRadius: 2,
-            offset: Offset(0, 16),
+            color: const Color(0x8A000000),
+            blurRadius: 30 * s,
+            spreadRadius: 2 * s,
+            offset: Offset(0, 16 * s),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(4 * s),
         child: Column(
           children: [
             Container(
-              height: titleHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: const BoxDecoration(
-                color: Color(0xFF33302F),
+              height: barH,
+              padding: EdgeInsets.symmetric(horizontal: 14 * s),
+              decoration: BoxDecoration(
+                color: const Color(0xFF33302F),
                 border: Border(
-                  bottom: BorderSide(color: Color(0xFF474341)),
+                  bottom: BorderSide(
+                    color: const Color(0xFF474341),
+                    width: math.max(0.5, s),
+                  ),
                 ),
               ),
               child: Row(
@@ -527,7 +644,7 @@ class _StructuralWindow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.value.copyWith(
                         color: const Color(0xFFC7C3C0),
-                        fontSize: 12,
+                        fontSize: 12 * s,
                       ),
                     ),
                   ),
@@ -535,6 +652,8 @@ class _StructuralWindow extends StatelessWidget {
                     'F$sourceFrame / $sourceDurationFrames',
                     style: theme.micro.copyWith(
                       color: const Color(0xFF8E8884),
+                      fontSize: (theme.micro.fontSize ?? 10.5) * s,
+                      letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
                     ),
                   ),
                 ],
