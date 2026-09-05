@@ -210,12 +210,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             fit: StackFit.expand,
             children: [
               Opacity(
+                key: const ValueKey<String>('structural-desktop-layer'),
                 opacity: desktopOpacity.clamp(0.0, 1.0),
                 child: _DesktopPlate(wallpaper: widget.wallpaper),
               ),
 
               if (terminalOpacity > 0.001)
                 Positioned.fromRect(
+                  key: const ValueKey<String>('structural-terminal-positioned'),
                   rect: terminalRect,
                   child: Opacity(
                     key: const ValueKey<String>('structural-terminal-opacity'),
@@ -229,6 +231,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
               if (structuralWindowPresent)
                 Positioned.fromRect(
+                  key: const ValueKey<String>('structural-window-positioned'),
                   rect: structuralRect,
                   child: Opacity(
                     key: const ValueKey<String>('structural-window-opacity'),
@@ -257,6 +260,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
               if (_firstFrameReady)
                 const Positioned(
+                  key: ValueKey<String>('structural-ready-positioned'),
                   left: 0,
                   top: 0,
                   child: SizedBox.shrink(
