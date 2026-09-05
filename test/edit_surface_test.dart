@@ -102,23 +102,20 @@ void main() {
     );
   });
 
-  testWidgets('crossfade menu serializes transition into CLIP source',
+  testWidgets('crossfade controls are owned by clip edges, not the toolbar',
       (WidgetTester tester) async {
-    String? changed;
-    await tester.pumpWidget(_host(onSourceChanged: (String value) {
-      changed = value;
-    }));
+    await tester.pumpWidget(_host(onSourceChanged: (_) {}));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('intro'));
-    await tester.pump();
-    await tester.tap(find.text('XFADE'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('12 frames'));
-    await tester.pumpAndSettle();
-
-    expect(changed, isNotNull);
-    expect(changed, contains('[#EDIT_TRANSITION:CROSSFADE:12]'));
+    expect(find.text('XFADE'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('edit-clip-V1-intro-in-handle')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-clip-V1-intro-out-handle')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('ruler drag coalesces a burst of scrub positions',
