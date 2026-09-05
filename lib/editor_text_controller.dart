@@ -70,11 +70,12 @@ class EditorTextController extends TextEditingController {
   static final RegExp _colorPattern =
       RegExp(r':(\d{1,3},\d{1,3},\d{1,3})(?=:|\])');
 
-  /// Structural video markup is deliberately outside the terminal tag grammar.
-  /// It still deserves first-class lexical treatment in TEXT mode. The CST and
-  /// EditDocumentModel own its semantics; this regex is presentation only.
+  /// Structural video source definitions and sequence placements deliberately
+  /// live outside the terminal tag grammar. They still deserve first-class
+  /// lexical treatment in TEXT mode. The CST/Edit model owns EDIT/MOSAIC
+  /// definitions; STRUCT is the sequence-side reference that consumes time.
   static final RegExp _structuralTagPattern = RegExp(
-    r'\[(?:/)?(?:EDIT|TRACK|CLIP|MOSAIC|PANE)(?::[^\]\r\n]*)?\]',
+    r'\[(?:/)?(?:EDIT|TRACK|CLIP|MOSAIC|PANE|STRUCT)(?::[^\]\r\n]*)?\]',
   );
 
   /// A cool steel/cyan tone keeps structural video markup distinct from both
@@ -171,9 +172,10 @@ class EditorTextController extends TextEditingController {
 
     // 1.25 Structural video language.
     //
-    // EDIT / TRACK / CLIP and MOSAIC / PANE are canonical source structures,
-    // not terminal copy. Giving the full tag a semantic colour makes that
-    // distinction visible while typing without claiming parser ownership here.
+    // EDIT / TRACK / CLIP and MOSAIC / PANE are canonical source structures.
+    // STRUCT is the sequence reference that plays one of those sources. Giving
+    // the full tag a semantic colour makes both sides of that relationship
+    // visible while typing without claiming terminal-parser ownership here.
     // Actual missing-asset/problem styling runs after this and therefore wins.
     for (final RegExpMatch match in _structuralTagPattern.allMatches(text)) {
       for (int j = match.start; j < match.end && j < len; j++) {
