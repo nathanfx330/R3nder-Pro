@@ -13,6 +13,8 @@ import 'scene_evaluator.dart';
 import 'compositor.dart';
 import 'motion.dart';
 import 'diag.dart';
+import 'media_layer.dart';
+import 'program_structural_export.dart';
 
 // The sum of two beds, and the gain spelling, shared with the preview
 // player. NOT an import of audio_bed.dart: export and preview remain
@@ -146,6 +148,15 @@ class SceneExporter {
     required int fps,
     required int width,
     required int height,
+    /// Raw authored document containing EDIT/MOSAIC definitions and STRUCT
+    /// placements. When null, bake is the historical terminal-only path.
+    String? structuralDocument,
+    /// Resolves relative CLIP/luma paths for [structuralDocument]. Both this
+    /// and the document must be present before whole-program STRUCT is enabled.
+    String Function(String source)? resolveStructuralSource,
+    /// Decoder seam for deterministic exporter tests. Production uses native
+    /// persistent MLT when omitted.
+    MediaDecoderBackend? structuralBackend,
     /// Background audio bed, muxed as a second ffmpeg input. Null means a
     /// silent bake. Export never touches the preview player: ffmpeg reads the
     /// original file, so the bake gets full source rate and channel count
@@ -539,6 +550,23 @@ class SceneExporter {
       }
     });
 
+    ProgramStructuralFrameRenderer? structuralRenderer;
+    if (structuralDocument != null && resolveStructuralSource != null) {
+      final ProgramStructuralFrameRenderer candidate =
+          ProgramStructuralFrameRenderer(
+        rawDocument: structuralDocument,
+        width: width,
+        height: height,
+        backend: structuralBackend ?? NativeMltMediaBackend(),
+        resolveSource: resolveStructuralSource,
+      );
+      if (candidate.hasPlacements) {
+        structuralRenderer = candidate;
+      } else {
+        candidate.dispose();
+      }
+    }
+
     final Isolate writerIsolate = await Isolate.spawn(_fifoWriterMain, (fifoPath, fromWriter.sendPort));
     final Process proc = await Process.start('ffmpeg', args);
 
@@ -553,6 +581,7 @@ class SceneExporter {
     proc.stderr.transform(utf8.decoder).listen(errBuf.write);
 
     Future<void> teardown() async {
+      structuralRenderer?.dispose();
       try { proc.kill(ProcessSignal.sigterm); } catch (_) {}
       if (!readyC.isCompleted) {
         try {
@@ -636,8 +665,19 @@ class SceneExporter {
               '(reached ${evaluation.reachedFrame}).');
         }
 
-        // Render the exact selected project frame.
-        final ui.Image frame = await compositor.advanceExportAsync(scene, fontFamily);
+        // STRUCT observes the same already-evaluated SceneEngine frame Preview
+        // does. Exact media decode may block here, but it cannot advance the
+        // engine or select any project frame other than i.
+        final ui.Image? structuralFrame = structuralRenderer == null
+            ? null
+            : await structuralRenderer.renderIfActive(
+                scene: scene,
+                fontFamily: fontFamily,
+              );
+
+        // Non-STRUCT frames stay on the original terminal SceneCompositor.
+        final ui.Image frame = structuralFrame ??
+            await compositor.advanceExportAsync(scene, fontFamily);
         final Future<ByteData?> bytesF = frame.toByteData(format: ui.ImageByteFormat.rawRgba);
 
         if (inFlight != null) await resolveInFlight();
@@ -676,6 +716,7 @@ class SceneExporter {
       );
     }
 
+    structuralRenderer?.dispose();
     fromWriter.close();
     try {
       final File f = File(fifoPath);
