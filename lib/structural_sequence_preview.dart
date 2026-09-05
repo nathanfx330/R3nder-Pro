@@ -336,6 +336,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
+                      // The main transport is already moving during zoom-out
+                      // and opening even though source time is intentionally
+                      // held at frame zero. Keep the decoder in that same moving
+                      // profile so entering showing does not switch decode size
+                      // and discard the frame-zero predecode exactly when the
+                      // authored fade begins.
+                      fastPreview: widget.isPlaying,
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
                           stage == StructuralSequenceStage.opening ||
                           stage == StructuralSequenceStage.showing ||
@@ -576,6 +583,7 @@ class _StructuralWindow extends StatelessWidget {
   final int sourceFrame;
   final int sourceDurationFrames;
   final bool isPlaying;
+  final bool fastPreview;
   final bool showVideo;
   final R3Theme theme;
   final double chromeScale;
@@ -590,6 +598,7 @@ class _StructuralWindow extends StatelessWidget {
     required this.sourceFrame,
     required this.sourceDurationFrames,
     required this.isPlaying,
+    required this.fastPreview,
     required this.showVideo,
     required this.theme,
     required this.chromeScale,
@@ -670,7 +679,7 @@ class _StructuralWindow extends StatelessWidget {
                         currentFrame: sourceFrame,
                         theme: theme,
                         isPlaying: isPlaying,
-                        fastPreview: isPlaying,
+                        fastPreview: fastPreview,
                         backend: backend,
                         resolveSource: resolveSource,
                         onFirstFrameReady: onFirstFrameReady,
