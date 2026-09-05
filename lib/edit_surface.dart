@@ -211,6 +211,42 @@ class _EditSurfaceState extends State<EditSurface> {
     });
   }
 
+  int _sourceOutFrame(EditSurfaceClip clip) {
+    return clip.clip.sourceFrameAtProjectOffset(clip.durationFrames - 1);
+  }
+
+  void _trimInToPlayhead(EditSurfaceDocument document) {
+    final EditSurfaceClip? selected = _selected(document);
+    if (selected == null) return;
+    final int frame = _effectiveFrame;
+    if (frame <= selected.atFrame || frame >= selected.endFrameExclusive) {
+      setState(() {
+        _error = 'Park the playhead inside the selected CLIP to trim its IN.';
+      });
+      return;
+    }
+
+    _commit((EditSurfaceDocument current) {
+      return current.trimStart(selected.trackId, selected.id, frame);
+    });
+  }
+
+  void _trimOutToPlayhead(EditSurfaceDocument document) {
+    final EditSurfaceClip? selected = _selected(document);
+    if (selected == null) return;
+    final int frame = _effectiveFrame;
+    if (frame < selected.atFrame || frame >= selected.endFrameExclusive - 1) {
+      setState(() {
+        _error = 'Park the playhead before the selected CLIP end to trim its OUT.';
+      });
+      return;
+    }
+
+    _commit((EditSurfaceDocument current) {
+      return current.trimEnd(selected.trackId, selected.id, frame + 1);
+    });
+  }
+
   void _splitSelected(EditSurfaceDocument document) {
     final EditSurfaceClip? selected = _selected(document);
     if (selected == null) return;
@@ -569,6 +605,8 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceClip? selected,
   ) {
     final int frame = _effectiveFrame;
+    final int? sourceOut = selected == null ? null : _sourceOutFrame(selected);
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: sc(10), vertical: sc(7)),
@@ -590,10 +628,8 @@ class _EditSurfaceState extends State<EditSurface> {
               Expanded(
                 child: Text(
                   selected == null
-                      ? 'SELECT A CLIP'
-                      : '${selected.trackId}  ${selected.id}    '
-                          'AT ${selected.atFrame}   IN ${selected.inFrame}   '
-                          'DUR ${selected.durationFrames}   ${selected.speed}X',
+                      ? 'SELECT A CLIP TO TRIM'
+                      : '${selected.id}   ${selected.source}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: selected == null
@@ -605,6 +641,35 @@ class _EditSurfaceState extends State<EditSurface> {
               Text('${document.projectFrameCount}F', style: widget.theme.micro),
             ],
           ),
+          if (selected != null) ...[
+            SizedBox(height: sc(6)),
+            Wrap(
+              spacing: sc(10),
+              runSpacing: sc(4),
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'SOURCE IN  F${selected.inFrame}',
+                  key: const ValueKey<String>('edit-selected-source-in'),
+                  style: widget.theme.microAccent,
+                ),
+                Text(
+                  'SOURCE OUT  F$sourceOut',
+                  key: const ValueKey<String>('edit-selected-source-out'),
+                  style: widget.theme.microAccent,
+                ),
+                Text(
+                  'CUT  ${selected.durationFrames}F',
+                  key: const ValueKey<String>('edit-selected-cut-duration'),
+                  style: widget.theme.micro.copyWith(color: R3Theme.textBright),
+                ),
+                Text(
+                  'TRACK ${selected.trackId}   SPEED ${selected.speed}X',
+                  style: widget.theme.micro,
+                ),
+              ],
+            ),
+          ],
           SizedBox(height: sc(6)),
           Wrap(
             spacing: sc(4),
@@ -613,6 +678,20 @@ class _EditSurfaceState extends State<EditSurface> {
             children: [
               if (selected != null) ...[
                 _toolButton(
+                  'TRIM IN',
+                  onPressed: frame > selected.atFrame &&
+                          frame < selected.endFrameExclusive
+                      ? () => _trimInToPlayhead(document)
+                      : null,
+                ),
+                _toolButton(
+                  'TRIM OUT',
+                  onPressed: frame >= selected.atFrame &&
+                          frame < selected.endFrameExclusive - 1
+                      ? () => _trimOutToPlayhead(document)
+                      : null,
+                ),
+                _toolButton(
                   'SPLIT',
                   onPressed: frame > selected.atFrame &&
                           frame < selected.endFrameExclusive
@@ -620,7 +699,7 @@ class _EditSurfaceState extends State<EditSurface> {
                       : null,
                 ),
                 _toolButton(
-                  'SLIP 1',
+                  'SLIP -1',
                   onPressed: selected.inFrame > 0
                       ? () => _commit((EditSurfaceDocument current) {
                             return current.slipClip(
@@ -1012,6 +1091,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     final Color fill = widget.selected
         ? widget.theme.accentFaint
         : R3Theme.ribbonMedia.withValues(alpha: 0.22);
+    final int sourceOut = widget.clip.clip.sourceFrameAtProjectOffset(
+      widget.clip.durationFrames - 1,
+    );
 
     return Transform.translate(
       offset: Offset(moveOffset, 0),
@@ -1048,7 +1130,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                       SizedBox(height: sc(2)),
                       Text(
                         '${widget.clip.source}   IN ${widget.clip.inFrame}   '
-                        '${widget.clip.speed}X',
+                        'OUT $sourceOut   ${widget.clip.durationFrames}F',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: widget.theme.micro,
