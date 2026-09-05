@@ -94,6 +94,52 @@ void main() {
     compositor.dispose();
   });
 
+  test('leading EDIT gap holds black until incoming fade begins', () {
+    const String source = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:solo:solo.mp4:3:0:6:1]
+[#EDIT_TRANSITION:CROSSFADE:3]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+
+    final EditVideoCompositor compositor = _compositor(source);
+
+    for (int frame = 0; frame < 3; frame++) {
+      final EditVideoCompositeResult gap = compositor.render(
+        'main',
+        ProjectTime(frame: frame, mode: ProjectClockMode.scrub),
+        size,
+      );
+      expect(gap.hasImage, isTrue, reason: 'gap frame $frame must be black');
+      expect(gap.mediaFrames, isEmpty);
+      expect(_pixel(gap), <int>[0, 0, 0, 255]);
+    }
+
+    final EditVideoCompositeResult fadeStart = compositor.render(
+      'main',
+      ProjectTime(frame: 3, mode: ProjectClockMode.scrub),
+      size,
+    );
+    final EditVideoCompositeResult fadeMiddle = compositor.render(
+      'main',
+      ProjectTime(frame: 4, mode: ProjectClockMode.scrub),
+      size,
+    );
+    final EditVideoCompositeResult fadeEnd = compositor.render(
+      'main',
+      ProjectTime(frame: 5, mode: ProjectClockMode.scrub),
+      size,
+    );
+
+    expect(_pixel(fadeStart), <int>[0, 0, 0, 255]);
+    expect(_pixel(fadeMiddle), <int>[128, 0, 0, 255]);
+    expect(_pixel(fadeEnd), <int>[255, 0, 0, 255]);
+
+    compositor.dispose();
+  });
+
   test('outgoing crossfade on an isolated clip fades to opaque black', () {
     const String source = '''[EDIT:main]
 [TRACK:V1]
