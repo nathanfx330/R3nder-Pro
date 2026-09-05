@@ -548,6 +548,20 @@ class EditVideoCompositor {
     });
 
     if (layers.isEmpty) {
+      // An authored EDIT frame with no active clip is picture black, not a
+      // decode failure. This matters at the head of a structural source: the
+      // STRUCT opening choreography deliberately holds source frame zero until
+      // showing begins, so a leading gap must remain a stable black picture.
+      // If media.frames is non-empty, however, an authored clip was active and
+      // failed to become a decoded layer. Preserve that diagnostic instead of
+      // hiding offline or pending media behind black.
+      if (media.frames.isEmpty) {
+        return _blackResult(
+          size,
+          media.frames,
+          diagnosticFrames: diagnosticFrames,
+        );
+      }
       return _emptyResult(
         size,
         media.frames,
@@ -763,6 +777,27 @@ class EditVideoCompositor {
       topFrame: topFrame,
       contributors: List<MediaFrame>.unmodifiable(contributors),
       mediaFrames: media.frames,
+      diagnosticFrames: diagnosticFrames,
+    );
+  }
+
+  EditVideoCompositeResult _blackResult(
+    ui.Size size,
+    List<MediaFrame> mediaFrames, {
+    required List<MediaFrame> diagnosticFrames,
+  }) {
+    final int width = size.width.round();
+    final int height = size.height.round();
+    final Uint8List rgba = Uint8List(width * height * 4);
+    _fillOpaqueBlack(rgba);
+    return EditVideoCompositeResult(
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+      topFrame: null,
+      contributors: const <MediaFrame>[],
+      mediaFrames: mediaFrames,
       diagnosticFrames: diagnosticFrames,
     );
   }
