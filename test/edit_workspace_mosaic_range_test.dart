@@ -132,7 +132,9 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.text('base'));
+      final Finder baseLabel = find.text('base');
+      expect(baseLabel, findsOneWidget);
+      await tester.tapAt(tester.getCenter(baseLabel));
       await tester.pump();
 
       expect(find.text('SOURCE IN  F3'), findsOneWidget);
