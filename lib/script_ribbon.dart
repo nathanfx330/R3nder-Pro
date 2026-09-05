@@ -114,6 +114,7 @@ _Band _bandFor(String type) {
     case 'CARD':
     case 'DOSSIER':
     case 'TIMELINE':
+    case 'STRUCT':
       return _Band.window;
 
     case 'IMG':
@@ -295,6 +296,15 @@ List<RibbonBlock> buildRibbonBlocks(
     final int line = rawLineAtFrame[f];
     final int idx =
         (line >= 0 && line <= maxLine) ? nodeAtLine[line] : -1;
+
+    // SceneEngine can spend real frames finishing a presentation after its
+    // terminal read head has already left the authored line. Those frames are
+    // not dead air: they are the outgoing event's close/handoff animation.
+    // Keeping the current run open across an unmapped interval makes the
+    // ribbon describe visible runtime instead of cutting a black hole between
+    // two authored events. Leading unmapped time stays unowned because there
+    // is no previous event to inherit it. The end hold is excluded above.
+    if (idx < 0) continue;
 
     if (idx != runNode) {
       closeRun(f);
@@ -622,8 +632,8 @@ class _RibbonPainter extends CustomPainter {
       // A LOOP FILLS THE WIDTH. Without one, the lane ends where the track
       // ends and the gap after it is real silence you can see. With one, the
       // score plays under every frame, so the lane runs the full width and
-      // the repeat boundaries are marked instead. Drawing a looping score as
-      // a short lane would show silence that will not be in the file.
+      // the repeat boundaries are marked instead. Same two numbers, two
+      // different readings.
       final int visible = musicLoops
           ? totalFrames
           : (musicFrames < totalFrames ? musicFrames : totalFrames);
