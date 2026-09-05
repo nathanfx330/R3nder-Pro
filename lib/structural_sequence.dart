@@ -109,6 +109,38 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
   return List<StructuralSequencePlacement>.unmodifiable(out);
 }
 
+/// Appends one structural source as the next event in the main TEXT sequence.
+///
+/// Source definitions remain where they already live. The sequence receives
+/// only a lightweight reference and derives its duration from the selected
+/// EDIT/MOSAIC definition. This is the serializer used by the EDIT workspace's
+/// ADD TO SEQUENCE button, so the GUI never has to invent or duplicate frame
+/// counts.
+String appendStructuralSequencePlacement({
+  required String rawDocument,
+  required StructuralSourceRef sourceRef,
+}) {
+  final EditDocumentModel model = EditDocumentModel.parse(rawDocument);
+  if (!model.containsStructuralSource(sourceRef)) {
+    throw StateError('No structural source named ${sourceRef.canonicalSource}.');
+  }
+
+  final int duration = model.structuralSourceFrameCount(sourceRef);
+  if (duration <= 0) {
+    throw StateError('${sourceRef.canonicalSource} has no authored frames.');
+  }
+
+  final String newline = rawDocument.contains('\r\n') ? '\r\n' : '\n';
+  final StringBuffer out = StringBuffer(rawDocument);
+  if (rawDocument.isNotEmpty &&
+      !rawDocument.endsWith('\n') &&
+      !rawDocument.endsWith('\r')) {
+    out.write(newline);
+  }
+  out.write('[STRUCT:${sourceRef.canonicalSource}]$newline');
+  return out.toString();
+}
+
 /// Replaces sequence placements in an already root-stripped engine projection
 /// with ordinary PAUSE tags of the exact structural-source duration.
 ///
