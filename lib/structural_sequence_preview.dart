@@ -9,6 +9,12 @@
 // window close, terminal zoom-in. The live structural compositor remains a
 // widget because its MLT decoder is persistent and frame-addressed; the shell
 // around it is presentation geometry only.
+//
+// The critical continuity rule is geometric: the first opening frame occupies
+// exactly the parked-terminal rectangle produced by zoom-out, and the last
+// closing frame returns to that exact rectangle before zoom-in begins. The
+// structural window therefore grows out of the parked window instead of
+// appearing as an unrelated centered window.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -70,12 +76,14 @@ class StructuralSequencePreview extends StatelessWidget {
 
           final Rect fullTerminal = Rect.fromLTWH(0, 0, width, height);
           final Rect parkedTerminal = _parkedTerminalRect(width, height);
+          final Rect structuralTarget = _structuralTargetRect(width, height);
 
           Rect terminalRect = parkedTerminal;
+          Rect structuralRect = structuralTarget;
           double desktopOpacity = 1.0;
           double terminalOpacity = 0.0;
           double structuralOpacity = 0.0;
-          double structuralScale = 1.0;
+          bool structuralWindowPresent = false;
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
@@ -83,27 +91,43 @@ class StructuralSequencePreview extends StatelessWidget {
               desktopOpacity = eased;
               terminalOpacity = 1.0;
               break;
+
             case StructuralSequenceStage.opening:
+              // Continuity contract: frame zero of opening is exactly the
+              // parked terminal rect. No independently centered scale starts
+              // here; the structural window physically grows out of the
+              // window that zoom-out just produced.
               terminalRect = parkedTerminal;
+              structuralRect =
+                  Rect.lerp(parkedTerminal, structuralTarget, eased)!;
               desktopOpacity = 1.0;
               terminalOpacity = 1.0 - eased;
               structuralOpacity = eased;
-              structuralScale = 0.88 + (0.12 * eased);
+              structuralWindowPresent = true;
               break;
+
             case StructuralSequenceStage.showing:
               terminalRect = parkedTerminal;
+              structuralRect = structuralTarget;
               desktopOpacity = 1.0;
               terminalOpacity = 0.0;
               structuralOpacity = 1.0;
-              structuralScale = 1.0;
+              structuralWindowPresent = true;
               break;
+
             case StructuralSequenceStage.closing:
+              // Exact reverse of opening. On the final closing frame the
+              // structural shell is parked where the terminal ghost already
+              // is, so zoom-in begins from the same rectangle with no jump.
               terminalRect = parkedTerminal;
+              structuralRect =
+                  Rect.lerp(structuralTarget, parkedTerminal, eased)!;
               desktopOpacity = 1.0;
               terminalOpacity = eased;
               structuralOpacity = 1.0 - eased;
-              structuralScale = 1.0 - (0.12 * eased);
+              structuralWindowPresent = true;
               break;
+
             case StructuralSequenceStage.zoomIn:
               terminalRect = Rect.lerp(parkedTerminal, fullTerminal, eased)!;
               desktopOpacity = 1.0 - eased;
@@ -124,29 +148,31 @@ class StructuralSequencePreview extends StatelessWidget {
                   rect: terminalRect,
                   child: Opacity(
                     opacity: terminalOpacity.clamp(0.0, 1.0),
-                    child: _TerminalGhost(theme: theme),
+                    child: _TerminalGhost(
+                      key: const ValueKey<String>('structural-terminal-window'),
+                      theme: theme,
+                    ),
                   ),
                 ),
 
-              if (structuralOpacity > 0.001)
-                Center(
+              if (structuralWindowPresent)
+                Positioned.fromRect(
+                  rect: structuralRect,
                   child: Opacity(
                     opacity: structuralOpacity.clamp(0.0, 1.0),
-                    child: Transform.scale(
-                      scale: structuralScale,
-                      child: _StructuralWindow(
-                        source: source,
-                        rawDocument: rawDocument,
-                        sourceFrame: sourceFrame,
-                        sourceDurationFrames: placement.sourceDurationFrames,
-                        isPlaying: isPlaying &&
-                            stage == StructuralSequenceStage.showing,
-                        theme: theme,
-                        backend: backend,
-                        resolveSource: resolveSource,
-                        maxWidth: width * 0.86,
-                        maxHeight: height * 0.78,
-                      ),
+                    child: _StructuralWindow(
+                      key: const ValueKey<String>('structural-window-frame'),
+                      source: source,
+                      rawDocument: rawDocument,
+                      sourceFrame: sourceFrame,
+                      sourceDurationFrames: placement.sourceDurationFrames,
+                      isPlaying: isPlaying &&
+                          stage == StructuralSequenceStage.showing,
+                      showVideo: stage == StructuralSequenceStage.showing ||
+                          stage == StructuralSequenceStage.closing,
+                      theme: theme,
+                      backend: backend,
+                      resolveSource: resolveSource,
                     ),
                   ),
                 ),
@@ -172,6 +198,28 @@ class StructuralSequencePreview extends StatelessWidget {
       width * 0.055,
       height * 0.09,
       contentW,
+      windowH,
+    );
+  }
+
+  static Rect _structuralTargetRect(double width, double height) {
+    const double titleHeight = _StructuralWindow.titleHeight;
+    final double maxW = width * 0.86;
+    final double maxH = height * 0.78;
+
+    double clientW = maxW;
+    double clientH = clientW * 9.0 / 16.0;
+    if (clientH + titleHeight > maxH) {
+      clientH = math.max(1.0, maxH - titleHeight);
+      clientW = clientH * 16.0 / 9.0;
+    }
+
+    final double windowW = clientW;
+    final double windowH = clientH + titleHeight;
+    return Rect.fromLTWH(
+      (width - windowW) / 2.0,
+      (height - windowH) / 2.0,
+      windowW,
       windowH,
     );
   }
@@ -203,7 +251,7 @@ class _DesktopPlate extends StatelessWidget {
 class _TerminalGhost extends StatelessWidget {
   final R3Theme theme;
 
-  const _TerminalGhost({required this.theme});
+  const _TerminalGhost({super.key, required this.theme});
 
   @override
   Widget build(BuildContext context) {
@@ -258,111 +306,99 @@ class _TerminalGhost extends StatelessWidget {
 }
 
 class _StructuralWindow extends StatelessWidget {
-  static const double _titleHeight = 38.0;
+  static const double titleHeight = 38.0;
 
   final String source;
   final String rawDocument;
   final int sourceFrame;
   final int sourceDurationFrames;
   final bool isPlaying;
+  final bool showVideo;
   final R3Theme theme;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
-  final double maxWidth;
-  final double maxHeight;
 
   const _StructuralWindow({
+    super.key,
     required this.source,
     required this.rawDocument,
     required this.sourceFrame,
     required this.sourceDurationFrames,
     required this.isPlaying,
+    required this.showVideo,
     required this.theme,
     required this.backend,
     required this.resolveSource,
-    required this.maxWidth,
-    required this.maxHeight,
   });
 
   @override
   Widget build(BuildContext context) {
-    double clientW = maxWidth;
-    double clientH = clientW * 9.0 / 16.0;
-    if (clientH + _titleHeight > maxHeight) {
-      clientH = math.max(1.0, maxHeight - _titleHeight);
-      clientW = clientH * 16.0 / 9.0;
-    }
-
-    return SizedBox(
-      width: clientW,
-      height: clientH + _titleHeight,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFF171717),
-          borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: const Color(0xFF3B3938)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 24,
-              offset: Offset(0, 12),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF171717),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: const Color(0xFF3B3938)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Column(
+          children: [
+            Container(
+              height: titleHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: const BoxDecoration(
+                color: Color(0xFF33302F),
+                border: Border(
+                  bottom: BorderSide(color: Color(0xFF474341)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      source,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.value.copyWith(
+                        color: const Color(0xFFC7C3C0),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'F$sourceFrame / $sourceDurationFrames',
+                    style: theme.micro.copyWith(
+                      color: const Color(0xFF8E8884),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ColoredBox(
+                color: Colors.black,
+                child: showVideo
+                    ? EditVideoPreview(
+                        key: ValueKey<String>('sequence-preview:$source'),
+                        source: rawDocument,
+                        structuralSource: source,
+                        currentFrame: sourceFrame,
+                        theme: theme,
+                        isPlaying: isPlaying,
+                        fastPreview: isPlaying,
+                        backend: backend,
+                        resolveSource: resolveSource,
+                      )
+                    : const SizedBox.expand(),
+              ),
             ),
           ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Column(
-            children: [
-              Container(
-                height: _titleHeight,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: const BoxDecoration(
-                  color: Color(0xFF33302F),
-                  border: Border(
-                    bottom: BorderSide(color: Color(0xFF474341)),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        source,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.value.copyWith(
-                          color: const Color(0xFFC7C3C0),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'F$sourceFrame / $sourceDurationFrames',
-                      style: theme.micro.copyWith(
-                        color: const Color(0xFF8E8884),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(
-                width: clientW,
-                height: clientH,
-                child: ColoredBox(
-                  color: Colors.black,
-                  child: EditVideoPreview(
-                    key: ValueKey<String>('sequence-preview:$source'),
-                    source: rawDocument,
-                    structuralSource: source,
-                    currentFrame: sourceFrame,
-                    theme: theme,
-                    isPlaying: isPlaying,
-                    fastPreview: isPlaying,
-                    backend: backend,
-                    resolveSource: resolveSource,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
