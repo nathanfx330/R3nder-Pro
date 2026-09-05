@@ -10,11 +10,11 @@
 // widget because its MLT decoder is persistent and frame-addressed; the shell
 // around it is presentation geometry only.
 //
-// The critical continuity rule is geometric: the first opening frame occupies
-// exactly the parked-terminal rectangle produced by zoom-out, and the last
-// closing frame returns to that exact rectangle before zoom-in begins. The
-// structural window therefore grows out of the parked window instead of
-// appearing as an unrelated centered window.
+// The critical geometry rule is that STRUCT has one destination rectangle:
+// the final video-panel window. The terminal zooms directly from fullscreen to
+// that rectangle. The opening phase then changes ownership/content in place;
+// it does not shrink to a smaller parked terminal first and grow a second
+// window afterward. Closing is the exact reverse.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -75,11 +75,10 @@ class StructuralSequencePreview extends StatelessWidget {
               : 720.0;
 
           final Rect fullTerminal = Rect.fromLTWH(0, 0, width, height);
-          final Rect parkedTerminal = _parkedTerminalRect(width, height);
-          final Rect structuralTarget = _structuralTargetRect(width, height);
+          final Rect presentationRect = _structuralTargetRect(width, height);
 
-          Rect terminalRect = parkedTerminal;
-          Rect structuralRect = structuralTarget;
+          Rect terminalRect = presentationRect;
+          Rect structuralRect = presentationRect;
           double desktopOpacity = 1.0;
           double terminalOpacity = 0.0;
           double structuralOpacity = 0.0;
@@ -87,19 +86,19 @@ class StructuralSequencePreview extends StatelessWidget {
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              terminalRect = Rect.lerp(fullTerminal, parkedTerminal, eased)!;
+              // STRUCT does not use the generic small parked-terminal target.
+              // The terminal heads straight for the rectangle the resulting
+              // video panel will occupy.
+              terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
               desktopOpacity = eased;
               terminalOpacity = 1.0;
               break;
 
             case StructuralSequenceStage.opening:
-              // Continuity contract: frame zero of opening is exactly the
-              // parked terminal rect. No independently centered scale starts
-              // here; the structural window physically grows out of the
-              // window that zoom-out just produced.
-              terminalRect = parkedTerminal;
-              structuralRect =
-                  Rect.lerp(parkedTerminal, structuralTarget, eased)!;
+              // Geometry is already final. This phase only hands visual
+              // ownership from the terminal shell to the structural shell.
+              terminalRect = presentationRect;
+              structuralRect = presentationRect;
               desktopOpacity = 1.0;
               terminalOpacity = 1.0 - eased;
               structuralOpacity = eased;
@@ -107,8 +106,8 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.showing:
-              terminalRect = parkedTerminal;
-              structuralRect = structuralTarget;
+              terminalRect = presentationRect;
+              structuralRect = presentationRect;
               desktopOpacity = 1.0;
               terminalOpacity = 0.0;
               structuralOpacity = 1.0;
@@ -116,12 +115,10 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.closing:
-              // Exact reverse of opening. On the final closing frame the
-              // structural shell is parked where the terminal ghost already
-              // is, so zoom-in begins from the same rectangle with no jump.
-              terminalRect = parkedTerminal;
-              structuralRect =
-                  Rect.lerp(structuralTarget, parkedTerminal, eased)!;
+              // Reverse the in-place ownership handoff. The rectangle does
+              // not move until zoom-in begins.
+              terminalRect = presentationRect;
+              structuralRect = presentationRect;
               desktopOpacity = 1.0;
               terminalOpacity = eased;
               structuralOpacity = 1.0 - eased;
@@ -129,7 +126,7 @@ class StructuralSequencePreview extends StatelessWidget {
               break;
 
             case StructuralSequenceStage.zoomIn:
-              terminalRect = Rect.lerp(parkedTerminal, fullTerminal, eased)!;
+              terminalRect = Rect.lerp(presentationRect, fullTerminal, eased)!;
               desktopOpacity = 1.0 - eased;
               terminalOpacity = 1.0;
               break;
@@ -183,25 +180,9 @@ class StructuralSequencePreview extends StatelessWidget {
     );
   }
 
-  static Rect _parkedTerminalRect(double width, double height) {
-    const double titleHeight = 30.0;
-    final double maxW = width * 0.48;
-    final double maxH = height * 0.58;
-    double contentW = maxW;
-    double contentH = contentW * 9.0 / 16.0;
-    if (contentH + titleHeight > maxH) {
-      contentH = math.max(1.0, maxH - titleHeight);
-      contentW = contentH * 16.0 / 9.0;
-    }
-    final double windowH = contentH + titleHeight;
-    return Rect.fromLTWH(
-      width * 0.055,
-      height * 0.09,
-      contentW,
-      windowH,
-    );
-  }
-
+  /// Final presentation rectangle. The client area itself is 16:9, and the
+  /// title bar is added above it. This is both the terminal zoom target and the
+  /// structural window's showing geometry, so there is only one destination.
   static Rect _structuralTargetRect(double width, double height) {
     const double titleHeight = _StructuralWindow.titleHeight;
     final double maxW = width * 0.86;
@@ -273,8 +254,8 @@ class _TerminalGhost extends StatelessWidget {
         child: Column(
           children: [
             Container(
-              height: 30,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              height: 38,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               color: const Color(0xFF33302F),
               alignment: Alignment.centerLeft,
               child: Text(
