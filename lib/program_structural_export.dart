@@ -27,6 +27,48 @@ import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
+/// Preview computes the final STRUCT panel in real render-frame pixels. Bake
+/// must do the same before converting to ScenePainter's normalized 0..1 space.
+///
+/// Applying the 16:9 client ratio directly to normalized X/Y coordinates is
+/// wrong because the axes have already been scaled independently. On a 16:9
+/// output that mistake turns an 86%-wide client into a ~48%-tall client, skips
+/// the preview's height cap, and produces the visibly over-wide bake window.
+Rect structuralProgramTargetRectForOutput({
+  required int outputWidth,
+  required int outputHeight,
+  required double titleHeight,
+}) {
+  if (outputWidth <= 0 || outputHeight <= 0) return Rect.zero;
+
+  final double width = outputWidth.toDouble();
+  final double height = outputHeight.toDouble();
+  final double maxW = width * 0.86;
+  final double maxH = height * 0.78;
+
+  double clientW = maxW;
+  double clientH = clientW * 9.0 / 16.0;
+  if (clientH + titleHeight > maxH) {
+    clientH = math.max(1.0, maxH - titleHeight);
+    clientW = clientH * 16.0 / 9.0;
+  }
+
+  final double windowH = clientH + titleHeight;
+  final Rect pixelRect = Rect.fromLTWH(
+    (width - clientW) / 2.0,
+    (height - windowH) / 2.0,
+    clientW,
+    windowH,
+  );
+
+  return Rect.fromLTRB(
+    pixelRect.left / width,
+    pixelRect.top / height,
+    pixelRect.right / width,
+    pixelRect.bottom / height,
+  );
+}
+
 class ProgramStructuralFrameRenderer {
   final String rawDocument;
   final int width;
@@ -425,12 +467,14 @@ class _StructuralProgramVisual {
         scene.width > 0.0 ? scene.width : outputWidth.toDouble();
     final double chromeScale =
         scene.terminal.scale * outputWidth.toDouble() / engineWidth;
-    final double titleFraction = outputHeight > 0
-        ? (38.0 * chromeScale) / outputHeight.toDouble()
-        : 0.0;
+    final double titleHeight = 38.0 * chromeScale;
 
     final Rect fullTerminal = const Rect.fromLTWH(0, 0, 1, 1);
-    final Rect presentationRect = _targetRect(titleFraction);
+    final Rect presentationRect = structuralProgramTargetRectForOutput(
+      outputWidth: outputWidth,
+      outputHeight: outputHeight,
+      titleHeight: titleHeight,
+    );
     final Rect emergenceRect = _emergenceRect(presentationRect);
 
     Rect terminalRect = presentationRect;
@@ -506,26 +550,6 @@ class _StructuralProgramVisual {
       terminalChrome: terminalChrome,
       structuralOpacity: structuralOpacity,
       structuralWindowPresent: structuralWindowPresent,
-    );
-  }
-
-  static Rect _targetRect(double titleFraction) {
-    const double maxW = 0.86;
-    const double maxH = 0.78;
-
-    double clientW = maxW;
-    double clientH = clientW * 9.0 / 16.0;
-    if (clientH + titleFraction > maxH) {
-      clientH = math.max(0.0, maxH - titleFraction);
-      clientW = clientH * 16.0 / 9.0;
-    }
-
-    final double windowH = clientH + titleFraction;
-    return Rect.fromLTWH(
-      (1.0 - clientW) / 2.0,
-      (1.0 - windowH) / 2.0,
-      clientW,
-      windowH,
     );
   }
 
