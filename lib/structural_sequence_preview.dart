@@ -11,10 +11,11 @@
 // supplies the depth cue; the matched rear-plane fade makes the hand-off read
 // as one window yielding to another rather than two stacked windows.
 //
-// The first structural frame is decoded during the opening stage and held
-// still while the new window comes forward. Source time begins advancing only
-// after the window has settled, so the presentation never opens onto an
-// artificial black client before picture appears.
+// Frame zero is predecoded while the terminal is still resizing. The structural
+// window already exists at opacity zero during zoom-out, so the same mounted
+// EditVideoPreview owns the decoded first frame when foreground emergence
+// begins. Source time remains pinned at zero throughout opening and only starts
+// advancing after the window has settled.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -87,11 +88,15 @@ class StructuralSequencePreview extends StatelessWidget {
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              // Resize straight to the final panel geometry. There is no
-              // smaller parked-terminal waypoint for STRUCT.
+              // Resize straight to the final panel geometry. The structural
+              // window is already mounted, invisible, at its emergence rect so
+              // frame zero can decode before any part of it becomes visible.
               terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
+              structuralRect = emergenceRect;
               desktopOpacity = eased;
               terminalOpacity = 1.0;
+              structuralOpacity = 0.0;
+              structuralWindowPresent = true;
               break;
 
             case StructuralSequenceStage.opening:
@@ -165,6 +170,7 @@ class StructuralSequencePreview extends StatelessWidget {
                 Positioned.fromRect(
                   rect: structuralRect,
                   child: Opacity(
+                    key: const ValueKey<String>('structural-window-opacity'),
                     opacity: structuralOpacity.clamp(0.0, 1.0),
                     child: _StructuralWindow(
                       key: const ValueKey<String>('structural-window-frame'),
@@ -174,7 +180,8 @@ class StructuralSequencePreview extends StatelessWidget {
                       sourceDurationFrames: placement.sourceDurationFrames,
                       isPlaying: isPlaying &&
                           stage == StructuralSequenceStage.showing,
-                      showVideo: stage == StructuralSequenceStage.opening ||
+                      showVideo: stage == StructuralSequenceStage.zoomOut ||
+                          stage == StructuralSequenceStage.opening ||
                           stage == StructuralSequenceStage.showing ||
                           stage == StructuralSequenceStage.closing,
                       theme: theme,
