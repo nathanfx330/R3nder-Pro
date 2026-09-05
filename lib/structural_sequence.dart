@@ -30,6 +30,13 @@ const int kStructuralEntryFrames =
 const int kStructuralExitFrames =
     kStructuralWindowFrames + kStructuralZoomFrames;
 
+/// A standalone `[PAUSE:N]` line occupies two scene ticks beyond N in the
+/// terminal execution path: entering the pause and advancing past the line.
+/// STRUCT owns an exact presentation budget, so its projected PAUSE argument
+/// compensates for those framing ticks instead of silently stretching every
+/// structural call by two frames.
+const int kStructuralProjectionFramingFrames = 2;
+
 enum StructuralSequenceStage {
   zoomOut,
   opening,
@@ -43,6 +50,12 @@ int structuralSequenceDurationForSource(int sourceFrames) {
   return kStructuralEntryFrames + sourceFrames + kStructuralExitFrames;
 }
 
+int _projectedPauseFramesForEvent(int eventFrames) {
+  if (eventFrames <= 0) return 1;
+  final int pauseFrames = eventFrames - kStructuralProjectionFramingFrames;
+  return pauseFrames > 0 ? pauseFrames : 1;
+}
+
 class StructuralSequencePlacement {
   final StructuralSourceRef sourceRef;
   final int lineIndex;
@@ -54,7 +67,7 @@ class StructuralSequencePlacement {
   final int sourceDurationFrames;
 
   /// Full main-sequence duration including desktop reveal/open/close/restore.
-  /// This is what TerminalEngine burns as the placement's PAUSE projection.
+  /// This is the exact scene-time budget of the STRUCT event.
   final int durationFrames;
 
   const StructuralSequencePlacement({
@@ -159,7 +172,7 @@ EditDocumentModel? _tryModel(String rawDocument) {
 /// Invalid or temporarily incomplete structural source definitions do not make
 /// the text editor crash while the author is typing. Their placements remain
 /// visible with duration 0 so diagnostics can report them and the engine
-/// projection can burn a single harmless frame instead of typing literal
+/// projection can burn a small harmless fallback instead of typing literal
 /// markup onto screen.
 List<StructuralSequencePlacement> parseStructuralSequencePlacements(
   String rawDocument,
@@ -232,10 +245,15 @@ String appendStructuralSequencePlacement({
 /// Replaces sequence placements in an already root-stripped engine projection
 /// with ordinary PAUSE tags covering the full structural presentation event.
 ///
-/// The source itself still owns only its authored frames. The PAUSE also buys
-/// the deterministic terminal zoom and window open/close frames, which keeps
-/// the main sequence, narration bed, scrubber, and visible desktop transition
-/// on one shared frame count.
+/// The source itself still owns only its authored frames. The exact STRUCT
+/// scene-time budget also includes deterministic terminal zoom and window
+/// open/close frames. Because a standalone PAUSE line has two framing ticks in
+/// TerminalEngine, the argument written here is smaller by exactly that amount;
+/// the resulting runtime span still equals [StructuralSequencePlacement.durationFrames].
+///
+/// Sequence placements are projected only after source definitions are gone,
+/// so a `[STRUCT:...]` accidentally written inside a definition cannot schedule
+/// itself into main program time.
 String projectStructuralSequencePlacements({
   required String rawDocument,
   required String projectedSource,
@@ -261,16 +279,17 @@ String projectStructuralSequencePlacements({
       }
     }
 
-    final int duration = sourceDuration > 0
+    final int eventDuration = sourceDuration > 0
         ? structuralSequenceDurationForSource(sourceDuration)
-        : 1;
+        : 0;
+    final int pauseFrames = _projectedPauseFramesForEvent(eventDuration);
 
     final String indent = match.namedGroup('indent') ?? '';
     final String trail = match.namedGroup('trail') ?? '';
     out = out.replaceRange(
       match.start,
       match.end,
-      '$indent[PAUSE:$duration]$trail',
+      '$indent[PAUSE:$pauseFrames]$trail',
     );
   }
   return out;
