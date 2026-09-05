@@ -97,10 +97,13 @@ class EditVideoPreview extends StatefulWidget {
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
-  /// Fired once after this preview has an actual presentable picture, either
-  /// a native texture or a converted compositor image. Pending/blank states do
-  /// not count. Structural sequence presentation uses this to avoid revealing
-  /// an empty black client before frame zero is resident.
+  /// Fired once after the first preview evaluation has RESOLVED to something
+  /// the UI can honestly present. A native texture or converted image counts,
+  /// but so does a confirmed authored empty frame or a stable error diagnostic.
+  /// A pending decode does not count. Structural sequence presentation uses
+  /// this distinction so it waits for unresolved I/O without confusing
+  /// "there is no picture at this authored frame" with "the decoder is not
+  /// ready yet" and hiding the structural window forever.
   final VoidCallback? onFirstFrameReady;
 
   const EditVideoPreview({
@@ -475,6 +478,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           status: 'VIDEO PREVIEW UNAVAILABLE\n$error',
         ),
       );
+      _reportFirstFrameReady();
       return;
     }
 
@@ -530,6 +534,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           status: 'VIDEO PREVIEW UNAVAILABLE\n$error',
         ),
       );
+      _reportFirstFrameReady();
       return;
     }
 
@@ -576,6 +581,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           status: status,
         ),
       );
+      _reportFirstFrameReady();
       return;
     }
 
@@ -612,6 +618,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           status: 'FRAME CONVERSION FAILED\n$error',
         ),
       );
+      _reportFirstFrameReady();
       return;
     }
 
