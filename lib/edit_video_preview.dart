@@ -153,7 +153,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         projectFrame: widget.currentFrame,
         moving: widget.isPlaying || widget.fastPreview,
         nativeTexture: false,
-        status: 'NO VIDEO AT THIS FRAME',
+        // No frame has been evaluated yet. A newly mounted preview must not
+        // claim that picture is absent before the compositor has answered.
+        status: '',
       ),
     );
     _scheduleParkedRender();
