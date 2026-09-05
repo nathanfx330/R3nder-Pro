@@ -138,20 +138,59 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      placement.stageAt(kStructuralZoomFrames),
-      StructuralSequenceStage.opening,
-    );
-
     final Rect openingTerminal = tester.getRect(
       find.byKey(const ValueKey<String>('structural-terminal-window')),
     );
-    final Rect openingStructural = tester.getRect(
+    _expectSameRect(zoomTarget, openingTerminal);
+    expect(backend.openCount, 0);
+  });
+
+  testWidgets('structural window comes forward from terminal rear plane',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: kStructuralZoomFrames,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect rear = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-terminal-window')),
+    );
+    final Rect emergenceStart = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
 
-    _expectSameRect(zoomTarget, openingTerminal);
-    _expectSameRect(openingTerminal, openingStructural);
+    expect(emergenceStart.width, lessThan(rear.width));
+    expect(emergenceStart.height, lessThan(rear.height));
+    expect(emergenceStart.top, greaterThan(rear.top));
+    expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
+    expect(backend.openCount, 0);
+
+    final int middleFrame =
+        kStructuralZoomFrames + (kStructuralWindowFrames ~/ 2);
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: placement,
+        backend: backend,
+        localFrame: middleFrame,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect emergenceMiddle = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-window-frame')),
+    );
+    expect(emergenceMiddle.width, greaterThan(emergenceStart.width));
+    expect(emergenceMiddle.height, greaterThan(emergenceStart.height));
+    expect(emergenceMiddle.top, lessThan(emergenceStart.top));
+    expect(find.text('R3nder : Terminal Engine'), findsOneWidget);
     expect(backend.openCount, 0);
 
     await tester.pumpWidget(
@@ -163,10 +202,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final Rect openingEnd = tester.getRect(
+    final Rect emergenceEnd = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
-    _expectSameRect(openingStructural, openingEnd);
+    _expectSameRect(emergenceEnd, rear);
 
     await tester.pumpWidget(
       _buildPreview(
@@ -180,7 +219,7 @@ void main() {
     final Rect showingStart = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-frame')),
     );
-    _expectSameRect(openingEnd, showingStart);
+    _expectSameRect(emergenceEnd, showingStart);
   });
 
   testWidgets('showing stage renders MOSAIC at source-local frame in 16:9 client',
