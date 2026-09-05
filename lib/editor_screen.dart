@@ -1673,6 +1673,8 @@ class _EditorScreenState extends State<EditorScreen> {
         isPlaying: _isPlaying,
         theme: _t,
         wallpaper: _scene.wallpaper,
+        terminalScene: _scene,
+        terminalFontFamily: widget.fontFamily,
         terminalCursorFraction: _terminalCursorFraction(),
       );
     }
