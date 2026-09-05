@@ -61,7 +61,7 @@ Outro
     );
   });
 
-  test('compile compensates PAUSE framing while preserving full STRUCT duration', () {
+  test('preview and bake compile an internal runtime STRUCT marker', () {
     final compiled = compileScript(source);
 
     expect(compiled.engineText, isNot(contains('[EDIT:main]')));
@@ -69,20 +69,35 @@ Outro
     expect(compiled.engineText, isNot(contains('[STRUCT:MOSAIC.wall]')));
     expect(
       compiled.engineText,
-      contains('[PAUSE:${80 - kStructuralProjectionFramingFrames}]'),
+      contains(
+        '[REGION:STRUCTSEQ_0_80]'
+        '[PAUSE:${80 - kStructuralProjectionFramingFrames}]',
+      ),
     );
     expect(compiled.engineText, contains('Intro'));
     expect(compiled.engineText, contains('Outro'));
   });
 
-  test('editor line markers use the same compensated STRUCT projection', () {
+  test('editor line map keeps plain compensated STRUCT projection', () {
     final compiled = compileScript(source, lineMarkers: true);
+    expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
     expect(
       compiled.engineText,
       contains(
         '[LINE:13][PAUSE:${80 - kStructuralProjectionFramingFrames}]',
       ),
     );
+  });
+
+  test('runtime marker round-trips placement index and duration', () {
+    final StructuralRuntimeMarker marker = parseStructuralRuntimeRegion(
+      'STRUCTSEQ_7_383',
+    )!;
+
+    expect(marker.placementIndex, 7);
+    expect(marker.durationFrames, 383);
+    expect(marker.regionId, 'STRUCTSEQ_7_383');
+    expect(parseStructuralRuntimeRegion('ordinary_region'), isNull);
   });
 
   test('missing structural source burns fallback timing instead of markup', () {
@@ -99,6 +114,7 @@ After
 
     final compiled = compileScript(missing);
     expect(compiled.engineText, isNot(contains('[STRUCT:')));
+    expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
     expect(compiled.engineText, contains('[PAUSE:1]'));
   });
 }
