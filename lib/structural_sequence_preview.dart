@@ -14,8 +14,11 @@
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during zoom-out, but it is not allowed
 // to become visible until EditVideoPreview reports that an actual presentable
-// image/texture is resident. That readiness gate prevents an empty black client
-// from flashing between the terminal and the first video frame.
+// image/texture is resident. Readiness is only a visibility gate. It never
+// re-anchors or stretches authored presentation time: once picture is ready,
+// geometry is evaluated from the current STRUCT project frame exactly as if
+// decode had completed immediately. A slow machine can reveal late, but it
+// cannot invent a different transition curve.
 //
 // The terminal ghost also follows ScenePainter's native chrome rule: as the
 // terminal pulls away from fullscreen its title bar, corners, border, and
@@ -78,7 +81,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   static const double _renderAspect = 16.0 / 9.0;
 
   bool _firstFrameReady = false;
-  int? _firstFrameReadyAt;
 
   @override
   void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
@@ -91,32 +93,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             oldWidget.resolveSource != widget.resolveSource;
     if (sourceChanged) {
       _firstFrameReady = false;
-      _firstFrameReadyAt = null;
     }
   }
 
   void _handleFirstFrameReady() {
     if (_firstFrameReady || !mounted) return;
-    setState(() {
-      _firstFrameReady = true;
-      _firstFrameReadyAt = widget.localFrame;
-    });
-  }
-
-  double _openingProgress(double authoredLinear) {
-    if (!_firstFrameReady) return 0.0;
-
-    final int readyAt = _firstFrameReadyAt ?? 0;
-    if (readyAt < kStructuralZoomFrames) {
-      return authoredLinear;
-    }
-
-    final int finalOpeningFrame = kStructuralEntryFrames - 1;
-    if (readyAt >= finalOpeningFrame) return 1.0;
-
-    return ((widget.localFrame - readyAt) /
-            (finalOpeningFrame - readyAt))
-        .clamp(0.0, 1.0);
+    setState(() => _firstFrameReady = true);
   }
 
   @override
@@ -171,11 +153,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.opening:
-              // Do not expose an empty client. If frame zero is still warming,
-              // hold the rear terminal fully visible and the structural window
-              // fully hidden. Once picture is resident, spend the remaining
-              // opening frames on the same depth hand-off.
-              final double handoffLinear = _openingProgress(linear);
+              // Readiness may suppress the foreground, but it may not alter
+              // authored time. Before picture is resident we hold the visual
+              // hand-off at its frame-zero state. Once ready, the geometry
+              // jumps to the deterministic authored state for THIS localFrame.
+              // There is deliberately no decode-timing-derived start frame.
+              final double handoffLinear = _firstFrameReady ? linear : 0.0;
               final double handoffEased =
                   Curves.easeInOutCubic.transform(handoffLinear);
               terminalRect = presentationRect;
