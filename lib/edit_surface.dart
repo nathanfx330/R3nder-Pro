@@ -19,7 +19,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'
-    show PointerCancelEvent, PointerDownEvent, PointerMoveEvent, PointerUpEvent;
+    show
+        PointerCancelEvent,
+        PointerDownEvent,
+        PointerMoveEvent,
+        PointerUpEvent,
+        kSecondaryMouseButton;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
@@ -271,20 +276,6 @@ class _EditSurfaceState extends State<EditSurface> {
         selected.trackId,
         selected.id,
         frame,
-      );
-    });
-  }
-
-  void _setCrossfade(EditSurfaceDocument document, int frames) {
-    final EditSurfaceClip? selected = _selected(document);
-    if (selected == null) return;
-    _commit((EditSurfaceDocument current) {
-      return current.setTransition(
-        selected.trackId,
-        selected.id,
-        frames <= 0
-            ? const EditTransition.none()
-            : EditTransition.crossfade(frames),
       );
     });
   }
@@ -727,22 +718,6 @@ class _EditSurfaceState extends State<EditSurface> {
                       .toList(),
                   child: _toolFace('SPEED'),
                 ),
-                PopupMenuButton<int>(
-                  tooltip: 'Crossfade',
-                  color: R3Theme.panelHi,
-                  onSelected: (int frames) => _setCrossfade(document, frames),
-                  itemBuilder: (_) => const <int>[0, 6, 12, 24]
-                      .map(
-                        (int frames) => PopupMenuItem<int>(
-                          value: frames,
-                          child: Text(
-                            frames == 0 ? 'No crossfade' : '$frames frames',
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  child: _toolFace('XFADE'),
-                ),
                 _toolButton('LUMA', onPressed: () => _setLuma(document)),
               ],
               SizedBox(width: sc(6)),
@@ -864,7 +839,8 @@ class _EditSurfaceState extends State<EditSurface> {
               child: _EditableClipBlock(
                 key: ValueKey(
                   '${track.id}:${clip.id}:${clip.atFrame}:'
-                  '${clip.inFrame}:${clip.durationFrames}:${clip.speed}',
+                  '${clip.inFrame}:${clip.durationFrames}:${clip.speed}:'
+                  '${clip.transition}:${clip.outgoingTransition}',
                 ),
                 clip: clip,
                 pixelsPerFrame: _pixelsPerFrame,
@@ -887,6 +863,28 @@ class _EditSurfaceState extends State<EditSurface> {
                     return current.trimEnd(track.id, clip.id, endFrame);
                   });
                 },
+                onSetIncomingCrossfade: (int frames) {
+                  _commit((EditSurfaceDocument current) {
+                    return current.setTransition(
+                      track.id,
+                      clip.id,
+                      frames <= 0
+                          ? const EditTransition.none()
+                          : EditTransition.crossfade(frames),
+                    );
+                  });
+                },
+                onSetOutgoingCrossfade: (int frames) {
+                  _commit((EditSurfaceDocument current) {
+                    return current.setOutgoingTransition(
+                      track.id,
+                      clip.id,
+                      frames <= 0
+                          ? const EditTransition.none()
+                          : EditTransition.crossfade(frames),
+                    );
+                  });
+                },
               ),
             ),
         ],
@@ -904,6 +902,8 @@ class _EditableClipBlock extends StatefulWidget {
   final ValueChanged<int> onMove;
   final ValueChanged<int> onTrimStart;
   final ValueChanged<int> onTrimEnd;
+  final ValueChanged<int> onSetIncomingCrossfade;
+  final ValueChanged<int> onSetOutgoingCrossfade;
 
   const _EditableClipBlock({
     super.key,
@@ -915,6 +915,8 @@ class _EditableClipBlock extends StatefulWidget {
     required this.onMove,
     required this.onTrimStart,
     required this.onTrimEnd,
+    required this.onSetIncomingCrossfade,
+    required this.onSetOutgoingCrossfade,
   });
 
   @override
@@ -955,7 +957,16 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
-  void _pointerDown(_ClipDragMode mode, PointerDownEvent event) {
+  void _pointerDown(
+    _ClipDragMode mode,
+    PointerDownEvent event, {
+    ValueChanged<Offset>? onSecondary,
+  }) {
+    if ((event.buttons & kSecondaryMouseButton) != 0) {
+      widget.onSelect();
+      onSecondary?.call(event.position);
+      return;
+    }
     if (_activePointer != null) return;
     widget.onSelect();
     setState(() {
@@ -1016,13 +1027,92 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
+  Future<void> _showCrossfadeMenu({
+    required bool incoming,
+    required Offset globalPosition,
+  }) async {
+    final OverlayState overlayState = Overlay.of(context);
+    final RenderObject? renderObject = overlayState.context.findRenderObject();
+    if (renderObject is! RenderBox) return;
+
+    final int currentFrames = incoming
+        ? widget.clip.transition.kind == EditTransitionKind.crossfade
+            ? widget.clip.transition.frames
+            : 0
+        : widget.clip.outgoingTransition.kind == EditTransitionKind.crossfade
+            ? widget.clip.outgoingTransition.frames
+            : 0;
+    final String edge = incoming ? 'in' : 'out';
+    final RelativeRect position = RelativeRect.fromRect(
+      Rect.fromPoints(globalPosition, globalPosition),
+      Offset.zero & renderObject.size,
+    );
+
+    final int? selected = await showMenu<int>(
+      context: context,
+      color: R3Theme.panelHi,
+      position: position,
+      items: <PopupMenuEntry<int>>[
+        PopupMenuItem<int>(
+          enabled: false,
+          height: sc(30),
+          child: Text(
+            incoming ? 'XFADE IN' : 'XFADE OUT',
+            style: widget.theme.microAccent,
+          ),
+        ),
+        PopupMenuItem<int>(
+          key: ValueKey<String>('edit-xfade-$edge-clear'),
+          value: 0,
+          child: Row(
+            children: [
+              SizedBox(
+                width: sc(18),
+                child: currentFrames == 0
+                    ? const Icon(Icons.check, size: 14)
+                    : null,
+              ),
+              const Text('CLEAR'),
+            ],
+          ),
+        ),
+        for (final int frames in const <int>[6, 12, 24])
+          PopupMenuItem<int>(
+            key: ValueKey<String>('edit-xfade-$edge-$frames'),
+            value: frames,
+            enabled: frames <= widget.clip.durationFrames,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: sc(18),
+                  child: currentFrames == frames
+                      ? const Icon(Icons.check, size: 14)
+                      : null,
+                ),
+                Text('$frames FRAMES'),
+              ],
+            ),
+          ),
+      ],
+    );
+
+    if (!mounted || selected == null) return;
+    if (incoming) {
+      widget.onSetIncomingCrossfade(selected);
+    } else {
+      widget.onSetOutgoingCrossfade(selected);
+    }
+  }
+
   Widget _pointerRegion({
     required _ClipDragMode mode,
     required Widget child,
+    ValueChanged<Offset>? onSecondary,
   }) {
     return Listener(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: (PointerDownEvent event) => _pointerDown(mode, event),
+      onPointerDown: (PointerDownEvent event) =>
+          _pointerDown(mode, event, onSecondary: onSecondary),
       onPointerMove: _pointerMove,
       onPointerUp: _pointerUp,
       onPointerCancel: _pointerCancel,
@@ -1044,6 +1134,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     final int sourceOut = widget.clip.clip.sourceFrameAtProjectOffset(
       widget.clip.durationFrames - 1,
     );
+    final double transitionMaxWidth = math.max(0.0, width - sc(14));
 
     return Transform.translate(
       offset: Offset(moveOffset, 0),
@@ -1090,15 +1181,78 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 ),
               ),
             ),
+            if (!widget.clip.transition.isNone)
+              Positioned(
+                key: ValueKey<String>(
+                  'edit-clip-${widget.clip.trackId}-${widget.clip.id}-in-transition',
+                ),
+                left: sc(7),
+                top: 0,
+                bottom: 0,
+                width: math.min(
+                  transitionMaxWidth,
+                  math.max(
+                    sc(4),
+                    widget.clip.transition.frames * widget.pixelsPerFrame,
+                  ),
+                ),
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _TransitionPainter(
+                      color: widget.clip.transition.kind ==
+                              EditTransitionKind.crossfade
+                          ? R3Theme.ribbonWindow
+                          : R3Theme.warn,
+                      reverse: false,
+                    ),
+                  ),
+                ),
+              ),
+            if (!widget.clip.outgoingTransition.isNone)
+              Positioned(
+                key: ValueKey<String>(
+                  'edit-clip-${widget.clip.trackId}-${widget.clip.id}-out-transition',
+                ),
+                right: sc(7),
+                top: 0,
+                bottom: 0,
+                width: math.min(
+                  transitionMaxWidth,
+                  math.max(
+                    sc(4),
+                    widget.clip.outgoingTransition.frames *
+                        widget.pixelsPerFrame,
+                  ),
+                ),
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: const _TransitionPainter(
+                      color: R3Theme.ribbonWindow,
+                      reverse: true,
+                    ),
+                  ),
+                ),
+              ),
             Positioned(
               left: 0,
               top: 0,
               bottom: 0,
               width: sc(7),
               child: MouseRegion(
+                key: ValueKey<String>(
+                  'edit-clip-${widget.clip.trackId}-${widget.clip.id}-in-handle',
+                ),
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: _pointerRegion(
                   mode: _ClipDragMode.trimStart,
+                  onSecondary: (Offset position) {
+                    unawaited(
+                      _showCrossfadeMenu(
+                        incoming: true,
+                        globalPosition: position,
+                      ),
+                    );
+                  },
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
@@ -1113,9 +1267,20 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
               bottom: 0,
               width: sc(7),
               child: MouseRegion(
+                key: ValueKey<String>(
+                  'edit-clip-${widget.clip.trackId}-${widget.clip.id}-out-handle',
+                ),
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: _pointerRegion(
                   mode: _ClipDragMode.trimEnd,
+                  onSecondary: (Offset position) {
+                    unawaited(
+                      _showCrossfadeMenu(
+                        incoming: false,
+                        globalPosition: position,
+                      ),
+                    );
+                  },
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
@@ -1124,29 +1289,6 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 ),
               ),
             ),
-            if (!widget.clip.transition.isNone)
-              Positioned(
-                left: sc(7),
-                top: 0,
-                bottom: 0,
-                width: math.min(
-                  width - sc(14),
-                  math.max(
-                    sc(4),
-                    widget.clip.transition.frames * widget.pixelsPerFrame,
-                  ),
-                ),
-                child: IgnorePointer(
-                  child: CustomPaint(
-                    painter: _TransitionPainter(
-                      color: widget.clip.transition.kind ==
-                              EditTransitionKind.crossfade
-                          ? R3Theme.ribbonWindow
-                          : R3Theme.warn,
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -1200,8 +1342,12 @@ class _EditPlayheadPainter extends CustomPainter {
 
 class _TransitionPainter extends CustomPainter {
   final Color color;
+  final bool reverse;
 
-  const _TransitionPainter({required this.color});
+  const _TransitionPainter({
+    required this.color,
+    this.reverse = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1209,17 +1355,25 @@ class _TransitionPainter extends CustomPainter {
       ..color = color.withValues(alpha: 0.8)
       ..strokeWidth = 1;
     for (double x = -size.height; x < size.width; x += sc(6)) {
-      canvas.drawLine(
-        Offset(x, size.height),
-        Offset(x + size.height, 0),
-        paint,
-      );
+      if (reverse) {
+        canvas.drawLine(
+          Offset(x, 0),
+          Offset(x + size.height, size.height),
+          paint,
+        );
+      } else {
+        canvas.drawLine(
+          Offset(x, size.height),
+          Offset(x + size.height, 0),
+          paint,
+        );
+      }
     }
   }
 
   @override
   bool shouldRepaint(covariant _TransitionPainter oldDelegate) =>
-      oldDelegate.color != color;
+      oldDelegate.color != color || oldDelegate.reverse != reverse;
 }
 
 class _EditRulerPainter extends CustomPainter {
