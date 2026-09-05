@@ -24,9 +24,10 @@
 // portion of the transition is NOT reconstructed here. ScenePainter's native
 // desktop and terminal-window renderer draws it directly. That preserves the
 // actual authored terminal theme, font, cursor, title, wallpaper/chroma plate,
-// Yaru chrome, and exact fullscreen pixels across the hand-off. The simplified
-// Flutter ghost remains only as a fallback seam for isolated widget tests and
-// alternate callers that do not own a SceneEngine.
+// Yaru chrome, and exact fullscreen pixels across the hand-off. The structural
+// foreground window also scales its chrome from that same engine-to-preview
+// ratio, so a small editor pane does not get a 38-widget-pixel title bar while
+// the real terminal beside it is using a scaled native title bar.
 //
 // The editor preview pane is not the render frame. ScenePainter letterboxes the
 // 16:9 engine canvas inside whatever space the editor gives it. Structural
@@ -141,8 +142,26 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               : 720.0;
 
           final Rect renderFrame = _fittedRenderFrame(width, height);
+          final SceneEngine? liveScene = widget.terminalScene;
+          final String? liveFont = widget.terminalFontFamily;
+          final bool useNativeTerminal =
+              liveScene != null && liveFont != null && liveFont.isNotEmpty;
+
+          // ScenePainter expresses chrome in logical engine pixels and then
+          // applies the engine-to-widget fit. Reuse that exact conversion for
+          // the foreground structural window. This is load-bearing in EDIT:
+          // a fixed 38 widget pixels was much larger than the native title bar
+          // in a reduced preview pane and visibly broke the hand-off.
+          final double chromeScale = useNativeTerminal
+              ? _nativeChromeScale(renderFrame, liveScene)
+              : 1.0;
+          final double titleHeight = _StructuralWindow.titleHeight * chromeScale;
+
           final Rect fullTerminal = renderFrame;
-          final Rect presentationRect = _structuralTargetRect(renderFrame);
+          final Rect presentationRect = _structuralTargetRect(
+            renderFrame,
+            titleHeight: titleHeight,
+          );
           final Rect emergenceRect = _structuralEmergenceRect(presentationRect);
 
           Rect terminalRect = presentationRect;
@@ -233,11 +252,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
-          final SceneEngine? liveScene = widget.terminalScene;
-          final String? liveFont = widget.terminalFontFamily;
-          final bool useNativeTerminal =
-              liveScene != null && liveFont != null && liveFont.isNotEmpty;
-
           // Fallback ghost only. Production passes the real SceneEngine and
           // therefore never needs to approximate cursor metrics or theme.
           final Size cursorFraction = widget.terminalCursorFraction ??
@@ -327,6 +341,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                           stage == StructuralSequenceStage.showing ||
                           stage == StructuralSequenceStage.closing,
                       theme: widget.theme,
+                      chromeScale: chromeScale,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
@@ -348,6 +363,16 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
         },
       ),
     );
+  }
+
+  /// Native chrome is specified in logical engine pixels. This converts one
+  /// logical style pixel into widget pixels using the exact ScenePainter fit.
+  /// 1080p uses terminal.scale=1; 4K uses terminal.scale=2, so both produce
+  /// the same apparent chrome size at the same preview dimensions.
+  static double _nativeChromeScale(Rect renderFrame, SceneEngine scene) {
+    final double engineWidth = scene.width;
+    if (engineWidth <= 0.0 || renderFrame.width <= 0.0) return 1.0;
+    return scene.terminal.scale * renderFrame.width / engineWidth;
   }
 
   /// Maps a widget-space rectangle onto the fitted engine frame as 0..1
@@ -387,10 +412,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   }
 
   /// Final presentation rectangle inside the fitted render frame. The client
-  /// area itself is 16:9, and the title bar is added above it. This is both
-  /// the terminal zoom target and the final structural-window geometry.
-  static Rect _structuralTargetRect(Rect frame) {
-    const double titleHeight = _StructuralWindow.titleHeight;
+  /// area itself is 16:9, and [titleHeight] is added above it. Production uses
+  /// the ScenePainter-scaled native title height; fallback widget tests retain
+  /// the historical 38-widget-pixel geometry.
+  static Rect _structuralTargetRect(
+    Rect frame, {
+    double titleHeight = _StructuralWindow.titleHeight,
+  }) {
     final double maxW = frame.width * 0.86;
     final double maxH = frame.height * 0.78;
 
@@ -550,6 +578,7 @@ class _StructuralWindow extends StatelessWidget {
   final bool isPlaying;
   final bool showVideo;
   final R3Theme theme;
+  final double chromeScale;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback onFirstFrameReady;
@@ -563,6 +592,7 @@ class _StructuralWindow extends StatelessWidget {
     required this.isPlaying,
     required this.showVideo,
     required this.theme,
+    required this.chromeScale,
     required this.backend,
     required this.resolveSource,
     required this.onFirstFrameReady,
@@ -570,31 +600,40 @@ class _StructuralWindow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double s = chromeScale > 0.0 ? chromeScale : 1.0;
+    final double barH = titleHeight * s;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF171717),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: const Color(0xFF3B3938)),
-        boxShadow: const [
+        borderRadius: BorderRadius.circular(5 * s),
+        border: Border.all(
+          color: const Color(0xFF3B3938),
+          width: math.max(0.5, s),
+        ),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x8A000000),
-            blurRadius: 30,
-            spreadRadius: 2,
-            offset: Offset(0, 16),
+            color: const Color(0x8A000000),
+            blurRadius: 30 * s,
+            spreadRadius: 2 * s,
+            offset: Offset(0, 16 * s),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(4 * s),
         child: Column(
           children: [
             Container(
-              height: titleHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: const BoxDecoration(
-                color: Color(0xFF33302F),
+              height: barH,
+              padding: EdgeInsets.symmetric(horizontal: 14 * s),
+              decoration: BoxDecoration(
+                color: const Color(0xFF33302F),
                 border: Border(
-                  bottom: BorderSide(color: Color(0xFF474341)),
+                  bottom: BorderSide(
+                    color: const Color(0xFF474341),
+                    width: math.max(0.5, s),
+                  ),
                 ),
               ),
               child: Row(
@@ -605,7 +644,7 @@ class _StructuralWindow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.value.copyWith(
                         color: const Color(0xFFC7C3C0),
-                        fontSize: 12,
+                        fontSize: 12 * s,
                       ),
                     ),
                   ),
@@ -613,6 +652,8 @@ class _StructuralWindow extends StatelessWidget {
                     'F$sourceFrame / $sourceDurationFrames',
                     style: theme.micro.copyWith(
                       color: const Color(0xFF8E8884),
+                      fontSize: (theme.micro.fontSize ?? 10.5) * s,
+                      letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
                     ),
                   ),
                 ],
