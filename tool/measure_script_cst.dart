@@ -12,6 +12,7 @@
 //   dart run tool/measure_script_cst.dart path/to/script.txt
 //   dart run tool/measure_script_cst.dart path/to/script.txt --iterations=200
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:r3nder/script_cst.dart';
@@ -36,7 +37,10 @@ class _Stats {
 
 int _percentileIndex(int length, double percentile) {
   if (length <= 1) return 0;
-  return ((length - 1) * percentile).round().clamp(0, length - 1);
+  return ((length - 1) * percentile)
+      .round()
+      .clamp(0, length - 1)
+      .toInt();
 }
 
 _Stats _measure(String source, {required int iterations}) {
@@ -98,9 +102,10 @@ void _printResult(
   int rootCount,
   _Stats stats,
 ) {
+  final int byteLength = utf8.encode(source).length;
   stdout.writeln(
     '${label.padRight(24)} '
-    '${_formatBytes(source.length).padLeft(10)}  '
+    '${_formatBytes(byteLength).padLeft(10)}  '
     '${_lineCount(source).toString().padLeft(6)} lines  '
     '${rootCount.toString().padLeft(5)} roots  '
     'n=${stats.iterations.toString().padLeft(3)}  '
