@@ -2,10 +2,11 @@
 //
 // GUI surface for canonical MOSAIC / PANE / CLIP authoring.
 //
-// Each visual pane is a real compact timeline. ADD CUT introduces already-
-// trimmed EDIT material, then authored CLIPs can be moved and trimmed directly
-// against a ruler. Crossfades live on the actual overlap between adjacent cuts.
-// The script remains canonical; this widget owns only transient gesture state.
+// Each visual pane is a real compact timeline. ADD SEQUENCE introduces a whole
+// authored EDIT as one structural source, then those sequence clips can be
+// moved and trimmed directly against a ruler. Crossfades live on the actual
+// overlap between adjacent sequences. The script remains canonical; this widget
+// owns only transient gesture state.
 
 import 'dart:math' as math;
 
@@ -21,7 +22,6 @@ import 'edit_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'mosaic_surface_model.dart';
-import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
 class MosaicSurface extends StatefulWidget {
@@ -109,106 +109,75 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     }
   }
 
-  void _addToSequence(MosaicSequence mosaic) {
-    if (widget.isPlaying || mosaic.projectFrameCount <= 0) return;
-
-    try {
-      final StructuralSourceRef ref =
-          StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!;
-      final String next = appendStructuralSequencePlacement(
-        rawDocument: _workingSource,
-        sourceRef: ref,
-      );
-      MosaicSurfaceDocument.parse(next, widget.mosaicId);
-      setState(() {
-        _workingSource = next;
-        _error = null;
-      });
-      widget.onSourceChanged(next);
-    } catch (error) {
-      setState(() => _error = '$error');
-    }
-  }
-
-  List<_EditCutChoice> _editCuts(MosaicSurfaceDocument document) {
-    final List<_EditCutChoice> cuts = <_EditCutChoice>[];
-    for (final EditSequence edit in document.model.edits) {
-      for (final EditTrack track in edit.tracks) {
-        for (final EditClip clip in track.clips) {
-          cuts.add(
-            _EditCutChoice(
-              editId: edit.id,
-              trackId: track.id,
-              clip: clip,
-            ),
-          );
-        }
-      }
-    }
-    return cuts;
-  }
-
-  int _sourceOut(EditClip clip) =>
-      clip.sourceFrameAtProjectOffset(clip.durationFrames - 1);
-
-  Future<_EditCutChoice?> _pickCut(
+  Future<EditSequence?> _pickEditSequence(
     MosaicSurfaceDocument document,
     int paneNumber,
   ) async {
-    final List<_EditCutChoice> cuts = _editCuts(document);
-    if (cuts.isEmpty) {
+    final List<EditSequence> edits = document.model.edits;
+    if (edits.isEmpty) {
       setState(() {
-        _error = 'No EDIT cuts exist yet. Trim a clip in EDIT first.';
+        _error = 'No EDIT sequences exist yet. Create an EDIT first.';
       });
       return null;
     }
 
-    return showDialog<_EditCutChoice>(
+    return showDialog<EditSequence>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           backgroundColor: R3Theme.panel,
-          title: Text('Add cut to Pane $paneNumber', style: widget.theme.value),
+          title: Text(
+            'Add EDIT sequence to Pane $paneNumber',
+            style: widget.theme.value,
+          ),
           content: SizedBox(
-            width: sc(620),
-            height: sc(390),
+            width: sc(540),
+            height: sc(330),
             child: ListView.separated(
-              itemCount: cuts.length,
+              itemCount: edits.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (BuildContext context, int index) {
-                final _EditCutChoice choice = cuts[index];
-                final EditClip clip = choice.clip;
+                final EditSequence edit = edits[index];
+                final int frames = edit.projectFrameCount;
                 return InkWell(
-                  key: ValueKey<String>(
-                    'mosaic-cut:${choice.editId}:${choice.trackId}:${clip.id}',
-                  ),
-                  onTap: () => Navigator.of(context).pop(choice),
+                  key: ValueKey<String>('mosaic-edit-sequence:${edit.id}'),
+                  onTap: frames <= 0
+                      ? null
+                      : () => Navigator.of(context).pop(edit),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
-                      horizontal: sc(8),
-                      vertical: sc(10),
+                      horizontal: sc(9),
+                      vertical: sc(11),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Text(
-                          'EDIT ${choice.editId}  /  ${choice.trackId}  /  ${clip.id}',
-                          style: widget.theme.value.copyWith(
-                            color: widget.theme.accent,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'EDIT.${edit.id}',
+                                style: widget.theme.value.copyWith(
+                                  color: frames > 0
+                                      ? widget.theme.accent
+                                      : R3Theme.textDim,
+                                ),
+                              ),
+                              SizedBox(height: sc(3)),
+                              Text(
+                                '${edit.tracks.length} TRACK${edit.tracks.length == 1 ? '' : 'S'}',
+                                style: widget.theme.micro,
+                              ),
+                            ],
                           ),
                         ),
-                        SizedBox(height: sc(4)),
                         Text(
-                          clip.source,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: widget.theme.fine,
-                        ),
-                        SizedBox(height: sc(3)),
-                        Text(
-                          'IN F${clip.inFrame}   OUT F${_sourceOut(clip)}   '
-                          'CUT ${clip.durationFrames}F   ${clip.speed.canonicalMarkup}X',
-                          style: widget.theme.micro,
+                          frames > 0 ? '$frames FRAMES' : 'EMPTY',
+                          style: widget.theme.micro.copyWith(
+                            color: frames > 0
+                                ? R3Theme.textBright
+                                : R3Theme.textDim,
+                          ),
                         ),
                       ],
                     ),
@@ -228,16 +197,36 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     );
   }
 
-  Future<void> _appendCut(
+  Future<void> _appendEditSequence(
     MosaicSurfaceDocument document,
     MosaicPane pane,
     int paneNumber,
   ) async {
-    final _EditCutChoice? choice = await _pickCut(document, paneNumber);
-    if (choice == null || !mounted) return;
+    final EditSequence? edit = await _pickEditSequence(document, paneNumber);
+    if (edit == null || !mounted) return;
+
+    final int duration = edit.projectFrameCount;
+    if (duration <= 0) {
+      setState(() => _error = 'EDIT.${edit.id} has no authored frames.');
+      return;
+    }
 
     _commit((MosaicSurfaceDocument current) {
-      return current.appendCut(pane.id, choice.clip);
+      final MosaicPane target = current.pane(pane.id);
+      final int atFrame = target.clips.fold<int>(
+        0,
+        (int end, EditClip clip) =>
+            clip.endFrameExclusive > end ? clip.endFrameExclusive : end,
+      );
+      final String clipId = current.nextClipId(pane.id, 'edit_${edit.id}');
+      return current.addClip(
+        paneId: pane.id,
+        clipId: clipId,
+        structuralSource: 'EDIT.${edit.id}',
+        atFrame: atFrame,
+        inFrame: 0,
+        durationFrames: duration,
+      );
     });
   }
 
@@ -432,16 +421,6 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             theme: widget.theme,
             accent: true,
           ),
-          R3Button(
-            'ADD SEQUENCE',
-            key: const ValueKey<String>('mosaic-add-sequence'),
-            theme: widget.theme,
-            compact: true,
-            kind: R3ButtonKind.primary,
-            onPressed: widget.isPlaying || mosaic.projectFrameCount <= 0
-                ? null
-                : () => _addToSequence(mosaic),
-          ),
           SizedBox(width: sc(4)),
           Text('LAYOUT', style: widget.theme.micro),
           for (final int count in const <int>[1, 2, 3])
@@ -542,7 +521,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     int paneNumber,
     int frame,
   ) {
-    final bool hasCuts = pane.clips.isNotEmpty;
+    final bool hasSequences = pane.clips.isNotEmpty;
     final bool paneSelected = _selectedPaneId == pane.id;
     EditClip? selected;
     if (paneSelected && _selectedClipId != null) {
@@ -559,7 +538,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       decoration: BoxDecoration(
         color: R3Theme.bg,
         border: Border.all(
-          color: hasCuts ? widget.theme.accentDim : R3Theme.hairline,
+          color: hasSequences ? widget.theme.accentDim : R3Theme.hairline,
         ),
         borderRadius: BorderRadius.circular(4),
       ),
@@ -580,14 +559,14 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 ),
                 SizedBox(width: sc(8)),
                 Text(
-                  '${pane.clips.length} CUT${pane.clips.length == 1 ? '' : 'S'}',
+                  '${pane.clips.length} SEQUENCE${pane.clips.length == 1 ? '' : 'S'}',
                   style: widget.theme.micro,
                 ),
                 if (selected != null) ...[
                   SizedBox(width: sc(10)),
                   Flexible(
                     child: Text(
-                      '${selected.id}  AT ${selected.atFrame}  '
+                      '${selected.source}  AT ${selected.atFrame}  '
                       'IN ${selected.inFrame}  ${selected.durationFrames}F',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -598,7 +577,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                   ),
                 ],
                 const Spacer(),
-                if (hasCuts)
+                if (hasSequences)
                   R3Button(
                     'CLEAR',
                     theme: widget.theme,
@@ -606,23 +585,27 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                     onPressed: widget.isPlaying ? null : () => _clearPane(pane),
                   ),
                 R3Button(
-                  'ADD CUT',
+                  'ADD SEQUENCE',
+                  key: ValueKey<String>('mosaic-pane-add-sequence:${pane.id}'),
                   theme: widget.theme,
                   compact: true,
-                  kind: hasCuts ? R3ButtonKind.normal : R3ButtonKind.primary,
+                  kind: hasSequences
+                      ? R3ButtonKind.normal
+                      : R3ButtonKind.primary,
                   onPressed: widget.isPlaying
                       ? null
-                      : () => _appendCut(document, pane, paneNumber),
+                      : () => _appendEditSequence(document, pane, paneNumber),
                 ),
               ],
             ),
           ),
           Expanded(
-            child: !hasCuts
+            child: !hasSequences
                 ? InkWell(
+                    key: ValueKey<String>('mosaic-empty-pane:${pane.id}'),
                     onTap: widget.isPlaying
                         ? null
-                        : () => _appendCut(document, pane, paneNumber),
+                        : () => _appendEditSequence(document, pane, paneNumber),
                     child: Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -636,7 +619,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                           Text('EMPTY', style: widget.theme.value),
                           SizedBox(height: sc(3)),
                           Text(
-                            'ADD CUT to start this pane timeline',
+                            'Click to add an EDIT sequence',
                             style: widget.theme.micro,
                           ),
                         ],
@@ -826,7 +809,6 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     final int maxFrames = left.durationFrames < right.durationFrames
         ? left.durationFrames
         : right.durationFrames;
-    final double overlapWidth = current * _pixelsPerFrame;
     final double centerFrame = current > 0
         ? right.atFrame + current / 2.0
         : right.atFrame.toDouble();
@@ -850,7 +832,10 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
           PopupMenuItem<int>(
             enabled: false,
             height: sc(30),
-            child: Text('XFADE BETWEEN CUTS', style: widget.theme.microAccent),
+            child: Text(
+              'XFADE BETWEEN SEQUENCES',
+              style: widget.theme.microAccent,
+            ),
           ),
           PopupMenuItem<int>(
             value: 0,
@@ -1105,6 +1090,9 @@ class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
     final int sourceOut = widget.clip.sourceFrameAtProjectOffset(
       widget.clip.durationFrames - 1,
     );
+    final String title = widget.clip.source.startsWith('EDIT.')
+        ? widget.clip.source
+        : widget.clip.id;
 
     return Transform.translate(
       offset: Offset(moveOffset, 0),
@@ -1131,7 +1119,7 @@ class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        widget.clip.id,
+                        title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: widget.theme.fine.copyWith(
@@ -1302,16 +1290,4 @@ class _MosaicTransitionPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MosaicTransitionPainter oldDelegate) =>
       oldDelegate.color != color;
-}
-
-class _EditCutChoice {
-  final String editId;
-  final String trackId;
-  final EditClip clip;
-
-  const _EditCutChoice({
-    required this.editId,
-    required this.trackId,
-    required this.clip,
-  });
 }
