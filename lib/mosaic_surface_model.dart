@@ -9,10 +9,10 @@
 // from a referenced EDIT or MOSAIC after the clip has been created.
 //
 // M17 keeps the original pane-assignment API for compatibility, while adding
-// the author-facing sequence operations the GUI now needs: a pane may append
-// multiple already-trimmed EDIT cuts and author a crossfade directly between
-// adjacent cuts. The overlap required by that crossfade is canonical CLIP time,
-// not hidden GUI state.
+// real pane-timeline operations: a pane may append multiple already-trimmed
+// EDIT cuts, move and trim those cuts in project time, and author a crossfade
+// directly between adjacent cuts. Crossfade overlap is canonical CLIP time,
+// never hidden GUI state.
 
 import 'edit_linter.dart';
 import 'edit_model.dart';
@@ -228,6 +228,8 @@ class MosaicSurfaceDocument {
     return next;
   }
 
+  /// Compatibility operation used by older callers. Replaces the pane with
+  /// exactly one cut at frame zero.
   String assignCut(String paneId, EditClip cut) {
     final MosaicPane target = pane(paneId);
     _validateId('CLIP', cut.id);
@@ -246,6 +248,7 @@ class MosaicSurfaceDocument {
     return next;
   }
 
+  /// Appends an already-authored EDIT cut after the last visible pane frame.
   String appendCut(String paneId, EditClip cut) {
     final MosaicPane target = pane(paneId);
     final String clipId = nextClipId(paneId, cut.id);
@@ -269,15 +272,21 @@ class MosaicSurfaceDocument {
   }
 
   int incomingCrossfadeFrames(String paneId, String clipId) {
-    final RegExpMatch? match =
-        _incomingCrossfadeDirective.firstMatch(clip(paneId, clipId).block.innerSource);
+    final RegExpMatch? match = _incomingCrossfadeDirective.firstMatch(
+      clip(paneId, clipId).block.innerSource,
+    );
     return match == null ? 0 : int.parse(match.group(1)!);
   }
 
-  /// Authors a transition BETWEEN two adjacent pane cuts. The right cut owns
-  /// the incoming transition. Changing the overlap shifts the right cut and
-  /// every later cut by the same delta so the pane never develops a gap after
-  /// an earlier crossfade. Clearing restores the downstream hard-cut timing.
+  /// Authors a transition BETWEEN two adjacent pane cuts.
+  ///
+  /// The right cut owns the incoming transition. Unlike the earlier card UI,
+  /// this operation cannot assume the cuts are still at hard-cut geometry:
+  /// authors may have dragged or trimmed them on the pane timeline. Therefore
+  /// the requested transition normalizes the right cut to
+  /// `left.end - frames`, then shifts every later cut by the same amount so
+  /// downstream timing remains continuous. Clearing returns the pair to a
+  /// hard-cut boundary at `left.end`.
   String setCrossfadeBetween(
     String paneId,
     String leftClipId,
@@ -313,17 +322,20 @@ class MosaicSurfaceDocument {
       );
     }
 
-    final int currentFrames = incomingCrossfadeFrames(paneId, rightClipId);
-    final int delta = frames - currentFrames;
+    final int targetRightAt = left.endFrameExclusive - frames;
+    if (targetRightAt < 0) {
+      throw StateError('Crossfade would move CLIP "$rightClipId" before frame zero.');
+    }
+    final int shift = targetRightAt - right.atFrame;
     String shifted = source;
 
-    if (delta != 0) {
+    if (shift != 0) {
       for (int index = rightIndex; index < ordered.length; index++) {
         final String id = ordered[index].id;
         final MosaicSurfaceDocument current =
             MosaicSurfaceDocument.parse(shifted, mosaicId);
         final EditClip currentClip = current.clip(paneId, id);
-        final int nextAt = currentClip.atFrame - delta;
+        final int nextAt = currentClip.atFrame + shift;
         if (nextAt < 0) {
           throw StateError('Crossfade would move CLIP "$id" before frame zero.');
         }
@@ -391,6 +403,82 @@ class MosaicSurfaceDocument {
     final String next = model.rewriteClip(
       clip(paneId, clipId),
       atFrame: atFrame,
+    );
+    _validateRenderable(next);
+    return next;
+  }
+
+  /// Trims the left edge in project time while preserving sampled source time.
+  /// Extending left is allowed while the resulting source IN remains >= 0.
+  String trimClipStart(String paneId, String clipId, int newAtFrame) {
+    final EditClip selected = clip(paneId, clipId);
+    final int delta = newAtFrame - selected.atFrame;
+    final int newDuration = selected.durationFrames - delta;
+
+    if (newAtFrame < 0) {
+      throw ArgumentError.value(newAtFrame, 'newAtFrame', 'Must be non-negative.');
+    }
+    if (newDuration <= 0) {
+      throw ArgumentError.value(
+        newAtFrame,
+        'newAtFrame',
+        'Trim would remove the entire CLIP.',
+      );
+    }
+
+    final int sourceDelta = _floorDiv(
+      delta * selected.speed.numerator,
+      selected.speed.denominator,
+    );
+    final int newIn = selected.inFrame + sourceDelta;
+    if (newIn < 0) {
+      throw ArgumentError.value(
+        newAtFrame,
+        'newAtFrame',
+        'Trim would move before source frame zero.',
+      );
+    }
+
+    final int transitionFrames = incomingCrossfadeFrames(paneId, clipId);
+    if (transitionFrames > newDuration) {
+      throw StateError(
+        'Trim would make the ${transitionFrames}F incoming crossfade longer '
+        'than CLIP "$clipId".',
+      );
+    }
+
+    final String next = model.rewriteClip(
+      selected,
+      atFrame: newAtFrame,
+      inFrame: newIn,
+      durationFrames: newDuration,
+    );
+    _validateRenderable(next);
+    return next;
+  }
+
+  String trimClipEnd(String paneId, String clipId, int newEndFrameExclusive) {
+    final EditClip selected = clip(paneId, clipId);
+    final int duration = newEndFrameExclusive - selected.atFrame;
+    if (duration <= 0) {
+      throw ArgumentError.value(
+        newEndFrameExclusive,
+        'newEndFrameExclusive',
+        'Trim would remove the entire CLIP.',
+      );
+    }
+
+    final int transitionFrames = incomingCrossfadeFrames(paneId, clipId);
+    if (transitionFrames > duration) {
+      throw StateError(
+        'Trim would make the ${transitionFrames}F incoming crossfade longer '
+        'than CLIP "$clipId".',
+      );
+    }
+
+    final String next = model.rewriteClip(
+      selected,
+      durationFrames: duration,
     );
     _validateRenderable(next);
     return next;
@@ -557,4 +645,12 @@ String _lineIndentAt(String source, int offset) {
     cursor++;
   }
   return source.substring(lineStart, cursor);
+}
+
+int _floorDiv(int numerator, int denominator) {
+  assert(denominator > 0);
+  final int quotient = numerator ~/ denominator;
+  final int remainder = numerator % denominator;
+  if (remainder == 0 || numerator >= 0) return quotient;
+  return quotient - 1;
 }
