@@ -180,11 +180,6 @@ class MosaicSurfaceDocument {
     ]);
   }
 
-  /// Sets the visible composition to one, two, or three pane slots.
-  ///
-  /// Existing panes are retained from the front. Growing appends empty panes;
-  /// shrinking removes trailing panes. This is layout authoring, so there is no
-  /// project-frame parameter involved.
   String setPaneCount(int count) {
     if (count < 1 || count > 3) {
       throw ArgumentError.value(
@@ -233,7 +228,6 @@ class MosaicSurfaceDocument {
     return next;
   }
 
-  /// Replaces one pane with one already-authored cut. Retained for old callers.
   String assignCut(String paneId, EditClip cut) {
     final MosaicPane target = pane(paneId);
     _validateId('CLIP', cut.id);
@@ -252,9 +246,6 @@ class MosaicSurfaceDocument {
     return next;
   }
 
-  /// Appends an already-trimmed EDIT cut after the pane's current authored end.
-  /// Existing cuts are preserved. A duplicate cut id is made unique within the
-  /// pane so the same EDIT cut can be reused more than once.
   String appendCut(String paneId, EditClip cut) {
     final MosaicPane target = pane(paneId);
     final String clipId = nextClipId(paneId, cut.id);
@@ -277,8 +268,6 @@ class MosaicSurfaceDocument {
     return next;
   }
 
-  /// Returns the incoming crossfade owned by [clipId], or zero when the cut is
-  /// hard. This is intentionally a small GUI projection over canonical source.
   int incomingCrossfadeFrames(String paneId, String clipId) {
     final RegExpMatch? match =
         _incomingCrossfadeDirective.firstMatch(clip(paneId, clipId).block.innerSource);
@@ -286,9 +275,9 @@ class MosaicSurfaceDocument {
   }
 
   /// Authors a transition BETWEEN two adjacent pane cuts. The right cut owns
-  /// the incoming transition, and its AT is moved left by exactly [frames] so
-  /// the compositor receives the actual overlap it needs. Clearing the xfade
-  /// restores a butt cut at the left cut's end.
+  /// the incoming transition. Changing the overlap shifts the right cut and
+  /// every later cut by the same delta so the pane never develops a gap after
+  /// an earlier crossfade. Clearing restores the downstream hard-cut timing.
   String setCrossfadeBetween(
     String paneId,
     String leftClipId,
@@ -324,28 +313,41 @@ class MosaicSurfaceDocument {
       );
     }
 
-    final int rightAt = left.endFrameExclusive - frames;
-    final String moved = model.rewriteClip(right, atFrame: rightAt);
-    final MosaicSurfaceDocument movedDocument =
-        MosaicSurfaceDocument.parse(moved, mosaicId);
-    final EditClip movedRight = movedDocument.clip(paneId, rightClipId);
-    final String body = movedRight.block.innerSource;
-    final String cleaned = body.replaceFirst(_incomingTransitionLine, '');
+    final int currentFrames = incomingCrossfadeFrames(paneId, rightClipId);
+    final int delta = frames - currentFrames;
+    String shifted = source;
 
-    final String replacement;
-    if (frames == 0) {
-      replacement = cleaned;
-    } else {
-      replacement = _insertIncomingCrossfade(
-        moved,
-        movedRight,
-        cleaned,
-        frames,
-      );
+    if (delta != 0) {
+      for (int index = rightIndex; index < ordered.length; index++) {
+        final String id = ordered[index].id;
+        final MosaicSurfaceDocument current =
+            MosaicSurfaceDocument.parse(shifted, mosaicId);
+        final EditClip currentClip = current.clip(paneId, id);
+        final int nextAt = currentClip.atFrame - delta;
+        if (nextAt < 0) {
+          throw StateError('Crossfade would move CLIP "$id" before frame zero.');
+        }
+        shifted = current.model.rewriteClip(currentClip, atFrame: nextAt);
+      }
     }
 
-    final String next = movedDocument.model.cst.replaceInnerSource(
-      movedRight.block,
+    final MosaicSurfaceDocument shiftedDocument =
+        MosaicSurfaceDocument.parse(shifted, mosaicId);
+    final EditClip shiftedRight = shiftedDocument.clip(paneId, rightClipId);
+    final String body = shiftedRight.block.innerSource;
+    final String cleaned = body.replaceFirst(_incomingTransitionLine, '');
+
+    final String replacement = frames == 0
+        ? cleaned
+        : _insertIncomingCrossfade(
+            shifted,
+            shiftedRight,
+            cleaned,
+            frames,
+          );
+
+    final String next = shiftedDocument.model.cst.replaceInnerSource(
+      shiftedRight.block,
       replacement,
     );
     _validateRenderable(next);
