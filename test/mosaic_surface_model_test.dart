@@ -165,6 +165,78 @@ opaque body stays exact
     expect(clip.speed, ExactClipSpeed(2));
   });
 
+  test('appendCut preserves first cut and places second at pane end', () {
+    const String source = '''[EDIT:cuts]
+[TRACK:V1]
+[CLIP:first:video/a.mp4:0:10:30:1]
+[/CLIP]
+[CLIP:second:video/b.mp4:30:20:40:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:first:video/a.mp4:0:10:30:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+    final MosaicSurfaceDocument document =
+        MosaicSurfaceDocument.parse(source, 'wall');
+    final EditClip sourceCut = document.model.edit('cuts').track('V1').clip('second');
+    final String next = document.appendCut('left', sourceCut);
+    final MosaicSurfaceDocument reparsed =
+        MosaicSurfaceDocument.parse(next, 'wall');
+
+    expect(reparsed.pane('left').clips, hasLength(2));
+    expect(reparsed.clip('left', 'first').atFrame, 0);
+    final EditClip second = reparsed.clip('left', 'second');
+    expect(second.atFrame, 30);
+    expect(second.inFrame, 20);
+    expect(second.durationFrames, 40);
+    expect(second.source, 'video/b.mp4');
+  });
+
+  test('between-cut crossfade creates overlap on incoming cut and clears to hard cut', () {
+    const String source = '''[EDIT:cuts]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:60:1]
+[/CLIP]
+[CLIP:b:video/b.mp4:60:0:60:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:a:video/a.mp4:0:0:60:1]
+[/CLIP]
+[CLIP:b:video/b.mp4:60:0:60:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+    final MosaicSurfaceDocument document =
+        MosaicSurfaceDocument.parse(source, 'wall');
+    final String faded = document.setCrossfadeBetween('left', 'a', 'b', 24);
+    final MosaicSurfaceDocument afterFade =
+        MosaicSurfaceDocument.parse(faded, 'wall');
+
+    expect(afterFade.clip('left', 'a').endFrameExclusive, 60);
+    expect(afterFade.clip('left', 'b').atFrame, 36);
+    expect(afterFade.incomingCrossfadeFrames('left', 'b'), 24);
+    expect(faded, contains('[#EDIT_TRANSITION:CROSSFADE:24]'));
+
+    final String cleared =
+        afterFade.setCrossfadeBetween('left', 'a', 'b', 0);
+    final MosaicSurfaceDocument afterClear =
+        MosaicSurfaceDocument.parse(cleared, 'wall');
+    expect(afterClear.clip('left', 'b').atFrame, 60);
+    expect(afterClear.incomingCrossfadeFrames('left', 'b'), 0);
+    expect(cleared, isNot(contains('[#EDIT_TRANSITION:CROSSFADE:24]')));
+  });
+
   test('authoring rejects a mixed cycle before source is returned', () {
     const String source = '''[EDIT:a]
 [TRACK:V1]
