@@ -532,9 +532,9 @@ void main() {
     expect(model.mosaic('mosaic').pane('pane1').clips, isEmpty);
     expect(find.textContaining('MOSAIC mosaic'), findsWidgets);
     expect(find.text('PANE 1'), findsOneWidget);
-    expect(find.text('ASSIGN CUT'), findsOneWidget);
+    expect(find.text('ADD CUT'), findsOneWidget);
 
-    await tester.tap(find.text('ASSIGN CUT'));
+    await tester.tap(find.text('ADD CUT'));
     await tester.pumpAndSettle();
 
     final Finder cutDialog = find.byType(AlertDialog);
