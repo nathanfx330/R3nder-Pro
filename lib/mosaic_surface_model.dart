@@ -8,11 +8,11 @@
 // Authored CLIP duration remains explicit project time and is never inferred
 // from a referenced EDIT or MOSAIC after the clip has been created.
 //
-// M16 adds the author-facing pane model on top of that exact representation:
-// an EDIT clip is already a cut, so assigning it to a MOSAIC pane copies its
-// source, source IN, duration, and speed at pane time zero. The GUI therefore
-// never needs to ask an author for raw AT or DURATION values just to populate a
-// visual pane.
+// M17 keeps the original pane-assignment API for compatibility, while adding
+// the author-facing sequence operations the GUI now needs: a pane may append
+// multiple already-trimmed EDIT cuts and author a crossfade directly between
+// adjacent cuts. The overlap required by that crossfade is canonical CLIP time,
+// not hidden GUI state.
 
 import 'edit_linter.dart';
 import 'edit_model.dart';
@@ -113,6 +113,15 @@ String createMosaicWithSource({
 }
 
 class MosaicSurfaceDocument {
+  static final RegExp _incomingTransitionLine = RegExp(
+    r'^[ \t]*\[#EDIT_TRANSITION:CROSSFADE:\d+\][ \t]*(\r?\n)?',
+    multiLine: true,
+  );
+
+  static final RegExp _incomingCrossfadeDirective = RegExp(
+    r'\[#EDIT_TRANSITION:CROSSFADE:(\d+)\]',
+  );
+
   final EditDocumentModel model;
   final String mosaicId;
   final MosaicSequence mosaic;
@@ -178,7 +187,11 @@ class MosaicSurfaceDocument {
   /// project-frame parameter involved.
   String setPaneCount(int count) {
     if (count < 1 || count > 3) {
-      throw ArgumentError.value(count, 'count', 'MOSAIC pane count must be 1, 2, or 3.');
+      throw ArgumentError.value(
+        count,
+        'count',
+        'MOSAIC pane count must be 1, 2, or 3.',
+      );
     }
     if (count == mosaic.panes.length) return source;
 
@@ -220,11 +233,7 @@ class MosaicSurfaceDocument {
     return next;
   }
 
-  /// Replaces one pane with the already-authored cut represented by [cut].
-  ///
-  /// The cut remains source-backed. No new media object or duration is
-  /// invented: source, IN, duration, and speed are copied verbatim from the
-  /// EDIT clip and the pane starts it at composition frame zero.
+  /// Replaces one pane with one already-authored cut. Retained for old callers.
   String assignCut(String paneId, EditClip cut) {
     final MosaicPane target = pane(paneId);
     _validateId('CLIP', cut.id);
@@ -239,6 +248,106 @@ class MosaicSurfaceDocument {
         '$paneIndent';
 
     final String next = model.cst.replaceInnerSource(target.block, body);
+    _validateRenderable(next);
+    return next;
+  }
+
+  /// Appends an already-trimmed EDIT cut after the pane's current authored end.
+  /// Existing cuts are preserved. A duplicate cut id is made unique within the
+  /// pane so the same EDIT cut can be reused more than once.
+  String appendCut(String paneId, EditClip cut) {
+    final MosaicPane target = pane(paneId);
+    final String clipId = nextClipId(paneId, cut.id);
+    final int atFrame = target.clips.fold<int>(
+      0,
+      (int end, EditClip item) =>
+          item.endFrameExclusive > end ? item.endFrameExclusive : end,
+    );
+    final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+    final int close = target.block.closeStartOffset;
+    final String paneIndent = _lineIndentAt(source, close);
+    final String clipIndent = '$paneIndent  ';
+    final String insertion = '$clipIndent[CLIP:$clipId:${cut.source}:$atFrame:'
+        '${cut.inFrame}:${cut.durationFrames}:${cut.speed.canonicalMarkup}]$newline'
+        '$clipIndent[/CLIP]$newline'
+        '$paneIndent';
+
+    final String next = model.cst.insertBeforeClosingTag(target.block, insertion);
+    _validateRenderable(next);
+    return next;
+  }
+
+  /// Returns the incoming crossfade owned by [clipId], or zero when the cut is
+  /// hard. This is intentionally a small GUI projection over canonical source.
+  int incomingCrossfadeFrames(String paneId, String clipId) {
+    final RegExpMatch? match =
+        _incomingCrossfadeDirective.firstMatch(clip(paneId, clipId).block.innerSource);
+    return match == null ? 0 : int.parse(match.group(1)!);
+  }
+
+  /// Authors a transition BETWEEN two adjacent pane cuts. The right cut owns
+  /// the incoming transition, and its AT is moved left by exactly [frames] so
+  /// the compositor receives the actual overlap it needs. Clearing the xfade
+  /// restores a butt cut at the left cut's end.
+  String setCrossfadeBetween(
+    String paneId,
+    String leftClipId,
+    String rightClipId,
+    int frames,
+  ) {
+    if (frames < 0) {
+      throw ArgumentError.value(frames, 'frames', 'Must be non-negative.');
+    }
+
+    final MosaicPane target = pane(paneId);
+    final List<EditClip> ordered = List<EditClip>.from(target.clips)
+      ..sort((EditClip a, EditClip b) {
+        final int time = a.atFrame.compareTo(b.atFrame);
+        if (time != 0) return time;
+        return a.id.compareTo(b.id);
+      });
+    final int leftIndex = ordered.indexWhere((EditClip c) => c.id == leftClipId);
+    final int rightIndex = ordered.indexWhere((EditClip c) => c.id == rightClipId);
+    if (leftIndex < 0 || rightIndex != leftIndex + 1) {
+      throw StateError(
+        'Crossfade endpoints must be adjacent cuts in PANE "$paneId".',
+      );
+    }
+
+    final EditClip left = ordered[leftIndex];
+    final EditClip right = ordered[rightIndex];
+    if (frames > left.durationFrames || frames > right.durationFrames) {
+      throw ArgumentError.value(
+        frames,
+        'frames',
+        'Crossfade cannot exceed either adjacent cut duration.',
+      );
+    }
+
+    final int rightAt = left.endFrameExclusive - frames;
+    final String moved = model.rewriteClip(right, atFrame: rightAt);
+    final MosaicSurfaceDocument movedDocument =
+        MosaicSurfaceDocument.parse(moved, mosaicId);
+    final EditClip movedRight = movedDocument.clip(paneId, rightClipId);
+    final String body = movedRight.block.innerSource;
+    final String cleaned = body.replaceFirst(_incomingTransitionLine, '');
+
+    final String replacement;
+    if (frames == 0) {
+      replacement = cleaned;
+    } else {
+      replacement = _insertIncomingCrossfade(
+        moved,
+        movedRight,
+        cleaned,
+        frames,
+      );
+    }
+
+    final String next = movedDocument.model.cst.replaceInnerSource(
+      movedRight.block,
+      replacement,
+    );
     _validateRenderable(next);
     return next;
   }
@@ -375,6 +484,29 @@ class MosaicSurfaceDocument {
     final String next = model.cst.insertBeforeClosingTag(target.block, insertion);
     _validateRenderable(next);
     return next;
+  }
+
+  static String _insertIncomingCrossfade(
+    String document,
+    EditClip clip,
+    String body,
+    int frames,
+  ) {
+    final String childIndent = '${_lineIndentAt(document, clip.block.startOffset)}  ';
+    final String lineEnding = body.contains('\r\n') ? '\r\n' : '\n';
+    final String directive = '[#EDIT_TRANSITION:CROSSFADE:$frames]';
+
+    if (body.startsWith('\r\n')) {
+      return '$lineEnding$childIndent$directive$lineEnding${body.substring(2)}';
+    }
+    if (body.startsWith('\n')) {
+      return '$lineEnding$childIndent$directive$lineEnding${body.substring(1)}';
+    }
+    if (body.isEmpty) {
+      return '$lineEnding$childIndent$directive$lineEnding'
+          '${_lineIndentAt(document, clip.block.startOffset)}';
+    }
+    return '$lineEnding$childIndent$directive$lineEnding$body';
   }
 }
 
