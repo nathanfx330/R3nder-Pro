@@ -9,6 +9,12 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart'
+    show
+        PointerCancelEvent,
+        PointerDownEvent,
+        PointerMoveEvent,
+        PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
@@ -938,6 +944,8 @@ enum _MosaicClipDragMode { none, move, trimStart, trimEnd }
 
 class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
   _MosaicClipDragMode _mode = _MosaicClipDragMode.none;
+  int? _activePointer;
+  double _pointerDownX = 0.0;
   double _dragPixels = 0.0;
 
   int get _deltaFrames => (_dragPixels / widget.pixelsPerFrame).round();
@@ -966,21 +974,42 @@ class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
     }
   }
 
-  void _start(_MosaicClipDragMode mode) {
-    if (!widget.enabled) return;
+  void _pointerDown(
+    _MosaicClipDragMode mode,
+    PointerDownEvent event,
+  ) {
+    if (!widget.enabled || _activePointer != null) return;
     widget.onSelect();
     setState(() {
       _mode = mode;
+      _activePointer = event.pointer;
+      _pointerDownX = event.position.dx;
       _dragPixels = 0.0;
     });
   }
 
-  void _update(DragUpdateDetails details) {
-    if (_mode == _MosaicClipDragMode.none) return;
-    setState(() => _dragPixels += details.delta.dx);
+  void _pointerMove(PointerMoveEvent event) {
+    if (event.pointer != _activePointer || _mode == _MosaicClipDragMode.none) {
+      return;
+    }
+    setState(() {
+      _dragPixels = event.position.dx - _pointerDownX;
+    });
   }
 
-  void _finish() {
+  void _pointerUp(PointerUpEvent event) {
+    if (event.pointer != _activePointer || _mode == _MosaicClipDragMode.none) {
+      return;
+    }
+    _finishPointer(commit: true);
+  }
+
+  void _pointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _activePointer) return;
+    _finishPointer(commit: false);
+  }
+
+  void _finishPointer({required bool commit}) {
     final _MosaicClipDragMode mode = _mode;
     final int previewAt = _previewAt;
     final int previewDuration = _previewDuration;
@@ -988,10 +1017,12 @@ class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
 
     setState(() {
       _mode = _MosaicClipDragMode.none;
+      _activePointer = null;
+      _pointerDownX = 0.0;
       _dragPixels = 0.0;
     });
 
-    if (delta == 0) return;
+    if (!commit || delta == 0) return;
     switch (mode) {
       case _MosaicClipDragMode.move:
         widget.onMove(previewAt);
@@ -1007,24 +1038,16 @@ class _MosaicTimelineClipState extends State<_MosaicTimelineClip> {
     }
   }
 
-  GestureDetector _dragRegion(
+  Listener _dragRegion(
     _MosaicClipDragMode mode,
     Widget child,
   ) {
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.opaque,
-      onTap: widget.enabled ? widget.onSelect : null,
-      onHorizontalDragStart: widget.enabled ? (_) => _start(mode) : null,
-      onHorizontalDragUpdate: widget.enabled ? _update : null,
-      onHorizontalDragEnd: widget.enabled ? (_) => _finish() : null,
-      onHorizontalDragCancel: widget.enabled
-          ? () {
-              setState(() {
-                _mode = _MosaicClipDragMode.none;
-                _dragPixels = 0.0;
-              });
-            }
-          : null,
+      onPointerDown: (PointerDownEvent event) => _pointerDown(mode, event),
+      onPointerMove: _pointerMove,
+      onPointerUp: _pointerUp,
+      onPointerCancel: _pointerCancel,
       child: child,
     );
   }
