@@ -46,10 +46,13 @@ const String _source = '''[EDIT:main]
 [STRUCT:EDIT.main]
 ''';
 
+String _resolveTestSource(String value) => '/workspace/$value';
+
 Widget _preview({
   required StructuralSequencePlacement placement,
   required int localFrame,
   required bool isPlaying,
+  required _FakeBackend backend,
 }) {
   return MaterialApp(
     home: SizedBox(
@@ -62,11 +65,24 @@ Widget _preview({
         isPlaying: isPlaying,
         theme: R3Theme.of(Colors.green),
         wallpaper: null,
-        backend: _FakeBackend(),
-        resolveSource: (String value) => '/workspace/$value',
+        backend: backend,
+        resolveSource: _resolveTestSource,
       ),
     ),
   );
+}
+
+Future<void> _waitForFirstFrameReady(WidgetTester tester) async {
+  final Finder ready = find.byKey(
+    const ValueKey<String>('structural-first-frame-ready'),
+  );
+  for (int attempt = 0; attempt < 50 && ready.evaluate().isEmpty; attempt++) {
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+  }
+  expect(ready, findsOneWidget);
 }
 
 void main() {
@@ -75,12 +91,14 @@ void main() {
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
 
     await tester.pumpWidget(
       _preview(
         placement: placement,
         localFrame: kStructuralZoomFrames + 1,
         isPlaying: true,
+        backend: backend,
       ),
     );
 
@@ -88,24 +106,35 @@ void main() {
       find.byType(EditVideoPreview),
     );
 
-    expect(placement.stageAt(kStructuralZoomFrames + 1),
-        StructuralSequenceStage.opening);
+    expect(
+      placement.stageAt(kStructuralZoomFrames + 1),
+      StructuralSequenceStage.opening,
+    );
     expect(video.currentFrame, 0);
     expect(video.isPlaying, isFalse);
     expect(video.fastPreview, isTrue);
+
+    // Readiness is deliberately independent from authored time. Wait for the
+    // held frame-zero decode to become presentable before entering showing,
+    // while keeping backend and resolver identities stable just like product.
+    await _waitForFirstFrameReady(tester);
 
     await tester.pumpWidget(
       _preview(
         placement: placement,
         localFrame: kStructuralEntryFrames,
         isPlaying: true,
+        backend: backend,
       ),
     );
+    await tester.pump();
 
     video = tester.widget<EditVideoPreview>(find.byType(EditVideoPreview));
 
-    expect(placement.stageAt(kStructuralEntryFrames),
-        StructuralSequenceStage.showing);
+    expect(
+      placement.stageAt(kStructuralEntryFrames),
+      StructuralSequenceStage.showing,
+    );
     expect(video.currentFrame, 0);
     expect(video.isPlaying, isTrue);
     expect(video.fastPreview, isTrue);
@@ -115,12 +144,14 @@ void main() {
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_source).single;
+    final _FakeBackend backend = _FakeBackend();
 
     await tester.pumpWidget(
       _preview(
         placement: placement,
         localFrame: kStructuralZoomFrames + 1,
         isPlaying: false,
+        backend: backend,
       ),
     );
 
