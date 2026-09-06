@@ -1063,38 +1063,39 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         : maxFrames >= 48
             ? 48
             : maxFrames;
-    final TextEditingController controller = TextEditingController(text: '$initial');
+    String draft = '$initial';
 
-    final int? result = await showDialog<int>(
+    return showDialog<int>(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: R3Theme.panel,
           title: Text('Crossfade frames', style: widget.theme.value),
-          content: TextField(
+          content: TextFormField(
             key: const ValueKey<String>('edit-xfade-custom-field'),
-            controller: controller,
+            initialValue: draft,
             autofocus: true,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(labelText: '1 to $maxFrames frames'),
             style: widget.theme.value,
-            onSubmitted: (String value) {
+            onChanged: (String value) => draft = value,
+            onFieldSubmitted: (String value) {
               final int? frames = int.tryParse(value.trim());
               if (frames != null && frames > 0 && frames <= maxFrames) {
-                Navigator.of(context).pop(frames);
+                Navigator.of(dialogContext).pop(frames);
               }
             },
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('CANCEL'),
             ),
             TextButton(
               onPressed: () {
-                final int? frames = int.tryParse(controller.text.trim());
+                final int? frames = int.tryParse(draft.trim());
                 if (frames == null || frames <= 0 || frames > maxFrames) return;
-                Navigator.of(context).pop(frames);
+                Navigator.of(dialogContext).pop(frames);
               },
               child: const Text('APPLY'),
             ),
@@ -1102,9 +1103,6 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         );
       },
     );
-
-    controller.dispose();
-    return result;
   }
 
   Future<void> _showCrossfadeMenu({
