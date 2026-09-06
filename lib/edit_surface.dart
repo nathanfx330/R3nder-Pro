@@ -185,11 +185,11 @@ class _EditSurfaceState extends State<EditSurface> {
     }
   }
 
-  void _commit(String Function(EditSurfaceDocument document) operation) {
+  bool _commit(String Function(EditSurfaceDocument document) operation) {
     final EditSurfaceDocument? document = _parse();
     if (document == null) {
       setState(() {});
-      return;
+      return false;
     }
 
     try {
@@ -200,8 +200,10 @@ class _EditSurfaceState extends State<EditSurface> {
         _error = null;
       });
       widget.onSourceChanged(next);
+      return true;
     } catch (error) {
       setState(() => _error = '$error');
+      return false;
     }
   }
 
@@ -221,6 +223,23 @@ class _EditSurfaceState extends State<EditSurface> {
       _selectedTrackId = clip.trackId;
       _selectedClipId = clip.id;
       _error = null;
+    });
+  }
+
+  void _moveSelectedToTrack(EditSurfaceClip clip, String targetTrackId) {
+    if (clip.trackId == targetTrackId) return;
+    final bool moved = _commit((EditSurfaceDocument current) {
+      return current.moveClipToTrack(
+        clip.trackId,
+        clip.id,
+        targetTrackId,
+        clip.atFrame,
+      );
+    });
+    if (!moved || !mounted) return;
+    setState(() {
+      _selectedTrackId = targetTrackId;
+      _selectedClipId = clip.id;
     });
   }
 
@@ -450,8 +469,6 @@ class _EditSurfaceState extends State<EditSurface> {
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
     final EditSurfaceClip? selected = _selected(document);
 
-    // This is a CUT surface. Composition-level audio beds intentionally do not
-    // extend its ruler or create A1/A2 lanes.
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
         _kRulerHeight + tracks.length * _kTrackHeight;
@@ -678,6 +695,16 @@ class _EditSurfaceState extends State<EditSurface> {
                       ? () => _splitSelected(document)
                       : null,
                 ),
+                if (selected.trackId != 'V1')
+                  _toolButton(
+                    'TO V1',
+                    onPressed: () => _moveSelectedToTrack(selected, 'V1'),
+                  ),
+                if (selected.trackId != 'V2')
+                  _toolButton(
+                    'TO V2',
+                    onPressed: () => _moveSelectedToTrack(selected, 'V2'),
+                  ),
                 _toolButton(
                   'SLIP -1',
                   onPressed: selected.inFrame > 0
@@ -1027,6 +1054,59 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
+  Future<int?> _showCustomCrossfadeDialog({
+    required int currentFrames,
+  }) async {
+    final int maxFrames = widget.clip.durationFrames;
+    final int initial = currentFrames > 0
+        ? currentFrames
+        : maxFrames >= 48
+            ? 48
+            : maxFrames;
+    final TextEditingController controller = TextEditingController(text: '$initial');
+
+    final int? result = await showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text('Crossfade frames', style: widget.theme.value),
+          content: TextField(
+            key: const ValueKey<String>('edit-xfade-custom-field'),
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: '1 to $maxFrames frames'),
+            style: widget.theme.value,
+            onSubmitted: (String value) {
+              final int? frames = int.tryParse(value.trim());
+              if (frames != null && frames > 0 && frames <= maxFrames) {
+                Navigator.of(context).pop(frames);
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              onPressed: () {
+                final int? frames = int.tryParse(controller.text.trim());
+                if (frames == null || frames <= 0 || frames > maxFrames) return;
+                Navigator.of(context).pop(frames);
+              },
+              child: const Text('APPLY'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
+  }
+
   Future<void> _showCrossfadeMenu({
     required bool incoming,
     required Offset globalPosition,
@@ -1076,7 +1156,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
             ],
           ),
         ),
-        for (final int frames in const <int>[6, 12, 24])
+        for (final int frames in const <int>[12, 24, 48, 72])
           PopupMenuItem<int>(
             key: ValueKey<String>('edit-xfade-$edge-$frames'),
             value: frames,
@@ -1093,14 +1173,29 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
               ],
             ),
           ),
+        const PopupMenuDivider(),
+        PopupMenuItem<int>(
+          key: ValueKey<String>('edit-xfade-$edge-custom'),
+          value: -1,
+          child: const Text('CUSTOM…'),
+        ),
       ],
     );
 
     if (!mounted || selected == null) return;
+    int frames = selected;
+    if (selected == -1) {
+      final int? custom = await _showCustomCrossfadeDialog(
+        currentFrames: currentFrames,
+      );
+      if (!mounted || custom == null) return;
+      frames = custom;
+    }
+
     if (incoming) {
-      widget.onSetIncomingCrossfade(selected);
+      widget.onSetIncomingCrossfade(frames);
     } else {
-      widget.onSetOutgoingCrossfade(selected);
+      widget.onSetOutgoingCrossfade(frames);
     }
   }
 
