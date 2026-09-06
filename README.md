@@ -162,7 +162,7 @@ The public promise is:
 
 > Ask for project frame N, and preview, scrubbing, replay, and export agree on what belongs at N.
 
-The full structural-video engineering history is in [docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md](docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md).
+The full structural-video engineering history is in [docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md](docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md). If you are building your own NLE or motion-graphics editor, the distilled architecture and debugging lessons are in [docs/BUILDING_A_DETERMINISTIC_NLE.md](docs/BUILDING_A_DETERMINISTIC_NLE.md).
 
 ---
 
@@ -344,6 +344,7 @@ Structural sources can also be exported in isolation from the structural video w
 # Documentation
 
 - **[MANUAL.md](MANUAL.md)**: beginner-first user manual. Start here.
+- **[docs/BUILDING_A_DETERMINISTIC_NLE.md](docs/BUILDING_A_DETERMINISTIC_NLE.md)**: lessons for building your own NLE or motion-graphics editor from the architecture, failures, measurements, and corrections that shaped R3nder Pro.
 - **[docs/REFERENCE.md](docs/REFERENCE.md)**: complete tag/media/reference manual and architecture notes preserved from the earlier documentation.
 - **[docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md](docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md)**: engineering history from ProjectClock through structural video preview/bake parity.
 - **[docs/EDIT_PLAYBACK_PERFORMANCE.md](docs/EDIT_PLAYBACK_PERFORMANCE.md)**: EDIT playback performance work.
