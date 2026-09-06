@@ -54,7 +54,8 @@ const String _trimmedSource = '''[EDIT:main]
 ''';
 
 void main() {
-  test('trimmed EDIT cut is copied exactly into a spatial mosaic pane', () {
+  test('trimmed EDIT remains intact when whole sequence is placed in MOSAIC pane',
+      () {
     String next = EditSurfaceDocument.parse(_source, 'main').trimStart(
       'V1',
       'base',
@@ -67,11 +68,13 @@ void main() {
     );
 
     EditDocumentModel model = EditDocumentModel.parse(next);
-    final EditClip cut = model.edit('main').track('V1').clip('base');
+    final EditSequence edit = model.edit('main');
+    final EditClip cut = edit.track('V1').clip('base');
     expect(cut.atFrame, 3);
     expect(cut.inFrame, 3);
     expect(cut.durationFrames, 8);
     expect(cut.sourceFrameAtProjectOffset(cut.durationFrames - 1), 10);
+    expect(edit.projectFrameCount, 11);
 
     next = createEmptyMosaic(source: next, mosaicId: 'mosaic');
     MosaicSurfaceDocument mosaic =
@@ -87,26 +90,32 @@ void main() {
       <String>['pane1', 'pane2', 'pane3'],
     );
 
-    model = EditDocumentModel.parse(next);
-    final EditClip currentCut = model.edit('main').track('V1').clip('base');
-    next = MosaicSurfaceDocument.parse(next, 'mosaic').assignCut(
-      'pane1',
-      currentCut,
+    next = mosaic.addClip(
+      paneId: 'pane1',
+      clipId: 'edit_main',
+      structuralSource: 'EDIT.main',
+      atFrame: 0,
+      inFrame: 0,
+      durationFrames: 11,
     );
 
-    final EditClip assigned = EditDocumentModel.parse(next)
-        .mosaic('mosaic')
-        .pane('pane1')
-        .clip('base');
-    expect(assigned.source, 'video/base.mp4');
+    model = EditDocumentModel.parse(next);
+    final EditClip assigned =
+        model.mosaic('mosaic').pane('pane1').clip('edit_main');
+    expect(assigned.source, 'EDIT.main');
     expect(assigned.atFrame, 0);
-    expect(assigned.inFrame, 3);
-    expect(assigned.durationFrames, 8);
+    expect(assigned.inFrame, 0);
+    expect(assigned.durationFrames, 11);
     expect(assigned.speed, ExactClipSpeed(1));
+
+    final EditClip preserved = model.edit('main').track('V1').clip('base');
+    expect(preserved.atFrame, 3);
+    expect(preserved.inFrame, 3);
+    expect(preserved.durationFrames, 8);
   });
 
   testWidgets(
-    'workspace shows cut trim data then assigns that cut to a pane',
+    'workspace shows trim data then places the whole EDIT sequence in a pane',
     (WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -169,28 +178,34 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.text('ASSIGN CUT').first);
+      await tester.tap(
+        find.byKey(const ValueKey<String>('mosaic-empty-pane:pane1')),
+      );
       await tester.pump();
 
-      final Finder cutChoice = find.byKey(
-        const ValueKey<String>('mosaic-cut:main:V1:base'),
+      final Finder editChoice = find.byKey(
+        const ValueKey<String>('mosaic-edit-sequence:main'),
       );
-      expect(cutChoice, findsOneWidget);
-      await tester.tap(cutChoice);
+      expect(editChoice, findsOneWidget);
+      expect(find.text('EDIT.main'), findsOneWidget);
+      expect(find.text('11 FRAMES'), findsOneWidget);
+      await tester.tap(editChoice);
       await tester.pump();
 
       expect(latestSource, isNotNull);
-      final EditClip assigned = EditDocumentModel.parse(latestSource!)
-          .mosaic('mosaic')
-          .pane('pane1')
-          .clip('base');
-      expect(assigned.source, 'video/base.mp4');
+      final EditDocumentModel model = EditDocumentModel.parse(latestSource!);
+      final EditClip assigned =
+          model.mosaic('mosaic').pane('pane1').clip('edit_main');
+      expect(assigned.source, 'EDIT.main');
       expect(assigned.atFrame, 0);
-      expect(assigned.inFrame, 3);
-      expect(assigned.durationFrames, 8);
-      expect(find.text('IN F3'), findsOneWidget);
-      expect(find.text('OUT F10'), findsOneWidget);
-      expect(find.text('CUT 8F'), findsOneWidget);
+      expect(assigned.inFrame, 0);
+      expect(assigned.durationFrames, 11);
+
+      final EditClip preserved = model.edit('main').track('V1').clip('base');
+      expect(preserved.atFrame, 3);
+      expect(preserved.inFrame, 3);
+      expect(preserved.durationFrames, 8);
+      expect(find.text('edit_main'), findsOneWidget);
     },
   );
 }
