@@ -21,6 +21,7 @@ import 'edit_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'mosaic_surface_model.dart';
+import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
 class MosaicSurface extends StatefulWidget {
@@ -105,6 +106,27 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     } catch (error) {
       setState(() => _error = '$error');
       return false;
+    }
+  }
+
+  void _addToSequence(MosaicSequence mosaic) {
+    if (widget.isPlaying || mosaic.projectFrameCount <= 0) return;
+
+    try {
+      final StructuralSourceRef ref =
+          StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!;
+      final String next = appendStructuralSequencePlacement(
+        rawDocument: _workingSource,
+        sourceRef: ref,
+      );
+      MosaicSurfaceDocument.parse(next, widget.mosaicId);
+      setState(() {
+        _workingSource = next;
+        _error = null;
+      });
+      widget.onSourceChanged(next);
+    } catch (error) {
+      setState(() => _error = '$error');
     }
   }
 
@@ -409,6 +431,16 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             'MOSAIC ${mosaic.id}',
             theme: widget.theme,
             accent: true,
+          ),
+          R3Button(
+            'ADD SEQUENCE',
+            key: const ValueKey<String>('mosaic-add-sequence'),
+            theme: widget.theme,
+            compact: true,
+            kind: R3ButtonKind.primary,
+            onPressed: widget.isPlaying || mosaic.projectFrameCount <= 0
+                ? null
+                : () => _addToSequence(mosaic),
           ),
           SizedBox(width: sc(4)),
           Text('LAYOUT', style: widget.theme.micro),
