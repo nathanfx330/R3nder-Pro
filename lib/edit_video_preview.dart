@@ -339,6 +339,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         activeCount++;
         if (activeCount > 1) return null;
         if (!clip.transition.isNone ||
+            !clip.outgoingTransition.isNone ||
             StructuralSourceRef.tryParse(clip.source) != null) {
           return null;
         }
@@ -597,6 +598,17 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         status: '',
       ),
     );
+
+    // An authored EDIT gap is already honestly presentable before RGBA image
+    // conversion finishes: the preview painter's stable base is opaque black,
+    // and the compositor has confirmed that no active clip is pending/offline.
+    // Report readiness now so STRUCT opening can release without waiting on a
+    // needless black-image conversion round trip.
+    if (top == null &&
+        result.contributors.isEmpty &&
+        result.mediaFrames.isEmpty) {
+      _reportFirstFrameReady();
+    }
 
     final ui.Image decoded;
     try {
