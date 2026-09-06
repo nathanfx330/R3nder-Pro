@@ -79,13 +79,13 @@ Widget _host(ValueChanged<String> onSourceChanged) {
 }
 
 void main() {
-  testWidgets('pane shows multiple cuts with crossfade control between them',
+  testWidgets('pane shows multiple sequence items with crossfade control between them',
       (WidgetTester tester) async {
     String? changed;
     await tester.pumpWidget(_host((String value) => changed = value));
     await tester.pumpAndSettle();
 
-    expect(find.text('2 CUTS'), findsOneWidget);
+    expect(find.text('2 SEQUENCES'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('mosaic-cut-assignment:a')),
       findsOneWidget,
@@ -109,12 +109,13 @@ void main() {
     expect(find.text('XFADE\n24F'), findsOneWidget);
   });
 
-  testWidgets('pane uses ADD CUT instead of destructive CHANGE CUT',
+  testWidgets('pane uses ADD SEQUENCE instead of cut assignment controls',
       (WidgetTester tester) async {
     await tester.pumpWidget(_host((_) {}));
     await tester.pumpAndSettle();
 
-    expect(find.text('ADD CUT'), findsOneWidget);
+    expect(find.text('ADD SEQUENCE'), findsOneWidget);
+    expect(find.text('ADD CUT'), findsNothing);
     expect(find.text('CHANGE CUT'), findsNothing);
     expect(find.text('ASSIGN CUT'), findsNothing);
   });
