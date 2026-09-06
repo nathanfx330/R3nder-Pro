@@ -2,11 +2,10 @@
 //
 // GUI surface for canonical MOSAIC / PANE / CLIP authoring.
 //
-// The script remains canonical, but the authoring abstraction is visual:
-// choose a one, two, or three-pane layout and assign already-authored EDIT cuts
-// to those panes. A pane assignment copies the cut's source IN, duration, and
-// speed at composition frame zero. Raw AT and DURATION fields are deliberately
-// not exposed here.
+// The script remains canonical, but each visual pane is now a small authored
+// cut timeline rather than a single-choice slot. Already-trimmed EDIT cuts can
+// be appended repeatedly, and a crossfade is authored directly between two
+// adjacent pane cuts. The model owns the actual overlap in CLIP project time.
 
 import 'package:flutter/material.dart';
 
@@ -74,11 +73,11 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     }
   }
 
-  void _commit(String Function(MosaicSurfaceDocument document) operation) {
+  bool _commit(String Function(MosaicSurfaceDocument document) operation) {
     final MosaicSurfaceDocument? document = _parse();
     if (document == null) {
       setState(() {});
-      return;
+      return false;
     }
 
     try {
@@ -89,8 +88,10 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
         _error = null;
       });
       widget.onSourceChanged(next);
+      return true;
     } catch (error) {
       setState(() => _error = '$error');
+      return false;
     }
   }
 
@@ -132,7 +133,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       builder: (BuildContext context) {
         return AlertDialog(
           backgroundColor: R3Theme.panel,
-          title: Text('Assign cut to Pane $paneNumber', style: widget.theme.value),
+          title: Text('Add cut to Pane $paneNumber', style: widget.theme.value),
           content: SizedBox(
             width: sc(620),
             height: sc(390),
@@ -192,7 +193,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     );
   }
 
-  Future<void> _assignPane(
+  Future<void> _appendCut(
     MosaicSurfaceDocument document,
     MosaicPane pane,
     int paneNumber,
@@ -201,7 +202,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     if (choice == null || !mounted) return;
 
     _commit((MosaicSurfaceDocument current) {
-      return current.assignCut(pane.id, choice.clip);
+      return current.appendCut(pane.id, choice.clip);
     });
   }
 
@@ -211,6 +212,92 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
 
   void _clearPane(MosaicPane pane) {
     _commit((MosaicSurfaceDocument current) => current.clearPane(pane.id));
+  }
+
+  Future<int?> _customCrossfadeFrames({
+    required int currentFrames,
+    required int maxFrames,
+  }) async {
+    final int initial = currentFrames > 0
+        ? currentFrames
+        : maxFrames >= 48
+            ? 48
+            : maxFrames;
+    final TextEditingController controller = TextEditingController(
+      text: '$initial',
+    );
+
+    final int? result = await showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text('Crossfade frames', style: widget.theme.value),
+          content: TextField(
+            key: const ValueKey<String>('mosaic-xfade-custom-field'),
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: '1 to $maxFrames frames',
+            ),
+            style: widget.theme.value,
+            onSubmitted: (String value) {
+              final int? frames = int.tryParse(value.trim());
+              if (frames != null && frames > 0 && frames <= maxFrames) {
+                Navigator.of(context).pop(frames);
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              onPressed: () {
+                final int? frames = int.tryParse(controller.text.trim());
+                if (frames == null || frames <= 0 || frames > maxFrames) return;
+                Navigator.of(context).pop(frames);
+              },
+              child: const Text('APPLY'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _choosePaneCrossfade(
+    MosaicPane pane,
+    EditClip left,
+    EditClip right,
+    int selected,
+    int currentFrames,
+  ) async {
+    final int maxFrames =
+        left.durationFrames < right.durationFrames ? left.durationFrames : right.durationFrames;
+    int frames = selected;
+    if (selected == -1) {
+      final int? custom = await _customCrossfadeFrames(
+        currentFrames: currentFrames,
+        maxFrames: maxFrames,
+      );
+      if (custom == null || !mounted) return;
+      frames = custom;
+    }
+
+    _commit((MosaicSurfaceDocument current) {
+      return current.setCrossfadeBetween(
+        pane.id,
+        left.id,
+        right.id,
+        frames,
+      );
+    });
   }
 
   @override
@@ -241,6 +328,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 structuralSource: 'MOSAIC.${mosaic.id}',
                 currentFrame: frame,
                 isPlaying: widget.isPlaying,
+                fastPreview: widget.isPlaying,
                 theme: widget.theme,
                 backend: widget.backend,
                 resolveSource: widget.resolveSource,
@@ -380,15 +468,14 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     MosaicPane pane,
     int paneNumber,
   ) {
-    final EditClip? cut = pane.clips.isEmpty ? null : pane.clips.first;
-    final bool legacyMulti = pane.clips.length > 1;
+    final bool hasCuts = pane.clips.isNotEmpty;
 
     return Container(
       key: ValueKey<String>('mosaic-pane:${pane.id}'),
       decoration: BoxDecoration(
         color: R3Theme.bg,
         border: Border.all(
-          color: cut == null ? R3Theme.hairline : widget.theme.accentDim,
+          color: hasCuts ? widget.theme.accentDim : R3Theme.hairline,
         ),
         borderRadius: BorderRadius.circular(4),
       ),
@@ -407,15 +494,13 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                   'PANE $paneNumber',
                   style: widget.theme.microAccent,
                 ),
-                if (legacyMulti) ...[
-                  SizedBox(width: sc(8)),
-                  Text(
-                    'LEGACY ${pane.clips.length} CLIPS',
-                    style: widget.theme.micro.copyWith(color: R3Theme.warn),
-                  ),
-                ],
+                SizedBox(width: sc(8)),
+                Text(
+                  '${pane.clips.length} CUT${pane.clips.length == 1 ? '' : 'S'}',
+                  style: widget.theme.micro,
+                ),
                 const Spacer(),
-                if (cut != null)
+                if (hasCuts)
                   R3Button(
                     'CLEAR',
                     theme: widget.theme,
@@ -423,23 +508,23 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                     onPressed: widget.isPlaying ? null : () => _clearPane(pane),
                   ),
                 R3Button(
-                  cut == null ? 'ASSIGN CUT' : 'CHANGE CUT',
+                  'ADD CUT',
                   theme: widget.theme,
                   compact: true,
-                  kind: cut == null ? R3ButtonKind.primary : R3ButtonKind.normal,
+                  kind: hasCuts ? R3ButtonKind.normal : R3ButtonKind.primary,
                   onPressed: widget.isPlaying
                       ? null
-                      : () => _assignPane(document, pane, paneNumber),
+                      : () => _appendCut(document, pane, paneNumber),
                 ),
               ],
             ),
           ),
           Expanded(
-            child: cut == null
+            child: !hasCuts
                 ? InkWell(
                     onTap: widget.isPlaying
                         ? null
-                        : () => _assignPane(document, pane, paneNumber),
+                        : () => _appendCut(document, pane, paneNumber),
                     child: Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -453,25 +538,71 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                           Text('EMPTY', style: widget.theme.value),
                           SizedBox(height: sc(4)),
                           Text(
-                            'Assign an already-trimmed EDIT cut',
+                            'Add an already-trimmed EDIT cut',
                             style: widget.theme.micro,
                           ),
                         ],
                       ),
                     ),
                   )
-                : _buildAssignedCut(cut),
+                : _buildPaneTimeline(document, pane),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAssignedCut(EditClip clip) {
+  Widget _buildPaneTimeline(
+    MosaicSurfaceDocument document,
+    MosaicPane pane,
+  ) {
+    final List<EditClip> ordered = List<EditClip>.from(pane.clips)
+      ..sort((EditClip a, EditClip b) {
+        final int time = a.atFrame.compareTo(b.atFrame);
+        if (time != 0) return time;
+        return a.id.compareTo(b.id);
+      });
+
+    final List<Widget> children = <Widget>[];
+    for (int index = 0; index < ordered.length; index++) {
+      final EditClip clip = ordered[index];
+      children.add(_buildCutCard(clip));
+      if (index >= ordered.length - 1) continue;
+
+      final EditClip next = ordered[index + 1];
+      children.add(
+        _buildBetweenCrossfade(
+          document: document,
+          pane: pane,
+          left: clip,
+          right: next,
+        ),
+      );
+    }
+
+    return Container(
+      key: ValueKey<String>('mosaic-pane-timeline:${pane.id}'),
+      padding: EdgeInsets.symmetric(horizontal: sc(8), vertical: sc(10)),
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: children),
+      ),
+    );
+  }
+
+  Widget _buildCutCard(EditClip clip) {
     final int out = _sourceOut(clip);
-    return Padding(
+    return Container(
       key: ValueKey<String>('mosaic-cut-assignment:${clip.id}'),
-      padding: EdgeInsets.all(sc(12)),
+      width: sc(170),
+      constraints: BoxConstraints(minHeight: sc(92)),
+      padding: EdgeInsets.all(sc(9)),
+      decoration: BoxDecoration(
+        color: widget.theme.accentFaint,
+        border: Border.all(color: widget.theme.accentDim),
+        borderRadius: BorderRadius.circular(3),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
@@ -485,25 +616,96 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          SizedBox(height: sc(5)),
+          SizedBox(height: sc(4)),
           Text(
             clip.source,
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: widget.theme.fine.copyWith(color: R3Theme.textBright),
           ),
-          SizedBox(height: sc(10)),
-          Wrap(
-            spacing: sc(12),
-            runSpacing: sc(5),
-            children: [
-              Text('IN F${clip.inFrame}', style: widget.theme.microAccent),
-              Text('OUT F$out', style: widget.theme.microAccent),
-              Text('CUT ${clip.durationFrames}F', style: widget.theme.micro),
-              Text('${clip.speed.canonicalMarkup}X', style: widget.theme.micro),
-            ],
+          SizedBox(height: sc(7)),
+          Text(
+            'AT F${clip.atFrame}   IN F${clip.inFrame}   OUT F$out',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: widget.theme.microAccent,
+          ),
+          SizedBox(height: sc(3)),
+          Text(
+            '${clip.durationFrames}F   ${clip.speed.canonicalMarkup}X',
+            style: widget.theme.micro,
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBetweenCrossfade({
+    required MosaicSurfaceDocument document,
+    required MosaicPane pane,
+    required EditClip left,
+    required EditClip right,
+  }) {
+    final int current = document.incomingCrossfadeFrames(pane.id, right.id);
+    final int maxFrames =
+        left.durationFrames < right.durationFrames ? left.durationFrames : right.durationFrames;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: sc(5)),
+      child: PopupMenuButton<int>(
+        key: ValueKey<String>('mosaic-xfade:${pane.id}:${left.id}:${right.id}'),
+        tooltip: 'Crossfade between ${left.id} and ${right.id}',
+        color: R3Theme.panelHi,
+        enabled: !widget.isPlaying,
+        onSelected: (int value) {
+          _choosePaneCrossfade(pane, left, right, value, current);
+        },
+        itemBuilder: (_) => <PopupMenuEntry<int>>[
+          PopupMenuItem<int>(
+            enabled: false,
+            height: sc(30),
+            child: Text('XFADE BETWEEN CUTS', style: widget.theme.microAccent),
+          ),
+          PopupMenuItem<int>(
+            value: 0,
+            child: Text(current == 0 ? '✓  HARD CUT' : 'HARD CUT'),
+          ),
+          for (final int frames in const <int>[12, 24, 48, 72])
+            PopupMenuItem<int>(
+              value: frames,
+              enabled: frames <= maxFrames,
+              child: Text(current == frames
+                  ? '✓  $frames FRAMES'
+                  : '$frames FRAMES'),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem<int>(
+            value: -1,
+            enabled: maxFrames > 0,
+            child: const Text('CUSTOM…'),
+          ),
+        ],
+        child: Container(
+          width: sc(72),
+          height: sc(54),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: current > 0
+                ? R3Theme.ribbonWindow.withValues(alpha: 0.18)
+                : R3Theme.panel,
+            border: Border.all(
+              color: current > 0 ? R3Theme.ribbonWindow : R3Theme.hairline,
+            ),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            current > 0 ? 'XFADE\n${current}F' : 'CUT\n▼',
+            textAlign: TextAlign.center,
+            style: current > 0
+                ? widget.theme.microAccent
+                : widget.theme.micro,
+          ),
+        ),
       ),
     );
   }
