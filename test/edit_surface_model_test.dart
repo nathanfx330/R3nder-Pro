@@ -33,6 +33,22 @@ void main() {
     );
   });
 
+  test('clip moves from V1 to V2 with transition body preserved', () {
+    final EditSurfaceDocument doc = EditSurfaceDocument.parse(_source, 'main');
+    final String next = doc.moveClipToTrack('V1', 'intro', 'V2', 22);
+    final EditSurfaceDocument reparsed = EditSurfaceDocument.parse(next, 'main');
+
+    expect(reparsed.track('V1').clips.map((EditSurfaceClip c) => c.id),
+        isNot(contains('intro')));
+    final EditSurfaceClip moved = reparsed.clip('V2', 'intro');
+    expect(moved.atFrame, 22);
+    expect(moved.inFrame, 20);
+    expect(moved.durationFrames, 40);
+    expect(moved.speed, ExactClipSpeed(1));
+    expect(moved.transition, const EditTransition.crossfade(8));
+    expect(next, contains('[#EDIT_TRANSITION:CROSSFADE:8]'));
+  });
+
   test('trim start preserves sampled source position at exact clip speed', () {
     final EditSurfaceDocument doc = EditSurfaceDocument.parse(_source, 'main');
     final String next = doc.trimStart('V1', 'broll', 65);
