@@ -146,7 +146,7 @@ void main() {
     renderer.dispose();
   });
 
-  test('authored empty timeline space exports transparent rather than holding', () {
+  test('authored empty EDIT timeline space exports opaque black', () {
     const String source = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:late:leaf.mp4:2:0:2:1]
@@ -168,7 +168,9 @@ void main() {
 
     expect(renderer.totalFrames, 4);
     final Uint8List gap = renderer.renderFrame(0);
-    expect(gap, everyElement(0));
+    for (int i = 0; i < gap.length; i += 4) {
+      expect(gap.sublist(i, i + 4), <int>[0, 0, 0, 255]);
+    }
     expect(backend.openCount, 0);
 
     renderer.renderFrame(2);
