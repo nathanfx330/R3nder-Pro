@@ -77,6 +77,27 @@ Widget _host(ValueChanged<String> onSourceChanged) {
   );
 }
 
+Future<void> _dragVisibleRegion(
+  WidgetTester tester,
+  Finder finder,
+  Offset delta,
+) async {
+  final Rect rect = tester.getRect(finder);
+
+  // The between-cut XFADE badge deliberately occupies the upper part of a
+  // boundary. Real trim handles remain exposed below it. Starting the gesture
+  // three-quarters down the visible region exercises the actual user-accessible
+  // drag target rather than assuming the wrapper widget's center owns input.
+  final Offset start = Offset(
+    rect.center.dx,
+    rect.top + rect.height * 0.75,
+  );
+
+  final TestGesture gesture = await tester.startGesture(start);
+  await gesture.moveBy(delta);
+  await gesture.up();
+}
+
 void main() {
   test('crossfade normalizes arbitrary dragged geometry to real overlap', () {
     final MosaicSurfaceDocument document =
@@ -125,12 +146,12 @@ void main() {
       findsOneWidget,
     );
     final Finder clip = find.byKey(
-      const ValueKey<String>('mosaic-timeline-clip:pane1:b'),
+      const ValueKey<String>('mosaic-cut-assignment:b'),
     );
     expect(clip, findsOneWidget);
 
     // Default MOSAIC timeline scale is 2 px/frame, so 20 px = 10 frames.
-    await tester.drag(clip, const Offset(-20, 0));
+    await _dragVisibleRegion(tester, clip, const Offset(-20, 0));
     await tester.pumpAndSettle();
 
     expect(changed, isNotNull);
@@ -150,7 +171,7 @@ void main() {
     );
     expect(handle, findsOneWidget);
 
-    await tester.drag(handle, const Offset(20, 0));
+    await _dragVisibleRegion(tester, handle, const Offset(20, 0));
     await tester.pumpAndSettle();
 
     expect(changed, isNotNull);
@@ -172,7 +193,7 @@ void main() {
     );
     expect(handle, findsOneWidget);
 
-    await tester.drag(handle, const Offset(-20, 0));
+    await _dragVisibleRegion(tester, handle, const Offset(-20, 0));
     await tester.pumpAndSettle();
 
     expect(changed, isNotNull);
