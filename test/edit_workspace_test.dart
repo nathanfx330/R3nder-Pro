@@ -532,25 +532,26 @@ void main() {
     expect(model.mosaic('mosaic').pane('pane1').clips, isEmpty);
     expect(find.textContaining('MOSAIC mosaic'), findsWidgets);
     expect(find.text('PANE 1'), findsOneWidget);
-    expect(find.text('ADD CUT'), findsOneWidget);
+    expect(find.text('ADD SEQUENCE'), findsOneWidget);
 
-    await tester.tap(find.text('ADD CUT'));
+    await tester.tap(find.text('ADD SEQUENCE'));
     await tester.pumpAndSettle();
 
-    final Finder cutDialog = find.byType(AlertDialog);
-    expect(cutDialog, findsOneWidget);
-    final Finder cutChoice = find.byKey(
-      const ValueKey<String>('mosaic-cut:main:V1:base'),
+    final Finder sequenceDialog = find.byType(AlertDialog);
+    expect(sequenceDialog, findsOneWidget);
+    final Finder sequenceChoice = find.byKey(
+      const ValueKey<String>('mosaic-edit-sequence:main'),
     );
-    expect(cutChoice, findsOneWidget);
-    await tester.tap(cutChoice);
+    expect(sequenceChoice, findsOneWidget);
+    await tester.tap(sequenceChoice);
     await tester.pumpAndSettle();
 
     model = EditDocumentModel.parse(latest);
-    final EditClip paneCut = model.mosaic('mosaic').pane('pane1').clip('base');
-    expect(paneCut.source, 'video/base.mp4');
-    expect(paneCut.inFrame, 0);
-    expect(paneCut.durationFrames, 60);
+    final EditClip paneSequence =
+        model.mosaic('mosaic').pane('pane1').clip('edit_main');
+    expect(paneSequence.source, 'EDIT.main');
+    expect(paneSequence.inFrame, 0);
+    expect(paneSequence.durationFrames, 60);
 
     await tester.tap(find.text('NEW EDIT'));
     await tester.pumpAndSettle();
