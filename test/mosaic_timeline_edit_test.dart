@@ -2,6 +2,7 @@
 
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_model.dart';
@@ -85,16 +86,22 @@ Future<void> _dragVisibleRegion(
   final Rect rect = tester.getRect(finder);
 
   // The between-cut XFADE badge deliberately occupies the upper part of a
-  // boundary. Real trim handles remain exposed below it. Starting the gesture
-  // three-quarters down the visible region exercises the actual user-accessible
-  // drag target rather than assuming the wrapper widget's center owns input.
+  // boundary. Real trim handles remain exposed below it. Start three-quarters
+  // down the visible region, using the desktop mouse device this UI is built
+  // for. Two move events make drag-arena acceptance and authored delta separate
+  // events, so the test does not depend on slop handling in one synthetic move.
   final Offset start = Offset(
     rect.center.dx,
     rect.top + rect.height * 0.75,
   );
 
-  final TestGesture gesture = await tester.startGesture(start);
-  await gesture.moveBy(delta);
+  final TestGesture gesture = await tester.startGesture(
+    start,
+    kind: PointerDeviceKind.mouse,
+  );
+  await gesture.moveBy(Offset(delta.dx / 2.0, delta.dy / 2.0));
+  await tester.pump();
+  await gesture.moveBy(Offset(delta.dx / 2.0, delta.dy / 2.0));
   await gesture.up();
 }
 
