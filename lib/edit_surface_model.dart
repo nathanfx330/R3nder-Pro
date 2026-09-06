@@ -332,7 +332,7 @@ class EditSurfaceDocument {
       final int close = existingTrack.track.block.closeStartOffset;
       final String parentIndent = _lineIndentAt(source, close);
       final String childIndent = '$parentIndent  ';
-      final String insertion = '  $opening$lineEnding'
+      final String insertion = '$childIndent$opening$lineEnding'
           '$childIndent[/CLIP]$lineEnding'
           '$parentIndent';
       next = model.cst.insertBeforeClosingTag(
@@ -344,7 +344,7 @@ class EditSurfaceDocument {
       final String editIndent = _lineIndentAt(source, close);
       final String trackIndent = '$editIndent  ';
       final String clipIndent = '$trackIndent  ';
-      final String insertion = '  [TRACK:$trackId]$lineEnding'
+      final String insertion = '$trackIndent[TRACK:$trackId]$lineEnding'
           '$clipIndent$opening$lineEnding'
           '$clipIndent[/CLIP]$lineEnding'
           '$trackIndent[/TRACK]$lineEnding'
@@ -362,6 +362,85 @@ class EditSurfaceDocument {
     }
     final EditSurfaceClip selected = clip(trackId, clipId);
     return model.rewriteClip(selected.clip, atFrame: atFrame);
+  }
+
+  /// Moves a complete authored CLIP block between video tracks while preserving
+  /// source IN, duration, speed, transition comments, and every other opaque
+  /// child inside that CLIP. The destination track is created on demand.
+  String moveClipToTrack(
+    String sourceTrackId,
+    String clipId,
+    String targetTrackId,
+    int atFrame,
+  ) {
+    if (!_structuralIdPattern.hasMatch(targetTrackId)) {
+      throw ArgumentError.value(
+        targetTrackId,
+        'targetTrackId',
+        'TRACK id must use letters, numbers, underscore, or hyphen.',
+      );
+    }
+    if (atFrame < 0) {
+      throw ArgumentError.value(atFrame, 'atFrame', 'Must be non-negative.');
+    }
+    if (sourceTrackId == targetTrackId) {
+      return moveClip(sourceTrackId, clipId, atFrame);
+    }
+
+    final EditSurfaceClip selected = clip(sourceTrackId, clipId);
+    final EditSurfaceTrack? existingTarget = trackOrNull(targetTrackId);
+    if (existingTarget != null &&
+        existingTarget.clips.any((EditSurfaceClip item) => item.id == clipId)) {
+      throw StateError(
+        'CLIP "$clipId" already exists in TRACK "$targetTrackId".',
+      );
+    }
+
+    final String opening = _clipOpeningTag(
+      id: selected.id,
+      source: selected.source,
+      atFrame: atFrame,
+      inFrame: selected.inFrame,
+      durationFrames: selected.durationFrames,
+      speed: selected.speed,
+    );
+    final String body = selected.clip.block.innerSource;
+    final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+
+    final String without = model.cst.replaceBlock(selected.clip.block, '');
+    final EditSurfaceDocument afterRemoval =
+        EditSurfaceDocument.parse(without, editId);
+    final EditSurfaceTrack? target = afterRemoval.trackOrNull(targetTrackId);
+
+    late final String next;
+    if (target != null) {
+      final int close = target.track.block.closeStartOffset;
+      final String parentIndent = _lineIndentAt(without, close);
+      final String childIndent = '$parentIndent  ';
+      final String insertion = '$childIndent$opening$body[/CLIP]$lineEnding'
+          '$parentIndent';
+      next = afterRemoval.model.cst.insertBeforeClosingTag(
+        target.track.block,
+        insertion,
+      );
+    } else {
+      final EditSequence currentEdit = afterRemoval.edit;
+      final int close = currentEdit.block.closeStartOffset;
+      final String editIndent = _lineIndentAt(without, close);
+      final String trackIndent = '$editIndent  ';
+      final String clipIndent = '$trackIndent  ';
+      final String insertion = '$trackIndent[TRACK:$targetTrackId]$lineEnding'
+          '$clipIndent$opening$body[/CLIP]$lineEnding'
+          '$trackIndent[/TRACK]$lineEnding'
+          '$editIndent';
+      next = afterRemoval.model.cst.insertBeforeClosingTag(
+        currentEdit.block,
+        insertion,
+      );
+    }
+
+    EditSurfaceDocument.parse(next, editId);
+    return next;
   }
 
   String trimStart(String trackId, String clipId, int newAtFrame) {
