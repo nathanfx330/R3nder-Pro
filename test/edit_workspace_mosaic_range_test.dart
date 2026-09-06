@@ -205,7 +205,18 @@ void main() {
       expect(preserved.atFrame, 3);
       expect(preserved.inFrame, 3);
       expect(preserved.durationFrames, 8);
-      expect(find.text('edit_main'), findsOneWidget);
+
+      final Finder sequenceCard = find.byKey(
+        const ValueKey<String>('mosaic-cut-assignment:edit_main'),
+      );
+      expect(sequenceCard, findsOneWidget);
+      expect(
+        find.descendant(
+          of: sequenceCard,
+          matching: find.text('EDIT.main'),
+        ),
+        findsOneWidget,
+      );
     },
   );
 }
