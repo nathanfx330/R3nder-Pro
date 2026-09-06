@@ -223,42 +223,41 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
         : maxFrames >= 48
             ? 48
             : maxFrames;
-    final TextEditingController controller = TextEditingController(
-      text: '$initial',
-    );
+    String draft = '$initial';
 
-    final int? result = await showDialog<int>(
+    return showDialog<int>(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: R3Theme.panel,
           title: Text('Crossfade frames', style: widget.theme.value),
-          content: TextField(
+          content: TextFormField(
             key: const ValueKey<String>('mosaic-xfade-custom-field'),
-            controller: controller,
+            initialValue: draft,
             autofocus: true,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
               labelText: '1 to $maxFrames frames',
             ),
             style: widget.theme.value,
-            onSubmitted: (String value) {
+            onChanged: (String value) => draft = value,
+            onFieldSubmitted: (String value) {
               final int? frames = int.tryParse(value.trim());
               if (frames != null && frames > 0 && frames <= maxFrames) {
-                Navigator.of(context).pop(frames);
+                Navigator.of(dialogContext).pop(frames);
               }
             },
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('CANCEL'),
             ),
             TextButton(
               onPressed: () {
-                final int? frames = int.tryParse(controller.text.trim());
+                final int? frames = int.tryParse(draft.trim());
                 if (frames == null || frames <= 0 || frames > maxFrames) return;
-                Navigator.of(context).pop(frames);
+                Navigator.of(dialogContext).pop(frames);
               },
               child: const Text('APPLY'),
             ),
@@ -266,9 +265,6 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
         );
       },
     );
-
-    controller.dispose();
-    return result;
   }
 
   Future<void> _choosePaneCrossfade(
@@ -582,7 +578,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
 
     return Container(
       key: ValueKey<String>('mosaic-pane-timeline:${pane.id}'),
-      padding: EdgeInsets.symmetric(horizontal: sc(8), vertical: sc(10)),
+      padding: EdgeInsets.symmetric(horizontal: sc(8), vertical: sc(8)),
       alignment: Alignment.centerLeft,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -596,14 +592,15 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     return Container(
       key: ValueKey<String>('mosaic-cut-assignment:${clip.id}'),
       width: sc(170),
-      constraints: BoxConstraints(minHeight: sc(92)),
-      padding: EdgeInsets.all(sc(9)),
+      constraints: BoxConstraints(minHeight: sc(76)),
+      padding: EdgeInsets.symmetric(horizontal: sc(7), vertical: sc(6)),
       decoration: BoxDecoration(
         color: widget.theme.accentFaint,
         border: Border.all(color: widget.theme.accentDim),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -611,26 +608,26 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             clip.id,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: widget.theme.value.copyWith(
+            style: widget.theme.fine.copyWith(
               color: widget.theme.accent,
               fontWeight: FontWeight.w600,
             ),
           ),
-          SizedBox(height: sc(4)),
+          SizedBox(height: sc(2)),
           Text(
             clip.source,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: widget.theme.fine.copyWith(color: R3Theme.textBright),
           ),
-          SizedBox(height: sc(7)),
+          SizedBox(height: sc(3)),
           Text(
             'AT F${clip.atFrame}   IN F${clip.inFrame}   OUT F$out',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: widget.theme.microAccent,
           ),
-          SizedBox(height: sc(3)),
+          SizedBox(height: sc(2)),
           Text(
             '${clip.durationFrames}F   ${clip.speed.canonicalMarkup}X',
             style: widget.theme.micro,
