@@ -16,14 +16,16 @@
 // APPSWITCH:SLIDE adds one lifecycle requirement: the next structural source
 // must be resident before the current one yields. When a placement plans a
 // seamless hand-off, the next keyed StructuralSequencePreview is mounted at
-// opacity zero while the current source is still playing. Flutter therefore
-// keeps that exact subtree and decoder state when it later becomes the visible
-// placement. Readiness can still delay visibility, but the common path switches
-// with frame zero already decoded instead of opening a new decoder at the join.
+// opacity zero while the current source is still playing. Hidden and visible
+// layers deliberately keep the exact same IgnorePointer -> Opacity -> preview
+// widget shape. Only property values change at the join, so Flutter preserves
+// the incoming preview State and its decoder/readiness state instead of
+// disposing the preloaded subtree when opacity becomes 1.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_sequence.dart';
@@ -37,6 +39,11 @@ class ProgramPreviewSurface extends StatefulWidget {
   final String fontFamily;
   final R3Theme theme;
 
+  /// Focused-test seams. Production leaves both null so structural PREVIEW uses
+  /// the same persistent native MLT backend and workspace resolver as before.
+  final MediaDecoderBackend? structuralBackend;
+  final String Function(String source)? structuralResolveSource;
+
   const ProgramPreviewSurface({
     super.key,
     required this.repaint,
@@ -44,6 +51,8 @@ class ProgramPreviewSurface extends StatefulWidget {
     required this.rawDocument,
     required this.fontFamily,
     required this.theme,
+    this.structuralBackend,
+    this.structuralResolveSource,
   });
 
   @override
@@ -128,18 +137,19 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       wallpaper: widget.scene.wallpaper,
       terminalScene: widget.scene,
       terminalFontFamily: widget.fontFamily,
+      backend: widget.structuralBackend,
+      resolveSource: widget.structuralResolveSource,
     );
 
     return Positioned.fill(
       key: ValueKey<String>('program-struct-layer-$placementIndex'),
-      child: visible
-          ? preview
-          : IgnorePointer(
-              child: Opacity(
-                opacity: 0.0,
-                child: preview,
-              ),
-            ),
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: Opacity(
+          opacity: visible ? 1.0 : 0.0,
+          child: preview,
+        ),
+      ),
     );
   }
 
@@ -168,8 +178,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
               _preloadPlacement(marker, placement);
 
           // Put the hidden incoming keyed layer in the tree BEFORE the visible
-          // outgoing layer. On the next marker it is re-ordered rather than
-          // remounted, preserving the decoder/readiness state we just warmed.
+          // outgoing layer. On the next marker the same outer key remains at
+          // the same stack position, and the wrapper shape remains identical;
+          // only opacity/ignoring change. That is what actually preserves the
+          // preloaded StructuralSequencePreview State across the hand-off.
           if (preload != null) {
             layers.add(
               _structuralLayer(
