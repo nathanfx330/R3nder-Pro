@@ -72,6 +72,11 @@ class StructuralSequencePreview extends StatefulWidget {
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
 
+  /// Optional parent-level readiness signal. Program PREVIEW uses this to keep
+  /// the outgoing seamless shell alive if an incoming preload is genuinely
+  /// late, without changing project time or the incoming source-frame mapping.
+  final VoidCallback? onFirstFrameReady;
+
   const StructuralSequencePreview({
     super.key,
     required this.rawDocument,
@@ -85,6 +90,7 @@ class StructuralSequencePreview extends StatefulWidget {
     this.terminalCursorFraction,
     this.backend,
     this.resolveSource,
+    this.onFirstFrameReady,
   });
 
   @override
@@ -114,6 +120,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   void _handleFirstFrameReady() {
     if (_firstFrameReady || !mounted) return;
     setState(() => _firstFrameReady = true);
+    widget.onFirstFrameReady?.call();
   }
 
   @override
