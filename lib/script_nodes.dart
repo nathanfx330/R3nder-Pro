@@ -76,7 +76,7 @@ final RegExp _macroRegex = RegExp(
   r'|\[MENU_STATE:(?<msMenu>[a-zA-Z0-9_-]+):(?<msInstance>[a-zA-Z0-9_-]+)\]'
   r'|\[MACRO_CFG:(?<cfgId>[a-zA-Z0-9_-]+):(?<cfgItem>[a-zA-Z0-9_-]+|NONE)'
   r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]'
-  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)\]',
+  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)(?::(?<structMode>FULL))?\]',
   dotAll: true,
 );
 
@@ -432,6 +432,12 @@ class ScriptNode {
       case 'SPRITE_OFF':
         return '[SPRITE_OFF:${param('file')}]';
 
+      // --- Structural placement -----------------------------------
+      case 'STRUCT':
+        final bool fullscreen =
+            param('mode').trim().toUpperCase() == 'FULL';
+        return '[STRUCT:${param('source')}${fullscreen ? ':FULL' : ''}]';
+
       // --- Macro menus --------------------------------------------
       case 'DEF_MENU':
         return '[DEF_MENU:${param('id', 'menu')}]$body[/DEF_MENU]';
@@ -710,6 +716,7 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
   } else if (g('structSource') != null) {
     n.type = 'STRUCT';
     n.params['source'] = g('structSource')!;
+    n.params['mode'] = g('structMode') ?? '';
   }
 
   return n;
