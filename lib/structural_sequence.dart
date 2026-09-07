@@ -7,22 +7,36 @@
 // [STRUCT:EDIT.foo] or [STRUCT:MOSAIC.bar] line is the sequence-side reference
 // that says "play this source here".
 //
-// The placement carries no authored duration. Its source hold comes from the
-// definition itself. The main-sequence event also owns the same deterministic
-// desktop reveal/open/close/restore budget used by the simulated window
-// manager, so a STRUCT placement behaves like a presentation instead of a
-// silent pause with a widget swapped on top of it.
+// STRUCT owns presentation behavior, not source composition. The same EDIT or
+// MOSAIC can therefore be presented in a desktop window or fullscreen without
+// changing the reusable source definition:
+//
+//   [STRUCT:MOSAIC.wall]
+//   [STRUCT:MOSAIC.wall:FULL]
+//
+// Adjacent STRUCT placements also participate in the desktop application
+// choreography. With ordinary APPSWITCH behavior the outgoing structural
+// window closes to the desktop and the next one opens without zooming the
+// terminal back up between them. With [CONFIG:APPSWITCH:SLIDE], compatible
+// adjacent STRUCT placements keep the presentation shell alive and switch
+// directly. If the two placements disagree about fullscreen/windowed state,
+// the incoming placement owns one deterministic window-animation budget to
+// morph between those geometries.
 
 import 'edit_model.dart';
 import 'scene_engine.dart';
 
 final RegExp _placementLine = RegExp(
-  r'^(?<indent>[ \t]*)\[STRUCT:(?<source>(?:EDIT|MOSAIC)\.[A-Za-z0-9_-]+)\](?<trail>[ \t]*)$',
+  r'^(?<indent>[ \t]*)\[STRUCT:(?<source>(?:EDIT|MOSAIC)\.[A-Za-z0-9_-]+)(?<full>:FULL)?\](?<trail>[ \t]*)$',
   multiLine: true,
 );
 
 final RegExp _runtimeRegionPattern = RegExp(
   r'^STRUCTSEQ_(?<index>\d+)_(?<duration>\d+)$',
+);
+
+final RegExp _appSwitchConfig = RegExp(
+  r'\[CONFIG:APPSWITCH:(?<mode>[A-Za-z]+)\]',
 );
 
 /// A structural source uses the same terminal-to-desktop and window-open
@@ -44,6 +58,11 @@ const int kStructuralProjectionFramingFrames = 2;
 /// Prefix reserved for the engine-internal region used by real Preview/Bake.
 /// It fits the existing REGION grammar, so no author-visible tag is added.
 const String kStructuralRuntimeRegionPrefix = 'STRUCTSEQ_';
+
+enum StructuralPresentationMode {
+  windowed,
+  fullscreen,
+}
 
 enum StructuralSequenceStage {
   zoomOut,
@@ -145,9 +164,25 @@ class StructuralSequencePlacement {
   /// the structural compositor itself advances.
   final int sourceDurationFrames;
 
-  /// Full main-sequence duration including desktop reveal/open/close/restore.
-  /// This is the exact scene-time budget of the STRUCT event.
+  /// Full main-sequence duration after adjacency/application-switch planning.
   final int durationFrames;
+
+  /// Placement presentation, independent of EDIT/MOSAIC composition.
+  final StructuralPresentationMode presentationMode;
+
+  /// True when the previous/next runnable presentation is this neighbouring
+  /// STRUCT placement. Chaining suppresses the terminal zoom between them.
+  final bool chainedFromPrevious;
+  final bool chainedToNext;
+
+  /// Stronger form of chaining enabled by APPSWITCH:SLIDE. No close/open is
+  /// paid when geometry is unchanged. If geometry changes, the incoming
+  /// placement owns one window-animation budget for the morph.
+  final bool seamlessFromPrevious;
+  final bool seamlessToNext;
+
+  /// Needed only for a seamless windowed <-> fullscreen geometry morph.
+  final StructuralPresentationMode? previousPresentationMode;
 
   const StructuralSequencePlacement({
     required this.sourceRef,
@@ -156,22 +191,59 @@ class StructuralSequencePlacement {
     required this.endOffset,
     required this.sourceDurationFrames,
     required this.durationFrames,
+    this.presentationMode = StructuralPresentationMode.windowed,
+    this.chainedFromPrevious = false,
+    this.chainedToNext = false,
+    this.seamlessFromPrevious = false,
+    this.seamlessToNext = false,
+    this.previousPresentationMode,
   });
 
   bool get resolves => sourceDurationFrames > 0;
+  bool get fullscreen =>
+      presentationMode == StructuralPresentationMode.fullscreen;
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 
-  int get contentStartFrame => kStructuralEntryFrames;
+  int get entryZoomFrames =>
+      chainedFromPrevious ? 0 : kStructuralZoomFrames;
+
+  int get entryWindowFrames {
+    if (!chainedFromPrevious) return kStructuralWindowFrames;
+    if (!seamlessFromPrevious) return kStructuralWindowFrames;
+    if (previousPresentationMode != null &&
+        previousPresentationMode != presentationMode) {
+      return kStructuralWindowFrames;
+    }
+    return 0;
+  }
+
+  int get exitWindowFrames {
+    if (!chainedToNext) return kStructuralWindowFrames;
+    return seamlessToNext ? 0 : kStructuralWindowFrames;
+  }
+
+  int get exitZoomFrames => chainedToNext ? 0 : kStructuralZoomFrames;
+
+  int get contentStartFrame => entryZoomFrames + entryWindowFrames;
   int get contentEndFrameExclusive => contentStartFrame + sourceDurationFrames;
+  int get closingStartFrame => contentEndFrameExclusive;
+  int get zoomInStartFrame => closingStartFrame + exitWindowFrames;
 
   StructuralSequenceStage stageAt(int sequenceFrame) {
     final int f = sequenceFrame
         .clamp(0, durationFrames > 0 ? durationFrames - 1 : 0)
         .toInt();
-    if (f < kStructuralZoomFrames) return StructuralSequenceStage.zoomOut;
-    if (f < kStructuralEntryFrames) return StructuralSequenceStage.opening;
-    if (f < contentEndFrameExclusive) return StructuralSequenceStage.showing;
-    if (f < contentEndFrameExclusive + kStructuralWindowFrames) {
+
+    if (entryZoomFrames > 0 && f < entryZoomFrames) {
+      return StructuralSequenceStage.zoomOut;
+    }
+    if (entryWindowFrames > 0 && f < contentStartFrame) {
+      return StructuralSequenceStage.opening;
+    }
+    if (f < contentEndFrameExclusive) {
+      return StructuralSequenceStage.showing;
+    }
+    if (exitWindowFrames > 0 && f < zoomInStartFrame) {
       return StructuralSequenceStage.closing;
     }
     return StructuralSequenceStage.zoomIn;
@@ -185,25 +257,29 @@ class StructuralSequencePlacement {
       case StructuralSequenceStage.zoomOut:
         return f;
       case StructuralSequenceStage.opening:
-        return f - kStructuralZoomFrames;
+        return f - entryZoomFrames;
       case StructuralSequenceStage.showing:
         return f - contentStartFrame;
       case StructuralSequenceStage.closing:
-        return f - contentEndFrameExclusive;
+        return f - closingStartFrame;
       case StructuralSequenceStage.zoomIn:
-        return f - contentEndFrameExclusive - kStructuralWindowFrames;
+        return f - zoomInStartFrame;
     }
+  }
+
+  int stageDuration(StructuralSequenceStage stage) {
+    return switch (stage) {
+      StructuralSequenceStage.zoomOut => entryZoomFrames,
+      StructuralSequenceStage.opening => entryWindowFrames,
+      StructuralSequenceStage.showing => sourceDurationFrames,
+      StructuralSequenceStage.closing => exitWindowFrames,
+      StructuralSequenceStage.zoomIn => exitZoomFrames,
+    };
   }
 
   double stageProgressAt(int sequenceFrame) {
     final StructuralSequenceStage stage = stageAt(sequenceFrame);
-    final int frames = switch (stage) {
-      StructuralSequenceStage.zoomOut || StructuralSequenceStage.zoomIn =>
-        kStructuralZoomFrames,
-      StructuralSequenceStage.opening || StructuralSequenceStage.closing =>
-        kStructuralWindowFrames,
-      StructuralSequenceStage.showing => sourceDurationFrames,
-    };
+    final int frames = stageDuration(stage);
     if (frames <= 1) return 1.0;
     return (stageFrameAt(sequenceFrame) / (frames - 1)).clamp(0.0, 1.0);
   }
@@ -214,6 +290,20 @@ class StructuralSequencePlacement {
         .clamp(0, sourceDurationFrames - 1)
         .toInt();
   }
+}
+
+class _StructuralPlacementSeed {
+  final RegExpMatch match;
+  final StructuralSourceRef sourceRef;
+  final int sourceDurationFrames;
+  final StructuralPresentationMode presentationMode;
+
+  const _StructuralPlacementSeed({
+    required this.match,
+    required this.sourceRef,
+    required this.sourceDurationFrames,
+    required this.presentationMode,
+  });
 }
 
 List<int> _lineStarts(String source) {
@@ -246,6 +336,59 @@ EditDocumentModel? _tryModel(String rawDocument) {
   }
 }
 
+bool _slideAppSwitchEnabled(String rawDocument) {
+  final List<RegExpMatch> matches =
+      _appSwitchConfig.allMatches(rawDocument).toList(growable: false);
+  if (matches.isEmpty) return false;
+  return (matches.last.namedGroup('mode') ?? '').toUpperCase() == 'SLIDE';
+}
+
+/// Whether two placement tags are consecutive in executable program content.
+/// Comments and CONFIG declarations consume no terminal time, so they do not
+/// break a structural application chain. Real text, PAUSE, or another visible
+/// presentation does.
+bool _runtimeGapIsEmpty(String gap) {
+  String stripped = gap.replaceAll(RegExp(r'\[#.*?\]', dotAll: true), '');
+  stripped = stripped.replaceAll(RegExp(r'\[CONFIG:[^\]\r\n]+\]'), '');
+  return stripped.trim().isEmpty;
+}
+
+int _plannedDuration({
+  required int sourceFrames,
+  required bool chainedFromPrevious,
+  required bool chainedToNext,
+  required bool seamlessFromPrevious,
+  required bool seamlessToNext,
+  required StructuralPresentationMode presentationMode,
+  required StructuralPresentationMode? previousPresentationMode,
+}) {
+  if (sourceFrames <= 0) return 0;
+
+  final int entryZoom = chainedFromPrevious ? 0 : kStructuralZoomFrames;
+
+  int entryWindow;
+  if (!chainedFromPrevious) {
+    entryWindow = kStructuralWindowFrames;
+  } else if (!seamlessFromPrevious) {
+    entryWindow = kStructuralWindowFrames;
+  } else if (previousPresentationMode != null &&
+      previousPresentationMode != presentationMode) {
+    entryWindow = kStructuralWindowFrames;
+  } else {
+    entryWindow = 0;
+  }
+
+  final int exitWindow =
+      (!chainedToNext || !seamlessToNext) ? kStructuralWindowFrames : 0;
+  final int exitZoom = chainedToNext ? 0 : kStructuralZoomFrames;
+
+  return entryZoom +
+      entryWindow +
+      sourceFrames +
+      exitWindow +
+      exitZoom;
+}
+
 /// Returns every standalone structural placement in raw document order.
 ///
 /// Invalid or temporarily incomplete structural source definitions do not make
@@ -253,12 +396,16 @@ EditDocumentModel? _tryModel(String rawDocument) {
 /// visible with duration 0 so diagnostics can report them and the engine
 /// projection can burn a small harmless fallback instead of typing literal
 /// markup onto screen.
+///
+/// This pass also performs structural application planning. It is deliberately
+/// based on authored document adjacency rather than widget state, so Preview,
+/// Bake, scrub, and runtime projection all get the same duration answer.
 List<StructuralSequencePlacement> parseStructuralSequencePlacements(
   String rawDocument,
 ) {
   final EditDocumentModel? model = _tryModel(rawDocument);
   final List<int> starts = _lineStarts(rawDocument);
-  final List<StructuralSequencePlacement> out = <StructuralSequencePlacement>[];
+  final List<_StructuralPlacementSeed> seeds = <_StructuralPlacementSeed>[];
 
   for (final RegExpMatch match in _placementLine.allMatches(rawDocument)) {
     final StructuralSourceRef? ref =
@@ -274,14 +421,74 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
       }
     }
 
+    seeds.add(
+      _StructuralPlacementSeed(
+        match: match,
+        sourceRef: ref,
+        sourceDurationFrames: sourceDuration,
+        presentationMode: match.namedGroup('full') == null
+            ? StructuralPresentationMode.windowed
+            : StructuralPresentationMode.fullscreen,
+      ),
+    );
+  }
+
+  if (seeds.isEmpty) return const <StructuralSequencePlacement>[];
+
+  final bool slide = _slideAppSwitchEnabled(rawDocument);
+  final List<bool> chainedFrom = List<bool>.filled(seeds.length, false);
+  final List<bool> chainedTo = List<bool>.filled(seeds.length, false);
+  final List<bool> seamlessFrom = List<bool>.filled(seeds.length, false);
+  final List<bool> seamlessTo = List<bool>.filled(seeds.length, false);
+
+  for (int i = 0; i + 1 < seeds.length; i++) {
+    final _StructuralPlacementSeed current = seeds[i];
+    final _StructuralPlacementSeed next = seeds[i + 1];
+    final String gap = rawDocument.substring(
+      current.match.end,
+      next.match.start,
+    );
+    if (!_runtimeGapIsEmpty(gap)) continue;
+
+    chainedTo[i] = true;
+    chainedFrom[i + 1] = true;
+    if (slide) {
+      seamlessTo[i] = true;
+      seamlessFrom[i + 1] = true;
+    }
+  }
+
+  final List<StructuralSequencePlacement> out =
+      <StructuralSequencePlacement>[];
+  for (int i = 0; i < seeds.length; i++) {
+    final _StructuralPlacementSeed seed = seeds[i];
+    final StructuralPresentationMode? previousMode =
+        chainedFrom[i] && i > 0 ? seeds[i - 1].presentationMode : null;
+
+    final int duration = _plannedDuration(
+      sourceFrames: seed.sourceDurationFrames,
+      chainedFromPrevious: chainedFrom[i],
+      chainedToNext: chainedTo[i],
+      seamlessFromPrevious: seamlessFrom[i],
+      seamlessToNext: seamlessTo[i],
+      presentationMode: seed.presentationMode,
+      previousPresentationMode: previousMode,
+    );
+
     out.add(
       StructuralSequencePlacement(
-        sourceRef: ref,
-        lineIndex: _lineForOffset(starts, match.start),
-        startOffset: match.start,
-        endOffset: match.end,
-        sourceDurationFrames: sourceDuration,
-        durationFrames: structuralSequenceDurationForSource(sourceDuration),
+        sourceRef: seed.sourceRef,
+        lineIndex: _lineForOffset(starts, seed.match.start),
+        startOffset: seed.match.start,
+        endOffset: seed.match.end,
+        sourceDurationFrames: seed.sourceDurationFrames,
+        durationFrames: duration,
+        presentationMode: seed.presentationMode,
+        chainedFromPrevious: chainedFrom[i],
+        chainedToNext: chainedTo[i],
+        seamlessFromPrevious: seamlessFrom[i],
+        seamlessToNext: seamlessTo[i],
+        previousPresentationMode: previousMode,
       ),
     );
   }
@@ -293,12 +500,13 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
 ///
 /// Source definitions remain where they already live. The sequence receives
 /// only a lightweight reference and derives its duration from the selected
-/// EDIT/MOSAIC definition. This is the serializer used by the EDIT workspace's
-/// ADD TO SEQUENCE button, so the GUI never has to invent or duplicate frame
-/// counts.
+/// EDIT/MOSAIC definition. Presentation mode belongs to this placement rather
+/// than to the reusable source.
 String appendStructuralSequencePlacement({
   required String rawDocument,
   required StructuralSourceRef sourceRef,
+  StructuralPresentationMode presentationMode =
+      StructuralPresentationMode.windowed,
 }) {
   final EditDocumentModel model = EditDocumentModel.parse(rawDocument);
   if (!model.containsStructuralSource(sourceRef)) {
@@ -317,7 +525,9 @@ String appendStructuralSequencePlacement({
       !rawDocument.endsWith('\r')) {
     out.write(newline);
   }
-  out.write('[STRUCT:${sourceRef.canonicalSource}]$newline');
+  final String full =
+      presentationMode == StructuralPresentationMode.fullscreen ? ':FULL' : '';
+  out.write('[STRUCT:${sourceRef.canonicalSource}$full]$newline');
   return out.toString();
 }
 
@@ -326,48 +536,29 @@ String appendStructuralSequencePlacement({
 /// Editor line-map compilation uses a plain compensated PAUSE so its authored
 /// line continues to own exactly the STRUCT event budget. Real Preview/Bake
 /// compilation can request [runtimeMarkers], which writes an internal REGION
-/// immediately before the same compensated PAUSE:
+/// immediately before the same compensated PAUSE.
 ///
-///   [REGION:STRUCTSEQ_0_383][PAUSE:381]
-///
-/// engine_tick.dart treats that reserved REGION as a one-frame structural
-/// entry marker and clears it immediately after the pause completes. That
-/// gives the top-level Preview an engine-owned active placement and local time
-/// without changing author syntax, adding a second clock, or teaching MLT to
-/// own sequence time.
-///
-/// Sequence placements are projected only after source definitions are gone,
-/// so a `[STRUCT:...]` accidentally written inside a definition cannot schedule
-/// itself into main program time.
+/// Durations come from [parseStructuralSequencePlacements], not from a second
+/// local formula. This is load-bearing now that adjacent structural apps can
+/// suppress terminal zooms or window close/open frames: Preview, editor scrub,
+/// and Bake must project the exact same planned event budget.
 String projectStructuralSequencePlacements({
   required String rawDocument,
   required String projectedSource,
   bool runtimeMarkers = false,
 }) {
-  final EditDocumentModel? model = _tryModel(rawDocument);
   final List<RegExpMatch> matches =
       _placementLine.allMatches(projectedSource).toList(growable: false);
   if (matches.isEmpty) return projectedSource;
 
+  final List<StructuralSequencePlacement> placements =
+      parseStructuralSequencePlacements(rawDocument);
+
   String out = projectedSource;
   for (int index = matches.length - 1; index >= 0; index--) {
     final RegExpMatch match = matches[index];
-    final StructuralSourceRef? ref =
-        StructuralSourceRef.tryParse(match.namedGroup('source') ?? '');
-
-    int sourceDuration = 0;
-    if (ref != null && ref.id.isNotEmpty && model != null) {
-      if (model.containsStructuralSource(ref)) {
-        try {
-          sourceDuration = model.structuralSourceFrameCount(ref);
-        } catch (_) {
-          sourceDuration = 0;
-        }
-      }
-    }
-
-    final int eventDuration = sourceDuration > 0
-        ? structuralSequenceDurationForSource(sourceDuration)
+    final int eventDuration = index < placements.length
+        ? placements[index].durationFrames
         : 0;
     final int pauseFrames = _projectedPauseFramesForEvent(eventDuration);
 
