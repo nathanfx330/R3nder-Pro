@@ -8,7 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/program_preview_surface.dart';
+import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
+import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/ui_theme.dart';
@@ -41,8 +43,6 @@ class _RecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
-    // Geometry/readiness is what this gate exercises. Pixel content is not
-    // inspected, so do not burn test time painting a synthetic full frame.
     final Uint8List rgba = Uint8List(width * height * 4);
     return DecodedMediaFrame(
       requestedSourceFrame: requestedSourceFrame,
@@ -114,59 +114,37 @@ int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
   );
 }
 
-Future<StructuralRuntimeMarker> _advanceTo(
-  WidgetTester tester,
-  SceneEngine scene,
-  ChangeNotifier repaint, {
+int _findProjectFrame(
+  SceneEngine scene, {
   required int placementIndex,
-  int? localFrame,
-}) async {
-  StructuralRuntimeMarker? lastMarker;
-  int? lastLocalFrame;
-
-  for (int guard = 0; guard < 500; guard++) {
-    scene.tick();
-    repaint.notifyListeners();
-    await tester.pump();
+  required int localFrame,
+}) {
+  for (int projectFrame = 0; projectFrame < 300; projectFrame++) {
+    final SceneEvaluationResult result = scene.evaluate(
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+    );
+    expect(result.exact, isTrue);
 
     final StructuralRuntimeMarker? marker =
         parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-    if (marker != null) {
-      lastMarker = marker;
-      lastLocalFrame = _runtimeLocalFrame(scene, marker);
-    }
-
     if (marker == null || marker.placementIndex != placementIndex) continue;
-    if (localFrame == null || lastLocalFrame == localFrame) {
-      return marker;
-    }
+    if (_runtimeLocalFrame(scene, marker) == localFrame) return projectFrame;
   }
 
   fail(
-    'Did not reach STRUCT placement $placementIndex'
-    '${localFrame == null ? '' : ' local frame $localFrame'}. '
-    'Last marker=${lastMarker?.placementIndex}, local=$lastLocalFrame.',
+    'Did not find STRUCT placement $placementIndex local frame $localFrame.',
   );
 }
 
-Future<void> _yieldEngineAsync(WidgetTester tester) async {
-  await tester.runAsync(() async {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  });
-  await tester.pump();
-}
-
-Future<void> _waitForLayerReady(
+Future<void> _waitForIncomingReady(
   WidgetTester tester,
-  _RecordingBackend backend, {
-  required int placementIndex,
-  required String path,
-}) async {
-  final Finder layer = find.byKey(
-    ValueKey<String>('program-struct-layer-$placementIndex'),
-  );
+  _RecordingBackend backend,
+) async {
+  const String path = '/workspace/video/b.mp4';
+  final Finder incomingLayer =
+      find.byKey(const ValueKey<String>('program-struct-layer-1'));
   final Finder ready = find.descendant(
-    of: layer,
+    of: incomingLayer,
     matching: find.byKey(
       const ValueKey<String>('structural-first-frame-ready'),
     ),
@@ -176,21 +154,15 @@ Future<void> _waitForLayerReady(
       attempt < 80 &&
           ((backend.opens[path] ?? 0) == 0 || ready.evaluate().isEmpty);
       attempt++) {
-    await _yieldEngineAsync(tester);
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
   }
 
-  expect(backend.opens[path], 1, reason: '$path should be opened once.');
-  expect(ready, findsOneWidget, reason: '$path should be picture-ready.');
+  expect(backend.opens[path], 1, reason: 'incoming source must preload once');
+  expect(ready, findsOneWidget, reason: 'incoming source must be picture-ready');
   expect(backend.disposes[path] ?? 0, 0);
-}
-
-Future<void> _drainEngineAsync(WidgetTester tester) async {
-  // Advancing the real SceneEngine can supersede an outgoing preview request
-  // while its RGBA -> ui.Image callback is still in flight. Let those engine
-  // callbacks finish before the widget test tears the tree down.
-  for (int i = 0; i < 4; i++) {
-    await _yieldEngineAsync(tester);
-  }
 }
 
 Finder _incomingWindow() {
@@ -228,6 +200,20 @@ void _expectSameRect(Rect actual, Rect expected) {
   expect(actual.top, closeTo(expected.top, 0.02));
   expect(actual.width, closeTo(expected.width, 0.02));
   expect(actual.height, closeTo(expected.height, 0.02));
+}
+
+Future<void> _showProjectFrame(
+  WidgetTester tester,
+  SceneEngine scene,
+  ChangeNotifier repaint,
+  int projectFrame,
+) async {
+  final SceneEvaluationResult result = scene.evaluate(
+    ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+  );
+  expect(result.exact, isTrue);
+  repaint.notifyListeners();
+  await tester.pump();
 }
 
 Future<void> _runMixedModeGate(
@@ -282,6 +268,37 @@ Future<void> _runMixedModeGate(
     appSwitchConfig: compiled.appSwitch,
   );
 
+  final int firstProjectFrame = _findProjectFrame(
+    scene,
+    placementIndex: 0,
+    localFrame: 0,
+  );
+  final int secondStartProjectFrame = _findProjectFrame(
+    scene,
+    placementIndex: 1,
+    localFrame: 0,
+  );
+  final int secondMiddleProjectFrame = _findProjectFrame(
+    scene,
+    placementIndex: 1,
+    localFrame: kStructuralWindowFrames ~/ 2,
+  );
+  final int secondOpeningEndProjectFrame = _findProjectFrame(
+    scene,
+    placementIndex: 1,
+    localFrame: kStructuralWindowFrames - 1,
+  );
+  final int secondShowingProjectFrame = _findProjectFrame(
+    scene,
+    placementIndex: 1,
+    localFrame: second.contentStartFrame,
+  );
+
+  final SceneEvaluationResult firstResult = scene.evaluate(
+    ProjectTime(frame: firstProjectFrame, mode: ProjectClockMode.scrub),
+  );
+  expect(firstResult.exact, isTrue);
+
   final _RecordingBackend backend = _RecordingBackend();
   final ChangeNotifier repaint = ChangeNotifier();
 
@@ -312,13 +329,6 @@ Future<void> _runMixedModeGate(
     ),
   );
 
-  await _advanceTo(
-    tester,
-    scene,
-    repaint,
-    placementIndex: 0,
-  );
-
   expect(
     find.byKey(const ValueKey<String>('program-struct-layer-0')),
     findsOneWidget,
@@ -328,21 +338,7 @@ Future<void> _runMixedModeGate(
     findsOneWidget,
   );
 
-  // Both mounted previews must finish the engine-side RGBA -> ui.Image step.
-  // Waiting only for backend.open() can leave image conversion futures alive
-  // after the test body ends and cause flutter_test to sit until its timeout.
-  await _waitForLayerReady(
-    tester,
-    backend,
-    placementIndex: 0,
-    path: '/workspace/video/a.mp4',
-  );
-  await _waitForLayerReady(
-    tester,
-    backend,
-    placementIndex: 1,
-    path: '/workspace/video/b.mp4',
-  );
+  await _waitForIncomingReady(tester, backend);
 
   final Rect full = _programFrame();
   final Rect window = _windowRect(full);
@@ -352,28 +348,23 @@ Future<void> _runMixedModeGate(
   final Rect hiddenStart = tester.getRect(_incomingWindow());
   _expectSameRect(hiddenStart, expectedStart);
 
-  final StructuralRuntimeMarker startMarker = await _advanceTo(
+  await _showProjectFrame(
     tester,
     scene,
     repaint,
-    placementIndex: 1,
-    localFrame: 0,
+    secondStartProjectFrame,
   );
-  expect(_runtimeLocalFrame(scene, startMarker), 0);
-
   final Rect visibleStart = tester.getRect(_incomingWindow());
   _expectSameRect(visibleStart, hiddenStart);
   _expectSameRect(visibleStart, expectedStart);
   expect(backend.opens['/workspace/video/b.mp4'], 1);
   expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
-  final int middleFrame = kStructuralWindowFrames ~/ 2;
-  await _advanceTo(
+  await _showProjectFrame(
     tester,
     scene,
     repaint,
-    placementIndex: 1,
-    localFrame: middleFrame,
+    secondMiddleProjectFrame,
   );
   final Rect middle = tester.getRect(_incomingWindow());
 
@@ -391,22 +382,20 @@ Future<void> _runMixedModeGate(
   expect(middle.width, isNot(closeTo(expectedEnd.width, 0.02)));
   expect(middle.height, isNot(closeTo(expectedEnd.height, 0.02)));
 
-  await _advanceTo(
+  await _showProjectFrame(
     tester,
     scene,
     repaint,
-    placementIndex: 1,
-    localFrame: kStructuralWindowFrames - 1,
+    secondOpeningEndProjectFrame,
   );
   final Rect openingEnd = tester.getRect(_incomingWindow());
   _expectSameRect(openingEnd, expectedEnd);
 
-  await _advanceTo(
+  await _showProjectFrame(
     tester,
     scene,
     repaint,
-    placementIndex: 1,
-    localFrame: second.contentStartFrame,
+    secondShowingProjectFrame,
   );
   final Rect showingStart = tester.getRect(_incomingWindow());
   _expectSameRect(showingStart, expectedEnd);
@@ -414,7 +403,11 @@ Future<void> _runMixedModeGate(
   expect(backend.opens['/workspace/video/b.mp4'], 1);
   expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
-  await _drainEngineAsync(tester);
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
 }
 
 void main() {
