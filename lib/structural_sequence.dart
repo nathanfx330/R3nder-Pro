@@ -344,11 +344,25 @@ bool _slideAppSwitchEnabled(String rawDocument) {
 }
 
 /// Whether two placement tags are consecutive in executable program content.
-/// Comments and CONFIG declarations consume no terminal time, so they do not
-/// break a structural application chain. Real text, PAUSE, or another visible
-/// presentation does.
+/// Comments, CONFIG declarations, and reusable EDIT/MOSAIC source definitions
+/// consume no terminal time, so they do not break a structural application
+/// chain. Real text, PAUSE, or another visible presentation does.
 bool _runtimeGapIsEmpty(String gap) {
-  String stripped = gap.replaceAll(RegExp(r'\[#.*?\]', dotAll: true), '');
+  String stripped = gap.replaceAll(
+    RegExp(
+      r'\[EDIT:[^\]\r\n]+\].*?\[/EDIT\]',
+      dotAll: true,
+    ),
+    '',
+  );
+  stripped = stripped.replaceAll(
+    RegExp(
+      r'\[MOSAIC:[^\]\r\n]+\].*?\[/MOSAIC\]',
+      dotAll: true,
+    ),
+    '',
+  );
+  stripped = stripped.replaceAll(RegExp(r'\[#.*?\]', dotAll: true), '');
   stripped = stripped.replaceAll(RegExp(r'\[CONFIG:[^\]\r\n]+\]'), '');
   return stripped.trim().isEmpty;
 }
@@ -487,7 +501,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         chainedFromPrevious: chainedFrom[i],
         chainedToNext: chainedTo[i],
         seamlessFromPrevious: seamlessFrom[i],
-        seamlessToNext: seamlessTo[i],
+        seamlessToNext: seamlessToNext[i],
         previousPresentationMode: previousMode,
       ),
     );
