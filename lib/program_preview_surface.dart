@@ -22,12 +22,13 @@
 // the incoming preview State and its decoder/readiness state instead of
 // disposing the preloaded subtree when opacity becomes 1.
 //
-// If real decode is still late at the exact marker boundary, PREVIEW keeps the
-// outgoing structural shell on its final authored frame while the incoming
-// layer continues evaluating at current project time underneath. The clock does
-// not pause and B does not restart at frame zero. Once B reports a presentable
-// frame, the outgoing fallback is removed and B appears at the current frame.
-// This prevents a slow preload from exposing the desktop between seamless apps.
+// The marker hand-off itself is paint-atomic. When B becomes the active STRUCT,
+// B paints at opacity 1 underneath A while A remains on top. A is not removed
+// merely because B has logically reported readiness: B must complete one actual
+// frame paint while ready and active. The post-frame commit then removes A on
+// the following build. If B is genuinely late, A simply remains on top while B
+// continues evaluating at current project time underneath. Project time never
+// pauses and B never restarts at frame zero.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -69,12 +70,16 @@ class ProgramPreviewSurface extends StatefulWidget {
 class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   late List<StructuralSequencePlacement> _placements;
 
-  /// Readiness is only valid while the keyed preview instance is still mounted.
-  /// The mounted-index set lets us reject late callbacks from disposed decoder
-  /// work and prevents an old readiness result from being reused after a scrub
-  /// that fully removed and later remounted the same placement.
+  /// Readiness is valid only while the keyed preview instance is still mounted.
+  /// This rejects stale callbacks after a scrub/remount of the same placement.
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
+
+  /// A seamless incoming placement is allowed to displace its outgoing cover
+  /// only after it has painted one active frame while already ready. Preload
+  /// paints at opacity zero do not count.
+  final Set<int> _readyPaintedPlacements = <int>{};
+  final Set<int> _readyPaintCommitScheduled = <int>{};
 
   @override
   void initState() {
@@ -95,6 +100,8 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     if (previewIdentityChanged) {
       _readyPlacements.clear();
       _mountedPlacements.clear();
+      _readyPaintedPlacements.clear();
+      _readyPaintCommitScheduled.clear();
     }
   }
 
@@ -149,6 +156,27 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     setState(() => _readyPlacements.add(placementIndex));
   }
 
+  void _scheduleReadyPaintCommit(int placementIndex) {
+    if (_readyPaintedPlacements.contains(placementIndex) ||
+        _readyPaintCommitScheduled.contains(placementIndex)) {
+      return;
+    }
+
+    _readyPaintCommitScheduled.add(placementIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _readyPaintCommitScheduled.remove(placementIndex);
+      if (!mounted || !_readyPlacements.contains(placementIndex)) return;
+
+      final StructuralRuntimeMarker? marker =
+          parseStructuralRuntimeRegion(widget.scene.terminal.currentRegion);
+      if (marker == null || marker.placementIndex != placementIndex) return;
+      if (!_mountedPlacements.contains(placementIndex)) return;
+      if (_readyPaintedPlacements.contains(placementIndex)) return;
+
+      setState(() => _readyPaintedPlacements.add(placementIndex));
+    });
+  }
+
   Widget _structuralLayer({
     required int placementIndex,
     required StructuralSequencePlacement placement,
@@ -190,14 +218,23 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     return ListenableBuilder(
       listenable: widget.repaint,
       builder: (BuildContext context, Widget? child) {
-        final Set<int> previouslyMounted =
-            Set<int>.of(_mountedPlacements);
+        final Set<int> previouslyMounted = Set<int>.of(_mountedPlacements);
         final Set<int> nextMounted = <int>{};
 
         final StructuralRuntimeMarker? marker =
             parseStructuralRuntimeRegion(widget.scene.terminal.currentRegion);
         final StructuralSequencePlacement? placement =
             _activePlacement(marker);
+        final int? activeIndex = marker == null || placement == null
+            ? null
+            : marker.placementIndex;
+
+        // A hidden preload has not completed an active paint. Clearing this for
+        // every non-active index also makes a scrubbed/re-entered handoff earn a
+        // fresh atomic overlap instead of reusing an old presentation commit.
+        _readyPaintedPlacements.removeWhere(
+          (int index) => index != activeIndex,
+        );
 
         final List<Widget> layers = <Widget>[
           CustomPaint(
@@ -209,16 +246,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           ),
         ];
 
-        if (marker != null && placement != null) {
-          final int activeIndex = marker.placementIndex;
+        if (marker != null && placement != null && activeIndex != null) {
           final StructuralSequencePlacement? preload =
               _preloadPlacement(marker, placement);
 
-          // Put the hidden incoming keyed layer in the tree BEFORE the visible
-          // outgoing layer. On the next marker the same outer key remains at
-          // the same stack position, and the wrapper shape remains identical;
-          // only opacity/ignoring change. That is what actually preserves the
-          // preloaded StructuralSequencePreview State across the hand-off.
           if (preload != null) {
             final int preloadIndex = activeIndex + 1;
             nextMounted.add(preloadIndex);
@@ -234,10 +265,12 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
+          final bool activeReadyPainted =
+              _readyPaintedPlacements.contains(activeIndex);
 
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
-          if (placement.seamlessFromPrevious && !activeReady) {
+          if (placement.seamlessFromPrevious && !activeReadyPainted) {
             final int previousIndex = activeIndex - 1;
             final StructuralSequencePlacement? previous =
                 _placementAt(previousIndex);
@@ -249,20 +282,19 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             }
           }
 
+          // B is always fully paintable once it becomes active. If it is not
+          // ready yet, or has not yet completed a ready active paint, A is added
+          // afterwards and therefore remains the topmost visual cover.
           nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
               placementIndex: activeIndex,
               placement: placement,
               localFrame: _localFrame(marker),
-              visible: fallbackPlacement == null,
+              visible: true,
             ),
           );
 
-          // A genuinely late seamless preload must not expose the desktop.
-          // Keep the exact keyed outgoing preview alive on its final authored
-          // frame until the already-mounted incoming preview reports readiness.
-          // B still receives its real current local frame while hidden above.
           if (fallbackPlacement != null && fallbackIndex != null) {
             nextMounted.add(fallbackIndex);
             layers.add(
@@ -274,9 +306,16 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
               ),
             );
           }
+
+          if (placement.seamlessFromPrevious && activeReady) {
+            _scheduleReadyPaintCommit(activeIndex);
+          }
         }
 
         _readyPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _readyPaintedPlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
         _mountedPlacements
