@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/editor_node_workspace.dart';
-import 'package:r3nder/script_nodes.dart';
 import 'package:r3nder/ui_theme.dart';
 
 const String _source = '''[EDIT:main]
