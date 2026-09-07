@@ -501,7 +501,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         chainedFromPrevious: chainedFrom[i],
         chainedToNext: chainedTo[i],
         seamlessFromPrevious: seamlessFrom[i],
-        seamlessToNext: seamlessToNext[i],
+        seamlessToNext: seamlessTo[i],
         previousPresentationMode: previousMode,
       ),
     );
