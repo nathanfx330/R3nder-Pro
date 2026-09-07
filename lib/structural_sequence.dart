@@ -542,6 +542,15 @@ String appendStructuralSequencePlacement({
 /// local formula. This is load-bearing now that adjacent structural apps can
 /// suppress terminal zooms or window close/open frames: Preview, editor scrub,
 /// and Bake must project the exact same planned event budget.
+///
+/// Runtime-only chaining has one additional rule: the control-only gap between
+/// two placements that the planner marked as adjacent is removed entirely.
+/// Leaving the authored newline there would make TerminalEngine spend a real
+/// frame consuming it at normal typing speed, clear the reserved STRUCT region,
+/// and briefly expose the base program between A and B. Comments, CONFIG tags,
+/// indentation, and line breaks in that gap own no program time, so Preview and
+/// Bake collapse them just as the existing desktop presentation hand-off skips
+/// them. The editor line-map path keeps the authored line structure unchanged.
 String projectStructuralSequencePlacements({
   required String rawDocument,
   required String projectedSource,
@@ -554,34 +563,44 @@ String projectStructuralSequencePlacements({
   final List<StructuralSequencePlacement> placements =
       parseStructuralSequencePlacements(rawDocument);
 
-  String out = projectedSource;
-  for (int index = matches.length - 1; index >= 0; index--) {
+  final StringBuffer out = StringBuffer();
+  int cursor = 0;
+
+  for (int index = 0; index < matches.length; index++) {
     final RegExpMatch match = matches[index];
-    final int eventDuration = index < placements.length
-        ? placements[index].durationFrames
-        : 0;
+    final StructuralSequencePlacement? placement =
+        index < placements.length ? placements[index] : null;
+
+    final bool collapseGap = runtimeMarkers &&
+        index > 0 &&
+        index - 1 < placements.length &&
+        placements[index - 1].chainedToNext;
+
+    if (!collapseGap) {
+      out.write(projectedSource.substring(cursor, match.start));
+    }
+
+    final int eventDuration = placement?.durationFrames ?? 0;
     final int pauseFrames = _projectedPauseFramesForEvent(eventDuration);
 
-    final String indent = match.namedGroup('indent') ?? '';
-    final String trail = match.namedGroup('trail') ?? '';
-
-    String replacement;
     if (runtimeMarkers && eventDuration > 0) {
       final StructuralRuntimeMarker runtime = StructuralRuntimeMarker(
         placementIndex: index,
         durationFrames: eventDuration,
       );
-      replacement =
-          '$indent[REGION:${runtime.regionId}][PAUSE:$pauseFrames]$trail';
+      // Runtime markers are implementation details. Authored indentation and
+      // trailing spaces around a control-only STRUCT line must not become
+      // executable terminal characters before or after the marker.
+      out.write('[REGION:${runtime.regionId}][PAUSE:$pauseFrames]');
     } else {
-      replacement = '$indent[PAUSE:$pauseFrames]$trail';
+      final String indent = match.namedGroup('indent') ?? '';
+      final String trail = match.namedGroup('trail') ?? '';
+      out.write('$indent[PAUSE:$pauseFrames]$trail');
     }
 
-    out = out.replaceRange(
-      match.start,
-      match.end,
-      replacement,
-    );
+    cursor = match.end;
   }
-  return out;
+
+  out.write(projectedSource.substring(cursor));
+  return out.toString();
 }
