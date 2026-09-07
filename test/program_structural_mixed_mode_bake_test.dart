@@ -197,7 +197,8 @@ Rect _plannedMorphRect(
   StructuralSequencePlacement placement,
   int localFrame,
 ) {
-  final StructuralPresentationMode previous = placement.previousPresentationMode!;
+  final StructuralPresentationMode previous =
+      placement.previousPresentationMode!;
   final Rect from = structuralProgramPresentationRectForOutput(
     mode: previous,
     outputWidth: 800,
@@ -315,9 +316,9 @@ Future<void> _runBakeGate({
 }
 
 void main() {
-  test(
+  testWidgets(
     'whole-program bake matches planned window to fullscreen STRUCT morph',
-    () async {
+    (WidgetTester _) async {
       await _runBakeGate(
         firstFullscreen: false,
         secondFullscreen: true,
@@ -325,9 +326,9 @@ void main() {
     },
   );
 
-  test(
+  testWidgets(
     'whole-program bake matches planned fullscreen to window STRUCT morph',
-    () async {
+    (WidgetTester _) async {
       await _runBakeGate(
         firstFullscreen: true,
         secondFullscreen: false,
