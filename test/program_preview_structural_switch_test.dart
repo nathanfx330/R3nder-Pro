@@ -163,8 +163,6 @@ void main() {
       final Directory root = Directory.systemTemp.createTempSync(
         'r3nder_struct_switch_preview_',
       );
-      debugPrint('STRUCT lifecycle gate: temp root ready');
-
       final Directory images = Directory('${root.path}/images')
         ..createSync(recursive: true);
       final Directory sprites = Directory('${root.path}/sprites')
@@ -199,7 +197,6 @@ void main() {
           appSwitchConfig: compiled.appSwitch,
         );
       });
-      debugPrint('STRUCT lifecycle gate: scene setup ready');
 
       final int firstProjectFrame = _findProjectFrame(
         scene,
@@ -210,10 +207,6 @@ void main() {
         scene,
         placementIndex: 1,
         localFrame: 0,
-      );
-      debugPrint(
-        'STRUCT lifecycle gate: project frames ready '
-        'A=$firstProjectFrame B=$secondProjectFrame',
       );
 
       expect(
@@ -249,7 +242,6 @@ void main() {
           ),
         ),
       );
-      debugPrint('STRUCT lifecycle gate: pumpWidget complete');
 
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
