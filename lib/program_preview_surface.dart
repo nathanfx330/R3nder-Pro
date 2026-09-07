@@ -12,6 +12,14 @@
 // SceneEngine and font family. Its terminal/desktop transition therefore uses
 // ScenePainter's native renderer instead of a reconstructed ghost, preserving
 // terminal themes and exact hand-off pixels.
+//
+// APPSWITCH:SLIDE adds one lifecycle requirement: the next structural source
+// must be resident before the current one yields. When a placement plans a
+// seamless hand-off, the next keyed StructuralSequencePreview is mounted at
+// opacity zero while the current source is still playing. Flutter therefore
+// keeps that exact subtree and decoder state when it later becomes the visible
+// placement. Readiness can still delay visibility, but the common path switches
+// with frame zero already decoded instead of opening a new decoder at the join.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -59,17 +67,32 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     }
   }
 
+  StructuralSequencePlacement? _placementAt(int index) {
+    if (index < 0 || index >= _placements.length) return null;
+    final StructuralSequencePlacement placement = _placements[index];
+    return placement.resolves ? placement : null;
+  }
+
   StructuralSequencePlacement? _activePlacement(
     StructuralRuntimeMarker? marker,
   ) {
     if (marker == null) return null;
-    final int index = marker.placementIndex;
-    if (index < 0 || index >= _placements.length) return null;
-
-    final StructuralSequencePlacement placement = _placements[index];
-    if (!placement.resolves) return null;
+    final StructuralSequencePlacement? placement =
+        _placementAt(marker.placementIndex);
+    if (placement == null) return null;
     if (placement.durationFrames != marker.durationFrames) return null;
     return placement;
+  }
+
+  StructuralSequencePlacement? _preloadPlacement(
+    StructuralRuntimeMarker marker,
+    StructuralSequencePlacement active,
+  ) {
+    if (!active.seamlessToNext) return null;
+    final StructuralSequencePlacement? next =
+        _placementAt(marker.placementIndex + 1);
+    if (next == null || !next.seamlessFromPrevious) return null;
+    return next;
   }
 
   int _localFrame(StructuralRuntimeMarker marker) {
@@ -86,6 +109,40 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     );
   }
 
+  Widget _structuralLayer({
+    required int placementIndex,
+    required StructuralSequencePlacement placement,
+    required int localFrame,
+    required bool visible,
+  }) {
+    final Widget preview = StructuralSequencePreview(
+      key: ValueKey<String>(
+        'program-struct-$placementIndex-'
+        '${placement.sourceRef.canonicalSource}',
+      ),
+      rawDocument: widget.rawDocument,
+      placement: placement,
+      localFrame: localFrame,
+      isPlaying: true,
+      theme: widget.theme,
+      wallpaper: widget.scene.wallpaper,
+      terminalScene: widget.scene,
+      terminalFontFamily: widget.fontFamily,
+    );
+
+    return Positioned.fill(
+      key: ValueKey<String>('program-struct-layer-$placementIndex'),
+      child: visible
+          ? preview
+          : IgnorePointer(
+              child: Opacity(
+                opacity: 0.0,
+                child: preview,
+              ),
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -96,34 +153,47 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         final StructuralSequencePlacement? placement =
             _activePlacement(marker);
 
+        final List<Widget> layers = <Widget>[
+          CustomPaint(
+            size: Size.infinite,
+            painter: ScenePainter(
+              scene: widget.scene,
+              fontFamily: widget.fontFamily,
+            ),
+          ),
+        ];
+
+        if (marker != null && placement != null) {
+          final StructuralSequencePlacement? preload =
+              _preloadPlacement(marker, placement);
+
+          // Put the hidden incoming keyed layer in the tree BEFORE the visible
+          // outgoing layer. On the next marker it is re-ordered rather than
+          // remounted, preserving the decoder/readiness state we just warmed.
+          if (preload != null) {
+            layers.add(
+              _structuralLayer(
+                placementIndex: marker.placementIndex + 1,
+                placement: preload,
+                localFrame: 0,
+                visible: false,
+              ),
+            );
+          }
+
+          layers.add(
+            _structuralLayer(
+              placementIndex: marker.placementIndex,
+              placement: placement,
+              localFrame: _localFrame(marker),
+              visible: true,
+            ),
+          );
+        }
+
         return Stack(
           fit: StackFit.expand,
-          children: [
-            CustomPaint(
-              size: Size.infinite,
-              painter: ScenePainter(
-                scene: widget.scene,
-                fontFamily: widget.fontFamily,
-              ),
-            ),
-            if (marker != null && placement != null)
-              Positioned.fill(
-                child: StructuralSequencePreview(
-                  key: ValueKey<String>(
-                    'program-struct-${marker.placementIndex}-'
-                    '${placement.sourceRef.canonicalSource}',
-                  ),
-                  rawDocument: widget.rawDocument,
-                  placement: placement,
-                  localFrame: _localFrame(marker),
-                  isPlaying: true,
-                  theme: widget.theme,
-                  wallpaper: widget.scene.wallpaper,
-                  terminalScene: widget.scene,
-                  terminalFontFamily: widget.fontFamily,
-                ),
-              ),
-          ],
+          children: layers,
         );
       },
     );
