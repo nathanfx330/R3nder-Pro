@@ -160,8 +160,11 @@ void main() {
   testWidgets(
     'seamless STRUCT preloads next MOSAIC and keeps its decoder at handoff',
     (WidgetTester tester) async {
-      final Directory root =
-          await Directory.systemTemp.createTemp('r3nder_struct_switch_preview_');
+      final Directory root = Directory.systemTemp.createTempSync(
+        'r3nder_struct_switch_preview_',
+      );
+      debugPrint('STRUCT lifecycle gate: temp root ready');
+
       final Directory images = Directory('${root.path}/images')
         ..createSync(recursive: true);
       final Directory sprites = Directory('${root.path}/sprites')
@@ -175,25 +178,28 @@ void main() {
       expect(placements.last.seamlessFromPrevious, isTrue);
 
       final SceneEngine scene = SceneEngine();
-      await scene.setup(
-        templateText: compiled.engineText,
-        fontColor: Colors.green,
-        bgColor: Colors.black,
-        width: 320,
-        height: 180,
-        scale: 1,
-        fontPath: 'monospace',
-        fontSize: 12,
-        lineSpacing: 16,
-        tracking: 0,
-        marginTop: 10,
-        marginSide: 10,
-        imagesDir: images.path,
-        spritesDir: sprites.path,
-        paneLifeConfig: compiled.paneLife,
-        captionConfig: compiled.caption,
-        appSwitchConfig: compiled.appSwitch,
-      );
+      await tester.runAsync(() async {
+        await scene.setup(
+          templateText: compiled.engineText,
+          fontColor: Colors.green,
+          bgColor: Colors.black,
+          width: 320,
+          height: 180,
+          scale: 1,
+          fontPath: 'monospace',
+          fontSize: 12,
+          lineSpacing: 16,
+          tracking: 0,
+          marginTop: 10,
+          marginSide: 10,
+          imagesDir: images.path,
+          spritesDir: sprites.path,
+          paneLifeConfig: compiled.paneLife,
+          captionConfig: compiled.caption,
+          appSwitchConfig: compiled.appSwitch,
+        );
+      });
+      debugPrint('STRUCT lifecycle gate: scene setup ready');
 
       final int firstProjectFrame = _findProjectFrame(
         scene,
@@ -204,6 +210,10 @@ void main() {
         scene,
         placementIndex: 1,
         localFrame: 0,
+      );
+      debugPrint(
+        'STRUCT lifecycle gate: project frames ready '
+        'A=$firstProjectFrame B=$secondProjectFrame',
       );
 
       expect(
@@ -239,6 +249,7 @@ void main() {
           ),
         ),
       );
+      debugPrint('STRUCT lifecycle gate: pumpWidget complete');
 
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
