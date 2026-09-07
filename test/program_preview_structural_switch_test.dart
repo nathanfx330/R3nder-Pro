@@ -38,10 +38,9 @@ class _OfflineRecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
-    // This gate proves decoder lifetime, not decoded pixels. A stable decode
-    // error is ideal here: MediaLayer keeps this decoder cached, Preview
-    // resolves readiness immediately to an honest OFFLINE state, and no
-    // ui.decodeImageFromPixels() or parked-render retry loop is involved.
+    // This gate proves decoder lifetime and presentation overlap, not decoded
+    // pixels. A stable decode error resolves readiness immediately without
+    // ui.decodeImageFromPixels() or a parked-render retry loop.
     throw MediaDecodeException('intentional test offline: $path');
   }
 
@@ -158,7 +157,7 @@ double _programLayerOpacity(WidgetTester tester, int placementIndex) {
 
 void main() {
   testWidgets(
-    'seamless STRUCT preloads next MOSAIC and keeps its decoder at handoff',
+    'seamless STRUCT preloads B, overlaps one active paint, and keeps decoder',
     (WidgetTester tester) async {
       final Directory root = Directory.systemTemp.createTempSync(
         'r3nder_struct_switch_preview_',
@@ -278,6 +277,24 @@ void main() {
       repaint.notifyListeners();
       await tester.pump();
 
+      // B was logically ready while hidden, but alpha-zero preload never
+      // painted. On B's first active frame both shells therefore remain in the
+      // tree at full opacity, with A above B as the visual cover.
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+      expect(_programLayerOpacity(tester, 0), 1.0);
+      expect(_programLayerOpacity(tester, 1), 1.0);
+
+      // The post-frame commit marks B as actually painted. The next build may
+      // now release A without ever exposing the base ScenePainter desktop.
+      await tester.pump();
+
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,
@@ -288,8 +305,8 @@ void main() {
       );
       expect(_programLayerOpacity(tester, 1), 1.0);
 
-      // The incoming MediaLayer/decoder survived the keyed opacity handoff.
-      // It must not have been disposed and reopened when B became visible.
+      // B's MediaLayer/decoder survived preload, overlap, and release. It must
+      // not be disposed and reopened anywhere in the handoff.
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
