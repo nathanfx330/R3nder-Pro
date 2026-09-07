@@ -105,6 +105,18 @@ final List<TagSnippet> kAllTags = [
   TagSnippet('APP', 'Wii-style uniform image grid (folder:hold:title)', '[APP:folder:90:Title]', 'folder'),
   TagSnippet('APP MOSAIC', 'Metro photo panels in a window, 3 per page', '[APP:folder:90:Photos:MOSAIC]', 'folder'),
   TagSnippet('APP MOSAIC FULL', 'Metro panels, window maximizes to full frame', '[APP:folder:90:Photos:MOSAIC_FULL]', 'folder'),
+  TagSnippet(
+    'STRUCT MOSAIC',
+    'Place a reusable video MOSAIC in the desktop application window',
+    '[STRUCT:MOSAIC.wall]',
+    'wall',
+  ),
+  TagSnippet(
+    'STRUCT MOSAIC FULL SCREEN',
+    'Place a reusable video MOSAIC directly on the full program frame',
+    '[STRUCT:MOSAIC.wall:FULL]',
+    'wall',
+  ),
   TagSnippet('CARD', 'Floating info card panel', '[CARD:image.png:120:180,40,50:HEADING]\nBody text\n[/CARD]', 'image.png'),
   TagSnippet('DOSSIER', 'Card + gallery with configurable center stage', '[DOSSIER:folder:image.png:90:90:0:GRID:180,40,50:HEADING]\nBody text\n[/DOSSIER]', 'folder'),
   TagSnippet('TIMELINE', 'Vertical timeline with events', '[TIMELINE:120:30,30,38:HEADING:folder:150:40:FOCUS]\n2025 | Event text\n[/TIMELINE]', 'HEADING'),
@@ -200,7 +212,7 @@ bool debugValidateTagPalette() {
   for (final t in kAllTags) {
     final String? p = t.placeholder;
     if (p != null && !t.insertText.contains(p)) {
-      problems.add('"${t.label}" placeholder "$p" is not in its insert text');
+      problems.add('"${t.label}" placeholder "$p" is not in its insertText');
     }
   }
 
