@@ -6,27 +6,38 @@
 //
 // STRUCT uses deterministic desktop choreography around the persistent MLT
 // structural compositor. Presentation mode belongs to the placement: the same
-// source can open as a desktop window or as a fullscreen structural app.
-// Adjacent placements can also chain on the desktop, and APPSWITCH:SLIDE can
-// switch directly without returning through the terminal between sources.
+// source can open as a desktop window or fullscreen without changing source
+// composition. Adjacent placements can chain on the desktop, and
+// APPSWITCH:SLIDE can switch directly without returning through the terminal.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
-// window already exists at opacity zero during zoom-out, but it is not allowed
-// to become visible until EditVideoPreview reports that an actual presentable
-// image/texture is resident. Readiness is only a visibility gate. It never
-// re-anchors or stretches authored presentation time: once picture is ready,
-// geometry is evaluated from the current STRUCT project frame exactly as if
-// decode had completed immediately. A slow machine can reveal late, but it
-// cannot invent a different transition curve.
+// window already exists at opacity zero during a normal entry, but it is not
+// allowed to become visible until EditVideoPreview reports that an actual
+// presentable image/texture is resident. Readiness is only a visibility gate.
+// It never re-anchors or stretches authored presentation time.
+//
+// EDITOR DIRECT-HANDOFF CONTRACT
+//
+// Top-level PREVIEW owns separate keyed StructuralSequencePreview instances for
+// adjacent STRUCT placements. The editor live preview does not: it reuses this
+// same State object and updates [placement] from A to B. A seamless source
+// change must therefore NOT reset the shell's readiness to false, because doing
+// so produces one exact wallpaper-only frame: desktop stays opaque while the
+// structural window opacity becomes zero until B resolves.
+//
+// For a seamless A -> B update, the shell stays live. B is mounted underneath
+// the already-painted outgoing client, and the outgoing keyed EditVideoPreview
+// remains on top until B reports its first presentable frame. Both clients live
+// in the same Stack before and during the handoff, so Flutter can preserve A's
+// decoder State instead of disposing/reopening it merely to cover the seam.
+// Project time continues to advance; B is evaluated at its authored current
+// frame and is never restarted at frame zero.
 //
 // When the caller supplies the live SceneEngine + terminal font, the terminal
 // portion of the transition is NOT reconstructed here. ScenePainter's native
 // desktop and terminal-window renderer draws it directly. That preserves the
 // actual authored terminal theme, font, cursor, title, wallpaper/chroma plate,
-// Yaru chrome, and exact fullscreen pixels across the hand-off. The structural
-// foreground window also scales its chrome from that same engine-to-preview
-// ratio, so a small editor pane does not get a 38-widget-pixel title bar while
-// the real terminal beside it is using a scaled native title bar.
+// Yaru chrome, and exact fullscreen pixels across the hand-off.
 //
 // The editor preview pane is not the render frame. ScenePainter letterboxes the
 // 16:9 engine canvas inside whatever space the editor gives it. Structural
@@ -103,22 +114,75 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
   bool _firstFrameReady = false;
 
+  /// Editor live preview reuses this State across adjacent STRUCT placements.
+  /// During a seamless source switch, keep the already-painted outgoing client
+  /// above the incoming client until the incoming one resolves. These values
+  /// are snapshots of A's last authored frame, not a second time source.
+  String? _handoffOutgoingSource;
+  String? _handoffOutgoingRawDocument;
+  int _handoffOutgoingSourceFrame = 0;
+  int _handoffOutgoingSourceDurationFrames = 0;
+
+  void _clearHandoffCover() {
+    _handoffOutgoingSource = null;
+    _handoffOutgoingRawDocument = null;
+    _handoffOutgoingSourceFrame = 0;
+    _handoffOutgoingSourceDurationFrames = 0;
+  }
+
   @override
   void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final bool sourceChanged =
-        oldWidget.placement.sourceRef.canonicalSource !=
-                widget.placement.sourceRef.canonicalSource ||
-            oldWidget.rawDocument != widget.rawDocument ||
+
+    final String oldSource = oldWidget.placement.sourceRef.canonicalSource;
+    final String newSource = widget.placement.sourceRef.canonicalSource;
+    final bool sourceRefChanged = oldSource != newSource;
+    final bool previewInfrastructureChanged =
+        oldWidget.rawDocument != widget.rawDocument ||
             oldWidget.backend != widget.backend ||
             oldWidget.resolveSource != widget.resolveSource;
-    if (sourceChanged) {
+
+    final bool seamlessSourceHandoff = sourceRefChanged &&
+        !previewInfrastructureChanged &&
+        oldWidget.placement.seamlessToNext &&
+        widget.placement.seamlessFromPrevious &&
+        _firstFrameReady;
+
+    if (seamlessSourceHandoff) {
+      // The presentation shell is already resident. Do not turn it transparent
+      // merely because the client composition changed. Snapshot A's exact last
+      // evaluated source frame and keep its keyed preview as the visual cover
+      // while B resolves underneath at current project time.
+      _handoffOutgoingSource = oldSource;
+      _handoffOutgoingRawDocument = oldWidget.rawDocument;
+      _handoffOutgoingSourceFrame =
+          oldWidget.placement.sourceFrameAt(oldWidget.localFrame);
+      _handoffOutgoingSourceDurationFrames =
+          oldWidget.placement.sourceDurationFrames;
+      return;
+    }
+
+    if (sourceRefChanged || previewInfrastructureChanged) {
+      _clearHandoffCover();
       _firstFrameReady = false;
     }
   }
 
   void _handleFirstFrameReady() {
-    if (_firstFrameReady || !mounted) return;
+    if (!mounted) return;
+
+    if (_handoffOutgoingSource != null) {
+      // This callback now belongs to incoming B. The shell never went away;
+      // releasing A only swaps client pixels inside that already-live shell.
+      setState(() {
+        _clearHandoffCover();
+        _firstFrameReady = true;
+      });
+      widget.onFirstFrameReady?.call();
+      return;
+    }
+
+    if (_firstFrameReady) return;
     setState(() => _firstFrameReady = true);
     widget.onFirstFrameReady?.call();
   }
@@ -155,7 +219,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final double chromeScale = useNativeTerminal
               ? _nativeChromeScale(renderFrame, liveScene!)
               : 1.0;
-          final double titleHeight = _StructuralWindow.titleHeight * chromeScale;
+          final double titleHeight =
+              _StructuralWindow.titleHeight * chromeScale;
 
           final Rect fullTerminal = renderFrame;
 
@@ -258,13 +323,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       : emergenceRect);
               desktopOpacity = 1.0;
               // A chained structural app must never resurrect the terminal
-              // merely because its decoder is late. APPSWITCH preloads the
-              // common case; a genuinely late chain degrades to desktop, not a
-              // false terminal flash.
-              terminalOpacity = (!_firstFrameReady &&
-                      !placement.chainedFromPrevious)
-                  ? 1.0
-                  : 0.0;
+              // merely because its decoder is late. A genuinely late chain
+              // degrades to desktop, never to a false terminal flash.
+              terminalOpacity =
+                  (!_firstFrameReady && !placement.chainedFromPrevious)
+                      ? 1.0
+                      : 0.0;
               terminalChrome = 1.0;
               structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
               structuralWindowPresent = true;
@@ -401,6 +465,11 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
+                      outgoingSource: _handoffOutgoingSource,
+                      outgoingRawDocument: _handoffOutgoingRawDocument,
+                      outgoingSourceFrame: _handoffOutgoingSourceFrame,
+                      outgoingSourceDurationFrames:
+                          _handoffOutgoingSourceDurationFrames,
                     ),
                   ),
                 ),
@@ -449,7 +518,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   /// ScenePainter's preview letterbox.
   static Rect _fittedRenderFrame(double width, double height) {
     if (width <= 0.0 || height <= 0.0) {
-      return Rect.fromLTWH(0, 0, math.max(width, 0.0), math.max(height, 0.0));
+      return Rect.fromLTWH(
+        0,
+        0,
+        math.max(width, 0.0),
+        math.max(height, 0.0),
+      );
     }
 
     double frameW = width;
@@ -638,6 +712,14 @@ class _StructuralWindow extends StatelessWidget {
   final String Function(String source)? resolveSource;
   final VoidCallback onFirstFrameReady;
 
+  /// Optional outgoing client retained only during an editor-style seamless
+  /// source update. The window/chrome are the current shell; this is merely the
+  /// last already-painted client held above B until B becomes presentable.
+  final String? outgoingSource;
+  final String? outgoingRawDocument;
+  final int outgoingSourceFrame;
+  final int outgoingSourceDurationFrames;
+
   const _StructuralWindow({
     super.key,
     required this.source,
@@ -652,12 +734,39 @@ class _StructuralWindow extends StatelessWidget {
     required this.backend,
     required this.resolveSource,
     required this.onFirstFrameReady,
+    this.outgoingSource,
+    this.outgoingRawDocument,
+    this.outgoingSourceFrame = 0,
+    this.outgoingSourceDurationFrames = 0,
   });
+
+  Widget _videoPreview({
+    required String previewSource,
+    required String previewDocument,
+    required int previewFrame,
+    required bool playing,
+    required VoidCallback? onReady,
+  }) {
+    return EditVideoPreview(
+      key: ValueKey<String>('sequence-preview:$previewSource'),
+      source: previewDocument,
+      structuralSource: previewSource,
+      currentFrame: previewFrame,
+      theme: theme,
+      isPlaying: playing,
+      fastPreview: fastPreview,
+      backend: backend,
+      resolveSource: resolveSource,
+      onFirstFrameReady: onReady,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final double s = chromeScale > 0.0 ? chromeScale : 1.0;
     final double barH = titleHeight * s;
+    final String? coverSource = outgoingSource;
+    final String? coverDocument = outgoingRawDocument;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -719,17 +828,30 @@ class _StructuralWindow extends StatelessWidget {
               child: ColoredBox(
                 color: Colors.black,
                 child: showVideo
-                    ? EditVideoPreview(
-                        key: ValueKey<String>('sequence-preview:$source'),
-                        source: rawDocument,
-                        structuralSource: source,
-                        currentFrame: sourceFrame,
-                        theme: theme,
-                        isPlaying: isPlaying,
-                        fastPreview: fastPreview,
-                        backend: backend,
-                        resolveSource: resolveSource,
-                        onFirstFrameReady: onFirstFrameReady,
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // Incoming/current client is always mounted first so
+                          // it can resolve at current project time underneath.
+                          _videoPreview(
+                            previewSource: source,
+                            previewDocument: rawDocument,
+                            previewFrame: sourceFrame,
+                            playing: isPlaying,
+                            onReady: onFirstFrameReady,
+                          ),
+                          if (coverSource != null && coverDocument != null)
+                            // The exact outgoing keyed child already existed in
+                            // this Stack on the previous frame. Keeping the same
+                            // key preserves its decoder State while it covers B.
+                            _videoPreview(
+                              previewSource: coverSource,
+                              previewDocument: coverDocument,
+                              previewFrame: outgoingSourceFrame,
+                              playing: false,
+                              onReady: null,
+                            ),
+                        ],
                       )
                     : const SizedBox.expand(),
               ),
