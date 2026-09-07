@@ -130,12 +130,13 @@ Future<Uint8List> _captureRgba(WidgetTester tester) async {
   final RenderRepaintBoundary boundary =
       tester.renderObject<RenderRepaintBoundary>(find.byKey(_boundaryKey));
 
-  final Uint8List? rgba = await tester.runAsync(() async {
+  final Uint8List? rgba = await tester.runAsync<Uint8List?>(() async {
     final ui.Image image = await boundary.toImage(pixelRatio: 1.0);
     try {
       final ByteData? data =
           await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      return data?.buffer.asUint8List();
+      if (data == null) return null;
+      return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
     } finally {
       image.dispose();
     }
