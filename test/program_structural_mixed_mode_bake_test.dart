@@ -14,6 +14,9 @@ import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
 
+const int _testWidth = 320;
+const int _testHeight = 180;
+
 class _RecordingBackend implements MediaDecoderBackend {
   final Map<String, int> opens = <String, int>{};
   final Map<String, int> disposes = <String, int>{};
@@ -39,13 +42,10 @@ class _RecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    // The parity gate reads structural chrome geometry, not source picture
+    // content. A zeroed RGBA frame keeps the decoder path real without paying
+    // for synthetic per-pixel painting in the test harness.
     final Uint8List rgba = Uint8List(width * height * 4);
-    for (int i = 0; i < rgba.length; i += 4) {
-      rgba[i] = 255;
-      rgba[i + 1] = 0;
-      rgba[i + 2] = 0;
-      rgba[i + 3] = 255;
-    }
     return DecodedMediaFrame(
       requestedSourceFrame: requestedSourceFrame,
       actualSourceFrame: requestedSourceFrame,
@@ -186,11 +186,30 @@ Future<Rect> _headerBounds(ui.Image image) async {
   );
 }
 
+Future<Rect> _renderHeaderAtLocalFrame({
+  required SceneEngine scene,
+  required ProgramStructuralFrameRenderer renderer,
+  required int placementIndex,
+  required int localFrame,
+}) async {
+  final ui.Image image = await _renderAtLocalFrame(
+    scene: scene,
+    renderer: renderer,
+    placementIndex: placementIndex,
+    localFrame: localFrame,
+  );
+  try {
+    return await _headerBounds(image);
+  } finally {
+    image.dispose();
+  }
+}
+
 Rect _pixelRect(Rect normalized) => Rect.fromLTRB(
-      normalized.left * 800,
-      normalized.top * 450,
-      normalized.right * 800,
-      normalized.bottom * 450,
+      normalized.left * _testWidth,
+      normalized.top * _testHeight,
+      normalized.right * _testWidth,
+      normalized.bottom * _testHeight,
     );
 
 Rect _plannedMorphRect(
@@ -201,14 +220,14 @@ Rect _plannedMorphRect(
       placement.previousPresentationMode!;
   final Rect from = structuralProgramPresentationRectForOutput(
     mode: previous,
-    outputWidth: 800,
-    outputHeight: 450,
+    outputWidth: _testWidth,
+    outputHeight: _testHeight,
     titleHeight: 38.0,
   );
   final Rect to = structuralProgramPresentationRectForOutput(
     mode: placement.presentationMode,
-    outputWidth: 800,
-    outputHeight: 450,
+    outputWidth: _testWidth,
+    outputHeight: _testHeight,
     titleHeight: 38.0,
   );
   final double eased = Curves.easeInOutCubic.transform(
@@ -227,7 +246,8 @@ void _expectSameRect(Rect actual, Rect expected) {
   expect(actual.bottom, closeTo(expected.top + 38.0, 1.5));
 }
 
-Future<void> _runBakeGate({
+Future<void> _runBakeGate(
+  WidgetTester tester, {
   required bool firstFullscreen,
   required bool secondFullscreen,
 }) async {
@@ -258,8 +278,8 @@ Future<void> _runBakeGate({
     templateText: compiled.engineText,
     fontColor: Colors.green,
     bgColor: Colors.black,
-    width: 800,
-    height: 450,
+    width: _testWidth.toDouble(),
+    height: _testHeight.toDouble(),
     scale: 1,
     fontPath: 'monospace',
     fontSize: 12,
@@ -277,8 +297,8 @@ Future<void> _runBakeGate({
   final _RecordingBackend backend = _RecordingBackend();
   final ProgramStructuralFrameRenderer renderer = ProgramStructuralFrameRenderer(
     rawDocument: source,
-    width: 800,
-    height: 450,
+    width: _testWidth,
+    height: _testHeight,
     backend: backend,
     resolveSource: _resolveSource,
   );
@@ -296,19 +316,22 @@ Future<void> _runBakeGate({
   ];
 
   for (final int localFrame in localFrames) {
-    final ui.Image image = await _renderAtLocalFrame(
-      scene: scene,
-      renderer: renderer,
-      placementIndex: 1,
-      localFrame: localFrame,
-    );
-    try {
-      final Rect header = await _headerBounds(image);
-      final Rect planned = _plannedMorphRect(second, localFrame);
-      _expectSameRect(header, planned);
-    } finally {
-      image.dispose();
-    }
+    // ProgramStructuralFrameRenderer uses both decodeImageFromPixels() and
+    // Picture.toImage(). Those complete on Flutter's real engine async loop,
+    // not the widget-test fake clock. Run the complete image round trip there
+    // and return only the measured geometry to the deterministic test zone.
+    final Rect? header = await tester.runAsync<Rect>(() async {
+      return _renderHeaderAtLocalFrame(
+        scene: scene,
+        renderer: renderer,
+        placementIndex: 1,
+        localFrame: localFrame,
+      );
+    });
+    expect(header, isNotNull);
+
+    final Rect planned = _plannedMorphRect(second, localFrame);
+    _expectSameRect(header!, planned);
   }
 
   expect(backend.opens['/workspace/video/b.mp4'], 1);
@@ -318,8 +341,9 @@ Future<void> _runBakeGate({
 void main() {
   testWidgets(
     'whole-program bake matches planned window to fullscreen STRUCT morph',
-    (WidgetTester _) async {
+    (WidgetTester tester) async {
       await _runBakeGate(
+        tester,
         firstFullscreen: false,
         secondFullscreen: true,
       );
@@ -328,8 +352,9 @@ void main() {
 
   testWidgets(
     'whole-program bake matches planned fullscreen to window STRUCT morph',
-    (WidgetTester _) async {
+    (WidgetTester tester) async {
       await _runBakeGate(
+        tester,
         firstFullscreen: true,
         secondFullscreen: false,
       );
