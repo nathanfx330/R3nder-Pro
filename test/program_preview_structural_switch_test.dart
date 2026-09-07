@@ -37,14 +37,9 @@ class _RecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    // This gate observes decoder lifetime, not synthetic picture content.
+    // Leave the buffer zeroed so the test does no unnecessary pixel painting.
     final Uint8List rgba = Uint8List(width * height * 4);
-    final bool second = path.endsWith('b.mp4');
-    for (int i = 0; i < rgba.length; i += 4) {
-      rgba[i] = second ? 20 : 220;
-      rgba[i + 1] = second ? 160 : 40;
-      rgba[i + 2] = second ? 220 : 40;
-      rgba[i + 3] = 255;
-    }
     return DecodedMediaFrame(
       requestedSourceFrame: requestedSourceFrame,
       actualSourceFrame: requestedSourceFrame,
@@ -94,20 +89,49 @@ const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 
 String _resolveSource(String source) => '/workspace/$source';
 
-Future<void> _waitForOpen(
+Future<void> _yieldEngineAsync(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  });
+  await tester.pump();
+}
+
+Future<void> _waitForLayerReady(
   WidgetTester tester,
-  _RecordingBackend backend,
-  String path,
-) async {
+  _RecordingBackend backend, {
+  required int placementIndex,
+  required String path,
+}) async {
+  final Finder layer = find.byKey(
+    ValueKey<String>('program-struct-layer-$placementIndex'),
+  );
+  final Finder ready = find.descendant(
+    of: layer,
+    matching: find.byKey(
+      const ValueKey<String>('structural-first-frame-ready'),
+    ),
+  );
+
   for (int attempt = 0;
-      attempt < 50 && (backend.opens[path] ?? 0) == 0;
+      attempt < 80 &&
+          ((backend.opens[path] ?? 0) == 0 || ready.evaluate().isEmpty);
       attempt++) {
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    });
-    await tester.pump();
+    await _yieldEngineAsync(tester);
   }
-  expect(backend.opens[path], 1, reason: '$path should be predecoded once.');
+
+  expect(backend.opens[path], 1, reason: '$path should be opened once.');
+  expect(ready, findsOneWidget, reason: '$path should be picture-ready.');
+}
+
+Future<void> _drainEngineAsync(WidgetTester tester) async {
+  // EditVideoPreview's RGBA -> ui.Image conversion completes on the engine
+  // async loop rather than Flutter's fake-clock frame queue. A and B can have
+  // conversions in flight when the real SceneEngine marker changes. Yield a
+  // few times so disposed/outdated requests finish and cannot keep the widget
+  // test alive after its assertions have completed.
+  for (int i = 0; i < 4; i++) {
+    await _yieldEngineAsync(tester);
+  }
 }
 
 void main() {
@@ -188,8 +212,10 @@ void main() {
       }
       expect(marker?.placementIndex, 0);
 
-      // The visible first source and the hidden incoming second source are both
-      // mounted as soon as placement 0 becomes active.
+      // The visible first source and hidden incoming second source mount as
+      // soon as placement 0 becomes active. Wait for actual picture readiness,
+      // not merely for backend.open(), so ui.decodeImageFromPixels is allowed
+      // to finish before we drive the handoff.
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsOneWidget,
@@ -199,8 +225,18 @@ void main() {
         findsOneWidget,
       );
 
-      await _waitForOpen(tester, backend, '/workspace/video/a.mp4');
-      await _waitForOpen(tester, backend, '/workspace/video/b.mp4');
+      await _waitForLayerReady(
+        tester,
+        backend,
+        placementIndex: 0,
+        path: '/workspace/video/a.mp4',
+      );
+      await _waitForLayerReady(
+        tester,
+        backend,
+        placementIndex: 1,
+        path: '/workspace/video/b.mp4',
+      );
 
       final Finder incomingLayer =
           find.byKey(const ValueKey<String>('program-struct-layer-1'));
@@ -236,6 +272,8 @@ void main() {
       expect(visibleOpacity.opacity, 1.0);
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
+
+      await _drainEngineAsync(tester);
     },
   );
 }
