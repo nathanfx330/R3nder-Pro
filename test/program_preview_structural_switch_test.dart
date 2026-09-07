@@ -7,7 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/program_preview_surface.dart';
+import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
+import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/ui_theme.dart';
@@ -37,8 +39,6 @@ class _RecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
-    // This gate observes decoder lifetime, not synthetic picture content.
-    // Leave the buffer zeroed so the test does no unnecessary pixel painting.
     final Uint8List rgba = Uint8List(width * height * 4);
     return DecodedMediaFrame(
       requestedSourceFrame: requestedSourceFrame,
@@ -89,11 +89,40 @@ const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 
 String _resolveSource(String source) => '/workspace/$source';
 
-Future<void> _yieldEngineAsync(WidgetTester tester) async {
-  await tester.runAsync(() async {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  });
-  await tester.pump();
+int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
+  final terminal = scene.terminal;
+  final bool awaitingPauseTag = terminal.activePause == null &&
+      terminal.charIndex >= 0 &&
+      terminal.charIndex < terminal.text.length &&
+      terminal.text.startsWith('[PAUSE:', terminal.charIndex);
+
+  return structuralRuntimeLocalFrame(
+    marker: marker,
+    pauseFramesRemaining: terminal.pauseFrames,
+    awaitingPauseTag: awaitingPauseTag,
+  );
+}
+
+int _findProjectFrame(
+  SceneEngine scene, {
+  required int placementIndex,
+  required int localFrame,
+}) {
+  for (int projectFrame = 0; projectFrame < 300; projectFrame++) {
+    final SceneEvaluationResult result = scene.evaluate(
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+    );
+    expect(result.exact, isTrue);
+
+    final StructuralRuntimeMarker? marker =
+        parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (marker == null || marker.placementIndex != placementIndex) continue;
+    if (_runtimeLocalFrame(scene, marker) == localFrame) return projectFrame;
+  }
+
+  fail(
+    'Did not find STRUCT placement $placementIndex local frame $localFrame.',
+  );
 }
 
 Future<void> _waitForLayerReady(
@@ -116,22 +145,14 @@ Future<void> _waitForLayerReady(
       attempt < 80 &&
           ((backend.opens[path] ?? 0) == 0 || ready.evaluate().isEmpty);
       attempt++) {
-    await _yieldEngineAsync(tester);
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
   }
 
   expect(backend.opens[path], 1, reason: '$path should be opened once.');
   expect(ready, findsOneWidget, reason: '$path should be picture-ready.');
-}
-
-Future<void> _drainEngineAsync(WidgetTester tester) async {
-  // EditVideoPreview's RGBA -> ui.Image conversion completes on the engine
-  // async loop rather than Flutter's fake-clock frame queue. A and B can have
-  // conversions in flight when the real SceneEngine marker changes. Yield a
-  // few times so disposed/outdated requests finish and cannot keep the widget
-  // test alive after its assertions have completed.
-  for (int i = 0; i < 4; i++) {
-    await _yieldEngineAsync(tester);
-  }
 }
 
 void main() {
@@ -173,6 +194,22 @@ void main() {
         appSwitchConfig: compiled.appSwitch,
       );
 
+      final int firstProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: 0,
+      );
+      final int secondProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: 0,
+      );
+
+      final SceneEvaluationResult firstResult = scene.evaluate(
+        ProjectTime(frame: firstProjectFrame, mode: ProjectClockMode.scrub),
+      );
+      expect(firstResult.exact, isTrue);
+
       final _RecordingBackend backend = _RecordingBackend();
       final ChangeNotifier repaint = ChangeNotifier();
 
@@ -200,22 +237,6 @@ void main() {
         ),
       );
 
-      StructuralRuntimeMarker? marker;
-      int guard = 0;
-      while (guard < 500) {
-        scene.tick();
-        repaint.notifyListeners();
-        await tester.pump();
-        marker = parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-        if (marker?.placementIndex == 0) break;
-        guard++;
-      }
-      expect(marker?.placementIndex, 0);
-
-      // The visible first source and hidden incoming second source mount as
-      // soon as placement 0 becomes active. Wait for actual picture readiness,
-      // not merely for backend.open(), so ui.decodeImageFromPixels is allowed
-      // to finish before we drive the handoff.
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsOneWidget,
@@ -247,18 +268,12 @@ void main() {
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
-      // Advance frame-by-frame through the real terminal marker transition.
-      // The incoming layer must become visible without disappearing/reopening.
-      guard = 0;
-      while (guard < 500) {
-        scene.tick();
-        repaint.notifyListeners();
-        await tester.pump();
-        marker = parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-        if (marker?.placementIndex == 1) break;
-        guard++;
-      }
-      expect(marker?.placementIndex, 1);
+      final SceneEvaluationResult secondResult = scene.evaluate(
+        ProjectTime(frame: secondProjectFrame, mode: ProjectClockMode.scrub),
+      );
+      expect(secondResult.exact, isTrue);
+      repaint.notifyListeners();
+      await tester.pump();
 
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
@@ -273,7 +288,14 @@ void main() {
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
-      await _drainEngineAsync(tester);
+      // Explicitly unmount the preview after all decode work needed by the gate
+      // has resolved. This keeps flutter_test from waiting on abandoned widget
+      // callbacks during automatic teardown.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
     },
   );
 }
