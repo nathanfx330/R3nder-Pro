@@ -26,6 +26,13 @@ void main() {
   testWidgets(
       'existing generated STRUCT node owns source and fullscreen controls',
       (WidgetTester tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(() {
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    });
+
     final Directory root =
         Directory.systemTemp.createTempSync('r3_struct_node_test_');
     final Directory images = Directory('${root.path}/images')..createSync();
@@ -46,18 +53,14 @@ void main() {
       MaterialApp(
         theme: theme.materialTheme(),
         home: Scaffold(
-          body: SizedBox(
-            width: 1280,
-            height: 720,
-            child: EditorNodeWorkspace(
-              initialText: _source,
-              theme: theme,
-              highlightedLine: -1,
-              imagesDir: images.path,
-              spritesDir: sprites.path,
-              initialSelectedNodeIndex: structIndex,
-              onTextChanged: (String value) => changed = value,
-            ),
+          body: EditorNodeWorkspace(
+            initialText: _source,
+            theme: theme,
+            highlightedLine: -1,
+            imagesDir: images.path,
+            spritesDir: sprites.path,
+            initialSelectedNodeIndex: structIndex,
+            onTextChanged: (String value) => changed = value,
           ),
         ),
       ),
@@ -70,13 +73,15 @@ void main() {
     expect(find.text('RAW MARKUP'), findsNothing);
     expect(find.text('MOSAIC.mosaic_2'), findsWidgets);
 
-    await tester.tap(find.text('FULL SCREEN'));
+    final Finder fullscreen = find.text('FULL SCREEN');
+    await tester.ensureVisible(fullscreen);
+    await tester.tap(fullscreen);
     await tester.pump();
 
     expect(changed, contains('[STRUCT:MOSAIC.mosaic_2:FULL]'));
     expect(changed, isNot(contains('[STRUCT:MOSAIC.mosaic_2]\n')));
 
-    await tester.tap(find.text('FULL SCREEN'));
+    await tester.tap(fullscreen);
     await tester.pump();
 
     expect(changed, contains('[STRUCT:MOSAIC.mosaic_2]\n'));
