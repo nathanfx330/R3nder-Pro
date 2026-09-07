@@ -13,22 +13,13 @@
 // ScenePainter's native renderer instead of a reconstructed ghost, preserving
 // terminal themes and exact hand-off pixels.
 //
-// APPSWITCH:SLIDE adds one lifecycle requirement: the next structural source
-// must be resident before the current one yields. When a placement plans a
-// seamless hand-off, the next keyed StructuralSequencePreview is mounted at
-// opacity zero while the current source is still playing. Hidden and visible
-// layers deliberately keep the exact same IgnorePointer -> Opacity -> preview
-// widget shape. Only property values change at the join, so Flutter preserves
-// the incoming preview State and its decoder/readiness state instead of
-// disposing the preloaded subtree when opacity becomes 1.
-//
-// The marker hand-off itself is paint-atomic. When B becomes the active STRUCT,
-// B paints at opacity 1 underneath A while A remains on top. A is not removed
-// merely because B has logically reported readiness: B must complete one actual
-// frame paint while ready and active. The post-frame commit then removes A on
-// the following build. If B is genuinely late, A simply remains on top while B
-// continues evaluating at current project time underneath. Project time never
-// pauses and B never restarts at frame zero.
+// APPSWITCH:SLIDE preloads the next structural source while the current source
+// is still playing. A source that became ready during that hidden preload can
+// replace the outgoing shell immediately at the marker hand-off. If readiness
+// arrives only after the incoming source is already active, PREVIEW keeps the
+// outgoing shell on top while the incoming shell paints underneath at current
+// project time. After one ready active paint, the outgoing cover is removed.
+// Project time never pauses and the incoming source never restarts at frame zero.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -75,9 +66,14 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
 
-  /// A seamless incoming placement is allowed to displace its outgoing cover
-  /// only after it has painted one active frame while already ready. Preload
-  /// paints at opacity zero do not count.
+  /// Distinguish the common fast path from the genuinely late path. A preview
+  /// that became ready while still hidden already has resident picture and can
+  /// be revealed immediately when its marker becomes active.
+  final Set<int> _readyBeforeActivationPlacements = <int>{};
+
+  /// A late incoming placement may displace its outgoing cover only after it
+  /// has completed one active paint while ready. Hidden preload paints do not
+  /// count for this late-path commit.
   final Set<int> _readyPaintedPlacements = <int>{};
   final Set<int> _readyPaintCommitScheduled = <int>{};
 
@@ -100,6 +96,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     if (previewIdentityChanged) {
       _readyPlacements.clear();
       _mountedPlacements.clear();
+      _readyBeforeActivationPlacements.clear();
       _readyPaintedPlacements.clear();
       _readyPaintCommitScheduled.clear();
     }
@@ -153,7 +150,18 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         _readyPlacements.contains(placementIndex)) {
       return;
     }
-    setState(() => _readyPlacements.add(placementIndex));
+
+    final StructuralRuntimeMarker? marker =
+        parseStructuralRuntimeRegion(widget.scene.terminal.currentRegion);
+    final bool readyBeforeActivation =
+        marker == null || marker.placementIndex != placementIndex;
+
+    setState(() {
+      _readyPlacements.add(placementIndex);
+      if (readyBeforeActivation) {
+        _readyBeforeActivationPlacements.add(placementIndex);
+      }
+    });
   }
 
   void _scheduleReadyPaintCommit(int placementIndex) {
@@ -230,8 +238,8 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             : marker.placementIndex;
 
         // A hidden preload has not completed an active paint. Clearing this for
-        // every non-active index also makes a scrubbed/re-entered handoff earn a
-        // fresh atomic overlap instead of reusing an old presentation commit.
+        // every non-active index also makes a scrubbed/re-entered late handoff
+        // earn a fresh atomic overlap instead of reusing an old commit.
         _readyPaintedPlacements.removeWhere(
           (int index) => index != activeIndex,
         );
@@ -265,12 +273,17 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
+          final bool activeReadyBeforeActivation =
+              _readyBeforeActivationPlacements.contains(activeIndex);
           final bool activeReadyPainted =
               _readyPaintedPlacements.contains(activeIndex);
 
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
-          if (placement.seamlessFromPrevious && !activeReadyPainted) {
+          final bool needsLateCover = placement.seamlessFromPrevious &&
+              !activeReadyBeforeActivation &&
+              !activeReadyPainted;
+          if (needsLateCover) {
             final int previousIndex = activeIndex - 1;
             final StructuralSequencePlacement? previous =
                 _placementAt(previousIndex);
@@ -282,9 +295,11 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             }
           }
 
-          // B is always fully paintable once it becomes active. If it is not
-          // ready yet, or has not yet completed a ready active paint, A is added
-          // afterwards and therefore remains the topmost visual cover.
+          // The incoming shell is always paintable once it becomes active.
+          // Fast path: if it was already ready while hidden, there is no cover
+          // and the old immediate keyed handoff remains intact. Late path: the
+          // outgoing shell is added afterwards and stays visually on top until
+          // B completes one ready active paint.
           nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
@@ -307,12 +322,17 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             );
           }
 
-          if (placement.seamlessFromPrevious && activeReady) {
+          if (placement.seamlessFromPrevious &&
+              activeReady &&
+              !activeReadyBeforeActivation) {
             _scheduleReadyPaintCommit(activeIndex);
           }
         }
 
         _readyPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _readyBeforeActivationPlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
         _readyPaintedPlacements.removeWhere(
