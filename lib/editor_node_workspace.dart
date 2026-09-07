@@ -2853,6 +2853,11 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.addAll(_configForm(node));
         break;
 
+      // --- Structural placement ----------------------------------------
+      case 'STRUCT':
+        f.addAll(_structForm(node));
+        break;
+
       // --- Desktop presentations ---------------------------------------
       case 'GALLERY':
         f.add(_fAsset(node, 'Image folder', 'folder', AssetSlot.imageFolder));
@@ -3023,6 +3028,77 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             'and macro config lines live here.'));
         break;
     }
+
+    return f;
+  }
+
+  /// First-class controls for one `[STRUCT:...]` placement.
+  ///
+  /// EDIT and MOSAIC definitions are authored in their own structural panels.
+  /// This form only chooses which existing structural source is placed here
+  /// and whether that placement is windowed or fills the program frame.
+  List<Widget> _structForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final String current = node.param('source').trim();
+
+    final List<String> sources = _nodes
+        .where((n) =>
+            n.isStructural && (n.type == 'EDIT' || n.type == 'MOSAIC'))
+        .map((n) {
+          final String id = n.param('id').trim();
+          return id.isEmpty ? '' : '${n.type}.$id';
+        })
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+
+    final bool resolves = current.isNotEmpty && sources.contains(current);
+    final List<String> items = [
+      if (current.isNotEmpty && !sources.contains(current)) current,
+      ...sources,
+    ];
+
+    f.add(_wrap(Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            R3MicroLabel('Source', theme: widget.theme),
+            SizedBox(width: sc(8)),
+            if (current.isNotEmpty && !resolves)
+              const R3Tally(state: R3TallyState.error, count: 'UNRESOLVED'),
+          ],
+        ),
+        SizedBox(height: sc(6)),
+        if (items.isEmpty)
+          Text('NO EDIT OR MOSAIC SOURCES DEFINED', style: widget.theme.micro)
+        else
+          _bareDropdown(
+            value: current,
+            items: items,
+            itemLabel: (s) => s,
+            onChanged: (v) {
+              if (v == null) return;
+              node.set('source', v);
+              _notifyChanged();
+            },
+          ),
+      ],
+    )));
+
+    f.add(_fToggle(
+      node,
+      'Full screen',
+      'mode',
+      'FULL',
+      'Fill the program frame directly instead of presenting this source '
+          'inside a desktop window.',
+    ));
+
+    f.add(_hint('This changes only this STRUCT placement. The referenced '
+        'EDIT or MOSAIC definition stays unchanged and can be placed '
+        'windowed or full screen somewhere else.'));
 
     return f;
   }
