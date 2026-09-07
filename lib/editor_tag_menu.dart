@@ -212,7 +212,7 @@ bool debugValidateTagPalette() {
   for (final t in kAllTags) {
     final String? p = t.placeholder;
     if (p != null && !t.insertText.contains(p)) {
-      problems.add('"${t.label}" placeholder "$p" is not in its insertText');
+      problems.add('"${t.label}" placeholder "$p" is not in its insert text');
     }
   }
 
