@@ -145,6 +145,17 @@ double _programLayerOpacity(WidgetTester tester, int placementIndex) {
   return opacity.opacity;
 }
 
+Stack _programStack(WidgetTester tester, int placementIndex) {
+  final Finder ancestors = find.ancestor(
+    of: find.byKey(
+      ValueKey<String>('program-struct-layer-$placementIndex'),
+    ),
+    matching: find.byType(Stack),
+  );
+  expect(ancestors, findsWidgets);
+  return tester.widget<Stack>(ancestors.first);
+}
+
 Finder _readyInside(int placementIndex) {
   return find.descendant(
     of: find.byKey(
@@ -158,7 +169,7 @@ Finder _readyInside(int placementIndex) {
 
 void main() {
   testWidgets(
-    'late seamless B keeps A visible until B resolves',
+    'late seamless B paints under A before A is released',
     (WidgetTester tester) async {
       final Directory root = Directory.systemTemp.createTempSync(
         'r3nder_struct_late_handoff_',
@@ -262,8 +273,9 @@ void main() {
       repaint.notifyListeners();
       await tester.pump();
 
-      // B has reached project time but is still genuinely pending. Keep its
-      // keyed preview mounted and hidden while A remains the visible shell.
+      // B is active and fully paintable underneath, even while its media is
+      // unresolved. A remains the topmost opaque cover, so the desktop inside
+      // B cannot leak into the finished program plane.
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsOneWidget,
@@ -273,7 +285,11 @@ void main() {
         findsOneWidget,
       );
       expect(_programLayerOpacity(tester, 0), 1.0);
-      expect(_programLayerOpacity(tester, 1), 0.0);
+      expect(_programLayerOpacity(tester, 1), 1.0);
+      expect(
+        _programStack(tester, 0).children.last.key,
+        const ValueKey<String>('program-struct-layer-0'),
+      );
 
       backend.releaseB = true;
       for (int attempt = 0;
@@ -281,9 +297,24 @@ void main() {
           attempt++) {
         await tester.pump();
       }
+
+      // Logical readiness alone is not enough to remove A. B must paint one
+      // active ready frame underneath A first; the post-frame commit removes A
+      // on the following build.
+      expect(_readyInside(1), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(_programLayerOpacity(tester, 0), 1.0);
+      expect(_programLayerOpacity(tester, 1), 1.0);
+      expect(
+        _programStack(tester, 0).children.last.key,
+        const ValueKey<String>('program-struct-layer-0'),
+      );
+
       await tester.pump();
 
-      expect(_readyInside(1), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,
