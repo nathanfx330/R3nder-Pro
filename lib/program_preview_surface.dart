@@ -21,6 +21,13 @@
 // widget shape. Only property values change at the join, so Flutter preserves
 // the incoming preview State and its decoder/readiness state instead of
 // disposing the preloaded subtree when opacity becomes 1.
+//
+// If real decode is still late at the exact marker boundary, PREVIEW keeps the
+// outgoing structural shell on its final authored frame while the incoming
+// layer continues evaluating at current project time underneath. The clock does
+// not pause and B does not restart at frame zero. Once B reports a presentable
+// frame, the outgoing fallback is removed and B appears at the current frame.
+// This prevents a slow preload from exposing the desktop between seamless apps.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -62,6 +69,13 @@ class ProgramPreviewSurface extends StatefulWidget {
 class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   late List<StructuralSequencePlacement> _placements;
 
+  /// Readiness is only valid while the keyed preview instance is still mounted.
+  /// The mounted-index set lets us reject late callbacks from disposed decoder
+  /// work and prevents an old readiness result from being reused after a scrub
+  /// that fully removed and later remounted the same placement.
+  final Set<int> _readyPlacements = <int>{};
+  final Set<int> _mountedPlacements = <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -71,8 +85,16 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   @override
   void didUpdateWidget(covariant ProgramPreviewSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final bool previewIdentityChanged =
+        oldWidget.rawDocument != widget.rawDocument ||
+            oldWidget.structuralBackend != widget.structuralBackend ||
+            oldWidget.structuralResolveSource != widget.structuralResolveSource;
     if (oldWidget.rawDocument != widget.rawDocument) {
       _placements = parseStructuralSequencePlacements(widget.rawDocument);
+    }
+    if (previewIdentityChanged) {
+      _readyPlacements.clear();
+      _mountedPlacements.clear();
     }
   }
 
@@ -118,6 +140,15 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     );
   }
 
+  void _markPlacementReady(int placementIndex) {
+    if (!mounted ||
+        !_mountedPlacements.contains(placementIndex) ||
+        _readyPlacements.contains(placementIndex)) {
+      return;
+    }
+    setState(() => _readyPlacements.add(placementIndex));
+  }
+
   Widget _structuralLayer({
     required int placementIndex,
     required StructuralSequencePlacement placement,
@@ -139,6 +170,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       terminalFontFamily: widget.fontFamily,
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
+      onFirstFrameReady: () => _markPlacementReady(placementIndex),
     );
 
     return Positioned.fill(
@@ -158,6 +190,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     return ListenableBuilder(
       listenable: widget.repaint,
       builder: (BuildContext context, Widget? child) {
+        final Set<int> previouslyMounted =
+            Set<int>.of(_mountedPlacements);
+        final Set<int> nextMounted = <int>{};
+
         final StructuralRuntimeMarker? marker =
             parseStructuralRuntimeRegion(widget.scene.terminal.currentRegion);
         final StructuralSequencePlacement? placement =
@@ -174,6 +210,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         ];
 
         if (marker != null && placement != null) {
+          final int activeIndex = marker.placementIndex;
           final StructuralSequencePlacement? preload =
               _preloadPlacement(marker, placement);
 
@@ -183,9 +220,11 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           // only opacity/ignoring change. That is what actually preserves the
           // preloaded StructuralSequencePreview State across the hand-off.
           if (preload != null) {
+            final int preloadIndex = activeIndex + 1;
+            nextMounted.add(preloadIndex);
             layers.add(
               _structuralLayer(
-                placementIndex: marker.placementIndex + 1,
+                placementIndex: preloadIndex,
                 placement: preload,
                 localFrame: 0,
                 visible: false,
@@ -193,15 +232,56 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             );
           }
 
+          final bool activeReady = previouslyMounted.contains(activeIndex) &&
+              _readyPlacements.contains(activeIndex);
+
+          int? fallbackIndex;
+          StructuralSequencePlacement? fallbackPlacement;
+          if (placement.seamlessFromPrevious && !activeReady) {
+            final int previousIndex = activeIndex - 1;
+            final StructuralSequencePlacement? previous =
+                _placementAt(previousIndex);
+            if (previous != null &&
+                previous.seamlessToNext &&
+                previouslyMounted.contains(previousIndex)) {
+              fallbackIndex = previousIndex;
+              fallbackPlacement = previous;
+            }
+          }
+
+          nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
-              placementIndex: marker.placementIndex,
+              placementIndex: activeIndex,
               placement: placement,
               localFrame: _localFrame(marker),
-              visible: true,
+              visible: fallbackPlacement == null,
             ),
           );
+
+          // A genuinely late seamless preload must not expose the desktop.
+          // Keep the exact keyed outgoing preview alive on its final authored
+          // frame until the already-mounted incoming preview reports readiness.
+          // B still receives its real current local frame while hidden above.
+          if (fallbackPlacement != null && fallbackIndex != null) {
+            nextMounted.add(fallbackIndex);
+            layers.add(
+              _structuralLayer(
+                placementIndex: fallbackIndex,
+                placement: fallbackPlacement,
+                localFrame: fallbackPlacement.effectiveDurationFrames - 1,
+                visible: true,
+              ),
+            );
+          }
         }
+
+        _readyPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _mountedPlacements
+          ..clear()
+          ..addAll(nextMounted);
 
         return Stack(
           fit: StackFit.expand,
