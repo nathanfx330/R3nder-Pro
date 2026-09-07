@@ -13,6 +13,9 @@ import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/ui_theme.dart';
 
+const double _testWidth = 320.0;
+const double _testHeight = 180.0;
+
 class _RecordingBackend implements MediaDecoderBackend {
   final Map<String, int> opens = <String, int>{};
   final Map<String, int> disposes = <String, int>{};
@@ -38,14 +41,9 @@ class _RecordingDecoder implements MediaDecoder {
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    // Geometry/readiness is what this gate exercises. Pixel content is not
+    // inspected, so do not burn test time painting a synthetic full frame.
     final Uint8List rgba = Uint8List(width * height * 4);
-    final bool second = path.endsWith('b.mp4');
-    for (int i = 0; i < rgba.length; i += 4) {
-      rgba[i] = second ? 20 : 220;
-      rgba[i + 1] = second ? 160 : 40;
-      rgba[i + 2] = second ? 220 : 40;
-      rgba[i + 3] = 255;
-    }
     return DecodedMediaFrame(
       requestedSourceFrame: requestedSourceFrame,
       actualSourceFrame: requestedSourceFrame,
@@ -123,21 +121,31 @@ Future<StructuralRuntimeMarker> _advanceTo(
   required int placementIndex,
   int? localFrame,
 }) async {
-  for (int guard = 0; guard < 1000; guard++) {
+  StructuralRuntimeMarker? lastMarker;
+  int? lastLocalFrame;
+
+  for (int guard = 0; guard < 500; guard++) {
     scene.tick();
     repaint.notifyListeners();
     await tester.pump();
 
     final StructuralRuntimeMarker? marker =
         parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (marker != null) {
+      lastMarker = marker;
+      lastLocalFrame = _runtimeLocalFrame(scene, marker);
+    }
+
     if (marker == null || marker.placementIndex != placementIndex) continue;
-    if (localFrame == null || _runtimeLocalFrame(scene, marker) == localFrame) {
+    if (localFrame == null || lastLocalFrame == localFrame) {
       return marker;
     }
   }
+
   fail(
     'Did not reach STRUCT placement $placementIndex'
-    '${localFrame == null ? '' : ' local frame $localFrame'}.',
+    '${localFrame == null ? '' : ' local frame $localFrame'}. '
+    'Last marker=${lastMarker?.placementIndex}, local=$lastLocalFrame.',
   );
 }
 
@@ -177,7 +185,7 @@ Finder _incomingWindow() {
   );
 }
 
-Rect _fittedProgramFrame() => const Rect.fromLTWH(0, 25, 800, 450);
+Rect _programFrame() => const Rect.fromLTWH(0, 0, _testWidth, _testHeight);
 
 Rect _windowRect(Rect frame) {
   const double titleHeight = 38.0;
@@ -243,8 +251,8 @@ Future<void> _runMixedModeGate(
     templateText: compiled.engineText,
     fontColor: Colors.green,
     bgColor: Colors.black,
-    width: 800,
-    height: 450,
+    width: _testWidth,
+    height: _testHeight,
     scale: 1,
     fontPath: 'monospace',
     fontSize: 12,
@@ -273,8 +281,8 @@ Future<void> _runMixedModeGate(
       home: Align(
         alignment: Alignment.topLeft,
         child: SizedBox(
-          width: 800,
-          height: 500,
+          width: _testWidth,
+          height: _testHeight,
           child: ProgramPreviewSurface(
             repaint: repaint,
             scene: scene,
@@ -307,7 +315,7 @@ Future<void> _runMixedModeGate(
 
   await _waitForIncomingReady(tester, backend);
 
-  final Rect full = _fittedProgramFrame();
+  final Rect full = _programFrame();
   final Rect window = _windowRect(full);
   final Rect expectedStart = firstFullscreen ? full : window;
   final Rect expectedEnd = secondFullscreen ? full : window;
