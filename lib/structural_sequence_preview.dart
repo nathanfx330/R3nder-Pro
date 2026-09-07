@@ -5,11 +5,10 @@
 // widget is only the presentation of the sequence-side [STRUCT:...] reference.
 //
 // STRUCT uses deterministic desktop choreography around the persistent MLT
-// structural compositor. The terminal first resizes from fullscreen directly
-// to the final video-panel rectangle. The structural window then comes forward
-// from inside that rectangle while the terminal fades away behind it. Geometry
-// supplies the depth cue; the matched rear-plane fade makes the hand-off read
-// as one window yielding to another rather than two stacked windows.
+// structural compositor. Presentation mode belongs to the placement: the same
+// source can open as a desktop window or as a fullscreen structural app.
+// Adjacent placements can also chain on the desktop, and APPSWITCH:SLIDE can
+// switch directly without returning through the terminal between sources.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during zoom-out, but it is not allowed
@@ -31,10 +30,8 @@
 //
 // The editor preview pane is not the render frame. ScenePainter letterboxes the
 // 16:9 engine canvas inside whatever space the editor gives it. Structural
-// choreography must live inside that same fitted rectangle or its "fullscreen"
-// terminal grows into the editor letterbox and snaps back when ScenePainter
-// takes over. R3nder's supported 1080p and 4K formats are both 16:9, so the
-// fitted render frame is shared by both resolutions.
+// choreography lives inside that same fitted rectangle. FULL therefore means
+// the fitted program frame, not the outer editor widget and not its letterbox.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -121,14 +118,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
   @override
   Widget build(BuildContext context) {
-    final String source = widget.placement.sourceRef.canonicalSource;
-    final StructuralSequenceStage stage =
-        widget.placement.stageAt(widget.localFrame);
-    final double linear =
-        widget.placement.stageProgressAt(widget.localFrame);
+    final StructuralSequencePlacement placement = widget.placement;
+    final String source = placement.sourceRef.canonicalSource;
+    final StructuralSequenceStage stage = placement.stageAt(widget.localFrame);
+    final double linear = placement.stageProgressAt(widget.localFrame);
     final double eased = Curves.easeInOutCubic.transform(linear);
-    final int sourceFrame =
-        widget.placement.sourceFrameAt(widget.localFrame);
+    final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
 
     return ColoredBox(
       color: Colors.black,
@@ -149,22 +144,41 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
           // ScenePainter expresses chrome in logical engine pixels and then
           // applies the engine-to-widget fit. Reuse that exact conversion for
-          // the foreground structural window. This is load-bearing in EDIT:
-          // a fixed 38 widget pixels was much larger than the native title bar
-          // in a reduced preview pane and visibly broke the hand-off.
+          // the foreground structural window.
           final double chromeScale = useNativeTerminal
               ? _nativeChromeScale(renderFrame, liveScene!)
               : 1.0;
           final double titleHeight = _StructuralWindow.titleHeight * chromeScale;
 
           final Rect fullTerminal = renderFrame;
-          final Rect presentationRect = _structuralTargetRect(
+
+          // The terminal always parks as the normal desktop terminal window.
+          // FULL is a property of the structural app, not of the terminal.
+          final Rect terminalParkRect = _structuralTargetRect(
             renderFrame,
             titleHeight: titleHeight,
           );
-          final Rect emergenceRect = _structuralEmergenceRect(presentationRect);
 
-          Rect terminalRect = presentationRect;
+          final Rect presentationRect = placement.fullscreen
+              ? renderFrame
+              : terminalParkRect;
+
+          final Rect previousPresentationRect = switch (
+            placement.previousPresentationMode
+          ) {
+            StructuralPresentationMode.fullscreen => renderFrame,
+            StructuralPresentationMode.windowed => terminalParkRect,
+            null => terminalParkRect,
+          };
+
+          // Normal open/close originates from the desktop window plane even
+          // when the destination is FULL. That lets a fullscreen structural
+          // source read as an application window growing into the frame rather
+          // than a full-frame image materialising from nowhere.
+          final Rect emergenceRect =
+              _structuralEmergenceRect(terminalParkRect);
+
+          Rect terminalRect = terminalParkRect;
           Rect structuralRect = presentationRect;
           double desktopOpacity = 1.0;
           double terminalOpacity = 0.0;
@@ -174,12 +188,11 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              // Resize straight to the final panel geometry. Chrome grows in
-              // with the pull-back, matching ScenePainter's native terminal
-              // zoom instead of appearing at full height on the first frame.
-              // The structural preview is mounted invisibly from the first
-              // STRUCT frame so frame zero can decode before foreground reveal.
-              terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
+              // Only a chain root owns this stage. Pull the real terminal back
+              // to its parked desktop geometry while frame zero predecodes in
+              // an invisible structural subtree.
+              terminalRect =
+                  Rect.lerp(fullTerminal, terminalParkRect, eased)!;
               structuralRect = emergenceRect;
               desktopOpacity = eased;
               terminalOpacity = 1.0;
@@ -189,51 +202,77 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.opening:
-              // Readiness may suppress the foreground, but it may not alter
-              // authored time. Before picture is resident we hold the visual
-              // hand-off at its frame-zero state. Once ready, the geometry
-              // jumps to the deterministic authored state for THIS localFrame.
-              // There is deliberately no decode-timing-derived start frame.
+              // Two different things can own an opening stage:
+              //
+              // 1. ordinary desktop open: emerge from the desktop plane;
+              // 2. seamless mode change: morph the already-live shell from the
+              //    previous window/fullscreen geometry into this one.
+              //
+              // Same-mode APPSWITCH:SLIDE has no opening stage at all.
               final double handoffLinear = _firstFrameReady ? linear : 0.0;
               final double handoffEased =
                   Curves.easeInOutCubic.transform(handoffLinear);
-              terminalRect = presentationRect;
-              structuralRect = Rect.lerp(
-                emergenceRect,
-                presentationRect,
-                handoffEased,
-              )!;
+              terminalRect = terminalParkRect;
               desktopOpacity = 1.0;
-              terminalOpacity = 1.0 - handoffEased;
               terminalChrome = 1.0;
-              structuralOpacity = _firstFrameReady
-                  ? Curves.easeOutCubic.transform(
-                      (handoffLinear * 2.2).clamp(0.0, 1.0),
-                    )
-                  : 0.0;
               structuralWindowPresent = true;
+
+              if (placement.seamlessFromPrevious) {
+                structuralRect = Rect.lerp(
+                  previousPresentationRect,
+                  presentationRect,
+                  handoffEased,
+                )!;
+                terminalOpacity = 0.0;
+                structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
+              } else {
+                structuralRect = Rect.lerp(
+                  emergenceRect,
+                  presentationRect,
+                  handoffEased,
+                )!;
+                terminalOpacity = placement.chainedFromPrevious
+                    ? 0.0
+                    : 1.0 - handoffEased;
+                structuralOpacity = _firstFrameReady
+                    ? Curves.easeOutCubic.transform(
+                        (handoffLinear * 2.2).clamp(0.0, 1.0),
+                      )
+                    : 0.0;
+              }
               break;
 
             case StructuralSequenceStage.showing:
-              terminalRect = presentationRect;
-              structuralRect =
-                  _firstFrameReady ? presentationRect : emergenceRect;
+              terminalRect = terminalParkRect;
+              structuralRect = _firstFrameReady
+                  ? presentationRect
+                  : (placement.seamlessFromPrevious
+                      ? previousPresentationRect
+                      : emergenceRect);
               desktopOpacity = 1.0;
-              terminalOpacity = _firstFrameReady ? 0.0 : 1.0;
+              // A chained structural app must never resurrect the terminal
+              // merely because its decoder is late. APPSWITCH preloads the
+              // common case; a genuinely late chain degrades to desktop, not a
+              // false terminal flash.
+              terminalOpacity = (!_firstFrameReady &&
+                      !placement.chainedFromPrevious)
+                  ? 1.0
+                  : 0.0;
               terminalChrome = 1.0;
               structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
               structuralWindowPresent = true;
               break;
 
             case StructuralSequenceStage.closing:
-              // Foreground recedes while the fully chromed parked terminal
-              // returns beneath it. The following zoom-in now inherits that
-              // exact chrome state and collapses it continuously to fullscreen.
-              terminalRect = presentationRect;
+              // Normal adjacency closes the structural app to the desktop but
+              // leaves the terminal hidden so the next app can open directly.
+              // A standalone close brings the parked terminal back underneath
+              // the receding structural window before zoom-in takes over.
+              terminalRect = terminalParkRect;
               structuralRect =
                   Rect.lerp(presentationRect, emergenceRect, eased)!;
               desktopOpacity = 1.0;
-              terminalOpacity = eased;
+              terminalOpacity = placement.chainedToNext ? 0.0 : eased;
               terminalChrome = 1.0;
               structuralOpacity = Curves.easeInCubic.transform(
                 ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
@@ -242,13 +281,17 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.zoomIn:
-              // Native ScenePainter behavior inside the fitted render frame:
-              // geometry grows to the output canvas at the same time chrome
-              // collapses. It never expands into the editor's letterbox.
-              terminalRect = Rect.lerp(presentationRect, fullTerminal, eased)!;
+              // Only a chain tail owns this stage. The structural app is gone;
+              // the parked terminal expands through the same fitted program
+              // frame and its chrome collapses continuously to fullscreen.
+              terminalRect =
+                  Rect.lerp(terminalParkRect, fullTerminal, eased)!;
+              structuralRect = presentationRect;
               desktopOpacity = 1.0 - eased;
               terminalOpacity = 1.0;
               terminalChrome = 1.0 - eased;
+              structuralOpacity = 0.0;
+              structuralWindowPresent = false;
               break;
           }
 
@@ -331,8 +374,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       source: source,
                       rawDocument: widget.rawDocument,
                       sourceFrame: sourceFrame,
-                      sourceDurationFrames:
-                          widget.placement.sourceDurationFrames,
+                      sourceDurationFrames: placement.sourceDurationFrames,
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
@@ -341,7 +383,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       // held at frame zero. Keep the decoder in that same moving
                       // profile so entering showing does not switch decode size
                       // and discard the frame-zero predecode exactly when the
-                      // authored fade begins.
+                      // authored hand-off begins.
                       fastPreview: widget.isPlaying,
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
                           stage == StructuralSequenceStage.opening ||
@@ -418,10 +460,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// Final presentation rectangle inside the fitted render frame. The client
-  /// area itself is 16:9, and [titleHeight] is added above it. Production uses
-  /// the ScenePainter-scaled native title height; fallback widget tests retain
-  /// the historical 38-widget-pixel geometry.
+  /// Final windowed presentation rectangle inside the fitted render frame. The
+  /// client area itself is 16:9, and [titleHeight] is added above it.
   static Rect _structuralTargetRect(
     Rect frame, {
     double titleHeight = _StructuralWindow.titleHeight,
@@ -447,8 +487,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   }
 
   /// The foreground window's rear-plane geometry. It is deliberately not a
-  /// second destination. It lives inside the final panel rectangle and is
-  /// only the perspective cue for "coming forth": 84% scale, slightly lower.
+  /// second destination. It lives inside the normal desktop window rectangle
+  /// and is only the perspective cue for "coming forth".
   static Rect _structuralEmergenceRect(Rect target) {
     const double scale = 0.84;
     final double w = target.width * scale;
