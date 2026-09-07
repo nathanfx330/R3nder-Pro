@@ -9,6 +9,9 @@
 // exact EDIT/MOSAIC pixels, and composites the same authored desktop/window
 // choreography used by live Preview.
 //
+// Structural application planning is already baked into each placement:
+// standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
+// and windowed/fullscreen geometry all use the same event budget Preview sees.
 // Decode speed may make an export frame take longer to produce. It can never
 // move project time, substitute a neighbouring media frame, shorten a source,
 // or alter the structural transition curve.
@@ -27,13 +30,10 @@ import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
-/// Preview computes the final STRUCT panel in real render-frame pixels. Bake
-/// must do the same before converting to ScenePainter's normalized 0..1 space.
+/// Windowed STRUCT geometry in normalized output coordinates.
 ///
-/// Applying the 16:9 client ratio directly to normalized X/Y coordinates is
-/// wrong because the axes have already been scaled independently. On a 16:9
-/// output that mistake turns an 86%-wide client into a ~48%-tall client, skips
-/// the preview's height cap, and produces the visibly over-wide bake window.
+/// Preview computes this in real render-frame pixels. Bake must do the same
+/// before converting to ScenePainter's normalized 0..1 space.
 Rect structuralProgramTargetRectForOutput({
   required int outputWidth,
   required int outputHeight,
@@ -66,6 +66,22 @@ Rect structuralProgramTargetRectForOutput({
     pixelRect.top / height,
     pixelRect.right / width,
     pixelRect.bottom / height,
+  );
+}
+
+Rect structuralProgramPresentationRectForOutput({
+  required StructuralPresentationMode mode,
+  required int outputWidth,
+  required int outputHeight,
+  required double titleHeight,
+}) {
+  if (mode == StructuralPresentationMode.fullscreen) {
+    return const Rect.fromLTWH(0, 0, 1, 1);
+  }
+  return structuralProgramTargetRectForOutput(
+    outputWidth: outputWidth,
+    outputHeight: outputHeight,
+    titleHeight: titleHeight,
   );
 }
 
@@ -168,8 +184,6 @@ class ProgramStructuralFrameRenderer {
       Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
     );
 
-    // This is the same native terminal/desktop renderer used by production
-    // Preview and EDIT during their structural hand-off.
     SceneStructuralTerminalPainter(
       scene: scene,
       fontFamily: fontFamily,
@@ -470,14 +484,28 @@ class _StructuralProgramVisual {
     final double titleHeight = 38.0 * chromeScale;
 
     final Rect fullTerminal = const Rect.fromLTWH(0, 0, 1, 1);
-    final Rect presentationRect = structuralProgramTargetRectForOutput(
+    final Rect terminalParkRect = structuralProgramTargetRectForOutput(
       outputWidth: outputWidth,
       outputHeight: outputHeight,
       titleHeight: titleHeight,
     );
-    final Rect emergenceRect = _emergenceRect(presentationRect);
+    final Rect presentationRect = structuralProgramPresentationRectForOutput(
+      mode: placement.presentationMode,
+      outputWidth: outputWidth,
+      outputHeight: outputHeight,
+      titleHeight: titleHeight,
+    );
+    final Rect previousPresentationRect =
+        structuralProgramPresentationRectForOutput(
+      mode: placement.previousPresentationMode ??
+          StructuralPresentationMode.windowed,
+      outputWidth: outputWidth,
+      outputHeight: outputHeight,
+      titleHeight: titleHeight,
+    );
+    final Rect emergenceRect = _emergenceRect(terminalParkRect);
 
-    Rect terminalRect = presentationRect;
+    Rect terminalRect = terminalParkRect;
     Rect structuralRect = presentationRect;
     double desktopOpacity = 1.0;
     double terminalOpacity = 0.0;
@@ -487,7 +515,7 @@ class _StructuralProgramVisual {
 
     switch (stage) {
       case StructuralSequenceStage.zoomOut:
-        terminalRect = Rect.lerp(fullTerminal, presentationRect, eased)!;
+        terminalRect = Rect.lerp(fullTerminal, terminalParkRect, eased)!;
         structuralRect = emergenceRect;
         desktopOpacity = eased;
         terminalOpacity = 1.0;
@@ -497,19 +525,36 @@ class _StructuralProgramVisual {
         break;
 
       case StructuralSequenceStage.opening:
-        terminalRect = presentationRect;
-        structuralRect = Rect.lerp(emergenceRect, presentationRect, eased)!;
+        terminalRect = terminalParkRect;
         desktopOpacity = 1.0;
-        terminalOpacity = 1.0 - eased;
         terminalChrome = 1.0;
-        structuralOpacity = Curves.easeOutCubic.transform(
-          (linear * 2.2).clamp(0.0, 1.0),
-        );
         structuralWindowPresent = true;
+
+        if (placement.seamlessFromPrevious) {
+          structuralRect = Rect.lerp(
+            previousPresentationRect,
+            presentationRect,
+            eased,
+          )!;
+          terminalOpacity = 0.0;
+          structuralOpacity = 1.0;
+        } else {
+          structuralRect = Rect.lerp(
+            emergenceRect,
+            presentationRect,
+            eased,
+          )!;
+          terminalOpacity = placement.chainedFromPrevious
+              ? 0.0
+              : 1.0 - eased;
+          structuralOpacity = Curves.easeOutCubic.transform(
+            (linear * 2.2).clamp(0.0, 1.0),
+          );
+        }
         break;
 
       case StructuralSequenceStage.showing:
-        terminalRect = presentationRect;
+        terminalRect = terminalParkRect;
         structuralRect = presentationRect;
         desktopOpacity = 1.0;
         terminalOpacity = 0.0;
@@ -519,10 +564,10 @@ class _StructuralProgramVisual {
         break;
 
       case StructuralSequenceStage.closing:
-        terminalRect = presentationRect;
+        terminalRect = terminalParkRect;
         structuralRect = Rect.lerp(presentationRect, emergenceRect, eased)!;
         desktopOpacity = 1.0;
-        terminalOpacity = eased;
+        terminalOpacity = placement.chainedToNext ? 0.0 : eased;
         terminalChrome = 1.0;
         structuralOpacity = Curves.easeInCubic.transform(
           ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
@@ -531,7 +576,7 @@ class _StructuralProgramVisual {
         break;
 
       case StructuralSequenceStage.zoomIn:
-        terminalRect = Rect.lerp(presentationRect, fullTerminal, eased)!;
+        terminalRect = Rect.lerp(terminalParkRect, fullTerminal, eased)!;
         structuralRect = presentationRect;
         desktopOpacity = 1.0 - eased;
         terminalOpacity = 1.0;
