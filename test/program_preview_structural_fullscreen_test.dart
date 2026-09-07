@@ -149,15 +149,24 @@ Future<StructuralRuntimeMarker> _advanceTo(
   );
 }
 
-Future<void> _waitForIncomingReady(
+Future<void> _yieldEngineAsync(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  });
+  await tester.pump();
+}
+
+Future<void> _waitForLayerReady(
   WidgetTester tester,
-  _RecordingBackend backend,
-) async {
-  const String path = '/workspace/video/b.mp4';
-  final Finder incomingLayer =
-      find.byKey(const ValueKey<String>('program-struct-layer-1'));
+  _RecordingBackend backend, {
+  required int placementIndex,
+  required String path,
+}) async {
+  final Finder layer = find.byKey(
+    ValueKey<String>('program-struct-layer-$placementIndex'),
+  );
   final Finder ready = find.descendant(
-    of: incomingLayer,
+    of: layer,
     matching: find.byKey(
       const ValueKey<String>('structural-first-frame-ready'),
     ),
@@ -167,15 +176,21 @@ Future<void> _waitForIncomingReady(
       attempt < 80 &&
           ((backend.opens[path] ?? 0) == 0 || ready.evaluate().isEmpty);
       attempt++) {
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    });
-    await tester.pump();
+    await _yieldEngineAsync(tester);
   }
 
-  expect(backend.opens[path], 1, reason: 'incoming source must preload once');
-  expect(ready, findsOneWidget, reason: 'incoming source must be picture-ready');
+  expect(backend.opens[path], 1, reason: '$path should be opened once.');
+  expect(ready, findsOneWidget, reason: '$path should be picture-ready.');
   expect(backend.disposes[path] ?? 0, 0);
+}
+
+Future<void> _drainEngineAsync(WidgetTester tester) async {
+  // Advancing the real SceneEngine can supersede an outgoing preview request
+  // while its RGBA -> ui.Image callback is still in flight. Let those engine
+  // callbacks finish before the widget test tears the tree down.
+  for (int i = 0; i < 4; i++) {
+    await _yieldEngineAsync(tester);
+  }
 }
 
 Finder _incomingWindow() {
@@ -313,7 +328,21 @@ Future<void> _runMixedModeGate(
     findsOneWidget,
   );
 
-  await _waitForIncomingReady(tester, backend);
+  // Both mounted previews must finish the engine-side RGBA -> ui.Image step.
+  // Waiting only for backend.open() can leave image conversion futures alive
+  // after the test body ends and cause flutter_test to sit until its timeout.
+  await _waitForLayerReady(
+    tester,
+    backend,
+    placementIndex: 0,
+    path: '/workspace/video/a.mp4',
+  );
+  await _waitForLayerReady(
+    tester,
+    backend,
+    placementIndex: 1,
+    path: '/workspace/video/b.mp4',
+  );
 
   final Rect full = _programFrame();
   final Rect window = _windowRect(full);
@@ -384,6 +413,8 @@ Future<void> _runMixedModeGate(
 
   expect(backend.opens['/workspace/video/b.mp4'], 1);
   expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
+
+  await _drainEngineAsync(tester);
 }
 
 void main() {
