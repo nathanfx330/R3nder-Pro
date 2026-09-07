@@ -1,7 +1,6 @@
 // ./test/program_preview_structural_switch_test.dart
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,8 +20,7 @@ class _RecordingBackend implements MediaDecoderBackend {
   @override
   MediaDecoder open(String resolvedPath) {
     opens[resolvedPath] = (opens[resolvedPath] ?? 0) + 1;
-    return _RecordingDecoder(
-      path: resolvedPath,
+    return _PendingDecoder(
       onDispose: () {
         disposes[resolvedPath] = (disposes[resolvedPath] ?? 0) + 1;
       },
@@ -30,24 +28,30 @@ class _RecordingBackend implements MediaDecoderBackend {
   }
 }
 
-class _RecordingDecoder implements MediaDecoder {
-  final String path;
+/// This gate is about decoder ownership, not picture conversion.
+///
+/// Program PREVIEW is moving, so a NonBlockingMediaDecoder is the native-shape
+/// seam: request the exact target, report it as still pending, and never enter
+/// EditVideoPreview's RGBA -> ui.Image path. The decoder is still opened and
+/// cached by the real MediaLayer, which is exactly the lifetime behavior this
+/// test needs to observe.
+class _PendingDecoder implements NonBlockingMediaDecoder {
   final VoidCallback onDispose;
   bool _disposed = false;
 
-  _RecordingDecoder({required this.path, required this.onDispose});
+  _PendingDecoder({required this.onDispose});
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {}
+
+  @override
+  DecodedMediaFrame? poll(int requestedSourceFrame, int width, int height) {
+    return null;
+  }
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
-    final Uint8List rgba = Uint8List(width * height * 4);
-    return DecodedMediaFrame(
-      requestedSourceFrame: requestedSourceFrame,
-      actualSourceFrame: requestedSourceFrame,
-      width: width,
-      height: height,
-      stride: width * 4,
-      rgba: rgba,
-    );
+    throw StateError('Blocking render is not expected in moving PREVIEW.');
   }
 
   @override
@@ -125,34 +129,24 @@ int _findProjectFrame(
   );
 }
 
-Future<void> _waitForLayerReady(
+Future<void> _waitForOpen(
   WidgetTester tester,
-  _RecordingBackend backend, {
-  required int placementIndex,
-  required String path,
-}) async {
-  final Finder layer = find.byKey(
-    ValueKey<String>('program-struct-layer-$placementIndex'),
-  );
-  final Finder ready = find.descendant(
-    of: layer,
-    matching: find.byKey(
-      const ValueKey<String>('structural-first-frame-ready'),
-    ),
-  );
-
-  for (int attempt = 0;
-      attempt < 80 &&
-          ((backend.opens[path] ?? 0) == 0 || ready.evaluate().isEmpty);
-      attempt++) {
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    });
+  _RecordingBackend backend,
+  String path,
+) async {
+  for (int attempt = 0; attempt < 10 && (backend.opens[path] ?? 0) == 0; attempt++) {
     await tester.pump();
   }
-
   expect(backend.opens[path], 1, reason: '$path should be opened once.');
-  expect(ready, findsOneWidget, reason: '$path should be picture-ready.');
+}
+
+double _programLayerOpacity(WidgetTester tester, int placementIndex) {
+  final Positioned positioned = tester.widget<Positioned>(
+    find.byKey(ValueKey<String>('program-struct-layer-$placementIndex')),
+  );
+  final IgnorePointer ignore = positioned.child as IgnorePointer;
+  final Opacity opacity = ignore.child as Opacity;
+  return opacity.opacity;
 }
 
 void main() {
@@ -246,25 +240,10 @@ void main() {
         findsOneWidget,
       );
 
-      await _waitForLayerReady(
-        tester,
-        backend,
-        placementIndex: 0,
-        path: '/workspace/video/a.mp4',
-      );
-      await _waitForLayerReady(
-        tester,
-        backend,
-        placementIndex: 1,
-        path: '/workspace/video/b.mp4',
-      );
+      await _waitForOpen(tester, backend, '/workspace/video/a.mp4');
+      await _waitForOpen(tester, backend, '/workspace/video/b.mp4');
 
-      final Finder incomingLayer =
-          find.byKey(const ValueKey<String>('program-struct-layer-1'));
-      final Opacity hiddenOpacity = tester.widget<Opacity>(
-        find.descendant(of: incomingLayer, matching: find.byType(Opacity)).first,
-      );
-      expect(hiddenOpacity.opacity, 0.0);
+      expect(_programLayerOpacity(tester, 1), 0.0);
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
@@ -279,23 +258,21 @@ void main() {
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,
       );
-      expect(incomingLayer, findsOneWidget);
-
-      final Opacity visibleOpacity = tester.widget<Opacity>(
-        find.descendant(of: incomingLayer, matching: find.byType(Opacity)).first,
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
       );
-      expect(visibleOpacity.opacity, 1.0);
+      expect(_programLayerOpacity(tester, 1), 1.0);
+
+      // The incoming MediaLayer/decoder survived the keyed opacity handoff.
+      // It must not have been disposed and reopened when B became visible.
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 
-      // Explicitly unmount the preview after all decode work needed by the gate
-      // has resolved. This keeps flutter_test from waiting on abandoned widget
-      // callbacks during automatic teardown.
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      });
+
+      expect(backend.disposes['/workspace/video/b.mp4'], 1);
     },
   );
 }
