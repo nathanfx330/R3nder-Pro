@@ -242,19 +242,22 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: RepaintBoundary(
-            key: _boundaryKey,
-            child: SizedBox(
-              width: 320,
-              height: 180,
-              child: ProgramPreviewSurface(
-                repaint: repaint,
-                scene: scene,
-                rawDocument: _source,
-                fontFamily: 'monospace',
-                theme: R3Theme.of(Colors.green),
-                structuralBackend: backend,
-                structuralResolveSource: _resolveSource,
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: RepaintBoundary(
+              key: _boundaryKey,
+              child: SizedBox(
+                width: 320,
+                height: 180,
+                child: ProgramPreviewSurface(
+                  repaint: repaint,
+                  scene: scene,
+                  rawDocument: _source,
+                  fontFamily: 'monospace',
+                  theme: R3Theme.of(Colors.green),
+                  structuralBackend: backend,
+                  structuralResolveSource: _resolveSource,
+                ),
               ),
             ),
           ),
