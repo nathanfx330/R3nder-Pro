@@ -8,6 +8,8 @@ The central rule is:
 
 > Test the ownership boundary where the bug could exist, and widen the boundary when every smaller layer is green but the product is still wrong.
 
+The companion file `CONTRACT_TEST_MANIFEST.md` names the minimum proof files for the architectural contracts described here. `tool/check_doc_contracts.dart` verifies that those references do not silently rot when tests are renamed or removed.
+
 ---
 
 ## Why layered tests matter
@@ -59,11 +61,13 @@ render version planner is monotonic
 
 Representative test families:
 
-- `edit_model_test.dart`
-- `edit_model_validation_test.dart`
-- `edit_surface_model_test.dart`
-- structural parser/model tests
-- `render_naming_test.dart`
+- `test/script_cst_baseline_test.dart`
+- `test/script_cst_nested_test.dart`
+- `test/edit_model_test.dart`
+- `test/edit_model_validation_test.dart`
+- `test/edit_surface_model_test.dart`
+- `test/structural_chrome_test.dart`
+- `test/render_naming_test.dart`
 
 These tests answer:
 
@@ -98,10 +102,10 @@ NODES
 
 Representative tests include:
 
-- `editor_structural_fullscreen_node_test.dart`
-- `editor_structural_chrome_close_handoff_test.dart`
-- `render_name_config_node_test.dart`
-- edit-surface widget tests
+- `test/editor_structural_fullscreen_node_test.dart`
+- `test/editor_structural_chrome_close_handoff_test.dart`
+- `test/render_name_config_node_test.dart`
+- `test/edit_workspace_test.dart`
 
 These tests answer:
 
@@ -121,6 +125,13 @@ Test:
 - exact export frame selection;
 - local structural frame mapping from runtime markers;
 - clip project-to-source frame mapping.
+
+Representative proof includes:
+
+- `test/project_clock_native_test.dart`
+- `test/scene_evaluation_equivalence_test.dart`
+- `test/structural_runtime_marker_test.dart`
+- the explicit-age terminal tests.
 
 These tests answer:
 
@@ -144,8 +155,9 @@ Use them to test:
 
 Representative tests include:
 
-- `edit_video_compositor_test.dart`
-- `edit_video_compositor_depth_guard_test.dart`
+- `test/media_layer_test.dart`
+- `test/edit_video_compositor_test.dart`
+- `test/edit_video_compositor_depth_guard_test.dart`
 
 A fake should be simple enough that the expected pixel result is obvious.
 
@@ -170,12 +182,13 @@ Examples:
 Native sources include:
 
 ```text
+linux/runner/project_clock_test.cc
 linux/runner/audio_sink_test.cc
 linux/runner/media_decoder_test.cc
 linux/runner/av_lock_probe.cc
 ```
 
-The accepted A/V validation procedure is documented in `M4_AV_LOCK_VALIDATION.md`.
+The accepted A/V validation procedure is documented in `M4_AV_LOCK_VALIDATION.md` and driven by `tool/av_lock_probe.dart`.
 
 These tests answer:
 
@@ -197,9 +210,13 @@ Program Preview adds:
 
 When a bug appears only after leaving the editor workspace, add a Program Preview gate rather than more isolated structural-widget tests.
 
-Representative example:
+Representative examples:
 
-- `program_preview_structural_chrome_runtime_test.dart`
+- `test/program_preview_structural_chrome_runtime_test.dart`
+- `test/program_preview_structural_fullscreen_test.dart`
+- `test/program_preview_structural_switch_test.dart`
+- `test/program_preview_structural_late_handoff_test.dart`
+- `test/program_preview_structural_raster_handoff_test.dart`
 
 This layer was essential during M20 because isolated chrome rendering was already green.
 
@@ -220,9 +237,10 @@ They should cover:
 
 Representative tests include:
 
-- `program_structural_chrome_text_bake_test.dart`
-- `program_structural_export_test.dart`
-- `program_structural_mixed_mode_bake_test.dart`
+- `test/program_structural_chrome_text_bake_test.dart`
+- `test/program_structural_export_test.dart`
+- `test/program_structural_geometry_test.dart`
+- `test/program_structural_mixed_mode_bake_test.dart`
 
 These answer:
 
@@ -252,8 +270,8 @@ assert encoded result
 
 Representative tests:
 
-- `scene_exporter_structural_chrome_end_to_end_test.dart`
-- `scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
+- `test/scene_exporter_structural_chrome_end_to_end_test.dart`
+- `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
 
 These tests proved that CUSTOM structural chrome survived the real exporter and codec path.
 
@@ -291,6 +309,8 @@ hidden STRUCT-looking metadata
 
 Tests should include the source shapes that challenge ownership/indexing rules.
 
+`test/structural_sequence_marker_alignment_test.dart` is the canonical M20 example: the regression is not merely “CUSTOM chrome paints.” It preserves the real failure class that executable runtime marker order and raw metadata placement order must remain aligned.
+
 When a production bug appears despite green unit tests, the regression should reproduce the real document topology that made it possible.
 
 ---
@@ -311,6 +331,11 @@ A visual gate is appropriate when acceptance includes statements such as:
 Visual gates should be narrowly scripted and repeatable, not vague “play around and see if it feels right” sessions.
 
 Keep the exact fixture beside the checklist when possible.
+
+Current example:
+
+- `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
+- `docs/M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
 
 ---
 
@@ -416,23 +441,73 @@ Then add the smallest end-to-end regression that includes that missing boundary.
 
 This method was decisive in M20.
 
+The sequence there was instructive:
+
+```text
+chrome parser/painter green
+→ ProgramStructuralFrameRenderer green
+→ top-level Program Preview green
+→ SceneExporter → ffmpeg encoded output green
+→ real project still wrong
+→ realistic placement association/index topology added
+→ production indexing defect exposed
+```
+
+The lesson is not “keep adding bigger tests forever.” It is “when every tested layer is correct, identify the untested transformation between them.”
+
 ---
 
-# Reconstruction checklist
+# 16. Make documentation drift visible
 
-A rebuild should have proof at each layer:
+A contract document that names no concrete proof can remain plausible long after the implementation changes.
 
-- [ ] syntax/CST round-trip tests;
-- [ ] edit-model arithmetic tests;
-- [ ] GUI-to-document mutation tests;
-- [ ] ProjectTime/frame-mapping tests;
-- [ ] fake media/compositor tests;
-- [ ] native audio/MLT tests;
-- [ ] Program Preview runtime tests;
-- [ ] program structural bake-frame tests;
-- [ ] real SceneExporter + ffmpeg encoded tests;
-- [ ] realistic multi-placement/indexing fixtures;
-- [ ] scripted visual gates for paint/readiness seams;
-- [ ] regression names describe product contracts rather than implementation trivia.
+`CONTRACT_TEST_MANIFEST.md` therefore maps the reconstruction-critical contracts to the exact test/probe/visual-gate files that prove them.
+
+Run:
+
+```bash
+dart run tool/check_doc_contracts.dart
+```
+
+The checker verifies two things:
+
+1. every numbered contract section declares at least one proof path;
+2. every declared proof path still exists in the repository.
+
+This catches a narrow but important form of rot: a document continuing to cite a test that was deleted or renamed.
+
+It deliberately does not infer behavioral correctness from file existence. The actual proof still comes from running the relevant suite or native measurement.
+
+When changing an architectural contract, update four things together:
+
+```text
+production implementation
+proving test(s)
+subsystem documentation
+CONTRACT_TEST_MANIFEST.md
+```
+
+That makes documentation maintenance part of the engineering change rather than a cleanup task for later.
+
+---
+
+# Reconstruction proof checklist
+
+A rebuild should be able to point to concrete proof at every layer. These are the current anchor files; the fuller mapping lives in `CONTRACT_TEST_MANIFEST.md`.
+
+- [ ] **canonical/lossless document:** `test/script_cst_baseline_test.dart`, `test/script_cst_nested_test.dart`, `test/script_cst_source_span_test.dart`
+- [ ] **EDIT timing arithmetic:** `test/edit_model_test.dart`, `test/edit_surface_model_test.dart`, `test/edit_edge_transition_test.dart`
+- [ ] **GUI writes canonical state:** `test/editor_structural_chrome_close_handoff_test.dart`, `test/editor_structural_fullscreen_node_test.dart`
+- [ ] **project-time identity:** `test/project_clock_native_test.dart`, `test/scene_evaluation_equivalence_test.dart`
+- [ ] **fake media/compositor:** `test/media_layer_test.dart`, `test/edit_video_compositor_test.dart`
+- [ ] **native audio/MLT:** `test/audio_sink_native_test.dart`, `test/media_decoder_native_test.dart`, `tool/av_lock_probe.dart`
+- [ ] **structural recursion/export:** `test/structural_source_export_test.dart`, `test/edit_video_compositor_depth_guard_test.dart`
+- [ ] **runtime placement/index alignment:** `test/structural_sequence_marker_alignment_test.dart`, `test/structural_runtime_marker_test.dart`
+- [ ] **Program Preview runtime:** `test/program_preview_structural_chrome_runtime_test.dart`, `test/program_preview_structural_switch_test.dart`
+- [ ] **program structural BAKE frame:** `test/program_structural_chrome_text_bake_test.dart`, `test/program_structural_mixed_mode_bake_test.dart`
+- [ ] **real encoded SceneExporter:** `test/scene_exporter_structural_chrome_end_to_end_test.dart`, `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
+- [ ] **render identity/version safety:** `test/render_naming_test.dart`, `test/render_name_config_node_test.dart`
+- [ ] **visible handoff seam:** `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`, `docs/M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
+- [ ] **manifest references are current:** `dart run tool/check_doc_contracts.dart`
 
 If the test suite is built this way, it becomes a second form of documentation: an executable map of what the editor promises.
