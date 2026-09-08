@@ -1023,6 +1023,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Text(
+                      'Exports the selected EDIT/MOSAIC source only. STRUCT '
+                      'placement title, overlay, and window/fullscreen '
+                      'presentation are not included. Use main BAKE for the '
+                      'finished program.',
+                      style: widget.theme.fine,
+                    ),
+                    SizedBox(height: sc(14)),
                     Text('RESOLUTION', style: widget.theme.micro),
                     SizedBox(height: sc(5)),
                     DropdownButton<String>(
@@ -1099,7 +1107,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                       ),
                     );
                   },
-                  child: const Text('EXPORT'),
+                  child: const Text('EXPORT SOURCE'),
                 ),
               ],
             );
@@ -1144,7 +1152,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       _exporting = true;
       _exportDone = 0;
       _exportTotal = 0;
-      _exportStatus = 'PREPARING ${selected.canonicalSource}';
+      _exportStatus = 'PREPARING SOURCE ${selected.canonicalSource}';
       _error = null;
     });
 
@@ -1197,22 +1205,22 @@ class _EditWorkspaceState extends State<EditWorkspace>
         },
         onStatus: (String status) {
           if (!mounted) return;
-          setState(() => _exportStatus = status.toUpperCase());
+          setState(() => _exportStatus = 'SOURCE ${status.toUpperCase()}');
         },
       );
 
       if (!mounted) return;
       setState(() {
         if (result.cancelled) {
-          _exportStatus = 'EXPORT CANCELLED';
+          _exportStatus = 'SOURCE EXPORT CANCELLED';
         } else if (result.success) {
           final String matte = result.mattePath == null
               ? ''
               : '   MATTE ${result.mattePath}';
-          _exportStatus = 'EXPORTED ${result.outputPath}$matte';
+          _exportStatus = 'SOURCE EXPORTED ${result.outputPath}$matte';
         } else {
           _exportStatus = null;
-          _error = result.error ?? 'Structural export failed.';
+          _error = result.error ?? 'Structural source export failed.';
         }
       });
     } catch (error) {
@@ -1232,7 +1240,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   void _cancelExport() {
     if (!_exporting) return;
     _exportCancelToken?.cancel();
-    setState(() => _exportStatus = 'CANCELLING EXPORT');
+    setState(() => _exportStatus = 'CANCELLING SOURCE EXPORT');
   }
 
   @override
@@ -1467,9 +1475,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
             : () => unawaited(_togglePlayback(selected, selectedEnd)),
       ),
       SizedBox(width: sc(5)),
-      R3MicroLabel('OUTPUT', theme: widget.theme, accent: true),
+      R3MicroLabel('SOURCE OUTPUT', theme: widget.theme, accent: true),
       R3Button(
-        _exporting ? 'CANCEL EXPORT' : 'EXPORT',
+        _exporting ? 'CANCEL SOURCE EXPORT' : 'EXPORT SOURCE',
         theme: widget.theme,
         compact: true,
         kind: _exporting ? R3ButtonKind.hot : R3ButtonKind.primary,
@@ -1513,8 +1521,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
         ),
         Text(
           _exportTotal > 0
-              ? '${_exportStatus ?? 'EXPORTING'}   $_exportDone / $_exportTotal'
-              : (_exportStatus ?? 'EXPORTING'),
+              ? '${_exportStatus ?? 'EXPORTING SOURCE'}   $_exportDone / $_exportTotal'
+              : (_exportStatus ?? 'EXPORTING SOURCE'),
           style: widget.theme.micro,
         ),
       ] else if (_exportStatus != null)
