@@ -167,7 +167,7 @@ void main() {
       ),
     );
 
-    final ui.Image? image = await tester.runAsync(
+    final ui.Image? image = await tester.runAsync<ui.Image?>(
       () => renderer.renderIfActive(
         scene: scene,
         fontFamily: 'monospace',
