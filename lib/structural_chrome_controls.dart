@@ -3,10 +3,10 @@
 // Node-mode authoring controls for placement-owned STRUCT player chrome.
 //
 // This widget owns no document state and knows nothing about ScriptNode. The
-// node workspace supplies the currently authored token values and commits each
-// change back through its normal node serialization path. Keeping the control
-// surface separate makes DEFAULT/CUSTOM/NONE behavior testable without coupling
-// the pure structural grammar to the editor widget.
+// node workspace supplies the currently authored token values and the same
+// controller cache used by every other text field, then commits each change
+// through its normal node serialization path. That keeps undo/reparse adoption
+// and caret behavior identical to the rest of NODES.
 
 import 'package:flutter/material.dart';
 
@@ -15,10 +15,10 @@ import 'ui_theme.dart';
 
 class StructuralChromeControls extends StatelessWidget {
   final R3Theme theme;
-  final String windowTitle;
+  final TextEditingController windowTitleController;
   final String overlayMode;
-  final String topOverlay;
-  final String bottomOverlay;
+  final TextEditingController topOverlayController;
+  final TextEditingController bottomOverlayController;
   final ValueChanged<String> onWindowTitleChanged;
   final ValueChanged<String> onOverlayModeChanged;
   final ValueChanged<String> onTopOverlayChanged;
@@ -27,10 +27,10 @@ class StructuralChromeControls extends StatelessWidget {
   const StructuralChromeControls({
     super.key,
     required this.theme,
-    required this.windowTitle,
+    required this.windowTitleController,
     required this.overlayMode,
-    required this.topOverlay,
-    required this.bottomOverlay,
+    required this.topOverlayController,
+    required this.bottomOverlayController,
     required this.onWindowTitleChanged,
     required this.onOverlayModeChanged,
     required this.onTopOverlayChanged,
@@ -51,7 +51,7 @@ class StructuralChromeControls extends StatelessWidget {
         _textField(
           key: const ValueKey<String>('struct-window-title'),
           label: 'Window title',
-          value: windowTitle,
+          controller: windowTitleController,
           hintText: 'Uses the STRUCT source name when blank',
           onChanged: onWindowTitleChanged,
         ),
@@ -81,7 +81,7 @@ class StructuralChromeControls extends StatelessWidget {
           _textField(
             key: const ValueKey<String>('struct-top-overlay'),
             label: 'Custom top',
-            value: topOverlay,
+            controller: topOverlayController,
             hintText: 'Right side of the window title bar',
             onChanged: onTopOverlayChanged,
           ),
@@ -89,7 +89,7 @@ class StructuralChromeControls extends StatelessWidget {
           _textField(
             key: const ValueKey<String>('struct-bottom-overlay'),
             label: 'Custom bottom',
-            value: bottomOverlay,
+            controller: bottomOverlayController,
             hintText: 'Lower-left player overlay',
             onChanged: onBottomOverlayChanged,
           ),
@@ -159,7 +159,7 @@ class StructuralChromeControls extends StatelessWidget {
   Widget _textField({
     required Key key,
     required String label,
-    required String value,
+    required TextEditingController controller,
     required String hintText,
     required ValueChanged<String> onChanged,
   }) {
@@ -168,9 +168,9 @@ class StructuralChromeControls extends StatelessWidget {
       children: [
         R3MicroLabel(label, theme: theme),
         SizedBox(height: sc(6)),
-        TextFormField(
+        TextField(
           key: key,
-          initialValue: value,
+          controller: controller,
           style: theme.value,
           decoration: InputDecoration(
             isDense: true,
