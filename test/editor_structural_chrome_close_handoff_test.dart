@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/editor_screen.dart';
 
@@ -86,8 +87,12 @@ void main() {
     // EDIT before leaving the editor and returning to the dashboard BAKE.
     await tester.tap(find.text('EDIT').first);
     await tester.pumpAndSettle();
+    expect(find.text('SOURCE OUTPUT'), findsOneWidget);
 
-    await tester.tap(find.text('Back (Esc)'));
+    // Production advertises Escape as the editor-close path and the root Focus
+    // owns it in every view mode. Exercise that path directly rather than
+    // coupling this state-handoff test to the visual implementation of R3Button.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
 
     expect(
