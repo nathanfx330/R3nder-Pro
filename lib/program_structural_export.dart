@@ -100,6 +100,7 @@ class ProgramStructuralFrameRenderer {
   String? _cachedSource;
   int? _cachedSourceFrame;
   ui.Image? _cachedSourceImage;
+  String _cachedDiagnosticLabel = '';
   bool _disposed = false;
 
   ProgramStructuralFrameRenderer({
@@ -172,11 +173,13 @@ class ProgramStructuralFrameRenderer {
     );
 
     ui.Image? sourceImage;
+    String defaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
       sourceImage = await _imageForSourceFrame(
         placement.sourceRef.canonicalSource,
         visual.sourceFrame,
       );
+      defaultBottomOverlay = _cachedDiagnosticLabel;
     }
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -205,6 +208,7 @@ class ProgramStructuralFrameRenderer {
         overlayMode: placement.overlayMode,
         topOverlay: placement.topOverlay,
         bottomOverlay: placement.bottomOverlay,
+        defaultBottomOverlay: defaultBottomOverlay,
         rect: _pixelRect(visual.structuralRect),
         sourceImage: sourceImage,
         opacity: visual.structuralOpacity,
@@ -250,13 +254,15 @@ class ProgramStructuralFrameRenderer {
       ),
     );
 
-    final Uint8List rgba = renderer.renderFrame(sourceFrame);
-    final ui.Image decoded = await _decodeRgba(rgba, width, height);
+    final StructuralSourceRenderedFrame rendered =
+        renderer.renderFrameDetailed(sourceFrame);
+    final ui.Image decoded = await _decodeRgba(rendered.rgba, width, height);
 
     _cachedSourceImage?.dispose();
     _cachedSourceImage = decoded;
     _cachedSource = source;
     _cachedSourceFrame = sourceFrame;
+    _cachedDiagnosticLabel = rendered.diagnosticLabel(source);
     return decoded;
   }
 
@@ -287,6 +293,7 @@ class ProgramStructuralFrameRenderer {
     required StructuralOverlayMode overlayMode,
     required String topOverlay,
     required String bottomOverlay,
+    required String defaultBottomOverlay,
     required Rect rect,
     required ui.Image? sourceImage,
     required double opacity,
@@ -369,16 +376,20 @@ class ProgramStructuralFrameRenderer {
 
     final R3Theme theme = R3Theme.of(scene.terminal.fontColor);
 
-    // DEFAULT preserves historical BAKE output: the lower-left MLT diagnostic
-    // has always been a live-preview aid and was never encoded. CUSTOM is
-    // explicit authored copy, so it belongs in the program and is baked.
-    if (overlayMode == StructuralOverlayMode.custom &&
-        renderedBottom.isNotEmpty &&
+    final String? bottomText = switch (overlayMode) {
+      StructuralOverlayMode.defaultOverlay =>
+        defaultBottomOverlay.isEmpty ? null : defaultBottomOverlay,
+      StructuralOverlayMode.custom =>
+        renderedBottom.isEmpty ? null : renderedBottom,
+      StructuralOverlayMode.none => null,
+    };
+
+    if (bottomText != null &&
         client.width > 0.0 &&
         client.height > 0.0) {
       final TextPainter bottom = TextPainter(
         text: TextSpan(
-          text: renderedBottom,
+          text: bottomText,
           style: theme.micro.copyWith(
             fontFamily: fontFamily,
             color: R3Theme.textMid,
@@ -514,6 +525,7 @@ class ProgramStructuralFrameRenderer {
     _disposed = true;
     _cachedSourceImage?.dispose();
     _cachedSourceImage = null;
+    _cachedDiagnosticLabel = '';
     for (final StructuralSourceFrameRenderer renderer
         in _sourceRenderers.values) {
       renderer.dispose();
