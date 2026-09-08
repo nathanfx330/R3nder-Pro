@@ -16,6 +16,7 @@ A reader should be able to answer, from the repository alone:
 8. How does the GUI mutate the project without becoming a second database?
 9. How are final renders versioned without overwriting history?
 10. Which tests prove each contract?
+11. How do I validate those contracts on real Linux/audio/media/display hardware?
 
 If those answers are unclear, the documentation is incomplete.
 
@@ -29,6 +30,7 @@ Several files intentionally cover the same architecture from different direction
 | --- | --- | --- |
 | repository `README.md` | the product model and first run | an implementation specification |
 | `REBUILDING_R3NDER_PRO.md` | the order and architecture needed to rebuild the NLE | an exact tag reference |
+| `RECONSTRUCTION_BRINGUP.md` | the staged real-machine validation route after the architecture exists | a substitute for architecture/model design |
 | subsystem specifications | ownership, data flow, implementation seams, and proof for one subsystem | a development chronology |
 | `BUILDING_A_DETERMINISTIC_NLE.md` | transferable engineering lessons for another editor | a file-by-file map of R3nder |
 | `REFERENCE.md` | exact author-facing language/tag/media behavior | an explanation of why the architecture exists |
@@ -146,7 +148,38 @@ to catch renamed or deleted proof files before the written architecture silently
 
 ---
 
-## 4. `BUILDING_A_DETERMINISTIC_NLE.md`
+## 4. `RECONSTRUCTION_BRINGUP.md`
+
+**Read this when:** the architecture exists and you need to make it survive contact with real Linux hardware.
+
+**Do not use it for:** deciding who should own project state or time. Those decisions must already be settled.
+
+This is the practical integration companion to the reconstruction guide.
+
+It gives a staged route through:
+
+```text
+repository integrity
+→ compile/launch
+→ exact ProjectTime
+→ PulseAudio authority
+→ persistent MLT decode
+→ EDIT presentation timing
+→ structural recursion
+→ STRUCT readiness/presentation
+→ Program Preview
+→ whole-program BAKE
+→ encoded output
+→ render version safety
+```
+
+It also provides a symptom → likely boundary map, the accepted M4 audio/MLT measurement shape, the EDIT `FrameTiming` procedure, the M18 visual gate, encoded SceneExporter validation, and a measurement-session discipline for hardware-only failures.
+
+This is the document intended to reduce the “last 20%” integration cost. It cannot remove hardware observation; it is meant to stop an engineer spending that observation time at the wrong layer.
+
+---
+
+## 5. `BUILDING_A_DETERMINISTIC_NLE.md`
 
 **Read this if:** you are building another editor and want the transferable lessons.
 
@@ -167,7 +200,7 @@ Its central lessons are:
 
 ---
 
-## 5. `REFERENCE.md`
+## 6. `REFERENCE.md`
 
 **Read this if:** you need exact author-facing syntax or media behavior.
 
@@ -295,6 +328,7 @@ If rebuilding the editor from zero, use this order:
 18. Audio mux/final output formats
 19. Project-authored render identity and version safety
 20. End-to-end encoded and visual acceptance gates
+21. Target-hardware bring-up through `RECONSTRUCTION_BRINGUP.md`
 ```
 
 Do not reverse the first half of that list.
@@ -323,7 +357,7 @@ render versions remain monotonic across deleted gaps
 
 When a production bug appears despite green unit tests, add a regression across the missing ownership boundary rather than only adding assertions deeper inside the already-green unit.
 
-`TEST_STRATEGY.md` explains how to choose that boundary. `CONTRACT_TEST_MANIFEST.md` names the proof spine that must continue to exist.
+`TEST_STRATEGY.md` explains how to choose that boundary. `CONTRACT_TEST_MANIFEST.md` names the proof spine that must continue to exist. `RECONSTRUCTION_BRINGUP.md` explains how to turn hardware-only observations into evidence instead of guesses.
 
 ---
 
@@ -343,11 +377,13 @@ This does not replace running the suite. It prevents a quieter failure: document
 
 When a contract changes deliberately, update the implementation, its proving tests, the relevant subsystem page, and the manifest in the same change.
 
+When a proof file is substantially rewritten or repurposed, re-check every contract that cites it. File existence proves attachment, not semantic honesty.
+
 ---
 
 # What is still worth documenting
 
-The reconstruction-critical NLE path is now covered by dedicated subsystem pages.
+The reconstruction-critical NLE path and its target-hardware bring-up route are now covered by dedicated pages.
 
 The next documentation areas should be narrower supporting systems rather than more broad architecture essays:
 
@@ -373,6 +409,7 @@ canonical authored state
   → live Preview
   → identical final BAKE semantics
   → safe versioned output
+  → measured acceptance on the target machine
 ```
 
 When the repository itself teaches that chain, the documentation is doing its job.
