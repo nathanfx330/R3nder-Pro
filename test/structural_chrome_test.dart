@@ -38,6 +38,36 @@ void main() {
     expect(formatStructuralChromeTag(spec), authored);
   });
 
+  test('frame expression stays authored and expands only at render time', () {
+    const String authored =
+        '[STRUCT:EDIT.main:OVERLAY=CUSTOM:'
+        'TITLE="Monitor [frame]":TOP="F[frame]":BOTTOM="SRC [frame]"]';
+
+    final StructuralChromeSpec? spec = parseStructuralChromeTag(authored);
+    expect(spec, isNotNull);
+    expect(spec!.windowTitle, 'Monitor [frame]');
+    expect(spec.topOverlay, 'F[frame]');
+    expect(spec.bottomOverlay, 'SRC [frame]');
+    expect(formatStructuralChromeTag(spec), authored);
+
+    expect(
+      expandStructuralChromeExpressions(spec.windowTitle, frame: 42),
+      'Monitor 42',
+    );
+    expect(
+      expandStructuralChromeExpressions(spec.topOverlay, frame: 42),
+      'F42',
+    );
+    expect(
+      expandStructuralChromeExpressions(spec.bottomOverlay, frame: 42),
+      'SRC 42',
+    );
+    expect(
+      expandStructuralChromeExpressions('literal [box] [FRAME]', frame: 42),
+      'literal [box] [FRAME]',
+    );
+  });
+
   test('none hides overlays without discarding dormant custom copy', () {
     const StructuralChromeSpec spec = StructuralChromeSpec(
       source: 'EDIT.main',
