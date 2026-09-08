@@ -79,7 +79,7 @@ int _lightNeutralPixels(Uint8List rgba, int width, Rect region) {
 }
 
 void main() {
-  testWidgets('final STRUCT bake raster contains authored chrome text',
+  testWidgets('final STRUCT bake raster contains DEFAULT technical chrome',
       (WidgetTester tester) async {
     const int width = 640;
     const int height = 360;
@@ -90,7 +90,7 @@ void main() {
 [/CLIP]
 [/TRACK]
 [/EDIT]
-[STRUCT:EDIT.main:OVERLAY=CUSTOM:TITLE="MONITOR [frame]":TOP="FRAME [frame]":BOTTOM="REEL [frame]"]
+[STRUCT:EDIT.main]
 ''';
 
     final Directory root =
@@ -206,19 +206,19 @@ void main() {
     final Rect bottomOverlay = Rect.fromLTWH(
       px.left,
       px.bottom - 45,
-      px.width * 0.55,
+      px.width * 0.75,
       40,
     );
 
     expect(
       _lightNeutralPixels(rgba!, width, header),
       greaterThan(20),
-      reason: 'Window title/top overlay text must rasterize into final BAKE.',
+      reason: 'DEFAULT title/frame-count text must rasterize into final BAKE.',
     );
     expect(
       _lightNeutralPixels(rgba, width, bottomOverlay),
       greaterThan(5),
-      reason: 'Custom lower overlay text must rasterize into final BAKE.',
+      reason: 'DEFAULT technical lower overlay must rasterize into final BAKE.',
     );
   });
 }
