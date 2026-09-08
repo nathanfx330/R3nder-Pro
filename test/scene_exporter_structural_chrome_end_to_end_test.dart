@@ -83,7 +83,9 @@ void main() {
 [STRUCT:EDIT.main:FULL:OVERLAY=CUSTOM:TITLE="MONITOR [frame]":TOP="FRAME [frame]":BOTTOM="REEL [frame]"]
 ''';
 
-    final ProcessResult ffmpegCheck = await Process.run('ffmpeg', ['-version']);
+    final ProcessResult ffmpegCheck = await tester.runAsync<ProcessResult>(
+      () => Process.run('ffmpeg', ['-version']),
+    );
     expect(ffmpegCheck.exitCode, 0, reason: 'ffmpeg is required for BAKE.');
 
     final StructuralSequencePlacement placement =
@@ -149,20 +151,22 @@ void main() {
     expect(result.success, isTrue, reason: result.error);
     expect(File(output).existsSync(), isTrue);
 
-    final ProcessResult decodeResult = await Process.run(
-      'ffmpeg',
-      <String>[
-        '-y',
-        '-v',
-        'error',
-        '-i',
-        output,
-        '-f',
-        'rawvideo',
-        '-pix_fmt',
-        'rgba',
-        decoded,
-      ],
+    final ProcessResult decodeResult = await tester.runAsync<ProcessResult>(
+      () => Process.run(
+        'ffmpeg',
+        <String>[
+          '-y',
+          '-v',
+          'error',
+          '-i',
+          output,
+          '-f',
+          'rawvideo',
+          '-pix_fmt',
+          'rgba',
+          decoded,
+        ],
+      ),
     );
     expect(decodeResult.exitCode, 0, reason: '${decodeResult.stderr}');
 
@@ -170,6 +174,14 @@ void main() {
     final int frameBytes = width * height * 4;
     expect(all.length, greaterThanOrEqualTo(frameBytes));
     final int frameCount = all.length ~/ frameBytes;
+
+    final Rect headerRegion = Rect.fromLTWH(0, 0, width.toDouble(), 38);
+    final Rect bottomRegion = Rect.fromLTWH(
+      0,
+      height - 50.0,
+      width * 0.65,
+      50,
+    );
 
     int bestHeader = 0;
     int bestBottom = 0;
@@ -183,13 +195,13 @@ void main() {
         rgba,
         width,
         height,
-        const Rect.fromLTWH(0, 0, width.toDouble(), 38),
+        headerRegion,
       );
       final int bottom = _lightNeutralPixels(
         rgba,
         width,
         height,
-        const Rect.fromLTWH(0, height - 50.0, width * 0.65, 50),
+        bottomRegion,
       );
       if (header > bestHeader) bestHeader = header;
       if (bottom > bestBottom) bestBottom = bottom;
