@@ -261,8 +261,8 @@ void main() {
     final Uint8List rgba =
         await _renderShowingFrame(tester, source, sourceFrame: 1);
 
-    const Rect header = Rect.fromLTWH(0, 0, width.toDouble(), 38);
-    const Rect bottomOverlay = Rect.fromLTWH(
+    final Rect header = Rect.fromLTWH(0, 0, width.toDouble(), 38);
+    final Rect bottomOverlay = Rect.fromLTWH(
       0,
       height - 45.0,
       width * 0.55,
