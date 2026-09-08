@@ -3,10 +3,10 @@
 // Node-mode authoring controls for placement-owned STRUCT player chrome.
 //
 // This widget owns no document state and knows nothing about ScriptNode. The
-// node workspace supplies the currently authored values and commits each change
-// back through its normal node serialization path. Keeping the control surface
-// separate makes DEFAULT/CUSTOM/NONE behavior testable without coupling the
-// pure structural grammar to the editor widget.
+// node workspace supplies the currently authored token values and commits each
+// change back through its normal node serialization path. Keeping the control
+// surface separate makes DEFAULT/CUSTOM/NONE behavior testable without coupling
+// the pure structural grammar to the editor widget.
 
 import 'package:flutter/material.dart';
 
@@ -16,11 +16,11 @@ import 'ui_theme.dart';
 class StructuralChromeControls extends StatelessWidget {
   final R3Theme theme;
   final String windowTitle;
-  final StructuralOverlayMode overlayMode;
+  final String overlayMode;
   final String topOverlay;
   final String bottomOverlay;
   final ValueChanged<String> onWindowTitleChanged;
-  final ValueChanged<StructuralOverlayMode> onOverlayModeChanged;
+  final ValueChanged<String> onOverlayModeChanged;
   final ValueChanged<String> onTopOverlayChanged;
   final ValueChanged<String> onBottomOverlayChanged;
 
@@ -37,8 +37,14 @@ class StructuralChromeControls extends StatelessWidget {
     required this.onBottomOverlayChanged,
   });
 
+  StructuralOverlayMode get _mode =>
+      structuralOverlayModeFromToken(overlayMode) ??
+      StructuralOverlayMode.defaultOverlay;
+
   @override
   Widget build(BuildContext context) {
+    final StructuralOverlayMode mode = _mode;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -53,21 +59,24 @@ class StructuralChromeControls extends StatelessWidget {
         R3MicroLabel('Overlay', theme: theme),
         SizedBox(height: sc(7)),
         _choice(
+          current: mode,
           mode: StructuralOverlayMode.defaultOverlay,
           label: 'DEFAULT',
           description: 'Keep the current frame/status overlays.',
         ),
         _choice(
+          current: mode,
           mode: StructuralOverlayMode.custom,
           label: 'CUSTOM',
           description: 'Replace the top and bottom informational copy.',
         ),
         _choice(
+          current: mode,
           mode: StructuralOverlayMode.none,
           label: 'NONE',
           description: 'Hide informational overlays; keep the window title.',
         ),
-        if (overlayMode == StructuralOverlayMode.custom) ...[
+        if (mode == StructuralOverlayMode.custom) ...[
           SizedBox(height: sc(14)),
           _textField(
             key: const ValueKey<String>('struct-top-overlay'),
@@ -87,7 +96,7 @@ class StructuralChromeControls extends StatelessWidget {
         ],
         SizedBox(height: sc(6)),
         Text(
-          overlayMode == StructuralOverlayMode.custom
+          mode == StructuralOverlayMode.custom
               ? 'CUSTOM COPY IS PLACEMENT-OWNED AND BAKES WITH THIS STRUCT.'
               : 'CUSTOM COPY IS KEPT WHEN YOU SWITCH MODES AND RETURNS WHEN CUSTOM IS SELECTED AGAIN.',
           style: theme.fine.copyWith(
@@ -100,14 +109,15 @@ class StructuralChromeControls extends StatelessWidget {
   }
 
   Widget _choice({
+    required StructuralOverlayMode current,
     required StructuralOverlayMode mode,
     required String label,
     required String description,
   }) {
-    final bool selected = overlayMode == mode;
+    final bool selected = current == mode;
     return InkWell(
       key: ValueKey<String>('struct-overlay-${mode.token.toLowerCase()}'),
-      onTap: () => onOverlayModeChanged(mode),
+      onTap: () => onOverlayModeChanged(mode.token),
       borderRadius: BorderRadius.circular(4),
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: sc(6)),
