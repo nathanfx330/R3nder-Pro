@@ -69,11 +69,12 @@ int _lightNeutralPixels(
 
 void main() {
   testWidgets(
-      'SceneExporter preserves FULL MOSAIC CUSTOM STRUCT chrome in encoded H264',
+      'SceneExporter versions named FULL MOSAIC CUSTOM chrome in encoded H264',
       (WidgetTester tester) async {
     const int width = 640;
     const int height = 360;
-    const String source = '''[SPEED:MAX]
+    const String source = '''[CONFIG:RENDERNAME:Documentary Cut]
+[SPEED:MAX]
 [EDIT:main]
 [TRACK:V1]
 [CLIP:leaf:leaf.mp4:0:0:8:1]
@@ -110,7 +111,9 @@ void main() {
       ..createSync(recursive: true);
     final Directory sprites = Directory('${root.path}/sprites')
       ..createSync(recursive: true);
-    final String output = '${root.path}/mosaic_chrome.mp4';
+    final String requestedOutput = '${root.path}/output_1080p.mp4';
+    final String expectedOutput =
+        '${root.path}/Documentary_Cut_1080p_v001.mp4';
     final String decoded = '${root.path}/decoded.rgba';
     addTearDown(() {
       if (root.existsSync()) root.deleteSync(recursive: true);
@@ -146,7 +149,7 @@ void main() {
       return SceneExporter.export(
         scene: scene,
         fontFamily: 'monospace',
-        outputPath: output,
+        outputPath: requestedOutput,
         format: VideoExportFormat.h264Solid,
         fps: engineFps,
         width: width,
@@ -158,7 +161,10 @@ void main() {
     }))!;
 
     expect(result.success, isTrue, reason: result.error);
-    expect(File(output).existsSync(), isTrue);
+    expect(result.outputPath, expectedOutput);
+    expect(File(expectedOutput).existsSync(), isTrue);
+    expect(File(requestedOutput).existsSync(), isFalse,
+        reason: 'The legacy dashboard filename must never be overwritten.');
 
     final ProcessResult decodeResult =
         (await tester.runAsync<ProcessResult>(
@@ -169,7 +175,7 @@ void main() {
           '-v',
           'error',
           '-i',
-          output,
+          result.outputPath,
           '-f',
           'rawvideo',
           '-pix_fmt',
