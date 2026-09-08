@@ -21,9 +21,32 @@ If those answers are unclear, the documentation is incomplete.
 
 ---
 
+# Choose the right document
+
+Several files intentionally cover the same architecture from different directions. Do not read all of them as if they were one linear manual.
+
+| Document | Read this when you want... | Do not use it as... |
+| --- | --- | --- |
+| repository `README.md` | the product model and first run | an implementation specification |
+| `REBUILDING_R3NDER_PRO.md` | the order and architecture needed to rebuild the NLE | an exact tag reference |
+| subsystem specifications | ownership, data flow, implementation seams, and proof for one subsystem | a development chronology |
+| `BUILDING_A_DETERMINISTIC_NLE.md` | transferable engineering lessons for another editor | a file-by-file map of R3nder |
+| `REFERENCE.md` | exact author-facing language/tag/media behavior | an explanation of why the architecture exists |
+| journey documents | why decisions were made, failed hypotheses, and historical debugging lessons | the shortest route to a current contract |
+| `CONTRACT_TEST_MANIFEST.md` | the minimum contract → proof spine that must not drift | a replacement for running the tests |
+| `TEST_STRATEGY.md` | how to choose the correct testing boundary | a catalog of every test in the repository |
+
+That distinction matters. A 45 KB journey document may be the best place to understand *why* a bug existed and the worst place to look up the current ownership contract.
+
+---
+
 # Read in this order
 
 ## 1. Repository `README.md`
+
+**Read this if:** you are new to the product and need the vocabulary.
+
+**Skip ahead if:** you already understand TEXT → EDIT → MOSAIC → STRUCT → PREVIEW → BAKE.
 
 Start with the product model:
 
@@ -51,9 +74,9 @@ The GUI edits that project. It is not a second project database.
 
 ## 2. `REBUILDING_R3NDER_PRO.md`
 
-Read this next if the question is:
+**Read this if:** the question is “how would I rebuild an NLE with these capabilities and guarantees?”
 
-> If I were handed this repository and had to rebuild an NLE with the same fundamental abilities and guarantees, what would I build and in what order?
+**Do not use it for:** exact syntax details or the full historical narrative.
 
 This is the top-level reconstruction plan.
 
@@ -62,6 +85,10 @@ It connects canonical state, deterministic time, EDIT, persistent MLT, MOSAIC, S
 ---
 
 ## 3. Subsystem specifications
+
+**Read these if:** you are changing or rebuilding one ownership boundary.
+
+**Do not use them for:** the chronological story of how that boundary was discovered.
 
 These are the implementation-grade ownership documents.
 
@@ -105,13 +132,25 @@ Linux CMake/native runner architecture, native ProjectClock, PulseAudio sink, pe
 
 The proof architecture: pure model tests, widget handoff tests, fake media backends, native probes, Program Preview tests, structural BAKE tests, real SceneExporter→ffmpeg encoded tests, and visual gates.
 
+### `CONTRACT_TEST_MANIFEST.md`
+
+The minimum contract → proof map. Every numbered contract names the test/probe/visual-gate files that currently prove it.
+
+Run:
+
+```bash
+dart run tool/check_doc_contracts.dart
+```
+
+to catch renamed or deleted proof files before the written architecture silently drifts away from the repository.
+
 ---
 
 ## 4. `BUILDING_A_DETERMINISTIC_NLE.md`
 
-This is the transferable engineering guide.
+**Read this if:** you are building another editor and want the transferable lessons.
 
-Read it when building another editor that may not use R3nder's exact language or UI but needs the same architectural properties.
+**Do not use it for:** exact current class names or the shortest path to a R3nder-specific implementation detail.
 
 Its central lessons are:
 
@@ -130,13 +169,19 @@ Its central lessons are:
 
 ## 5. `REFERENCE.md`
 
-Use this for exact language/tag/media behavior.
+**Read this if:** you need exact author-facing syntax or media behavior.
+
+**Do not use it for:** architectural ownership or debugging history.
 
 The subsystem specifications explain *why* ownership is arranged the way it is. REFERENCE explains the concrete author-facing surface.
 
 ---
 
 # Development history
+
+**Read these when:** you need to understand why a current contract exists, what misleading symptoms looked like, or which failed hypotheses were eliminated.
+
+**Do not start here when:** you merely need the current contract or API surface.
 
 The journey documents preserve why the final architecture exists and what misleading failures taught us.
 
@@ -221,6 +266,8 @@ parser tests
 + real visual BAKE gate
 ```
 
+The corresponding concrete proof filenames belong in `CONTRACT_TEST_MANIFEST.md`, not only in prose.
+
 ---
 
 # The reconstruction path
@@ -276,7 +323,25 @@ render versions remain monotonic across deleted gaps
 
 When a production bug appears despite green unit tests, add a regression across the missing ownership boundary rather than only adding assertions deeper inside the already-green unit.
 
-`TEST_STRATEGY.md` records the full acceptance ladder.
+`TEST_STRATEGY.md` explains how to choose that boundary. `CONTRACT_TEST_MANIFEST.md` names the proof spine that must continue to exist.
+
+---
+
+# Documentation drift is a build problem
+
+Contracts rot when class names, test files, or ownership boundaries change and prose is not updated.
+
+The first automated guard is intentionally small:
+
+```bash
+dart run tool/check_doc_contracts.dart
+```
+
+It verifies that every repository proof path named by the numbered contracts in `CONTRACT_TEST_MANIFEST.md` still exists.
+
+This does not replace running the suite. It prevents a quieter failure: documentation continuing to claim proof from a test that no longer exists.
+
+When a contract changes deliberately, update the implementation, its proving tests, the relevant subsystem page, and the manifest in the same change.
 
 ---
 
