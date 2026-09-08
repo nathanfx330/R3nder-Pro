@@ -18,6 +18,7 @@ import 'node_asset_preview.dart';
 import 'ui_theme.dart';
 import 'node_assets.dart';
 import 'script_nodes.dart';
+import 'structural_chrome_controls.dart';
 
 export 'node_assets.dart';
 export 'script_nodes.dart';
@@ -3035,8 +3036,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
   /// First-class controls for one `[STRUCT:...]` placement.
   ///
   /// EDIT and MOSAIC definitions are authored in their own structural panels.
-  /// This form only chooses which existing structural source is placed here
-  /// and whether that placement is windowed or fills the program frame.
+  /// This form owns only this placement: source, window/fullscreen mode, window
+  /// title, and informational player overlay presentation.
   List<Widget> _structForm(ScriptNode node) {
     final List<Widget> f = [];
     final String current = node.param('source').trim();
@@ -3096,9 +3097,38 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           'inside a desktop window.',
     ));
 
+    f.add(_wrap(
+      StructuralChromeControls(
+        theme: widget.theme,
+        windowTitleController:
+            _ctl('${node.id}|title', node.param('title')),
+        overlayMode: node.param('overlay', 'DEFAULT'),
+        topOverlayController:
+            _ctl('${node.id}|top', node.param('top')),
+        bottomOverlayController:
+            _ctl('${node.id}|bottom', node.param('bottom')),
+        onWindowTitleChanged: (value) {
+          node.set('title', value);
+          _notifyChanged();
+        },
+        onOverlayModeChanged: (value) {
+          node.set('overlay', value);
+          _notifyChanged();
+        },
+        onTopOverlayChanged: (value) {
+          node.set('top', value);
+          _notifyChanged();
+        },
+        onBottomOverlayChanged: (value) {
+          node.set('bottom', value);
+          _notifyChanged();
+        },
+      ),
+    ));
+
     f.add(_hint('This changes only this STRUCT placement. The referenced '
         'EDIT or MOSAIC definition stays unchanged and can be placed '
-        'windowed or full screen somewhere else.'));
+        'windowed or full screen with different chrome somewhere else.'));
 
     return f;
   }
