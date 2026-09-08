@@ -53,6 +53,18 @@ const String _source = '''[SPEED:MAX]
 [STRUCT:EDIT.main:FULL:OVERLAY=CUSTOM:TITLE="MONITOR [frame]":TOP="FRAME [frame]":BOTTOM="REEL [frame]"]
 ''';
 
+const String _indexedSource = '''[SPEED:MAX]
+[EDIT:main]
+[TRACK:V1]
+[STRUCT:EDIT.main]
+[CLIP:leaf:video/leaf.mp4:0:0:8:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.main:FULL:OVERLAY=NONE]
+[STRUCT:EDIT.main:FULL:OVERLAY=CUSTOM:TITLE="SECOND [frame]":TOP="CUSTOM [frame]":BOTTOM="BOTTOM [frame]"]
+''';
+
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
   final terminal = scene.terminal;
   final bool awaitingPauseTag = terminal.activePause == null &&
@@ -69,9 +81,10 @@ int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
 int _findShowingProjectFrame(
   SceneEngine scene,
   StructuralSequencePlacement placement, {
+  required int placementIndex,
   required int sourceFrame,
 }) {
-  for (int projectFrame = 0; projectFrame < 400; projectFrame++) {
+  for (int projectFrame = 0; projectFrame < 500; projectFrame++) {
     final SceneEvaluationResult result = scene.evaluate(
       ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
     );
@@ -79,14 +92,47 @@ int _findShowingProjectFrame(
 
     final StructuralRuntimeMarker? marker =
         parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-    if (marker == null || marker.placementIndex != 0) continue;
+    if (marker == null || marker.placementIndex != placementIndex) continue;
     final int local = _runtimeLocalFrame(scene, marker);
     if (placement.stageAt(local) == StructuralSequenceStage.showing &&
         placement.sourceFrameAt(local) == sourceFrame) {
       return projectFrame;
     }
   }
-  fail('Did not find STRUCT showing source frame $sourceFrame.');
+  fail(
+    'Did not find STRUCT placement $placementIndex showing source frame '
+    '$sourceFrame.',
+  );
+}
+
+Future<void> _setupScene(
+  WidgetTester tester,
+  SceneEngine scene,
+  CompiledScript compiled,
+  Directory images,
+  Directory sprites,
+) async {
+  await tester.runAsync(() async {
+    await scene.setup(
+      templateText: compiled.engineText,
+      fontColor: Colors.green,
+      bgColor: Colors.black,
+      width: 640,
+      height: 360,
+      scale: 1,
+      fontPath: 'monospace',
+      fontSize: 18,
+      lineSpacing: 22,
+      tracking: 0,
+      marginTop: 20,
+      marginSide: 20,
+      imagesDir: images.path,
+      spritesDir: sprites.path,
+      paneLifeConfig: compiled.paneLife,
+      captionConfig: compiled.caption,
+      appSwitchConfig: compiled.appSwitch,
+    );
+  });
 }
 
 void main() {
@@ -113,31 +159,12 @@ void main() {
       if (root.existsSync()) root.deleteSync(recursive: true);
     });
 
-    await tester.runAsync(() async {
-      await scene.setup(
-        templateText: compiled.engineText,
-        fontColor: Colors.green,
-        bgColor: Colors.black,
-        width: 640,
-        height: 360,
-        scale: 1,
-        fontPath: 'monospace',
-        fontSize: 18,
-        lineSpacing: 22,
-        tracking: 0,
-        marginTop: 20,
-        marginSide: 20,
-        imagesDir: images.path,
-        spritesDir: sprites.path,
-        paneLifeConfig: compiled.paneLife,
-        captionConfig: compiled.caption,
-        appSwitchConfig: compiled.appSwitch,
-      );
-    });
+    await _setupScene(tester, scene, compiled, images, sprites);
 
     final int projectFrame = _findShowingProjectFrame(
       scene,
       placement,
+      placementIndex: 0,
       sourceFrame: 2,
     );
     expect(
@@ -173,6 +200,82 @@ void main() {
     expect(find.text('MONITOR 2'), findsOneWidget);
     expect(find.text('FRAME 2'), findsOneWidget);
     expect(find.text('REEL 2'), findsOneWidget);
+    expect(find.textContaining('[frame]'), findsNothing);
+  });
+
+  testWidgets(
+      'runtime index ignores source-root STRUCT text before later CUSTOM placement',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_struct_program_indexed_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_indexedSource);
+    expect(placements, hasLength(2));
+    expect(placements.first.overlayMode.name, 'none');
+    expect(placements.last.overlayMode.name, 'custom');
+    expect(placements.last.windowTitle, 'SECOND [frame]');
+    expect(placements.last.topOverlay, 'CUSTOM [frame]');
+    expect(placements.last.bottomOverlay, 'BOTTOM [frame]');
+
+    final CompiledScript compiled = compileScript(_indexedSource);
+    expect(compiled.engineText, contains('[REGION:STRUCTSEQ_0_'));
+    expect(compiled.engineText, contains('[REGION:STRUCTSEQ_1_'));
+    expect(compiled.engineText, isNot(contains('[REGION:STRUCTSEQ_2_')));
+
+    final SceneEngine scene = SceneEngine();
+    final ChangeNotifier repaint = ChangeNotifier();
+    addTearDown(() {
+      repaint.dispose();
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(tester, scene, compiled, images, sprites);
+
+    final int projectFrame = _findShowingProjectFrame(
+      scene,
+      placements[1],
+      placementIndex: 1,
+      sourceFrame: 2,
+    );
+    expect(
+      scene.evaluate(
+        ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+      ).exact,
+      isTrue,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 640,
+          height: 360,
+          child: ProgramPreviewSurface(
+            repaint: repaint,
+            scene: scene,
+            rawDocument: _indexedSource,
+            fontFamily: 'monospace',
+            theme: R3Theme.of(Colors.green),
+            structuralBackend: _SolidBackend(),
+            structuralResolveSource: (String value) => '/workspace/$value',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('program-struct-layer-1')),
+      findsOneWidget,
+    );
+    expect(find.text('SECOND 2'), findsOneWidget);
+    expect(find.text('CUSTOM 2'), findsOneWidget);
+    expect(find.text('BOTTOM 2'), findsOneWidget);
     expect(find.textContaining('[frame]'), findsNothing);
   });
 }
