@@ -15,6 +15,7 @@ import 'motion.dart';
 import 'diag.dart';
 import 'media_layer.dart';
 import 'program_structural_export.dart';
+import 'render_naming.dart';
 
 // The sum of two beds, and the gain spelling, shared with the preview
 // player. NOT an import of audio_bed.dart: export and preview remain
@@ -216,6 +217,21 @@ class SceneExporter {
         break;
     }
 
+    // The dashboard historically requests output_1080p.* (or its preroll
+    // variant). Upgrade only that family to document-authored, collision-safe
+    // versioning so direct SceneExporter callers keep the exact filenames they
+    // asked for. RENDERNAME lives in the same raw document already handed to
+    // structural bake, so no second dashboard state can drift from the script.
+    if (isDashboardBakeOutputPath(actualOutputPath)) {
+      final RenderOutputPlan plan = planVersionedDashboardOutput(
+        requestedOutputPath: actualOutputPath,
+        renderNameOverride: renderNameFromDocument(structuralDocument),
+        includeMatteCompanion: format == VideoExportFormat.lumaMatte,
+      );
+      actualOutputPath = plan.outputPath;
+      mattePath = plan.mattePath;
+    }
+
     if (!await _isFfmpegAvailable()) {
       return ExportResult(
         success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
@@ -306,6 +322,22 @@ class SceneExporter {
     final Directory dir = Directory(exportDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
 
+    // Planning chooses an unoccupied version, but another process can create
+    // that path between planning and encoding. Refuse here, then ask ffmpeg to
+    // refuse again below. No successful BAKE is ever allowed to replace bytes
+    // that were already on disk.
+    if (File(actualOutputPath).existsSync() ||
+        (mattePath != null && File(mattePath).existsSync())) {
+      return ExportResult(
+        success: false,
+        cancelled: false,
+        framesWritten: 0,
+        outputPath: actualOutputPath,
+        mattePath: mattePath,
+        error: 'Refusing to overwrite an existing render.',
+      );
+    }
+
     final String fifoPath = '$exportDir/.r3nder_fifo_$pid';
     try {
       final File f = File(fifoPath);
@@ -337,7 +369,7 @@ class SceneExporter {
     final bool hasAudio = bedFile != null || musicFile != null;
 
     final List<String> args = [
-      '-y',
+      '-n',
       '-v', 'error',
       '-nostats',
       '-nostdin',
