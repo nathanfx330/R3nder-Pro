@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:r3nder/structural_chrome.dart';
 import 'package:r3nder/structural_chrome_controls.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -15,7 +14,7 @@ class _Harness extends StatefulWidget {
 
 class _HarnessState extends State<_Harness> {
   String title = 'Archive Viewer';
-  StructuralOverlayMode mode = StructuralOverlayMode.defaultOverlay;
+  String mode = 'DEFAULT';
   String top = 'FEB 1972';
   String bottom = '16MM TRANSFER · REEL 4';
 
