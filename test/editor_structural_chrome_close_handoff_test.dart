@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/editor_screen.dart';
 
 void main() {
-  testWidgets('EditorScreen returns CUSTOM STRUCT chrome through onClose',
+  testWidgets('EditorScreen keeps CUSTOM STRUCT chrome through NODES EDIT close',
       (WidgetTester tester) async {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1440, 900);
@@ -81,6 +81,11 @@ void main() {
     await tester.ensureVisible(bottom);
     await tester.enterText(bottom, 'REEL [frame]');
     await tester.pump();
+
+    // Mirror the real workflow: the author checks the structural result in
+    // EDIT before leaving the editor and returning to the dashboard BAKE.
+    await tester.tap(find.text('EDIT').first);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Back (Esc)'));
     await tester.pump();
