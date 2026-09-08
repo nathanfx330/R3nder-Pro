@@ -31,7 +31,8 @@
 // in the same Stack before and during the handoff, so Flutter can preserve A's
 // decoder State instead of disposing/reopening it merely to cover the seam.
 // Project time continues to advance; B is evaluated at its authored current
-// frame and is never restarted at frame zero.
+// frame and is never restarted at frame zero. Placement-owned title/overlay
+// chrome is snapshotted with that cover so labels and picture swap atomically.
 //
 // When the caller supplies the live SceneEngine + terminal font, the terminal
 // portion of the transition is NOT reconstructed here. ScenePainter's native
@@ -53,6 +54,7 @@ import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
+import 'structural_chrome.dart';
 import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
@@ -117,17 +119,27 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   /// Editor live preview reuses this State across adjacent STRUCT placements.
   /// During a seamless source switch, keep the already-painted outgoing client
   /// above the incoming client until the incoming one resolves. These values
-  /// are snapshots of A's last authored frame, not a second time source.
+  /// are snapshots of A's last authored frame and chrome, not a second time
+  /// source.
   String? _handoffOutgoingSource;
   String? _handoffOutgoingRawDocument;
   int _handoffOutgoingSourceFrame = 0;
   int _handoffOutgoingSourceDurationFrames = 0;
+  StructuralOverlayMode _handoffOutgoingOverlayMode =
+      StructuralOverlayMode.defaultOverlay;
+  String _handoffOutgoingWindowTitle = '';
+  String _handoffOutgoingTopOverlay = '';
+  String _handoffOutgoingBottomOverlay = '';
 
   void _clearHandoffCover() {
     _handoffOutgoingSource = null;
     _handoffOutgoingRawDocument = null;
     _handoffOutgoingSourceFrame = 0;
     _handoffOutgoingSourceDurationFrames = 0;
+    _handoffOutgoingOverlayMode = StructuralOverlayMode.defaultOverlay;
+    _handoffOutgoingWindowTitle = '';
+    _handoffOutgoingTopOverlay = '';
+    _handoffOutgoingBottomOverlay = '';
   }
 
   @override
@@ -151,14 +163,20 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     if (seamlessSourceHandoff) {
       // The presentation shell is already resident. Do not turn it transparent
       // merely because the client composition changed. Snapshot A's exact last
-      // evaluated source frame and keep its keyed preview as the visual cover
-      // while B resolves underneath at current project time.
+      // evaluated source frame and its authored chrome, then keep its keyed
+      // preview as the visual cover while B resolves underneath at current
+      // project time.
       _handoffOutgoingSource = oldSource;
       _handoffOutgoingRawDocument = oldWidget.rawDocument;
       _handoffOutgoingSourceFrame =
           oldWidget.placement.sourceFrameAt(oldWidget.localFrame);
       _handoffOutgoingSourceDurationFrames =
           oldWidget.placement.sourceDurationFrames;
+      _handoffOutgoingOverlayMode = oldWidget.placement.overlayMode;
+      _handoffOutgoingWindowTitle =
+          oldWidget.placement.effectiveWindowTitle;
+      _handoffOutgoingTopOverlay = oldWidget.placement.topOverlay;
+      _handoffOutgoingBottomOverlay = oldWidget.placement.bottomOverlay;
       return;
     }
 
@@ -173,7 +191,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
     if (_handoffOutgoingSource != null) {
       // This callback now belongs to incoming B. The shell never went away;
-      // releasing A only swaps client pixels inside that already-live shell.
+      // releasing A swaps client pixels and placement chrome together inside
+      // that already-live shell.
       setState(() {
         _clearHandoffCover();
         _firstFrameReady = true;
@@ -446,6 +465,10 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       rawDocument: widget.rawDocument,
                       sourceFrame: sourceFrame,
                       sourceDurationFrames: placement.sourceDurationFrames,
+                      overlayMode: placement.overlayMode,
+                      windowTitle: placement.effectiveWindowTitle,
+                      topOverlay: placement.topOverlay,
+                      bottomOverlay: placement.bottomOverlay,
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
@@ -470,6 +493,10 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       outgoingSourceFrame: _handoffOutgoingSourceFrame,
                       outgoingSourceDurationFrames:
                           _handoffOutgoingSourceDurationFrames,
+                      outgoingOverlayMode: _handoffOutgoingOverlayMode,
+                      outgoingWindowTitle: _handoffOutgoingWindowTitle,
+                      outgoingTopOverlay: _handoffOutgoingTopOverlay,
+                      outgoingBottomOverlay: _handoffOutgoingBottomOverlay,
                     ),
                   ),
                 ),
@@ -703,6 +730,10 @@ class _StructuralWindow extends StatelessWidget {
   final String rawDocument;
   final int sourceFrame;
   final int sourceDurationFrames;
+  final StructuralOverlayMode overlayMode;
+  final String windowTitle;
+  final String topOverlay;
+  final String bottomOverlay;
   final bool isPlaying;
   final bool fastPreview;
   final bool showVideo;
@@ -713,12 +744,17 @@ class _StructuralWindow extends StatelessWidget {
   final VoidCallback onFirstFrameReady;
 
   /// Optional outgoing client retained only during an editor-style seamless
-  /// source update. The window/chrome are the current shell; this is merely the
-  /// last already-painted client held above B until B becomes presentable.
+  /// source update. The window/chrome are the current shell; the outgoing
+  /// picture and its informational chrome remain the visible cover until B is
+  /// presentable, then all of them swap together.
   final String? outgoingSource;
   final String? outgoingRawDocument;
   final int outgoingSourceFrame;
   final int outgoingSourceDurationFrames;
+  final StructuralOverlayMode outgoingOverlayMode;
+  final String outgoingWindowTitle;
+  final String outgoingTopOverlay;
+  final String outgoingBottomOverlay;
 
   const _StructuralWindow({
     super.key,
@@ -726,6 +762,10 @@ class _StructuralWindow extends StatelessWidget {
     required this.rawDocument,
     required this.sourceFrame,
     required this.sourceDurationFrames,
+    required this.overlayMode,
+    required this.windowTitle,
+    required this.topOverlay,
+    required this.bottomOverlay,
     required this.isPlaying,
     required this.fastPreview,
     required this.showVideo,
@@ -738,6 +778,10 @@ class _StructuralWindow extends StatelessWidget {
     this.outgoingRawDocument,
     this.outgoingSourceFrame = 0,
     this.outgoingSourceDurationFrames = 0,
+    this.outgoingOverlayMode = StructuralOverlayMode.defaultOverlay,
+    this.outgoingWindowTitle = '',
+    this.outgoingTopOverlay = '',
+    this.outgoingBottomOverlay = '',
   });
 
   Widget _videoPreview({
@@ -745,8 +789,19 @@ class _StructuralWindow extends StatelessWidget {
     required String previewDocument,
     required int previewFrame,
     required bool playing,
+    required StructuralOverlayMode previewOverlayMode,
+    required String previewBottomOverlay,
     required VoidCallback? onReady,
   }) {
+    final bool showOverlay =
+        previewOverlayMode == StructuralOverlayMode.defaultOverlay ||
+            (previewOverlayMode == StructuralOverlayMode.custom &&
+                previewBottomOverlay.isNotEmpty);
+    final String? customText =
+        previewOverlayMode == StructuralOverlayMode.custom
+            ? previewBottomOverlay
+            : null;
+
     return EditVideoPreview(
       key: ValueKey<String>('sequence-preview:$previewSource'),
       source: previewDocument,
@@ -755,6 +810,8 @@ class _StructuralWindow extends StatelessWidget {
       theme: theme,
       isPlaying: playing,
       fastPreview: fastPreview,
+      showDiagnosticOverlay: showOverlay,
+      diagnosticOverlayText: customText,
       backend: backend,
       resolveSource: resolveSource,
       onFirstFrameReady: onReady,
@@ -767,6 +824,27 @@ class _StructuralWindow extends StatelessWidget {
     final double barH = titleHeight * s;
     final String? coverSource = outgoingSource;
     final String? coverDocument = outgoingRawDocument;
+    final bool showingCover = coverSource != null && coverDocument != null;
+
+    final StructuralOverlayMode visibleOverlayMode =
+        showingCover ? outgoingOverlayMode : overlayMode;
+    final String visibleTitle = showingCover
+        ? (outgoingWindowTitle.isEmpty ? coverSource : outgoingWindowTitle)
+        : windowTitle;
+    final String visibleTop =
+        showingCover ? outgoingTopOverlay : topOverlay;
+    final int visibleFrame =
+        showingCover ? outgoingSourceFrame : sourceFrame;
+    final int visibleDuration = showingCover
+        ? outgoingSourceDurationFrames
+        : sourceDurationFrames;
+
+    final String? topText = switch (visibleOverlayMode) {
+      StructuralOverlayMode.defaultOverlay =>
+        'F$visibleFrame / $visibleDuration',
+      StructuralOverlayMode.custom => visibleTop.isEmpty ? null : visibleTop,
+      StructuralOverlayMode.none => null,
+    };
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -805,7 +883,7 @@ class _StructuralWindow extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      source,
+                      visibleTitle,
                       overflow: TextOverflow.ellipsis,
                       style: theme.value.copyWith(
                         color: const Color(0xFFC7C3C0),
@@ -813,14 +891,17 @@ class _StructuralWindow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Text(
-                    'F$sourceFrame / $sourceDurationFrames',
-                    style: theme.micro.copyWith(
-                      color: const Color(0xFF8E8884),
-                      fontSize: (theme.micro.fontSize ?? 10.5) * s,
-                      letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+                  if (topText != null)
+                    Text(
+                      topText,
+                      key: const ValueKey<String>('structural-top-overlay'),
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.micro.copyWith(
+                        color: const Color(0xFF8E8884),
+                        fontSize: (theme.micro.fontSize ?? 10.5) * s,
+                        letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -838,9 +919,11 @@ class _StructuralWindow extends StatelessWidget {
                             previewDocument: rawDocument,
                             previewFrame: sourceFrame,
                             playing: isPlaying,
+                            previewOverlayMode: overlayMode,
+                            previewBottomOverlay: bottomOverlay,
                             onReady: onFirstFrameReady,
                           ),
-                          if (coverSource != null && coverDocument != null)
+                          if (showingCover)
                             // The exact outgoing keyed child already existed in
                             // this Stack on the previous frame. Keeping the same
                             // key preserves its decoder State while it covers B.
@@ -849,6 +932,8 @@ class _StructuralWindow extends StatelessWidget {
                               previewDocument: coverDocument,
                               previewFrame: outgoingSourceFrame,
                               playing: false,
+                              previewOverlayMode: outgoingOverlayMode,
+                              previewBottomOverlay: outgoingBottomOverlay,
                               onReady: null,
                             ),
                         ],
