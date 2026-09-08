@@ -294,3 +294,5 @@ flutter test test/documentation_contract_manifest_test.dart
 The checker reads this manifest and verifies that every numbered contract declares proof and every backticked repository proof path still exists. A renamed or removed proof file is therefore a test failure, not silent documentation drift.
 
 The checker deliberately does **not** claim that file existence proves behavioral correctness. The actual tests and probes still have to run. Its job is narrower: keep the written contract map attached to real repository artifacts.
+
+A cited proof file is therefore a maintenance responsibility, not just a path that happens to exist. If a proof test or probe is rewritten, broadened, narrowed, repurposed, or substantially renamed, the person making that change must re-read the contract(s) that cite it and confirm that the file still genuinely proves those claims. If it no longer does, update the proof map or add a replacement regression in the same change. The automated drift check can prove attachment; only review can preserve semantic honesty.
