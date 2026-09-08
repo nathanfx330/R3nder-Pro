@@ -124,4 +124,62 @@ void main() {
     expect(normal.fileName, 'cut_1080p_v005.mp4');
     expect(preroll.fileName, 'preroll_cut_1080p_v003.mp4');
   });
+
+  test('last non-empty RENDERNAME config wins', () {
+    const String document = '''
+[CONFIG:RENDERNAME:first_cut]
+[CONFIG:SIZE:48]
+[CONFIG:RENDERNAME:   ]
+[CONFIG:RENDERNAME:Documentary Cut]
+''';
+
+    expect(renderNameFromDocument(document), 'Documentary Cut');
+    expect(renderNameFromDocument('[CONFIG:SIZE:48]'), isNull);
+    expect(renderNameFromDocument(null), isNull);
+  });
+
+  test('dashboard output path adopts custom render name and version', () {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_render_name_dashboard_');
+    addTearDown(() {
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    final RenderOutputPlan first = planVersionedDashboardOutput(
+      requestedOutputPath: '${root.path}/output_1080p.mp4',
+      renderNameOverride: 'Documentary Cut',
+    );
+    expect(first.fileName, 'Documentary_Cut_1080p_v001.mp4');
+
+    File(first.outputPath).writeAsStringSync('first');
+    final RenderOutputPlan second = planVersionedDashboardOutput(
+      requestedOutputPath: '${root.path}/output_1080p.mp4',
+      renderNameOverride: 'Documentary Cut',
+    );
+    expect(second.fileName, 'Documentary_Cut_1080p_v002.mp4');
+  });
+
+  test('dashboard preroll path preserves its separate version family', () {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_render_name_dash_preroll_');
+    addTearDown(() {
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    File('${root.path}/preroll_master_4K_v003.mov').writeAsStringSync('3');
+
+    final RenderOutputPlan plan = planVersionedDashboardOutput(
+      requestedOutputPath: '${root.path}/preroll_output_4K.mov',
+      renderNameOverride: 'master',
+    );
+
+    expect(plan.fileName, 'preroll_master_4K_v004.mov');
+  });
+
+  test('dashboard recognition leaves direct exporter filenames distinct', () {
+    expect(isDashboardBakeOutputPath('/tmp/output_1080p.mp4'), isTrue);
+    expect(isDashboardBakeOutputPath('/tmp/preroll_output_4K.mov'), isTrue);
+    expect(isDashboardBakeOutputPath('/tmp/test_bake.mp4'), isFalse);
+    expect(isDashboardBakeOutputPath('/tmp/final.mp4'), isFalse);
+  });
 }
