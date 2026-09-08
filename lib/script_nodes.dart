@@ -7,6 +7,7 @@
 
 import 'parser.dart';
 import 'script_cst.dart';
+import 'structural_chrome.dart';
 
 // =====================================================================
 // ROUND-TRIP CONTRACT
@@ -69,14 +70,15 @@ int _nodeSeq = 0;
 ///
 /// STRUCT is included in the same non-terminal pass even though it is not a
 /// macro: script_pipeline projects it into main-sequence timing before the
-/// TerminalEngine ever sees the document.
+/// TerminalEngine ever sees the document. Its keyed presentation tail is
+/// parsed by structural_chrome.dart instead of by positional regex groups.
 final RegExp _macroRegex = RegExp(
   r'\[DEF_MENU:(?<menuId>[a-zA-Z0-9_-]+)\](?<menuBody>.*?)\[/DEF_MENU\]'
   r'|\[CALL:(?<callId>[a-zA-Z0-9_-]+)\]'
   r'|\[MENU_STATE:(?<msMenu>[a-zA-Z0-9_-]+):(?<msInstance>[a-zA-Z0-9_-]+)\]'
   r'|\[MACRO_CFG:(?<cfgId>[a-zA-Z0-9_-]+):(?<cfgItem>[a-zA-Z0-9_-]+|NONE)'
   r':(?<cfgRgb>\d+,\d+,\d+):(?<cfgBlink>\d+)\]'
-  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)(?::(?<structMode>FULL))?\]',
+  r'|\[STRUCT:(?<structSource>(?:EDIT|MOSAIC)\.[a-zA-Z0-9_-]+)(?<structTail>[^\r\n]*)\]',
   dotAll: true,
 );
 
@@ -434,9 +436,19 @@ class ScriptNode {
 
       // --- Structural placement -----------------------------------
       case 'STRUCT':
-        final bool fullscreen =
-            param('mode').trim().toUpperCase() == 'FULL';
-        return '[STRUCT:${param('source')}${fullscreen ? ':FULL' : ''}]';
+        final StructuralOverlayMode overlayMode =
+            structuralOverlayModeFromToken(param('overlay', 'DEFAULT')) ??
+                StructuralOverlayMode.defaultOverlay;
+        return formatStructuralChromeTag(
+          StructuralChromeSpec(
+            source: param('source'),
+            fullscreen: param('mode').trim().toUpperCase() == 'FULL',
+            overlayMode: overlayMode,
+            windowTitle: param('title'),
+            topOverlay: param('top'),
+            bottomOverlay: param('bottom'),
+          ),
+        );
 
       // --- Macro menus --------------------------------------------
       case 'DEF_MENU':
@@ -587,7 +599,7 @@ ScriptNode _nodeFromStructuralRoot(ScriptCstBlock root) {
 // =====================================================================
 // SCRIPT PARSING
 //
-// Top level and pure: text in, nodes out, no widget state touched. Two
+// Top level and pure: text in and nodes out, no widget state touched. Two
 // consumers need it. The node workspace turns the decomposition into a
 // form; the script ribbon in text mode turns it into blocks on a time
 // axis. Making the second one mount a node workspace it never renders,
@@ -714,9 +726,17 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
     n.params['rgb'] = g('cfgRgb') ?? '0,255,0';
     n.params['blink'] = g('cfgBlink') ?? '0';
   } else if (g('structSource') != null) {
-    n.type = 'STRUCT';
-    n.params['source'] = g('structSource')!;
-    n.params['mode'] = g('structMode') ?? '';
+    final StructuralChromeSpec? chrome =
+        parseStructuralChromeTag(m.group(0) ?? '');
+    if (chrome != null) {
+      n.type = 'STRUCT';
+      n.params['source'] = chrome.source;
+      n.params['mode'] = chrome.fullscreen ? 'FULL' : '';
+      n.params['overlay'] = chrome.overlayMode.token;
+      n.params['title'] = chrome.windowTitle;
+      n.params['top'] = chrome.topOverlay;
+      n.params['bottom'] = chrome.bottomOverlay;
+    }
   }
 
   return n;
