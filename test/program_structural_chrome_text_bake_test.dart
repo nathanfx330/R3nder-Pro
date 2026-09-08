@@ -167,22 +167,28 @@ void main() {
       ),
     );
 
-    final ui.Image? image = await tester.runAsync<ui.Image?>(
-      () => renderer.renderIfActive(
+    final Uint8List? rgba = await tester.runAsync<Uint8List?>(() async {
+      final ui.Image? image = await renderer.renderIfActive(
         scene: scene,
         fontFamily: 'monospace',
-      ),
-    );
-    expect(image, isNotNull);
+      );
+      if (image == null) return null;
 
-    final ByteData? data =
-        await image!.toByteData(format: ui.ImageByteFormat.rawRgba);
-    image.dispose();
-    expect(data, isNotNull);
-    final Uint8List rgba = data!.buffer.asUint8List(
-      data.offsetInBytes,
-      data.lengthInBytes,
-    );
+      try {
+        final ByteData? data =
+            await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        if (data == null) return null;
+        return Uint8List.fromList(
+          data.buffer.asUint8List(
+            data.offsetInBytes,
+            data.lengthInBytes,
+          ),
+        );
+      } finally {
+        image.dispose();
+      }
+    });
+    expect(rgba, isNotNull);
 
     final Rect window = structuralProgramTargetRectForOutput(
       outputWidth: width,
@@ -205,7 +211,7 @@ void main() {
     );
 
     expect(
-      _lightNeutralPixels(rgba, width, header),
+      _lightNeutralPixels(rgba!, width, header),
       greaterThan(20),
       reason: 'Window title/top overlay text must rasterize into final BAKE.',
     );
