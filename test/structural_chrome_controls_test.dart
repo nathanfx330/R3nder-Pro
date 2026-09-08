@@ -13,10 +13,26 @@ class _Harness extends StatefulWidget {
 }
 
 class _HarnessState extends State<_Harness> {
-  String title = 'Archive Viewer';
+  late final TextEditingController title;
+  late final TextEditingController top;
+  late final TextEditingController bottom;
   String mode = 'DEFAULT';
-  String top = 'FEB 1972';
-  String bottom = '16MM TRANSFER · REEL 4';
+
+  @override
+  void initState() {
+    super.initState();
+    title = TextEditingController(text: 'Archive Viewer');
+    top = TextEditingController(text: 'FEB 1972');
+    bottom = TextEditingController(text: '16MM TRANSFER · REEL 4');
+  }
+
+  @override
+  void dispose() {
+    title.dispose();
+    top.dispose();
+    bottom.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,14 +42,14 @@ class _HarnessState extends State<_Harness> {
           width: 420,
           child: StructuralChromeControls(
             theme: R3Theme.of(Colors.green),
-            windowTitle: title,
+            windowTitleController: title,
             overlayMode: mode,
-            topOverlay: top,
-            bottomOverlay: bottom,
-            onWindowTitleChanged: (value) => setState(() => title = value),
+            topOverlayController: top,
+            bottomOverlayController: bottom,
+            onWindowTitleChanged: (_) {},
             onOverlayModeChanged: (value) => setState(() => mode = value),
-            onTopOverlayChanged: (value) => setState(() => top = value),
-            onBottomOverlayChanged: (value) => setState(() => bottom = value),
+            onTopOverlayChanged: (_) {},
+            onBottomOverlayChanged: (_) {},
           ),
         ),
       ),
