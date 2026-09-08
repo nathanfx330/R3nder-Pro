@@ -799,7 +799,10 @@ class _StructuralWindow extends StatelessWidget {
                 previewBottomOverlay.isNotEmpty);
     final String? customText =
         previewOverlayMode == StructuralOverlayMode.custom
-            ? previewBottomOverlay
+            ? expandStructuralChromeExpressions(
+                previewBottomOverlay,
+                frame: previewFrame,
+              )
             : null;
 
     return EditVideoPreview(
@@ -828,21 +831,30 @@ class _StructuralWindow extends StatelessWidget {
 
     final StructuralOverlayMode visibleOverlayMode =
         showingCover ? outgoingOverlayMode : overlayMode;
-    final String visibleTitle = showingCover
-        ? (outgoingWindowTitle.isEmpty ? coverSource : outgoingWindowTitle)
-        : windowTitle;
-    final String visibleTop =
-        showingCover ? outgoingTopOverlay : topOverlay;
     final int visibleFrame =
         showingCover ? outgoingSourceFrame : sourceFrame;
     final int visibleDuration = showingCover
         ? outgoingSourceDurationFrames
         : sourceDurationFrames;
+    final String authoredVisibleTitle = showingCover
+        ? (outgoingWindowTitle.isEmpty ? coverSource : outgoingWindowTitle)
+        : windowTitle;
+    final String visibleTitle = expandStructuralChromeExpressions(
+      authoredVisibleTitle,
+      frame: visibleFrame,
+    );
+    final String visibleTop =
+        showingCover ? outgoingTopOverlay : topOverlay;
 
     final String? topText = switch (visibleOverlayMode) {
       StructuralOverlayMode.defaultOverlay =>
         'F$visibleFrame / $visibleDuration',
-      StructuralOverlayMode.custom => visibleTop.isEmpty ? null : visibleTop,
+      StructuralOverlayMode.custom => visibleTop.isEmpty
+          ? null
+          : expandStructuralChromeExpressions(
+              visibleTop,
+              frame: visibleFrame,
+            ),
       StructuralOverlayMode.none => null,
     };
 
