@@ -12,12 +12,17 @@
 //   [STRUCT:MOSAIC.wall:FULL]
 //   [STRUCT:MOSAIC.wall:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:OVERLAY=NONE:TITLE="Archive Viewer"]
-//   [STRUCT:MOSAIC.wall:FULL:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972":BOTTOM="16MM TRANSFER · REEL 4"]
+//   [STRUCT:MOSAIC.wall:FULL:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972 · F[frame]":BOTTOM="16MM TRANSFER · REEL 4"]
 //
 // Text values are quoted. Colons inside quoted text are data, not segment
 // separators. Backslash, quote, newline, carriage return, and tab use the
 // conventional escaped forms. Unknown keyed segments make the tag invalid so
 // an author typo cannot silently become a different presentation.
+//
+// `[frame]` inside TITLE, TOP, or BOTTOM is a render-time expression. It is
+// preserved verbatim in script state and expands to the current structural
+// source frame only when chrome is painted. That keeps authored copy dynamic
+// without moving any project-time ownership into the node UI.
 
 enum StructuralOverlayMode {
   defaultOverlay,
@@ -40,6 +45,20 @@ StructuralOverlayMode? structuralOverlayModeFromToken(String raw) {
     'NONE' => StructuralOverlayMode.none,
     _ => null,
   };
+}
+
+/// Expands render-time expressions in authored STRUCT chrome copy.
+///
+/// Deliberately tiny for now. `[frame]` means the exact structural source frame
+/// the preview/export is already rendering. It is therefore deterministic under
+/// scrub, playback, seamless handoff, and BAKE. Unknown bracketed text is left
+/// untouched so ordinary archival notation cannot be accidentally consumed.
+String expandStructuralChromeExpressions(
+  String authored, {
+  required int frame,
+}) {
+  if (authored.isEmpty || !authored.contains('[frame]')) return authored;
+  return authored.replaceAll('[frame]', '$frame');
 }
 
 class StructuralChromeSpec {
