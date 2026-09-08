@@ -14,6 +14,11 @@
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
 //
+// Window title and informational player overlays are placement-owned for the
+// same reason. They are parsed from keyed STRUCT tail segments by
+// structural_chrome.dart and travel with this placement into Preview/Bake
+// presentation without changing the underlying EDIT/MOSAIC source.
+//
 // Adjacent STRUCT placements also participate in the desktop application
 // choreography. With ordinary APPSWITCH behavior the outgoing structural
 // window closes to the desktop and the next one opens without zooming the
@@ -25,9 +30,10 @@
 
 import 'edit_model.dart';
 import 'scene_engine.dart';
+import 'structural_chrome.dart';
 
 final RegExp _placementLine = RegExp(
-  r'^(?<indent>[ \t]*)\[STRUCT:(?<source>(?:EDIT|MOSAIC)\.[A-Za-z0-9_-]+)(?<full>:FULL)?\](?<trail>[ \t]*)$',
+  r'^(?<indent>[ \t]*)(?<tag>\[STRUCT:(?:EDIT|MOSAIC)\.[A-Za-z0-9_-]+[^\r\n]*\])(?<trail>[ \t]*)$',
   multiLine: true,
 );
 
@@ -170,6 +176,14 @@ class StructuralSequencePlacement {
   /// Placement presentation, independent of EDIT/MOSAIC composition.
   final StructuralPresentationMode presentationMode;
 
+  /// Placement-owned window/player chrome. Empty title means the canonical
+  /// source name. TOP/BOTTOM are dormant unless overlayMode is CUSTOM, but are
+  /// preserved so switching to DEFAULT/NONE and back does not destroy copy.
+  final StructuralOverlayMode overlayMode;
+  final String windowTitle;
+  final String topOverlay;
+  final String bottomOverlay;
+
   /// True when the previous/next runnable presentation is this neighbouring
   /// STRUCT placement. Chaining suppresses the terminal zoom between them.
   final bool chainedFromPrevious;
@@ -192,6 +206,10 @@ class StructuralSequencePlacement {
     required this.sourceDurationFrames,
     required this.durationFrames,
     this.presentationMode = StructuralPresentationMode.windowed,
+    this.overlayMode = StructuralOverlayMode.defaultOverlay,
+    this.windowTitle = '',
+    this.topOverlay = '',
+    this.bottomOverlay = '',
     this.chainedFromPrevious = false,
     this.chainedToNext = false,
     this.seamlessFromPrevious = false,
@@ -202,6 +220,8 @@ class StructuralSequencePlacement {
   bool get resolves => sourceDurationFrames > 0;
   bool get fullscreen =>
       presentationMode == StructuralPresentationMode.fullscreen;
+  String get effectiveWindowTitle =>
+      windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 
   int get entryZoomFrames =>
@@ -297,12 +317,20 @@ class _StructuralPlacementSeed {
   final StructuralSourceRef sourceRef;
   final int sourceDurationFrames;
   final StructuralPresentationMode presentationMode;
+  final StructuralOverlayMode overlayMode;
+  final String windowTitle;
+  final String topOverlay;
+  final String bottomOverlay;
 
   const _StructuralPlacementSeed({
     required this.match,
     required this.sourceRef,
     required this.sourceDurationFrames,
     required this.presentationMode,
+    required this.overlayMode,
+    required this.windowTitle,
+    required this.topOverlay,
+    required this.bottomOverlay,
   });
 }
 
@@ -422,8 +450,11 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
   final List<_StructuralPlacementSeed> seeds = <_StructuralPlacementSeed>[];
 
   for (final RegExpMatch match in _placementLine.allMatches(rawDocument)) {
-    final StructuralSourceRef? ref =
-        StructuralSourceRef.tryParse(match.namedGroup('source') ?? '');
+    final StructuralChromeSpec? chrome =
+        parseStructuralChromeTag(match.namedGroup('tag') ?? '');
+    if (chrome == null) continue;
+
+    final StructuralSourceRef? ref = StructuralSourceRef.tryParse(chrome.source);
     if (ref == null || ref.id.isEmpty) continue;
 
     int sourceDuration = 0;
@@ -440,9 +471,13 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         match: match,
         sourceRef: ref,
         sourceDurationFrames: sourceDuration,
-        presentationMode: match.namedGroup('full') == null
-            ? StructuralPresentationMode.windowed
-            : StructuralPresentationMode.fullscreen,
+        presentationMode: chrome.fullscreen
+            ? StructuralPresentationMode.fullscreen
+            : StructuralPresentationMode.windowed,
+        overlayMode: chrome.overlayMode,
+        windowTitle: chrome.windowTitle,
+        topOverlay: chrome.topOverlay,
+        bottomOverlay: chrome.bottomOverlay,
       ),
     );
   }
@@ -498,6 +533,10 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         sourceDurationFrames: seed.sourceDurationFrames,
         durationFrames: duration,
         presentationMode: seed.presentationMode,
+        overlayMode: seed.overlayMode,
+        windowTitle: seed.windowTitle,
+        topOverlay: seed.topOverlay,
+        bottomOverlay: seed.bottomOverlay,
         chainedFromPrevious: chainedFrom[i],
         chainedToNext: chainedTo[i],
         seamlessFromPrevious: seamlessFrom[i],
@@ -514,13 +553,17 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
 ///
 /// Source definitions remain where they already live. The sequence receives
 /// only a lightweight reference and derives its duration from the selected
-/// EDIT/MOSAIC definition. Presentation mode belongs to this placement rather
-/// than to the reusable source.
+/// EDIT/MOSAIC definition. Presentation mode and chrome belong to this
+/// placement rather than to the reusable source.
 String appendStructuralSequencePlacement({
   required String rawDocument,
   required StructuralSourceRef sourceRef,
   StructuralPresentationMode presentationMode =
       StructuralPresentationMode.windowed,
+  StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
+  String windowTitle = '',
+  String topOverlay = '',
+  String bottomOverlay = '',
 }) {
   final EditDocumentModel model = EditDocumentModel.parse(rawDocument);
   if (!model.containsStructuralSource(sourceRef)) {
@@ -539,9 +582,20 @@ String appendStructuralSequencePlacement({
       !rawDocument.endsWith('\r')) {
     out.write(newline);
   }
-  final String full =
-      presentationMode == StructuralPresentationMode.fullscreen ? ':FULL' : '';
-  out.write('[STRUCT:${sourceRef.canonicalSource}$full]$newline');
+  out.write(
+    formatStructuralChromeTag(
+      StructuralChromeSpec(
+        source: sourceRef.canonicalSource,
+        fullscreen:
+            presentationMode == StructuralPresentationMode.fullscreen,
+        overlayMode: overlayMode,
+        windowTitle: windowTitle,
+        topOverlay: topOverlay,
+        bottomOverlay: bottomOverlay,
+      ),
+    ),
+  );
+  out.write(newline);
   return out.toString();
 }
 
