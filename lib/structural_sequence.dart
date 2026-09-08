@@ -30,6 +30,7 @@
 
 import 'edit_model.dart';
 import 'scene_engine.dart';
+import 'script_cst.dart';
 import 'structural_chrome.dart';
 
 final RegExp _placementLine = RegExp(
@@ -364,6 +365,28 @@ EditDocumentModel? _tryModel(String rawDocument) {
   }
 }
 
+List<(int, int)> _structuralRootSpans(String rawDocument) {
+  if (!RegExp(r'\[(?:EDIT|MOSAIC)(?::[^\]\r\n]*)?\]').hasMatch(rawDocument)) {
+    return const <(int, int)>[];
+  }
+  try {
+    final ScriptCstDocument cst = ScriptCstDocument.parse(rawDocument);
+    return <(int, int)>[
+      for (final ScriptCstBlock root in cst.roots)
+        (root.startOffset, root.endOffset),
+    ];
+  } on ScriptCstFormatException {
+    return const <(int, int)>[];
+  }
+}
+
+bool _insideStructuralRoot(int offset, List<(int, int)> spans) {
+  for (final (int start, int end) in spans) {
+    if (offset >= start && offset < end) return true;
+  }
+  return false;
+}
+
 bool _slideAppSwitchEnabled(String rawDocument) {
   final List<RegExpMatch> matches =
       _appSwitchConfig.allMatches(rawDocument).toList(growable: false);
@@ -431,13 +454,18 @@ int _plannedDuration({
       exitZoom;
 }
 
-/// Returns every standalone structural placement in raw document order.
+/// Returns every executable structural placement in raw document order.
 ///
-/// Invalid or temporarily incomplete structural source definitions do not make
-/// the text editor crash while the author is typing. Their placements remain
-/// visible with duration 0 so diagnostics can report them and the engine
-/// projection can burn a small harmless fallback instead of typing literal
-/// markup onto screen.
+/// STRUCT-looking text inside reusable EDIT/MOSAIC roots is source metadata,
+/// not main-sequence program content, so it is deliberately excluded here.
+/// Runtime projection strips those roots before it numbers REGION markers; the
+/// placement metadata list must use the same executable set or every later
+/// marker can resolve to the wrong presentation/chrome record.
+///
+/// Invalid or temporarily incomplete placement tags are not included. The
+/// projection path applies the same chrome parser before assigning marker
+/// indices, so malformed markup stays visible for repair instead of consuming
+/// an index that has no metadata partner.
 ///
 /// This pass also performs structural application planning. It is deliberately
 /// based on authored document adjacency rather than widget state, so Preview,
@@ -447,9 +475,12 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
 ) {
   final EditDocumentModel? model = _tryModel(rawDocument);
   final List<int> starts = _lineStarts(rawDocument);
+  final List<(int, int)> rootSpans = _structuralRootSpans(rawDocument);
   final List<_StructuralPlacementSeed> seeds = <_StructuralPlacementSeed>[];
 
   for (final RegExpMatch match in _placementLine.allMatches(rawDocument)) {
+    if (_insideStructuralRoot(match.start, rootSpans)) continue;
+
     final StructuralChromeSpec? chrome =
         parseStructuralChromeTag(match.namedGroup('tag') ?? '');
     if (chrome == null) continue;
@@ -624,8 +655,11 @@ String projectStructuralSequencePlacements({
   required String projectedSource,
   bool runtimeMarkers = false,
 }) {
-  final List<RegExpMatch> matches =
-      _placementLine.allMatches(projectedSource).toList(growable: false);
+  final List<RegExpMatch> matches = _placementLine
+      .allMatches(projectedSource)
+      .where((RegExpMatch match) =>
+          parseStructuralChromeTag(match.namedGroup('tag') ?? '') != null)
+      .toList(growable: false);
   if (matches.isEmpty) return projectedSource;
 
   final List<StructuralSequencePlacement> placements =
