@@ -2,24 +2,30 @@
 
 This directory has one job: make the system understandable enough that another engineer can reconstruct an editor of the same class without depending on tribal knowledge.
 
-That means the documentation is not only a user manual and not only a history. It is an executable architectural record.
+The documentation is therefore not only a user manual and not only a development history. It is an architectural inheritance package.
 
-The target reader should be able to answer four questions from the repository alone:
+A reader should be able to answer, from the repository alone:
 
 1. What is canonical project state?
 2. Who owns project time?
-3. How does a source frame become a program pixel?
-4. Which tests prove that Preview, Edit, and BAKE agree?
+3. How does project frame N become a leaf-media source frame?
+4. How do nested EDIT/MOSAIC sources become one structural frame?
+5. How does STRUCT place that frame into the main program?
+6. Why do Preview and BAKE agree?
+7. Which layer owns audio timing?
+8. How does the GUI mutate the project without becoming a second database?
+9. How are final renders versioned without overwriting history?
+10. Which tests prove each contract?
 
 If those answers are unclear, the documentation is incomplete.
 
 ---
 
-## Read in this order
+# Read in this order
 
-### 1. `README.md` at repository root
+## 1. Repository `README.md`
 
-Start there for the product model:
+Start with the product model:
 
 ```text
 TEXT
@@ -35,146 +41,156 @@ PREVIEW
 BAKE
 ```
 
-The most important rule in the project is introduced there:
+The core rule appears there:
 
 > The script is the project.
 
-The GUI is an editor over that project, not a second project database.
+The GUI edits that project. It is not a second project database.
 
-### 2. `BUILDING_A_DETERMINISTIC_NLE.md`
+---
+
+## 2. `REBUILDING_R3NDER_PRO.md`
+
+Read this next if the question is:
+
+> If I were handed this repository and had to rebuild an NLE with the same fundamental abilities and guarantees, what would I build and in what order?
+
+This is the top-level reconstruction plan.
+
+It connects canonical state, deterministic time, EDIT, persistent MLT, MOSAIC, STRUCT, Preview, BAKE, and output identity.
+
+---
+
+## 3. Subsystem specifications
+
+These are the implementation-grade ownership documents.
+
+### `PROJECT_TIME_AND_AUDIO.md`
+
+ProjectClock, ProjectTime, explicit scene evaluation, realtime versus export scheduling, native audio authority, latency, epochs, and A/V lock.
+
+### `SCRIPT_AND_CST.md`
+
+Canonical authored state, lossless CST ownership, ScriptNode round-trip, CONFIG, one compile pipeline, structural projection, and editor line mapping.
+
+### `EDIT_MODEL.md`
+
+EDIT/TRACK/CLIP semantics, exact rational speed, frame mapping, duration ownership, add/move/trim/split operations, edge transitions, track composition, and graph lint.
+
+### `MEDIA_AND_MLT.md`
+
+Persistent decoder identity, exact versus nonblocking decode policy, requested/actual source-frame identity, stale-result rejection, structural recursion boundary, and diagnostic provenance.
+
+### `STRUCTURAL_COMPOSITION.md`
+
+EDIT as a reusable source, MOSAIC pane composition, STRUCT placement semantics, presentation-owned chrome, executable adjacency, APPSWITCH planning, runtime markers, and source export versus program placement.
+
+### `PREVIEW_AND_BAKE.md`
+
+ProgramPreviewSurface, structural readiness/paint ownership, exact BAKE frame iteration, ProgramStructuralFrameRenderer, ffmpeg handoff, source export versus final BAKE, and the M20 placement-association failure.
+
+### `GUI_MUTATION_CONTRACTS.md`
+
+View state versus project state, NODES ownership, protected structural roots, first-class STRUCT/CONFIG editing, EDIT text mutations, editor-close handoff, asset invalidation, and UI naming of ownership boundaries.
+
+### `RENDER_OUTPUTS.md`
+
+`RENDERNAME`, filename sanitization, monotonic versions, format-independent version families, fill/matte reservation, preroll families, and two-layer no-overwrite protection.
+
+### `LINUX_NATIVE_LAYER.md`
+
+Linux CMake/native runner architecture, native ProjectClock, PulseAudio sink, persistent MLT decode, external textures, threading/lifetime, and native validation.
+
+### `TEST_STRATEGY.md`
+
+The proof architecture: pure model tests, widget handoff tests, fake media backends, native probes, Program Preview tests, structural BAKE tests, real SceneExporter→ffmpeg encoded tests, and visual gates.
+
+---
+
+## 4. `BUILDING_A_DETERMINISTIC_NLE.md`
 
 This is the transferable engineering guide.
 
-Read it if you want to build another editor with the same architectural properties but not necessarily the same UI or language.
+Read it when building another editor that may not use R3nder's exact language or UI but needs the same architectural properties.
 
-It covers:
+Its central lessons are:
 
-- authoritative project time;
-- audio-clock ownership;
-- lossless authored state;
-- clip timing;
-- persistent media decode;
-- source/placement separation;
-- preview/export parity;
-- debugging by failure domain;
-- semantic regression testing.
+- decide who owns project time first;
+- choose one canonical authored model;
+- store authored facts and derive consequences;
+- keep the media backend below the timeline model;
+- make decode persistent before polishing the GUI;
+- separate source definition from program placement;
+- treat readiness as presentation state, never timing;
+- force Preview and export through the same authored frame contract;
+- debug by failure domain;
+- write semantic regressions rather than implementation-trivia tests.
 
-### 3. `REBUILDING_R3NDER_PRO.md`
+---
 
-This is the implementation map.
+## 5. `REFERENCE.md`
 
-Read it if the question is:
+Use this for exact language/tag/media behavior.
 
-> If I had this repository but had to rebuild the editor from scratch, what would I implement, in what order, and which files define each contract?
+The subsystem specifications explain *why* ownership is arranged the way it is. REFERENCE explains the concrete author-facing surface.
 
-It maps the major subsystems, their ownership boundaries, the reconstruction order, and the tests that act as architectural proof.
+---
 
-### 4. `REFERENCE.md`
+# Development history
 
-This is the language and media reference.
+The journey documents preserve why the final architecture exists and what misleading failures taught us.
 
-Use it when you need exact authored syntax and behavior.
+## `R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md`
 
-### 5. Journey documents
+ProjectClock through structural video, Preview, and BAKE parity.
 
-The journey documents explain why the architecture looks the way it does.
+## `M18_M19_STRUCTURAL_PRESENTATION_JOURNEY.md`
 
-They preserve failed hypotheses, misleading symptoms, and the engineering battles that are easy to forget once the final implementation looks obvious.
+Two of the hardest structural milestones: executable adjacency, seamless application switching, outgoing-shell readiness ownership, fullscreen/windowed presentation, and first-class STRUCT authoring.
+
+## `M20_M21_PRESENTATION_AND_RENDER_IDENTITY_JOURNEY.md`
+
+Player chrome, DEFAULT/CUSTOM/NONE, `[frame]`, missing custom overlays in final BAKE, runtime placement-index alignment, source export versus final BAKE, `RENDERNAME`, monotonic versions, and no-overwrite output.
+
+## `EDIT_PLAYBACK_PERFORMANCE.md`
+
+Measured EDIT playback performance and separation of native decode timing from Flutter UI repaint cost.
+
+## `M4_AV_LOCK_VALIDATION.md`
+
+Measured native audio authority and A/V lock while persistent MLT decoding runs concurrently.
+
+---
+
+# Visual acceptance documents
+
+Some guarantees are visible composition contracts rather than pure model properties.
 
 Read:
 
-- `R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md` — ProjectClock through structural video and Preview/BAKE parity.
-- `M18_M19_STRUCTURAL_PRESENTATION_JOURNEY.md` — seamless structural application switching and first-class fullscreen STRUCT authoring.
-- `M20_M21_PRESENTATION_AND_RENDER_IDENTITY_JOURNEY.md` — authored player chrome, dynamic `[frame]` expressions, bake parity, render naming, and no-overwrite versioning.
-- `EDIT_PLAYBACK_PERFORMANCE.md` — measured editor playback investigation.
-- `M4_AV_LOCK_VALIDATION.md` — native A/V lock validation.
+- `M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
+- `M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
 
-### 6. Visual gates
-
-Some contracts are not adequately captured by model tests.
-
-`M18_STRUCT_APP_SWITCH_VISUAL_GATE.md` and its fixture preserve one such case: continuity during adjacent structural application handoff.
-
-These files exist because a deterministic model can still produce a visually wrong result if paint/readiness ownership is wrong.
+These exist because a deterministic model can still produce a visually wrong frame when paint/readiness ownership is incorrect.
 
 ---
 
-# Documentation philosophy
+# Documentation standard
 
-R3nder Pro should be documented as five layers, not as a list of widgets.
-
-## Layer 1 — Authored state
-
-Questions:
-
-- What does the user actually author?
-- Which syntax owns the fact?
-- Can the GUI close and reconstruct itself from that state?
-
-Primary files include the parser/CST, script node model, edit model, structural sequence model, config model, and reference documentation.
-
-## Layer 2 — Time
-
-Questions:
-
-- Who owns project frame N?
-- Which clocks are authorities and which are observers?
-- Can project frame N be reproduced without wall-clock dependence?
-
-Primary concepts include `ProjectClock`, `ProjectTime`, explicit scene evaluation, audio authority, and exact frame mapping.
-
-## Layer 3 — Source evaluation
-
-Questions:
-
-- Given project frame N, which source frame is requested?
-- Who owns clip geometry?
-- Who owns structural nesting?
-- Where does MLT stop and R3nder begin?
-
-Primary concepts include EDIT, TRACK, CLIP, MOSAIC, persistent media decoders, source references, transitions, and structural sequence placements.
-
-## Layer 4 — Presentation
-
-Questions:
-
-- How is the evaluated source shown?
-- Windowed or fullscreen?
-- Which title/overlay belongs to the placement rather than the source?
-- How are adjacent structural applications chained?
-
-Primary concepts include STRUCT presentation mode, structural chrome, seamless application switching, first-frame readiness, and top-level Program Preview.
-
-## Layer 5 — Finalization
-
-Questions:
-
-- Does BAKE render the same authored frame contract as Preview?
-- How are audio and structural video composed into final output?
-- How are render files named and protected from overwrite?
-
-Primary concepts include `SceneExporter`, `ProgramStructuralFrameRenderer`, ffmpeg handoff, `RENDERNAME`, monotonic versions, and no-overwrite behavior.
-
----
-
-# The reconstruction standard
-
-A subsystem is not fully documented merely because its classes are named.
-
-For each major subsystem we want four things:
+Every subsystem page should answer four things.
 
 ```text
 CONTRACT
-What the subsystem promises.
+What must always be true?
 
 OWNERSHIP
-Which layer owns each fact.
+Which layer owns each fact?
 
 DATA FLOW
-What enters, what leaves, and which transformations occur.
+What enters, what leaves, and how is identity transformed?
 
 PROOF
-Which tests demonstrate the contract.
+Which tests or measurements demonstrate the contract?
 ```
 
 Example:
@@ -183,82 +199,115 @@ Example:
 STRUCT presentation chrome
 
 CONTRACT
-A placement may be windowed or fullscreen and may use DEFAULT, CUSTOM,
-or NONE chrome. CUSTOM expressions such as [frame] resolve from exact
-structural source-local frame metadata.
+A placement can be windowed/fullscreen and DEFAULT/CUSTOM/NONE.
+Dynamic [frame] copy resolves deterministically.
 
 OWNERSHIP
-The STRUCT placement owns the presentation chrome. EDIT/MOSAIC source
-definitions do not.
+STRUCT placement owns chrome.
+EDIT/MOSAIC source does not.
 
 DATA FLOW
-serialized STRUCT
-  -> StructuralSequencePlacement
-  -> ProgramPreviewSurface / ProgramStructuralFrameRenderer
-  -> exact frame metadata
-  -> rendered title/overlays
+authored STRUCT
+  → StructuralChromeSpec
+  → StructuralSequencePlacement
+  → runtime marker / exact local frame
+  → Preview or ProgramStructuralFrameRenderer
+  → final pixels
 
 PROOF
-preview runtime tests + SceneExporter encoded MP4 tests
+parser tests
++ Program Preview runtime tests
++ encoded SceneExporter tests
++ real visual BAKE gate
 ```
 
-That is the level of documentation required if the repo is supposed to teach another engineer how to rebuild the system.
-
 ---
 
-# Tests are part of the documentation
+# The reconstruction path
 
-R3nder's most valuable tests are not line-coverage tests. They are executable statements of product truth.
-
-Examples of useful proof classes:
-
-- parser round-trip tests;
-- frame mapping tests;
-- A/V lock tests;
-- structural marker alignment tests;
-- top-level Program Preview tests;
-- encoded SceneExporter tests;
-- EditorScreen handoff tests;
-- render naming/versioning tests;
-- visual gates for seams that only appear in realistic GUI composition.
-
-When a bug requires three or four isolated tests before the real failure appears, the missing end-to-end test becomes part of the architecture afterward.
-
-The M20 chrome bug is the model example: painter tests were green, then Program Preview was green, then isolated SceneExporter was green, and only realistic placement association exposed the defect. The final regression now documents that ownership rule better than a paragraph alone could.
-
----
-
-# What remains to document
-
-The repository already has strong narrative and reference documentation, but reconstruction-grade documentation should continue until these areas each have an explicit subsystem page:
-
-- project clock and audio authority;
-- script pipeline and lossless CST;
-- EDIT timing model and edit operations;
-- persistent MLT decoder lifecycle;
-- structural source recursion and composition;
-- MOSAIC pane/timeline semantics;
-- STRUCT planning, presentation, and chrome;
-- Preview architecture;
-- BAKE architecture and ffmpeg handoff;
-- audio bed/music graph;
-- render naming/versioning;
-- workspace asset ownership;
-- GUI-to-script mutation contracts;
-- native Linux integration.
-
-The objective is not more prose for its own sake.
-
-The objective is that a technically competent reader can begin with authored text and independently reproduce the same chain:
+If rebuilding the editor from zero, use this order:
 
 ```text
-canonical document
-  -> exact project time
-  -> exact source frame
-  -> deterministic composition
-  -> interactive NLE controls
-  -> preview
-  -> final encoded output
+1. Canonical authored document
+2. Lossless structural ownership / CST
+3. Exact ProjectTime and explicit evaluation seam
+4. Native realtime/audio clock authority
+5. EDIT / TRACK / CLIP model
+6. Model-level add/move/trim/split/transition operations
+7. Persistent leaf-media backend
+8. Exact and nonblocking source-frame delivery
+9. EDIT pixel compositor
+10. Structural recursion
+11. MOSAIC pane composition
+12. STRUCT main-sequence placement planning
+13. Visual NLE controls over authored operations
+14. Program Preview runtime bridge
+15. Exact structural source export
+16. Whole-program structural BAKE
+17. Presentation chrome and dynamic expressions
+18. Audio mux/final output formats
+19. Project-authored render identity and version safety
+20. End-to-end encoded and visual acceptance gates
 ```
 
-When that is possible from the repository alone, the documentation is doing its job.
+Do not reverse the first half of that list.
+
+A polished timeline built before canonical timing/model/media ownership is settled tends to become a second application that later has to be reconciled with the renderer.
+
+---
+
+# Tests are documentation
+
+The strongest tests in this repository describe product truths.
+
+Examples:
+
+```text
+split preserves exact source mapping
+
+hidden source metadata does not shift STRUCT runtime marker identity
+
+EditorScreen preserves CUSTOM STRUCT chrome through NODES → EDIT → close
+
+SceneExporter preserves FULL MOSAIC CUSTOM chrome in encoded H.264
+
+render versions remain monotonic across deleted gaps
+```
+
+When a production bug appears despite green unit tests, add a regression across the missing ownership boundary rather than only adding assertions deeper inside the already-green unit.
+
+`TEST_STRATEGY.md` records the full acceptance ladder.
+
+---
+
+# What is still worth documenting
+
+The reconstruction-critical NLE path is now covered by dedicated subsystem pages.
+
+The next documentation areas should be narrower supporting systems rather than more broad architecture essays:
+
+- workspace/asset import and portability;
+- image-folder ordering/caption sidecars;
+- terminal/presentation tag implementation internals;
+- music/voice preview lifecycle in more operational detail;
+- release/build/packaging procedures;
+- platform parity if macOS/Windows become supported production targets.
+
+The objective is not documentation volume.
+
+The objective is that a technically competent reader can begin with the project document and reproduce this chain without oral explanation:
+
+```text
+canonical authored state
+  → exact project time
+  → exact active clip
+  → exact source frame
+  → deterministic recursive composition
+  → direct-manipulation NLE edits
+  → structural program placement
+  → live Preview
+  → identical final BAKE semantics
+  → safe versioned output
+```
+
+When the repository itself teaches that chain, the documentation is doing its job.
