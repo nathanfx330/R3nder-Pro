@@ -301,6 +301,18 @@ class ProgramStructuralFrameRenderer {
     final double radius = 5.0 * s;
     final RRect window =
         RRect.fromRectAndRadius(rect, Radius.circular(radius));
+    final String renderedTitle = expandStructuralChromeExpressions(
+      windowTitle,
+      frame: sourceFrame,
+    );
+    final String renderedTop = expandStructuralChromeExpressions(
+      topOverlay,
+      frame: sourceFrame,
+    );
+    final String renderedBottom = expandStructuralChromeExpressions(
+      bottomOverlay,
+      frame: sourceFrame,
+    );
 
     final bool faded = opacity < 0.999;
     if (faded) {
@@ -359,12 +371,12 @@ class ProgramStructuralFrameRenderer {
     // has always been a live-preview aid and was never encoded. CUSTOM is
     // explicit authored copy, so it belongs in the program and is baked.
     if (overlayMode == StructuralOverlayMode.custom &&
-        bottomOverlay.isNotEmpty &&
+        renderedBottom.isNotEmpty &&
         client.width > 0.0 &&
         client.height > 0.0) {
       final TextPainter bottom = TextPainter(
         text: TextSpan(
-          text: bottomOverlay,
+          text: renderedBottom,
           style: theme.micro.copyWith(
             color: R3Theme.textMid,
             fontSize: (theme.micro.fontSize ?? 10.5) * s,
@@ -403,7 +415,7 @@ class ProgramStructuralFrameRenderer {
     final double horizontalPad = 14.0 * s;
     final TextPainter left = TextPainter(
       text: TextSpan(
-        text: windowTitle,
+        text: renderedTitle,
         style: theme.value.copyWith(
           color: const Color(0xFFC7C3C0),
           fontSize: 12.0 * s,
@@ -417,7 +429,8 @@ class ProgramStructuralFrameRenderer {
     final String? topText = switch (overlayMode) {
       StructuralOverlayMode.defaultOverlay =>
         'F$sourceFrame / $sourceDurationFrames',
-      StructuralOverlayMode.custom => topOverlay.isEmpty ? null : topOverlay,
+      StructuralOverlayMode.custom =>
+        renderedTop.isEmpty ? null : renderedTop,
       StructuralOverlayMode.none => null,
     };
 
