@@ -60,8 +60,23 @@ String _joinPath(String directoryPath, String fileName) {
   return '$directoryPath${Platform.pathSeparator}$fileName';
 }
 
-String _fileName(String path) =>
-    path.split(RegExp(r'[\\/]+')).where((String part) => part.isNotEmpty).last;
+String _fileName(String path) {
+  final List<String> parts =
+      path.split(RegExp(r'[\\/]+')).where((String part) => part.isNotEmpty).toList();
+  return parts.isEmpty ? '' : parts.last;
+}
+
+String _extensionOf(String fileName) {
+  final int dot = fileName.lastIndexOf('.');
+  return dot <= 0 || dot == fileName.length - 1
+      ? ''
+      : fileName.substring(dot + 1);
+}
+
+String _stemOf(String fileName) {
+  final int dot = fileName.lastIndexOf('.');
+  return dot <= 0 ? fileName : fileName.substring(0, dot);
+}
 
 int _maxExistingVersion({
   required Directory directory,
@@ -83,6 +98,98 @@ int _maxExistingVersion({
     if (version != null && version > maxVersion) maxVersion = version;
   }
   return maxVersion;
+}
+
+/// Returns the last non-empty authored RENDERNAME value.
+///
+/// CONFIG is document state and later CONFIG declarations win everywhere else
+/// in the parser, so render naming follows the same rule. Empty values are
+/// ignored rather than erasing the useful fallback name `output`.
+String? renderNameFromDocument(String? document) {
+  if (document == null || document.isEmpty) return null;
+
+  final RegExp re = RegExp(
+    r'\[CONFIG:RENDERNAME:([^\]\r\n]*)\]',
+    caseSensitive: false,
+  );
+  String? value;
+  for (final RegExpMatch match in re.allMatches(document)) {
+    final String candidate = (match.group(1) ?? '').trim();
+    if (candidate.isNotEmpty) value = candidate;
+  }
+  return value;
+}
+
+/// True only for the historical output path assembled by the dashboard.
+///
+/// SceneExporter is also used directly by tests and lower-level tools whose
+/// requested filenames are already deliberate. Versioning those would be an
+/// API break. The dashboard still asks for `output_1080p.mp4` (or the preroll
+/// form), and this predicate is the seam that upgrades only that legacy path.
+bool isDashboardBakeOutputPath(String path) {
+  final String stem = _stemOf(_fileName(path));
+  return RegExp(
+    r'^(?:preroll_)?output_[A-Za-z0-9.-]+$',
+    caseSensitive: false,
+  ).hasMatch(stem);
+}
+
+/// Converts the dashboard's historical requested path into a versioned plan.
+///
+/// Example: `.../output_1080p.mp4` plus render name `Documentary Cut` becomes
+/// `.../Documentary_Cut_1080p_v001.mp4`. The caller decides whether a matte
+/// companion is part of the same reservation.
+RenderOutputPlan planVersionedDashboardOutput({
+  required String requestedOutputPath,
+  String? renderNameOverride,
+  bool includeMatteCompanion = false,
+}) {
+  final File requested = File(requestedOutputPath);
+  final String fileName = _fileName(requestedOutputPath);
+  final String extension = _extensionOf(fileName);
+  if (extension.isEmpty) {
+    throw ArgumentError.value(
+      requestedOutputPath,
+      'requestedOutputPath',
+      'Dashboard bake path must include a file extension.',
+    );
+  }
+
+  String stem = _stemOf(fileName);
+  bool preroll = false;
+  if (stem.toLowerCase().startsWith('preroll_')) {
+    preroll = true;
+    stem = stem.substring('preroll_'.length);
+  }
+
+  final RegExpMatch? match =
+      RegExp(r'^output_(.+)$', caseSensitive: false).firstMatch(stem);
+  if (match == null) {
+    throw ArgumentError.value(
+      requestedOutputPath,
+      'requestedOutputPath',
+      'Not a dashboard output_<resolution> bake path.',
+    );
+  }
+
+  final String resolution = (match.group(1) ?? '').trim();
+  if (resolution.isEmpty) {
+    throw ArgumentError.value(
+      requestedOutputPath,
+      'requestedOutputPath',
+      'Dashboard bake path is missing its resolution label.',
+    );
+  }
+
+  final String authored = renderNameOverride?.trim() ?? '';
+  return planNextRenderOutput(
+    directoryPath: requested.parent.path,
+    renderName: authored.isEmpty ? 'output' : authored,
+    resolutionLabel: resolution,
+    extension: extension,
+    preroll: preroll,
+    includeMatteCompanion: includeMatteCompanion,
+  );
 }
 
 RenderOutputPlan planNextRenderOutput({
