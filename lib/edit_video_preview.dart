@@ -93,6 +93,12 @@ class EditVideoPreview extends StatefulWidget {
   /// cost, never project-time selection or source-frame mapping.
   final bool fastPreview;
 
+  /// The small lower-left MLT/project diagnostic is cosmetic presentation
+  /// chrome. Structural placement can hide it or replace its text without
+  /// affecting decoder state, project time, or center-screen error messages.
+  final bool showDiagnosticOverlay;
+  final String? diagnosticOverlayText;
+
   /// Optional seams for widget tests and alternate decoder experiments.
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
@@ -115,6 +121,8 @@ class EditVideoPreview extends StatefulWidget {
     required this.theme,
     this.isPlaying = false,
     this.fastPreview = false,
+    this.showDiagnosticOverlay = true,
+    this.diagnosticOverlayText,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -719,23 +727,25 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                         ),
                       ),
                     ),
-                  Positioned(
-                    left: sc(8),
-                    bottom: sc(7),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: sc(6),
-                        vertical: sc(3),
-                      ),
-                      color: Colors.black.withValues(alpha: 0.72),
-                      child: Text(
-                        metadata.label(widget.sourceRef),
-                        style: widget.theme.micro.copyWith(
-                          color: R3Theme.textMid,
+                  if (widget.showDiagnosticOverlay)
+                    Positioned(
+                      left: sc(8),
+                      bottom: sc(7),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: sc(6),
+                          vertical: sc(3),
+                        ),
+                        color: Colors.black.withValues(alpha: 0.72),
+                        child: Text(
+                          widget.diagnosticOverlayText ??
+                              metadata.label(widget.sourceRef),
+                          style: widget.theme.micro.copyWith(
+                            color: R3Theme.textMid,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               );
             },
