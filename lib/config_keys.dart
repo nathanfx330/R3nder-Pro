@@ -79,8 +79,10 @@ class ConfigKeySpec {
 }
 
 /// Every CONFIG key R3nder understands, in the order the dropdown shows
-/// them: the three that change how text looks, then the two that change
-/// what mode the engine runs in, then motion, then caption typography.
+/// them: visual settings first, then presentation/timing behavior, then
+/// output identity. Keeping render naming here makes it ordinary document
+/// state: it travels with the script and is editable from the same first-class
+/// CONFIG node UI as the rest of the authoring surface.
 const List<ConfigKeySpec> kConfigKeys = [
   ConfigKeySpec(
     key: 'SIZE',
@@ -137,6 +139,13 @@ const List<ConfigKeySpec> kConfigKeys = [
     kind: ConfigValueKind.compound,
     blurb: 'Typography for MOSAIC caption bands',
     sampleValue: 'CENTER:22',
+  ),
+  ConfigKeySpec(
+    key: 'RENDERNAME',
+    defaultValue: 'output',
+    kind: ConfigValueKind.text,
+    blurb: 'Base name for versioned BAKE outputs',
+    sampleValue: 'documentary_cut',
   ),
 ];
 
