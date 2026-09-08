@@ -78,6 +78,113 @@ int _lightNeutralPixels(Uint8List rgba, int width, Rect region) {
   return count;
 }
 
+Future<Uint8List> _renderShowingFrame(
+  WidgetTester tester,
+  String source, {
+  required int sourceFrame,
+}) async {
+  const int width = 640;
+  const int height = 360;
+
+  final Directory root =
+      Directory.systemTemp.createTempSync('r3_struct_chrome_bake_');
+  final Directory images = Directory('${root.path}/images')
+    ..createSync(recursive: true);
+  final Directory sprites = Directory('${root.path}/sprites')
+    ..createSync(recursive: true);
+
+  final CompiledScript compiled = compileScript(source, lineMarkers: false);
+  final SceneEngine scene = SceneEngine();
+  final ProgramStructuralFrameRenderer renderer =
+      ProgramStructuralFrameRenderer(
+    rawDocument: source,
+    width: width,
+    height: height,
+    backend: _SolidBackend(),
+    resolveSource: (String value) => value,
+  );
+
+  addTearDown(() {
+    renderer.dispose();
+    scene.disposeImages();
+    if (root.existsSync()) root.deleteSync(recursive: true);
+  });
+
+  await tester.runAsync(() async {
+    await scene.setup(
+      templateText: compiled.engineText,
+      fontColor: Colors.green,
+      bgColor: Colors.black,
+      width: width.toDouble(),
+      height: height.toDouble(),
+      scale: 1,
+      fontPath: 'monospace',
+      fontSize: 18,
+      lineSpacing: 22,
+      tracking: 0,
+      marginTop: 20,
+      marginSide: 20,
+      imagesDir: images.path,
+      spritesDir: sprites.path,
+      paneLifeConfig: compiled.paneLife,
+      captionConfig: compiled.caption,
+      appSwitchConfig: compiled.appSwitch,
+    );
+  });
+
+  final StructuralSequencePlacement placement =
+      parseStructuralSequencePlacements(source).single;
+  int? showingProjectFrame;
+  for (int projectFrame = 0; projectFrame < 400; projectFrame++) {
+    final SceneEvaluationResult result = scene.evaluate(
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+    );
+    expect(result.exact, isTrue);
+    final StructuralRuntimeMarker? marker =
+        parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (marker == null) continue;
+    final int local = _runtimeLocalFrame(scene, marker);
+    if (placement.stageAt(local) == StructuralSequenceStage.showing &&
+        placement.sourceFrameAt(local) == sourceFrame) {
+      showingProjectFrame = projectFrame;
+      break;
+    }
+  }
+  expect(showingProjectFrame, isNotNull);
+
+  scene.evaluate(
+    ProjectTime(
+      frame: showingProjectFrame!,
+      mode: ProjectClockMode.scrub,
+    ),
+  );
+
+  final Uint8List? rgba = await tester.runAsync<Uint8List?>(() async {
+    final ui.Image? image = await renderer.renderIfActive(
+      scene: scene,
+      fontFamily: 'monospace',
+    );
+    if (image == null) return null;
+
+    try {
+      final ByteData? data =
+          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (data == null) return null;
+      return Uint8List.fromList(
+        data.buffer.asUint8List(
+          data.offsetInBytes,
+          data.lengthInBytes,
+        ),
+      );
+    } finally {
+      image.dispose();
+    }
+  });
+
+  expect(rgba, isNotNull);
+  return rgba!;
+}
+
 void main() {
   testWidgets('final STRUCT bake raster contains DEFAULT technical chrome',
       (WidgetTester tester) async {
@@ -93,102 +200,8 @@ void main() {
 [STRUCT:EDIT.main]
 ''';
 
-    final Directory root =
-        Directory.systemTemp.createTempSync('r3_struct_chrome_bake_');
-    final Directory images = Directory('${root.path}/images')
-      ..createSync(recursive: true);
-    final Directory sprites = Directory('${root.path}/sprites')
-      ..createSync(recursive: true);
-    addTearDown(() {
-      if (root.existsSync()) root.deleteSync(recursive: true);
-    });
-
-    final CompiledScript compiled = compileScript(source, lineMarkers: false);
-    final SceneEngine scene = SceneEngine();
-    final ProgramStructuralFrameRenderer renderer =
-        ProgramStructuralFrameRenderer(
-      rawDocument: source,
-      width: width,
-      height: height,
-      backend: _SolidBackend(),
-      resolveSource: (String value) => value,
-    );
-    addTearDown(() {
-      renderer.dispose();
-      scene.disposeImages();
-    });
-
-    await tester.runAsync(() async {
-      await scene.setup(
-        templateText: compiled.engineText,
-        fontColor: Colors.green,
-        bgColor: Colors.black,
-        width: width.toDouble(),
-        height: height.toDouble(),
-        scale: 1,
-        fontPath: 'monospace',
-        fontSize: 18,
-        lineSpacing: 22,
-        tracking: 0,
-        marginTop: 20,
-        marginSide: 20,
-        imagesDir: images.path,
-        spritesDir: sprites.path,
-        paneLifeConfig: compiled.paneLife,
-        captionConfig: compiled.caption,
-        appSwitchConfig: compiled.appSwitch,
-      );
-    });
-
-    final StructuralSequencePlacement placement =
-        parseStructuralSequencePlacements(source).single;
-    int? showingProjectFrame;
-    for (int projectFrame = 0; projectFrame < 400; projectFrame++) {
-      final SceneEvaluationResult result = scene.evaluate(
-        ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
-      );
-      expect(result.exact, isTrue);
-      final StructuralRuntimeMarker? marker =
-          parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-      if (marker == null) continue;
-      final int local = _runtimeLocalFrame(scene, marker);
-      if (placement.stageAt(local) == StructuralSequenceStage.showing &&
-          placement.sourceFrameAt(local) == 1) {
-        showingProjectFrame = projectFrame;
-        break;
-      }
-    }
-    expect(showingProjectFrame, isNotNull);
-
-    scene.evaluate(
-      ProjectTime(
-        frame: showingProjectFrame!,
-        mode: ProjectClockMode.scrub,
-      ),
-    );
-
-    final Uint8List? rgba = await tester.runAsync<Uint8List?>(() async {
-      final ui.Image? image = await renderer.renderIfActive(
-        scene: scene,
-        fontFamily: 'monospace',
-      );
-      if (image == null) return null;
-
-      try {
-        final ByteData? data =
-            await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-        if (data == null) return null;
-        return Uint8List.fromList(
-          data.buffer.asUint8List(
-            data.offsetInBytes,
-            data.lengthInBytes,
-          ),
-        );
-      } finally {
-        image.dispose();
-      }
-    });
-    expect(rgba, isNotNull);
+    final Uint8List rgba =
+        await _renderShowingFrame(tester, source, sourceFrame: 1);
 
     final Rect window = structuralProgramTargetRectForOutput(
       outputWidth: width,
@@ -211,7 +224,7 @@ void main() {
     );
 
     expect(
-      _lightNeutralPixels(rgba!, width, header),
+      _lightNeutralPixels(rgba, width, header),
       greaterThan(20),
       reason: 'DEFAULT title/frame-count text must rasterize into final BAKE.',
     );
@@ -219,6 +232,52 @@ void main() {
       _lightNeutralPixels(rgba, width, bottomOverlay),
       greaterThan(5),
       reason: 'DEFAULT technical lower overlay must rasterize into final BAKE.',
+    );
+  });
+
+  testWidgets(
+      'fullscreen CUSTOM STRUCT bake raster contains title top bottom and frame expression',
+      (WidgetTester tester) async {
+    const int width = 640;
+    const int height = 360;
+    const String source = '''[SPEED:MAX]
+[EDIT:main]
+[TRACK:V1]
+[CLIP:leaf:leaf.mp4:0:0:4:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.main:FULL:OVERLAY=CUSTOM:TITLE="MONITOR [frame]":TOP="FRAME [frame]":BOTTOM="REEL [frame]"]
+''';
+
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(source).single;
+    expect(placement.presentationMode, StructuralPresentationMode.fullscreen);
+    expect(placement.overlayMode.name, 'custom');
+    expect(placement.windowTitle, 'MONITOR [frame]');
+    expect(placement.topOverlay, 'FRAME [frame]');
+    expect(placement.bottomOverlay, 'REEL [frame]');
+
+    final Uint8List rgba =
+        await _renderShowingFrame(tester, source, sourceFrame: 1);
+
+    const Rect header = Rect.fromLTWH(0, 0, width.toDouble(), 38);
+    const Rect bottomOverlay = Rect.fromLTWH(
+      0,
+      height - 45.0,
+      width * 0.55,
+      40,
+    );
+
+    expect(
+      _lightNeutralPixels(rgba, width, header),
+      greaterThan(20),
+      reason: 'FULL CUSTOM title/top text must rasterize into final BAKE.',
+    );
+    expect(
+      _lightNeutralPixels(rgba, width, bottomOverlay),
+      greaterThan(5),
+      reason: 'FULL CUSTOM lower text must rasterize into final BAKE.',
     );
   });
 }
