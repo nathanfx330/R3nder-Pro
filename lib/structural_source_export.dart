@@ -36,6 +36,37 @@ import 'exporter.dart';
 import 'media_layer.dart';
 import 'project_clock.dart';
 
+/// One exact offline structural frame plus the same composition metadata live
+/// preview uses for its technical diagnostic overlay.
+///
+/// The pixels remain the canonical export product. Metadata is observational:
+/// it cannot change duration, source-frame selection, or decode policy. It is
+/// exposed so higher-level program BAKE can render DEFAULT player chrome from
+/// the same facts Editor preview reports instead of inventing a second label.
+class StructuralSourceRenderedFrame {
+  final Uint8List rgba;
+  final MediaFrame? topFrame;
+  final int contributorCount;
+  final int projectFrame;
+
+  const StructuralSourceRenderedFrame({
+    required this.rgba,
+    required this.topFrame,
+    required this.contributorCount,
+    required this.projectFrame,
+  });
+
+  String diagnosticLabel(String sourceRef) {
+    final MediaFrame? current = topFrame;
+    if (current == null) return '$sourceRef  F$projectFrame';
+    return '${current.trackId} / ${current.clipId}   '
+        'P$projectFrame   '
+        'SRC ${current.requestedSourceFrame}'
+        '${current.actualSourceFrame == null ? '' : '→${current.actualSourceFrame}'}   '
+        'LAYERS $contributorCount';
+  }
+}
+
 class StructuralSourceFrameRenderer {
   final EditDocumentModel model;
   final StructuralSourceRef root;
@@ -121,7 +152,9 @@ class StructuralSourceFrameRenderer {
 
   int get totalFrames => model.structuralSourceFrameCount(root);
 
-  Uint8List renderFrame(int projectFrame) {
+  Uint8List renderFrame(int projectFrame) => renderFrameDetailed(projectFrame).rgba;
+
+  StructuralSourceRenderedFrame renderFrameDetailed(int projectFrame) {
     _checkAlive();
     if (projectFrame < 0 || projectFrame >= totalFrames) {
       throw RangeError.range(
@@ -168,6 +201,19 @@ class StructuralSourceFrameRenderer {
       }
     }
 
+    final Uint8List packed = _packResultRgba(result, projectFrame);
+    return StructuralSourceRenderedFrame(
+      rgba: packed,
+      topFrame: result.topFrame,
+      contributorCount: result.contributors.length,
+      projectFrame: projectFrame,
+    );
+  }
+
+  Uint8List _packResultRgba(
+    EditVideoCompositeResult result,
+    int projectFrame,
+  ) {
     // An authored gap is a legitimate transparent frame. It is different from
     // an offline source, which was rejected above.
     final Uint8List? rgba = result.rgba;
