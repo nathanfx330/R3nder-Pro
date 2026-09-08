@@ -198,6 +198,7 @@ class ProgramStructuralFrameRenderer {
       _paintStructuralWindow(
         canvas: canvas,
         scene: scene,
+        fontFamily: fontFamily,
         sourceFrame: visual.sourceFrame,
         sourceDurationFrames: placement.sourceDurationFrames,
         windowTitle: placement.effectiveWindowTitle,
@@ -279,6 +280,7 @@ class ProgramStructuralFrameRenderer {
   void _paintStructuralWindow({
     required Canvas canvas,
     required SceneEngine scene,
+    required String fontFamily,
     required int sourceFrame,
     required int sourceDurationFrames,
     required String windowTitle,
@@ -378,6 +380,7 @@ class ProgramStructuralFrameRenderer {
         text: TextSpan(
           text: renderedBottom,
           style: theme.micro.copyWith(
+            fontFamily: fontFamily,
             color: R3Theme.textMid,
             fontSize: (theme.micro.fontSize ?? 10.5) * s,
             letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
@@ -417,6 +420,7 @@ class ProgramStructuralFrameRenderer {
       text: TextSpan(
         text: renderedTitle,
         style: theme.value.copyWith(
+          fontFamily: fontFamily,
           color: const Color(0xFFC7C3C0),
           fontSize: 12.0 * s,
         ),
@@ -441,6 +445,7 @@ class ProgramStructuralFrameRenderer {
         text: TextSpan(
           text: topText,
           style: theme.micro.copyWith(
+            fontFamily: fontFamily,
             color: const Color(0xFF8E8884),
             fontSize: (theme.micro.fontSize ?? 10.5) * s,
             letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
