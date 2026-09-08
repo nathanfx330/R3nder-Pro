@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
+import 'structural_chrome.dart';
 import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
@@ -197,9 +198,12 @@ class ProgramStructuralFrameRenderer {
       _paintStructuralWindow(
         canvas: canvas,
         scene: scene,
-        source: placement.sourceRef.canonicalSource,
         sourceFrame: visual.sourceFrame,
         sourceDurationFrames: placement.sourceDurationFrames,
+        windowTitle: placement.effectiveWindowTitle,
+        overlayMode: placement.overlayMode,
+        topOverlay: placement.topOverlay,
+        bottomOverlay: placement.bottomOverlay,
         rect: _pixelRect(visual.structuralRect),
         sourceImage: sourceImage,
         opacity: visual.structuralOpacity,
@@ -275,9 +279,12 @@ class ProgramStructuralFrameRenderer {
   void _paintStructuralWindow({
     required Canvas canvas,
     required SceneEngine scene,
-    required String source,
     required int sourceFrame,
     required int sourceDurationFrames,
+    required String windowTitle,
+    required StructuralOverlayMode overlayMode,
+    required String topOverlay,
+    required String bottomOverlay,
     required Rect rect,
     required ui.Image? sourceImage,
     required double opacity,
@@ -346,6 +353,44 @@ class ProgramStructuralFrameRenderer {
       _drawImageContain(canvas, sourceImage, client);
     }
 
+    final R3Theme theme = R3Theme.of(scene.terminal.fontColor);
+
+    // DEFAULT preserves historical BAKE output: the lower-left MLT diagnostic
+    // has always been a live-preview aid and was never encoded. CUSTOM is
+    // explicit authored copy, so it belongs in the program and is baked.
+    if (overlayMode == StructuralOverlayMode.custom &&
+        bottomOverlay.isNotEmpty &&
+        client.width > 0.0 &&
+        client.height > 0.0) {
+      final TextPainter bottom = TextPainter(
+        text: TextSpan(
+          text: bottomOverlay,
+          style: theme.micro.copyWith(
+            color: R3Theme.textMid,
+            fontSize: (theme.micro.fontSize ?? 10.5) * s,
+            letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+          ),
+        ),
+        maxLines: 1,
+        ellipsis: '…',
+        textDirection: TextDirection.ltr,
+      );
+      bottom.layout(maxWidth: math.max(0.0, client.width - 28.0 * s));
+      final double padX = 6.0 * s;
+      final double padY = 3.0 * s;
+      final Rect plate = Rect.fromLTWH(
+        client.left + 8.0 * s,
+        client.bottom - 7.0 * s - bottom.height - padY * 2.0,
+        bottom.width + padX * 2.0,
+        bottom.height + padY * 2.0,
+      );
+      canvas.drawRect(
+        plate,
+        Paint()..color = Colors.black.withValues(alpha: 0.72),
+      );
+      bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
+    }
+
     canvas.drawRect(header, Paint()..color = const Color(0xFF33302F));
     canvas.drawLine(
       Offset(header.left, header.bottom),
@@ -355,11 +400,10 @@ class ProgramStructuralFrameRenderer {
         ..color = const Color(0xFF474341),
     );
 
-    final R3Theme theme = R3Theme.of(scene.terminal.fontColor);
     final double horizontalPad = 14.0 * s;
     final TextPainter left = TextPainter(
       text: TextSpan(
-        text: source,
+        text: windowTitle,
         style: theme.value.copyWith(
           color: const Color(0xFFC7C3C0),
           fontSize: 12.0 * s,
@@ -369,31 +413,47 @@ class ProgramStructuralFrameRenderer {
       ellipsis: '…',
       textDirection: TextDirection.ltr,
     );
-    final TextPainter right = TextPainter(
-      text: TextSpan(
-        text: 'F$sourceFrame / $sourceDurationFrames',
-        style: theme.micro.copyWith(
-          color: const Color(0xFF8E8884),
-          fontSize: (theme.micro.fontSize ?? 10.5) * s,
-          letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
-        ),
-      ),
-      maxLines: 1,
-      textDirection: TextDirection.ltr,
-    );
 
-    right.layout(maxWidth: math.max(0.0, header.width * 0.42));
-    final double rightX = header.right - horizontalPad - right.width;
+    final String? topText = switch (overlayMode) {
+      StructuralOverlayMode.defaultOverlay =>
+        'F$sourceFrame / $sourceDurationFrames',
+      StructuralOverlayMode.custom => topOverlay.isEmpty ? null : topOverlay,
+      StructuralOverlayMode.none => null,
+    };
+
+    TextPainter? right;
+    double rightX = header.right - horizontalPad;
+    if (topText != null) {
+      right = TextPainter(
+        text: TextSpan(
+          text: topText,
+          style: theme.micro.copyWith(
+            color: const Color(0xFF8E8884),
+            fontSize: (theme.micro.fontSize ?? 10.5) * s,
+            letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+          ),
+        ),
+        maxLines: 1,
+        ellipsis: '…',
+        textDirection: TextDirection.ltr,
+      );
+      right.layout(maxWidth: math.max(0.0, header.width * 0.42));
+      rightX -= right.width;
+    }
+
     final double labelMax = math.max(
       0.0,
-      rightX - (header.left + horizontalPad) - 10.0 * s,
+      rightX - (header.left + horizontalPad) -
+          (right == null ? 0.0 : 10.0 * s),
     );
     left.layout(maxWidth: labelMax);
 
     final double leftY = header.top + (header.height - left.height) / 2.0;
-    final double rightY = header.top + (header.height - right.height) / 2.0;
     left.paint(canvas, Offset(header.left + horizontalPad, leftY));
-    right.paint(canvas, Offset(rightX, rightY));
+    if (right != null) {
+      final double rightY = header.top + (header.height - right.height) / 2.0;
+      right.paint(canvas, Offset(rightX, rightY));
+    }
     canvas.restore();
 
     if (faded) canvas.restore();
