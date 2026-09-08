@@ -2,7 +2,7 @@
 
 This file is the executable index of R3nder Pro's architectural contracts.
 
-Its purpose is simple: when documentation says a subsystem guarantees something, the repository should name the tests or measurements that prove that guarantee. If one of those proof files is deleted or renamed, `dart run tool/check_doc_contracts.dart` must fail until this manifest is deliberately repaired.
+Its purpose is simple: when documentation says a subsystem guarantees something, the repository should name the tests or measurements that prove that guarantee. If one of those proof files is deleted or renamed, `dart run tool/check_doc_contracts.dart` and the normal Flutter test suite must fail until this manifest is deliberately repaired.
 
 This is not a list of every test. It is the minimum proof spine another engineer should preserve when rebuilding or refactoring the editor.
 
@@ -264,6 +264,19 @@ When the product is wrong but parser/painter/compositor tests are green, the nex
 
 ---
 
+## 16. The written proof map cannot silently detach from the repository
+
+**Contract**
+
+Every numbered contract in this manifest must name at least one real repository proof artifact. Renaming or deleting a cited test/probe/visual gate must fail both the standalone documentation check and the normal Flutter test suite until the manifest is deliberately updated.
+
+**Proof**
+
+- `tool/check_doc_contracts.dart`
+- `test/documentation_contract_manifest_test.dart`
+
+---
+
 # Drift check
 
 Run from the repository root:
@@ -272,6 +285,12 @@ Run from the repository root:
 dart run tool/check_doc_contracts.dart
 ```
 
-The checker reads this manifest and verifies that every backticked repository proof path in the contract sections still exists. A renamed or removed proof file is therefore a documentation failure, not silent drift.
+The same rule is also enforced by:
+
+```bash
+flutter test test/documentation_contract_manifest_test.dart
+```
+
+The checker reads this manifest and verifies that every numbered contract declares proof and every backticked repository proof path still exists. A renamed or removed proof file is therefore a test failure, not silent documentation drift.
 
 The checker deliberately does **not** claim that file existence proves behavioral correctness. The actual tests and probes still have to run. Its job is narrower: keep the written contract map attached to real repository artifacts.
