@@ -5,9 +5,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/engine.dart';
 import 'package:r3nder/exporter.dart';
 import 'package:r3nder/media_layer.dart';
-import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
@@ -83,9 +83,10 @@ void main() {
 [STRUCT:EDIT.main:FULL:OVERLAY=CUSTOM:TITLE="MONITOR [frame]":TOP="FRAME [frame]":BOTTOM="REEL [frame]"]
 ''';
 
-    final ProcessResult ffmpegCheck = await tester.runAsync<ProcessResult>(
+    final ProcessResult ffmpegCheck =
+        (await tester.runAsync<ProcessResult>(
       () => Process.run('ffmpeg', ['-version']),
-    );
+    ))!;
     expect(ffmpegCheck.exitCode, 0, reason: 'ffmpeg is required for BAKE.');
 
     final StructuralSequencePlacement placement =
@@ -133,7 +134,7 @@ void main() {
       );
     });
 
-    final ExportResult result = await tester.runAsync<ExportResult>(() {
+    final ExportResult result = (await tester.runAsync<ExportResult>(() {
       return SceneExporter.export(
         scene: scene,
         fontFamily: 'monospace',
@@ -146,12 +147,13 @@ void main() {
         resolveStructuralSource: (String value) => value,
         structuralBackend: _SolidBackend(),
       );
-    });
+    }))!;
 
     expect(result.success, isTrue, reason: result.error);
     expect(File(output).existsSync(), isTrue);
 
-    final ProcessResult decodeResult = await tester.runAsync<ProcessResult>(
+    final ProcessResult decodeResult =
+        (await tester.runAsync<ProcessResult>(
       () => Process.run(
         'ffmpeg',
         <String>[
@@ -167,7 +169,7 @@ void main() {
           decoded,
         ],
       ),
-    );
+    ))!;
     expect(decodeResult.exitCode, 0, reason: '${decodeResult.stderr}');
 
     final Uint8List all = File(decoded).readAsBytesSync();
