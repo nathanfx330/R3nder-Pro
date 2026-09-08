@@ -52,7 +52,7 @@ class StructuralChromeControls extends StatelessWidget {
           key: const ValueKey<String>('struct-window-title'),
           label: 'Window title',
           controller: windowTitleController,
-          hintText: 'Uses the STRUCT source name when blank',
+          hintText: 'Blank uses source name · [frame] is live',
           onChanged: onWindowTitleChanged,
         ),
         SizedBox(height: sc(16)),
@@ -82,7 +82,7 @@ class StructuralChromeControls extends StatelessWidget {
             key: const ValueKey<String>('struct-top-overlay'),
             label: 'Custom top',
             controller: topOverlayController,
-            hintText: 'Right side of the window title bar',
+            hintText: 'Example: FRAME [frame]',
             onChanged: onTopOverlayChanged,
           ),
           SizedBox(height: sc(12)),
@@ -90,15 +90,15 @@ class StructuralChromeControls extends StatelessWidget {
             key: const ValueKey<String>('struct-bottom-overlay'),
             label: 'Custom bottom',
             controller: bottomOverlayController,
-            hintText: 'Lower-left player overlay',
+            hintText: 'Example: REEL 4 · SRC [frame]',
             onChanged: onBottomOverlayChanged,
           ),
         ],
         SizedBox(height: sc(6)),
         Text(
           mode == StructuralOverlayMode.custom
-              ? 'CUSTOM COPY IS PLACEMENT-OWNED AND BAKES WITH THIS STRUCT.'
-              : 'CUSTOM COPY IS KEPT WHEN YOU SWITCH MODES AND RETURNS WHEN CUSTOM IS SELECTED AGAIN.',
+              ? 'CUSTOM COPY IS PLACEMENT-OWNED AND BAKES WITH THIS STRUCT. [frame] INSERTS THE LIVE STRUCTURAL SOURCE FRAME.'
+              : 'CUSTOM COPY IS KEPT WHEN YOU SWITCH MODES AND RETURNS WHEN CUSTOM IS SELECTED AGAIN. [frame] ALSO WORKS IN WINDOW TITLE.',
           style: theme.fine.copyWith(
             color: R3Theme.textDim,
             height: 1.35,
