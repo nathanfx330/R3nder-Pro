@@ -297,19 +297,20 @@ class StructuralAudioLeafDecode {
 
   bool get hasAudio => status == StructuralAudioLeafDecodeStatus.decoded;
 
-  int get sourceSampleFrames => interleavedStereo.length ~/ kStructuralAudioChannels;
+  int get sourceSampleFrames =>
+      interleavedStereo.length ~/ kStructuralAudioChannels;
 }
 
 class StructuralAudioProcessResult {
   final int exitCode;
   final String stdoutText;
-  final Uint8List stdoutBytes;
+  final Uint8List? stdoutBytes;
   final String stderrText;
 
   const StructuralAudioProcessResult({
     required this.exitCode,
     this.stdoutText = '',
-    this.stdoutBytes = const <int>[],
+    this.stdoutBytes,
     this.stderrText = '',
   });
 }
@@ -342,8 +343,8 @@ class LocalStructuralAudioProcessRunner implements StructuralAudioProcessRunner 
       exitCode: result.exitCode,
       stdoutText: binaryStdout ? '' : '${result.stdout}',
       stdoutBytes: binaryStdout
-          ? Uint8List.fromList((result.stdout as List<int>))
-          : Uint8List(0),
+          ? Uint8List.fromList(result.stdout as List<int>)
+          : null,
       stderrText: '${result.stderr}',
     );
   }
@@ -425,10 +426,10 @@ class StructuralAudioLeafDecoder {
     Map<String, dynamic>? audio;
     for (final Object? raw in rawStreams) {
       if (raw is! Map) continue;
-      final Map<String, dynamic> stream = <String, dynamic>{
-        for (final MapEntry<Object?, Object?> entry in raw.entries)
-          '${entry.key}': entry.value,
-      };
+      final Map<String, dynamic> stream = <String, dynamic>{};
+      raw.forEach((Object? key, Object? value) {
+        stream['$key'] = value;
+      });
       final String type = '${stream['codec_type'] ?? ''}'.trim();
       if (type == 'video' && video == null) video = stream;
       if (type == 'audio' && audio == null) audio = stream;
@@ -440,8 +441,9 @@ class StructuralAudioLeafDecoder {
       );
     }
 
-    final (int, int)? fps = _positiveRational('${video['avg_frame_rate'] ?? ''}') ??
-        _positiveRational('${video['r_frame_rate'] ?? ''}');
+    final (int, int)? fps =
+        _positiveRational('${video['avg_frame_rate'] ?? ''}') ??
+            _positiveRational('${video['r_frame_rate'] ?? ''}');
     if (fps == null) {
       throw StructuralAudioDecodeException(
         'Leaf media "$resolvedPath" has no usable video frame rate.',
@@ -456,9 +458,11 @@ class StructuralAudioLeafDecoder {
       );
     }
 
-    final int sampleRate = int.tryParse('${audio['sample_rate'] ?? ''}') ?? 0;
+    final int sampleRate =
+        int.tryParse('${audio['sample_rate'] ?? ''}') ?? 0;
     final int channels = int.tryParse('${audio['channels'] ?? ''}') ?? 0;
-    final String layout = '${audio['channel_layout'] ?? ''}'.trim().toLowerCase();
+    final String layout =
+        '${audio['channel_layout'] ?? ''}'.trim().toLowerCase();
     if (sampleRate <= 0 || channels <= 0) {
       throw StructuralAudioDecodeException(
         'Audio stream in "$resolvedPath" has invalid rate/channel metadata.',
@@ -488,7 +492,8 @@ class StructuralAudioLeafDecoder {
       );
     }
 
-    final StructuralAudioSourceInfo info = sourceInfo ?? await probe(resolvedPath);
+    final StructuralAudioSourceInfo info =
+        sourceInfo ?? await probe(resolvedPath);
     if (!info.hasAudio) {
       return StructuralAudioLeafDecode.noAudio(
         sourceInfo: info,
@@ -537,11 +542,9 @@ class StructuralAudioLeafDecoder {
       );
     }
 
-    final Float32List decoded = _decodeFloat32LeStereo(result.stdoutBytes);
-    final Float32List required = _trimDecodeMargin(
-      decoded,
-      window,
-    );
+    final Float32List decoded =
+        _decodeFloat32LeStereo(result.stdoutBytes ?? Uint8List(0));
+    final Float32List required = _trimDecodeMargin(decoded, window);
 
     return StructuralAudioLeafDecode.decoded(
       sourceInfo: info,
@@ -648,7 +651,10 @@ int _projectFadeFrames(StructuralAudioFade? fade) {
   if (slash <= 0 || slash == value.length - 1) return null;
   final int? numerator = int.tryParse(value.substring(0, slash));
   final int? denominator = int.tryParse(value.substring(slash + 1));
-  if (numerator == null || denominator == null || numerator <= 0 || denominator <= 0) {
+  if (numerator == null ||
+      denominator == null ||
+      numerator <= 0 ||
+      denominator <= 0) {
     return null;
   }
   final int divisor = _gcd(numerator, denominator);
@@ -657,7 +663,11 @@ int _projectFadeFrames(StructuralAudioFade? fade) {
 
 String _secondsFromCanonicalSampleFrame(int sampleFrame) {
   if (sampleFrame < 0) {
-    throw ArgumentError.value(sampleFrame, 'sampleFrame', 'Must be non-negative.');
+    throw ArgumentError.value(
+      sampleFrame,
+      'sampleFrame',
+      'Must be non-negative.',
+    );
   }
 
   const int scale = 1000000000000;

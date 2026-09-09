@@ -151,7 +151,10 @@ void main() {
     expect(result.sourceSampleFrames, 1600);
     expect(result.interleavedStereo.first, 256.0);
     expect(result.interleavedStereo[1], -256.0);
-    expect(result.interleavedStereo[result.interleavedStereo.length - 2], 1855.0);
+    expect(
+      result.interleavedStereo[result.interleavedStereo.length - 2],
+      1855.0,
+    );
     expect(result.interleavedStereo.last, -1855.0);
 
     expect(runner.calls, hasLength(1));
@@ -299,8 +302,8 @@ void main() {
     final StructuralAudioLeafDecoder decoder =
         StructuralAudioLeafDecoder(runner: runner);
 
-    expect(
-      () => decoder.decodeLeaf(
+    await expectLater(
+      decoder.decodeLeaf(
         segment: segment,
         resolvedPath: info.path,
         sourceInfo: info,
@@ -316,7 +319,8 @@ void main() {
   });
 
   test('full ffmpeg version output is exposed for future source cache identity', () async {
-    const String version = 'ffmpeg version 9.0.1\nconfiguration: --enable-gpl\nlibswresample 6.0';
+    const String version =
+        'ffmpeg version 9.0.1\nconfiguration: --enable-gpl\nlibswresample 6.0';
     final _FakeRunner runner = _FakeRunner(<_QueuedResult>[
       const _QueuedResult(
         'ffmpeg',
