@@ -166,6 +166,32 @@ void main() {
     expect(_leftAt(render, 1598), closeTo(799.0, 1e-5));
   });
 
+  test('24fps 4/5 conform preserves natural source-time audio rate', () async {
+    const String script = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:conform:video/24fps.mp4:0:0:1:4/5]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
+    final _FakeLeafDecoder decoder = _FakeLeafDecoder(
+      fpsByPath: const <String, (int, int)>{
+        '/workspace/video/24fps.mp4': (24, 1),
+      },
+      sampleValue: (String path, int sample, int channel) => sample / 10000.0,
+    );
+    final StructuralAudioSourceRender render =
+        await _renderer(script, decoder).render('EDIT.main');
+
+    // A 24 fps source authored at 4/5 source frames per 30 fps project frame
+    // consumes exactly 1/30 second of source time per project frame. At 48 kHz
+    // that is one source sample for every project sample: natural-speed audio.
+    expect(_leftAt(render, 0), 0.0);
+    expect(_leftAt(render, 1), closeTo(0.0001, 1e-7));
+    expect(_leftAt(render, 799), closeTo(0.0799, 1e-6));
+    expect(_leftAt(render, 1599), closeTo(0.1599, 1e-6));
+  });
+
   test('overlapping CROSSFADE segments use midpoint equal-power gains', () async {
     const String script = '''[EDIT:main]
 [TRACK:V1]
@@ -291,7 +317,10 @@ void main() {
         await _renderer(script, decoder).render('EDIT.main');
 
     expect(render.sampleFrames, 4 * 1600);
-    expect(render.interleavedStereo.every((double sample) => sample == 0.0), isTrue);
+    expect(
+      render.interleavedStereo.every((double sample) => sample == 0.0),
+      isTrue,
+    );
   });
 
   test('float WAV is byte-identical across consecutive renders', () async {
