@@ -13,11 +13,12 @@
 //
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
+//   [STRUCT:MOSAIC.wall:AUDIO]
 //
-// Window title and informational player overlays are placement-owned for the
-// same reason. They are parsed from keyed STRUCT tail segments by
-// structural_chrome.dart and travel with this placement into Preview/Bake
-// presentation without changing the underlying EDIT/MOSAIC source.
+// Window title, informational player overlays, and clip-audio intent are
+// placement-owned for the same reason. They are parsed from STRUCT tail
+// segments by structural_chrome.dart and travel with this placement into
+// Preview/Bake presentation without changing the underlying EDIT/MOSAIC source.
 //
 // Adjacent STRUCT placements also participate in the desktop application
 // choreography. With ordinary APPSWITCH behavior the outgoing structural
@@ -177,6 +178,10 @@ class StructuralSequencePlacement {
   /// Placement presentation, independent of EDIT/MOSAIC composition.
   final StructuralPresentationMode presentationMode;
 
+  /// Placement-owned intent to play audio belonging to clips in this source.
+  /// Workspace voice and music beds are separate authored systems.
+  final bool clipAudio;
+
   /// Placement-owned window/player chrome. Empty title means the canonical
   /// source name. TOP/BOTTOM are dormant unless overlayMode is CUSTOM, but are
   /// preserved so switching to DEFAULT/NONE and back does not destroy copy.
@@ -207,6 +212,7 @@ class StructuralSequencePlacement {
     required this.sourceDurationFrames,
     required this.durationFrames,
     this.presentationMode = StructuralPresentationMode.windowed,
+    this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
     this.topOverlay = '',
@@ -318,6 +324,7 @@ class _StructuralPlacementSeed {
   final StructuralSourceRef sourceRef;
   final int sourceDurationFrames;
   final StructuralPresentationMode presentationMode;
+  final bool clipAudio;
   final StructuralOverlayMode overlayMode;
   final String windowTitle;
   final String topOverlay;
@@ -328,6 +335,7 @@ class _StructuralPlacementSeed {
     required this.sourceRef,
     required this.sourceDurationFrames,
     required this.presentationMode,
+    required this.clipAudio,
     required this.overlayMode,
     required this.windowTitle,
     required this.topOverlay,
@@ -505,6 +513,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         presentationMode: chrome.fullscreen
             ? StructuralPresentationMode.fullscreen
             : StructuralPresentationMode.windowed,
+        clipAudio: chrome.clipAudio,
         overlayMode: chrome.overlayMode,
         windowTitle: chrome.windowTitle,
         topOverlay: chrome.topOverlay,
@@ -564,6 +573,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         sourceDurationFrames: seed.sourceDurationFrames,
         durationFrames: duration,
         presentationMode: seed.presentationMode,
+        clipAudio: seed.clipAudio,
         overlayMode: seed.overlayMode,
         windowTitle: seed.windowTitle,
         topOverlay: seed.topOverlay,
@@ -584,13 +594,14 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
 ///
 /// Source definitions remain where they already live. The sequence receives
 /// only a lightweight reference and derives its duration from the selected
-/// EDIT/MOSAIC definition. Presentation mode and chrome belong to this
-/// placement rather than to the reusable source.
+/// EDIT/MOSAIC definition. Presentation mode, clip-audio intent, and chrome
+/// belong to this placement rather than to the reusable source.
 String appendStructuralSequencePlacement({
   required String rawDocument,
   required StructuralSourceRef sourceRef,
   StructuralPresentationMode presentationMode =
       StructuralPresentationMode.windowed,
+  bool clipAudio = false,
   StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
   String windowTitle = '',
   String topOverlay = '',
@@ -619,6 +630,7 @@ String appendStructuralSequencePlacement({
         source: sourceRef.canonicalSource,
         fullscreen:
             presentationMode == StructuralPresentationMode.fullscreen,
+        clipAudio: clipAudio,
         overlayMode: overlayMode,
         windowTitle: windowTitle,
         topOverlay: topOverlay,
