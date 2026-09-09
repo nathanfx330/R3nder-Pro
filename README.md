@@ -2,6 +2,8 @@
 
 R3nder Pro is a Linux-first, language-driven motion graphics and video presentation tool.
 
+It is built for technical presentations, documentary sequences, explainers, and motion graphics where terminal language, desktop choreography, and source video need to behave as one authored piece.
+
 You write the presentation as a script. The GUI edits that same script. Terminal animation, desktop sequences, source-backed video edits, multi-sequence MOSAIC compositions, audio, preview, and export all resolve against one authored timeline.
 
 There is no hidden project database beside the document.
@@ -144,6 +146,21 @@ The design boundary is intentional: enough direct manipulation to work naturally
 
 ---
 
+## Design invariants
+
+If you are changing R3nder Pro rather than using it, protect these first:
+
+1. **The script is the sole authored truth.**
+2. **Authored duration is authoritative.** Decoder readiness does not retime the project.
+3. **Preview and bake must agree.**
+4. **One compile path, one simulation contract.**
+5. **MLT decodes media; it does not own project time.**
+6. **Untouched source round-trips untouched.**
+
+These rules are the reason the editor can add direct manipulation without becoming a second project model.
+
+---
+
 ## Deterministic time
 
 R3nder Pro uses an authoritative `ProjectClock` and explicit `ProjectTime`.
@@ -166,7 +183,7 @@ The full structural-video engineering history is in [docs/R3NDER_PRO_JOURNEY_TO_
 
 ---
 
-## Other presentation tools
+## The terminal presentation language
 
 Structural video sits beside the original R3nder language rather than replacing it.
 
@@ -190,7 +207,7 @@ The scripting system also supports:
 - H.264, fill-plus-matte, and ProRes 4444 export
 - optional preroll/wipe choreography
 
-The complete legacy tag and media-sequence reference is preserved in [docs/REFERENCE.md](docs/REFERENCE.md).
+The complete tag and media-sequence reference is in [docs/REFERENCE.md](docs/REFERENCE.md).
 
 ---
 
@@ -323,7 +340,7 @@ They deliberately have different timing roles:
 
 Preview and bake use the same authored gain relationship. The mix is not silently renormalized when music is attached.
 
-See [MANUAL.md](MANUAL.md) for the user workflow and [docs/REFERENCE.md](docs/REFERENCE.md) for the deeper behavior/reference notes.
+See [MANUAL.md](MANUAL.md) for the user workflow and [docs/REFERENCE.md](docs/REFERENCE.md) for the deeper behavior and reference notes.
 
 ---
 
@@ -343,49 +360,14 @@ Structural sources can also be exported in isolation from the structural video w
 
 # Documentation
 
-- **[MANUAL.md](MANUAL.md)**: beginner-first user manual. Start here.
-- **[docs/BUILDING_A_DETERMINISTIC_NLE.md](docs/BUILDING_A_DETERMINISTIC_NLE.md)**: lessons for building your own NLE or motion-graphics editor from the architecture, failures, measurements, and corrections that shaped R3nder Pro.
-- **[docs/REFERENCE.md](docs/REFERENCE.md)**: complete tag/media/reference manual and architecture notes preserved from the earlier documentation.
-- **[docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md](docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md)**: engineering history from ProjectClock through structural video preview/bake parity.
-- **[docs/EDIT_PLAYBACK_PERFORMANCE.md](docs/EDIT_PLAYBACK_PERFORMANCE.md)**: EDIT playback performance work.
-- **[docs/M4_AV_LOCK_VALIDATION.md](docs/M4_AV_LOCK_VALIDATION.md)**: sustained A/V lock validation.
+Start with **[MANUAL.md](MANUAL.md)** if you want to use R3nder Pro.
 
----
+For engineering, architecture, reconstruction order, subsystem ownership, hardware bring-up, testing strategy, contract proofs, and development history, use **[docs/README.md](docs/README.md)** as the documentation index.
 
-## Current checkpoint
+Two especially useful references are:
 
-The current structural-video milestone includes:
-
-- authoritative ProjectClock timing
-- native audio clock handoff and A/V lock validation
-- lossless structural parsing and source ownership
-- EDIT/TRACK/CLIP language model
-- persistent MLT media decoding
-- source-backed EDIT GUI
-- V1/V2 editing and overlays
-- independent clip edge XFADE IN / XFADE OUT
-- MOSAIC pane timelines
-- MOSAIC composition from whole EDIT sequences
-- structural preview inside the TEXT presentation
-- whole-program structural bake/export parity
-- regression coverage for authored black gaps and outgoing transition fast paths
-
-At the M17 merge checkpoint, the full Flutter repository suite passed **190 tests**.
-
----
-
-## Design invariants
-
-If you are changing R3nder Pro rather than using it, protect these first:
-
-1. **The script is the sole authored truth.**
-2. **Authored duration is authoritative.** Decoder readiness does not retime the project.
-3. **Preview and bake must agree.**
-4. **One compile path, one simulation contract.**
-5. **MLT decodes media; it does not own project time.**
-6. **Untouched source round-trips untouched.**
-
-The deeper rationale belongs in the reference and journey documents rather than in this front page.
+- **[docs/REFERENCE.md](docs/REFERENCE.md)** for exact author-facing language and media behavior
+- **[docs/BUILDING_A_DETERMINISTIC_NLE.md](docs/BUILDING_A_DETERMINISTIC_NLE.md)** for transferable architecture and debugging lessons
 
 ---
 
