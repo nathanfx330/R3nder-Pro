@@ -681,7 +681,7 @@ class _TerminalGhost extends StatelessWidget {
                   key: const ValueKey<String>('structural-terminal-title-bar'),
                   height: barH,
                   child: ColoredBox(
-                    color: const Color(0xFF33302F).withValues(alpha: c),
+                    color: const Color(0xFF222222).withValues(alpha: c),
                     child: Padding(
                       padding: EdgeInsets.symmetric(horizontal: 14 * c),
                       child: Align(
@@ -883,10 +883,10 @@ class _StructuralWindow extends StatelessWidget {
               height: barH,
               padding: EdgeInsets.symmetric(horizontal: 14 * s),
               decoration: BoxDecoration(
-                color: const Color(0xFF33302F),
+                color: const Color(0xFF222222),
                 border: Border(
                   bottom: BorderSide(
-                    color: const Color(0xFF474341),
+                    color: const Color(0xFF383838),
                     width: math.max(0.5, s),
                   ),
                 ),
