@@ -13,6 +13,16 @@ const double _kWindowCornerRadius = 4.0; // Yaru is squarer than mac chrome
 const double _kWindowMarginFrac = 0.06; // terminal window inset from screen edge
 const double _kViewerMarginFrac = 0.10; // image viewer inset from screen edge
 
+// Measured against the current Ubuntu/Yaru window controls at 1080p.
+// Keep these independent of bar height: the same controls are also reused by
+// the browser tab strip, whose bar is deliberately taller than a title bar.
+const double _kWindowControlRadius = 12.0;
+const double _kWindowControlCenterGap = 37.0;
+const double _kWindowControlRightInset = 14.0;
+const double _kWindowControlGlyphHalfExtent = 3.5;
+const double _kWindowControlGlyphStroke = 1.0;
+const double _kWindowControlMinimizeOffset = 2.5;
+
 /// App window sits a bit tighter than the viewer — feels more "fullscreen app"
 /// than "floating image viewer".
 const double _kAppMarginFrac = 0.06;
@@ -159,10 +169,10 @@ const double _kStageWindowOpacity = 0.85; // translucent glassy background (0.0 
 const double _kStageWindowBlurSigma = 12.0; // strength of the frosted glass blur
 
 // Yaru dark palette
-const Color _kHeaderBar = Color(0xFF33302F); // warm dark grey, faint aubergine cast
+const Color _kHeaderBar = Color(0xFF222222);
 const Color _kHeaderText = Color(0xFFC7C3C0);
-const Color _kControlCircle = Color(0xFF474341);
-const Color _kControlGlyph = Color(0xFFDEDAD6);
+const Color _kControlCircle = Color(0xFF383838);
+const Color _kControlGlyph = Color(0xFFF7F7F7);
 const Color _kTerminalBody = Color(0xFF300A24); // GNOME Terminal dark purple
 const Color _kViewerBody = Color(0xFF242120);
 const Color _kAppBody = Color(0xFF1E1B1A); // slightly darker than viewer

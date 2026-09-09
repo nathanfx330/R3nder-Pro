@@ -2777,7 +2777,7 @@ class ScenePainter extends CustomPainter {
   // Yaru chrome
   // --------------------------------------------------------------------
 
-  /// Ubuntu-style header bar: warm dark grey, centered title, and the three
+  /// Ubuntu-style header bar: neutral dark grey, centered title, and the three
   /// window controls on the RIGHT as grey circles with ─ □ ✕ glyphs.
   /// [textOnly] draws the title and window controls without the bar behind
   /// them, for the second pass of a title crossfade. Painting the plate
@@ -2832,26 +2832,30 @@ class ScenePainter extends CustomPainter {
   /// but they are the same three controls, and two copies of them would have
   /// drifted the first time one palette moved.
   void _drawWindowControls(Canvas canvas, Rect barRect, double s, int a) {
-    final double r = barRect.height * 0.30; // control circle radius
+    final double r = _kWindowControlRadius * s;
     final double cy = barRect.center.dy;
-    final double gap = r * 2.9;
-    final double closeX = barRect.right - 14 * s - r;
+    final double gap = _kWindowControlCenterGap * s;
+    final double closeX =
+        barRect.right - _kWindowControlRightInset * s - r;
     final double maxX = closeX - gap;
     final double minX = maxX - gap;
 
     final Paint circlePaint = Paint()..color = _kControlCircle.withAlpha(a);
     final Paint glyphPaint = Paint()
       ..color = _kControlGlyph.withAlpha(a)
-      ..strokeWidth = 1.6 * s
+      ..strokeWidth = _kWindowControlGlyphStroke * s
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    final double g = r * 0.52; // glyph half-extent
+    final double g = _kWindowControlGlyphHalfExtent * s;
 
     // Minimize: ─
     canvas.drawCircle(Offset(minX, cy), r, circlePaint);
     canvas.drawLine(
-        Offset(minX - g, cy + g * 0.6), Offset(minX + g, cy + g * 0.6), glyphPaint);
+      Offset(minX - g, cy + _kWindowControlMinimizeOffset * s),
+      Offset(minX + g, cy + _kWindowControlMinimizeOffset * s),
+      glyphPaint,
+    );
 
     // Maximize: □
     canvas.drawCircle(Offset(maxX, cy), r, circlePaint);
