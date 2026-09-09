@@ -20,9 +20,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'edit_model.dart';
 import 'project_clock.dart';
 import 'scene_engine.dart';
 import 'scene_evaluator.dart';
+import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 import 'structural_sequence.dart';
@@ -381,7 +383,8 @@ void _mixOccurrence(
 ) {
   final int destinationStart =
       occurrence.programStartSample * kStructuralAudioChannels;
-  if (destinationStart < 0 || destinationStart + source.length > destination.length) {
+  if (destinationStart < 0 ||
+      destinationStart + source.length > destination.length) {
     throw ProgramStructuralAudioException(
       'STRUCT placement ${occurrence.placementIndex} does not fit inside the '
       'program audio buffer.',
