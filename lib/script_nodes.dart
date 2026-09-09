@@ -443,6 +443,7 @@ class ScriptNode {
           StructuralChromeSpec(
             source: param('source'),
             fullscreen: param('mode').trim().toUpperCase() == 'FULL',
+            clipAudio: param('audio').trim().toUpperCase() == 'AUDIO',
             overlayMode: overlayMode,
             windowTitle: param('title'),
             topOverlay: param('top'),
@@ -732,6 +733,7 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
       n.type = 'STRUCT';
       n.params['source'] = chrome.source;
       n.params['mode'] = chrome.fullscreen ? 'FULL' : '';
+      n.params['audio'] = chrome.clipAudio ? 'AUDIO' : '';
       n.params['overlay'] = chrome.overlayMode.token;
       n.params['title'] = chrome.windowTitle;
       n.params['top'] = chrome.topOverlay;
