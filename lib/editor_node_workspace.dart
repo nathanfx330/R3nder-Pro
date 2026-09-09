@@ -207,19 +207,65 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
 
   // -------------------------------------------------------------------
   // Drop targeting
+  //
+  // The runner reports where a drop landed, so the common case needs no
+  // click: every asset field registers its geometry through a
+  // DropTargetRegion and DropZoneRegistry resolves the position to a
+  // field. The panel holds the DropBus claim for as long as node mode is
+  // open, which is what makes that work without the user nominating
+  // anything first.
+  //
+  // PINNING covers what position cannot: a drop that lands on the node
+  // list, or on empty panel, where there is no field under the cursor to
+  // resolve to. One field can be pinned as the catch-all for those. It is
+  // stored by node ID rather than by node object because a reparse
+  // replaces every node, and by paramKey because a node can own several
+  // asset fields.
   // -------------------------------------------------------------------
 
   /// The catch-all field for drops that hit no field, or null for none.
   _PinnedField? _pinned;
 
+  /// DropBus release callback for the panel's claim. Must be called before
+  /// dropping the reference or drops leak to a dead widget.
   VoidCallback? _dropRelease;
+
+  /// Set while a copy is in flight so a second drop cannot land mid-import.
   bool _importBusy = false;
+
+  /// Which field the last status message belongs to, so the result shows
+  /// under the field that produced it rather than under the pinned one.
+  /// Null when there is no message.
+  ///
+  /// Shared by every per-field action that can fail, not just import: a
+  /// drop that copied nothing and a file-manager handoff that found no
+  /// file manager are the same sentence in the same place, and a second
+  /// message channel would only mean two of them could be on screen at
+  /// once saying different things about one field.
   String? _fieldMessageKey;
+
+  /// Result of the last per-field action. Cleared when another starts.
   String? _fieldMessage;
   bool _fieldFailed = false;
+
+  /// When true the right column becomes the workspace recycle browser instead
+  /// of the selected node's settings. The selected node is intentionally kept
+  /// intact so closing recycle returns to exactly where the author was.
   bool _showRecyclePanel = false;
+
+  /// Cached recycle contents. Unlike normal form fields, this is not scanned on
+  /// every keystroke; it refreshes when the panel opens or R3nder moves a file.
   List<_RecycleEntry> _recycleItems = const [];
+
+  /// [#NEEDS:folder:N] directives from the live document, folder name
+  /// lowercased. Rebuilt in [_recomputeLines] rather than read per build:
+  /// the properties panel rebuilds on every keystroke and recomposing the
+  /// whole document to answer one badge is not a trade worth making.
   Map<String, int> _declaredCounts = const {};
+
+  // -------------------------------------------------------------------
+  // Lifecycle
+  // -------------------------------------------------------------------
 
   @override
   void initState() {
@@ -229,6 +275,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _nodes = _parseTextToNodes(widget.initialText);
     _recomputeLines();
 
+    // Honour an incoming selection (a ribbon double-tap) when it resolves,
+    // otherwise open on the first visible node as before.
     final int? wanted = widget.initialSelectedNodeIndex;
     if (wanted != null && wanted >= 0 && wanted < _nodes.length) {
       _selectedId = _nodes[wanted].id;
@@ -237,6 +285,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       if (first >= 0) _selectedId = _nodes[first].id;
     }
 
+    // Claimed for as long as node mode is open, not per field. Position
+    // decides which field takes a drop; this claim only decides that the
+    // node panel is the screen listening at all. Hover rides the same
+    // claim, so it can never outlive the panel that paints it.
     _dropRelease = DropBus.listen(
       _onDrop,
       onMotion: _onDragMotion,
@@ -253,7 +305,14 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     super.didUpdateWidget(oldWidget);
 
     if (widget.initialText != oldWidget.initialText) {
+      // If the incoming text is what we just composed, the node objects are
+      // already correct and only their line spans need refreshing. Anything
+      // else means the buffer changed underneath us (an external edit or an
+      // undo), so rebuild the graph from the document.
       if (widget.initialText != _compose()) {
+        // Every node object is about to be replaced, so a pin naming one of
+        // them is about to name nothing. The bus claim is untouched: it
+        // belongs to the panel, not to any node.
         _pinned = null;
         _disposeControllers();
         _nodes = _parseTextToNodes(widget.initialText);
@@ -276,6 +335,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _dropRelease?.call();
     _dropRelease = null;
     _hoveredKey = null;
+    // Regions register during build and unregister on their own dispose,
+    // but widget teardown order is not guaranteed to run them all before
+    // this. Clearing here means a region cannot outlive the panel that
+    // gave it meaning.
     DropZoneRegistry.clear();
     _disposeControllers();
     _scrollController.dispose();
@@ -289,6 +352,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _controllers.clear();
   }
 
+  /// Fetches (or creates) the controller for a field, adopting an external
+  /// value change without stomping the caret.
   TextEditingController _ctl(String key, String value) {
     final TextEditingController c =
         _controllers.putIfAbsent(key, () => TextEditingController(text: value));
@@ -304,15 +369,42 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return c;
   }
 
+  // -------------------------------------------------------------------
+  // Asset previews, drop targeting, and import
+  // -------------------------------------------------------------------
+
+  /// Workspace directory a bare name in this slot resolves against.
   String _slotRoot(AssetSlot slot) =>
       slot == AssetSlot.spriteFile ? widget.spritesDir : widget.imagesDir;
 
+  /// Absolute path for the value currently in an asset field. Empty when
+  /// the field is empty, which callers treat as "nothing to preview"
+  /// rather than as a missing file.
   String _slotAbsolute(AssetSlot slot, String value) {
     final String v = value.trim();
     if (v.isEmpty) return '';
     return '${_slotRoot(slot)}${Platform.pathSeparator}$v';
   }
 
+  /// Hands the asset a field names to the session's file manager.
+  ///
+  /// The name in the field is the whole reason this is worth a button. A
+  /// script says `evidence`, which is the correct thing for it to say and
+  /// is why a workspace can move, but culling a contact sheet, renaming a
+  /// scan, or checking what a folder actually holds are all filesystem
+  /// jobs, and without this the author leaves R3nder to go find a
+  /// directory whose path only R3nder knows.
+  ///
+  /// Reports through the shared per-field status line rather than a
+  /// dialog or a snackbar. A failure here is a fact about this field, it
+  /// belongs under this field, and it is the same sentence in the same
+  /// place as a drop that copied nothing.
+  ///
+  /// Touches no document state. This cannot dirty the script, cannot move
+  /// a frame boundary, and deliberately does not rescan on the way out:
+  /// the file manager is still open and the author has not done anything
+  /// in it yet. Any change they make there arrives through the same
+  /// import path everything else does.
   Future<void> _revealAsset(ScriptNode node, String paramKey,
       AssetSlot slot, String value) async {
     final String key = _fieldKey(node, paramKey);
@@ -334,12 +426,29 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     });
   }
 
+  /// Re-reads the workspace after files move on disk. Cheap enough to do
+  /// inline: two directory listings, the same pair node mode already does
+  /// once on open. The preview caches are dropped at the same time because
+  /// a name that resolved to nothing a moment ago now resolves to something.
+  ///
+  /// Also tells the parent, because the live preview holds decoded images
+  /// from setup time and has no other way to learn they are stale. Firing
+  /// from here rather than from each call site is deliberate: this function
+  /// is already the one thing every disk mutation has to call, so a future
+  /// asset operation that forgets to notify would have to forget to rescan
+  /// too, and that failure is visible immediately.
   void _rescanAssets() {
     invalidateAssetPreviews();
     _assets = NodeAssetLibrary.scan(widget.imagesDir, widget.spritesDir);
     widget.onAssetsChanged?.call();
   }
 
+  /// Non-destructive removal from a folder contact sheet. The source must
+  /// resolve underneath images/, then it is moved to
+  /// `images/_recycle/<original-folder>/` with a collision-safe filename.
+  ///
+  /// This intentionally changes no script text. [_notifyChanged] is still
+  /// called so the live scene resimulates against the new folder contents.
   Future<void> _recycleFolderImage(String absolutePath) async {
     try {
       final String root = Directory(widget.imagesDir).resolveSymbolicLinksSync();
@@ -370,6 +479,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       try {
         src.renameSync(target);
       } catch (_) {
+        // rename can fail across mount boundaries. Copy+delete preserves the
+        // same non-destructive user contract in that case.
         src.copySync(target);
         src.deleteSync();
       }
@@ -386,11 +497,26 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     }
   }
 
+  /// Writes a new load order for an asset folder.
+  ///
+  /// The order lives in a `.r3nder_order` dotfile inside the folder itself,
+  /// so filenames are never rewritten. That matters for archival material,
+  /// where a filename carries a date or a box number and re-prefixing it to
+  /// encode a composition decision would trade something irreplaceable for
+  /// something cosmetic.
+  ///
+  /// Ends with [_notifyChanged] like every other on-disk asset change, which
+  /// reaches the editor as onAssetsChanged and reloads the live preview. The
+  /// scene decodes each folder once at setup, so without that a reordered
+  /// MOSAIC would keep drawing the composition it opened with.
   Future<void> _reorderFolder(String absoluteDir, List<String> names) async {
     final bool ok = writeFolderOrder(absoluteDir, names);
     if (!mounted) return;
 
     if (!ok) {
+      // Silently failing to save an order somebody just arranged by hand is
+      // worse than saying so: the sheet would snap back on the next build
+      // with no explanation.
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         const SnackBar(content: Text('COULD NOT WRITE FOLDER ORDER')),
       );
@@ -401,6 +527,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _notifyChanged();
   }
 
+  /// Drops a folder's manifest, returning it to filename order.
   Future<void> _resetFolderOrder(String absoluteDir) async {
     clearFolderOrder(absoluteDir);
     if (!mounted) return;
@@ -408,6 +535,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _notifyChanged();
   }
 
+  /// Raster images parked under images/_recycle, recursively. The folder path
+  /// below _recycle is the original folder path, so no restore metadata file
+  /// is needed and a bin survives app restarts.
   List<_RecycleEntry> _recycleEntries() {
     final List<_RecycleEntry> out = [];
     final Directory recycle = Directory(
@@ -459,6 +589,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return out;
   }
 
+  /// Restores one recycled image to the folder encoded in its recycle path.
+  /// Existing files are never overwritten; the same _2/_3 naming convention
+  /// used by imports and recycling keeps every byte recoverable.
   Future<void> _restoreRecycledImage(_RecycleEntry entry) async {
     try {
       final String imagesRoot =
@@ -501,6 +634,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         src.deleteSync();
       }
 
+      // Remove empty recycle subdirectories but deliberately leave _recycle
+      // itself in place. This keeps the bin stable while avoiding dead folder
+      // names in the author's mental model.
       Directory cursor = File(source).parent;
       while (cursor.path != recycleRoot) {
         try {
@@ -554,6 +690,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     setState(() => _pinned = null);
   }
 
+  /// Field currently under a drag, or null. The second half of the two-stage
+  /// filter described in the runner: it throttles on movement because it
+  /// cannot know the targets, and this throttles on target identity because
+  /// it can. Dragging across 200 pixels inside one field repaints once.
   String? _hoveredKey;
 
   void _onDragMotion(Offset position) {
@@ -568,7 +708,15 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     setState(() => _hoveredKey = null);
   }
 
+  /// Entry point for every OS drop while node mode is open.
+  ///
+  /// Position wins. A drop that landed inside a field's region goes to that
+  /// field, no click required, and [DropZoneRegistry] resolves it against
+  /// live geometry so a scrolled panel cannot misroute. Only when the drop
+  /// hit no field, or when the runner sent no position at all (an older
+  /// binary against newer Dart), does the pinned field catch it.
   void _onDrop(DropEvent event) {
+    // Fires from the platform channel, outside any build.
     if (!mounted || _importBusy || event.paths.isEmpty) return;
 
     final Offset? pos = event.position;
@@ -577,6 +725,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     final _PinnedField? pin = _pinned;
     if (pin == null) return;
 
+    // A pin outlives nothing: resolve it through the current node list, so
+    // a pin left over from a node that has since been deleted or reparsed
+    // is ignored rather than importing into a corpse.
     final int idx = _nodes.indexWhere((n) => n.id == pin.nodeId);
     if (idx < 0) {
       _unpin();
@@ -586,6 +737,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _handleDrop(event.paths, _nodes[idx], pin.paramKey, pin.slot);
   }
 
+  /// A destination filename that will not clobber an existing file.
+  /// R3nder never deletes anything, and silently overwriting an asset that
+  /// another node references is a deletion with extra steps.
   String _uniqueName(String dir, String name) {
     final int dot = name.lastIndexOf('.');
     final String stem = dot > 0 ? name.substring(0, dot) : name;
@@ -606,6 +760,14 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return slot.acceptedExts.any(lower.endsWith);
   }
 
+  /// Routes a batch of dropped paths into one field.
+  ///
+  /// Two shapes, decided by the slot rather than by what was dropped:
+  /// a file field takes one file, a folder field takes any mix of files
+  /// and directories and copies their contents in. Everything the slot
+  /// cannot draw is skipped and counted rather than copied, since an
+  /// unusable file in a referenced folder is a bake-time problem with no
+  /// edit-time symptom.
   Future<void> _handleDrop(
     List<String> paths,
     ScriptNode node,
@@ -643,6 +805,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     if (!failed) _notifyChanged();
   }
 
+  /// File-kind destination: one file lands in the slot's root directory
+  /// and the field is pointed at it.
   String _importAsFile(
     List<String> paths,
     ScriptNode node,
@@ -675,6 +839,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return 'Imported $srcName$renamed$extras.';
   }
 
+  /// Folder-kind destination. The folder name comes from the field if it
+  /// already has one, from the dropped directory's own name when a single
+  /// directory was dropped, and from a prompt otherwise. Dropping a folder
+  /// of stills onto an empty GALLERY field is therefore one move.
   Future<String> _importIntoFolder(
     List<String> paths,
     ScriptNode node,
@@ -720,6 +888,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
 
     for (final p in paths) {
       if (Directory(p).existsSync()) {
+        // One level only. A nested tree is not what a flat asset folder
+        // means, and recursing would quietly flatten a structure the user
+        // built on purpose.
         for (final ent in Directory(p).listSync(followLinks: false)) {
           if (ent is File) copyFile(ent.path);
         }
@@ -741,6 +912,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return 'Copied $copied file(s) into $folderName$tail.';
   }
 
+  /// Strips path separators and leading dots so a typed name cannot escape
+  /// the workspace or create a hidden folder the scanner will not list.
   String _sanitizeFolderName(String raw) {
     String s = raw.trim().replaceAll(RegExp(r'[\\/]+'), '_');
     while (s.startsWith('.')) {
@@ -797,6 +970,12 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     }
   }
 
+  // -------------------------------------------------------------------
+  // Document composition and line tracking
+  // -------------------------------------------------------------------
+
+  /// The whole document, rebuilt from the node list. Joined with the empty
+  /// string because every node carries its own whitespace.
   String _compose() {
     final StringBuffer b = StringBuffer();
     for (final n in _nodes) {
@@ -805,9 +984,19 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return b.toString();
   }
 
+  /// Walks the node list accumulating newlines to assign each node its line
+  /// span. Exact by construction, since the composed document is the
+  /// concatenation of exactly these markups.
+  ///
+  /// endLine is the line of the node's LAST character, matching how the
+  /// engine reports the line it is currently executing.
   void _recomputeLines() {
     assignNodeLineSpans(_nodes);
 
+    // [#NEEDS:folder:N] declarations. Kept here rather than folded into the
+    // hoisted span pass because it is panel business: the ribbon has no use
+    // for it, and a shared function that computed something one caller
+    // always discards would be the wrong shape.
     final Map<String, int> needs = {};
     for (final n in _nodes) {
       final String m = n.toMarkup();
@@ -827,7 +1016,27 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     widget.onTextChanged(_compose());
   }
 
+  // -------------------------------------------------------------------
+  // Parsing
+  // -------------------------------------------------------------------
+
+  /// Splits the document into a gapless node list. Every character of the
+  /// input lands in exactly one node.
+  // -------------------------------------------------------------------
+  // Parsing
+  //
+  // The parser itself is top level (see parseScriptToNodes). It is pure,
+  // text in and nodes out, and the script ribbon in text mode needs the
+  // same decomposition without mounting this widget. Leaving it as a State
+  // method would have meant either duplicating it or instantiating a node
+  // workspace nobody renders.
+  // -------------------------------------------------------------------
+
   List<ScriptNode> _parseTextToNodes(String text) => parseScriptToNodes(text);
+
+  // -------------------------------------------------------------------
+  // Node list helpers
+  // -------------------------------------------------------------------
 
   List<int> get _visibleIndices {
     final List<int> out = [];
@@ -847,6 +1056,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return i < 0 ? null : _nodes[i];
   }
 
+  /// A node plus the spacer run trailing it. Structural edits move and
+  /// delete whole blocks so line breaks never pile up or vanish.
   int _blockEnd(int start) {
     int e = start + 1;
     while (e < _nodes.length && _nodes[e].isSpacer) {
@@ -854,6 +1065,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     }
     return e;
   }
+
+  // -------------------------------------------------------------------
+  // Scrolling
+  // -------------------------------------------------------------------
 
   void _scrollToHighlightedLine({bool animate = true}) {
     if (!_scrollController.hasClients) return;
@@ -888,6 +1103,13 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     }
   }
 
+  // -------------------------------------------------------------------
+  // Structural editing
+  // -------------------------------------------------------------------
+
+  /// Parses palette markup into nodes so inserted content is guaranteed to
+  /// match what the form expects. Marks them dirty so they emit from
+  /// params, not from the palette's literal string.
   List<ScriptNode> _nodesFromMarkup(String markup) {
     final List<ScriptNode> parsed = _parseTextToNodes(markup);
     for (final n in parsed) {
@@ -900,10 +1122,13 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     final List<ScriptNode> incoming = _nodesFromMarkup(snip.insertText);
     if (incoming.isEmpty) return;
 
+    // Insert after the selected node's block, or at the end.
     int at = _nodes.length;
     final int sel = _nodeIndexById(_selectedId);
     if (sel >= 0) at = _blockEnd(sel);
 
+    // Keep the inserted tag on its own line: if the preceding markup does
+    // not already end on a newline, open one.
     final List<ScriptNode> batch = [];
     if (at > 0 && !_nodes[at - 1].toMarkup().endsWith('\n')) {
       batch.add(ScriptNode(type: kSpacer, rawText: '\n'));
@@ -963,6 +1188,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _notifyChanged();
   }
 
+  /// Moves the selected block one visible slot up or down.
   void _moveSelected(int dir) {
     final int i = _nodeIndexById(_selectedId);
     if (i < 0) return;
@@ -974,9 +1200,14 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     final int targetVis = v + dir;
     if (targetVis < 0 || targetVis >= vis.length) return;
 
+    // ReorderableListView's convention: a downward move addresses the slot
+    // one past the destination, because the item is still in the list.
     _reorderVisible(v, dir > 0 ? targetVis + 1 : targetVis);
   }
 
+  /// Block-aware reorder, shared by the drag handles and the move buttons.
+  /// [newVis] follows ReorderableListView's convention: the index the item
+  /// should occupy in the list as it existed BEFORE removal.
   void _reorderVisible(int oldVis, int newVis) {
     final List<int> vis = _visibleIndices;
     if (oldVis < 0 || oldVis >= vis.length) return;
@@ -984,16 +1215,23 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     final int start = vis[oldVis];
     final int end = _blockEnd(start);
     final List<ScriptNode> block = _nodes.sublist(start, end);
+
+    // Where the block lands, expressed in full-list terms before removal.
     final int insertAt = newVis >= vis.length ? _nodes.length : vis[newVis];
 
     setState(() {
       _nodes.removeRange(start, end);
+      // Pulling the block out shifts anything after it left by its size.
       int adjusted = insertAt > start ? insertAt - block.length : insertAt;
       adjusted = adjusted.clamp(0, _nodes.length);
       _nodes.insertAll(adjusted, block);
     });
     _notifyChanged();
   }
+
+  // -------------------------------------------------------------------
+  // Presentation helpers
+  // -------------------------------------------------------------------
 
   Color _getNodeColor(String type) {
     switch (type) {
@@ -1121,7 +1359,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
   String _getNodeSummary(ScriptNode node) {
     switch (node.type) {
       case 'TEXT':
-        return node.body.replaceAll('\n', ' ↵ ');
+        return node.body.replaceAll('\n', ' \u21b5 ');
       case 'PAUSE':
         return '${node.param('frames', '30')} frames';
       case 'SPEED':
@@ -1207,10 +1445,12 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       case 'MACRO_CFG':
         return '${node.param('instance')} = ${node.param('item')}';
       default:
-        return node.rawText.replaceAll('\n', ' ↵ ');
+        return node.rawText.replaceAll('\n', ' \u21b5 ');
     }
   }
 
+  /// The node's primary asset reference, or null when it has none. Drives
+  /// the missing badge on the row.
   ({AssetSlot slot, String value})? _primaryAsset(ScriptNode n) {
     switch (n.type) {
       case 'GALLERY':
@@ -1242,6 +1482,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return !_assets.resolves(a.slot, a.value);
   }
 
+  // -------------------------------------------------------------------
+  // Build
+  // -------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -1258,6 +1502,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       ],
     );
   }
+
+  // --- Graph column --------------------------------------------------
 
   Widget _buildNodeGraphView() {
     final List<int> vis = _visibleIndices;
@@ -1393,6 +1639,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         child: GestureDetector(
           onTap: () {
             FocusScope.of(context).unfocus();
+            // A pin names a field on the panel, and moving the panel to
+            // another node takes that field off screen. Position-based
+            // drops need no cleanup: the field's region unregisters itself
+            // when it leaves the tree.
             if (_selectedId != node.id) _unpin();
             setState(() {
               _selectedId = node.id;
@@ -1470,6 +1720,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       ),
     );
   }
+
+  // --- Palette -------------------------------------------------------
 
   Future<void> _openPalette() async {
     final t = widget.theme;
@@ -1555,6 +1807,18 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     if (picked != null) _insertSnippet(picked);
   }
 
+  /// Permanently deletes everything the recycle browser is showing.
+  ///
+  /// This is the ONLY place R3nder deletes a file, and the exception is
+  /// deliberate. The bin is hidden from every picker and from the orphan
+  /// scan, which is what makes removal feel safe; the cost is that there is
+  /// no way to empty it from inside the app. Telling an author to go find a
+  /// folder whose name starts with an underscore in a file manager is worse
+  /// than one confirmed button here.
+  ///
+  /// Scoped to [_recycleItems] rather than deleting the tree, so anything in
+  /// the bin the browser did not list (a stray non-raster, a file dropped
+  /// there by hand) survives. Purge removes what you were shown, exactly.
   Future<void> _purgeRecycle() async {
     final List<_RecycleEntry> doomed = List.of(_recycleItems);
     if (doomed.isEmpty) return;
@@ -1578,6 +1842,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       }
     }
 
+    // Same pruning contract restore uses: empty subdirectories go, _recycle
+    // itself stays, so the bin is a stable place rather than one that
+    // appears and disappears.
     final String recycleRoot =
         '${widget.imagesDir}${Platform.pathSeparator}$kRecycleFolderName';
     for (final path in touchedDirs) {
@@ -1596,6 +1863,11 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     }
 
     if (!mounted) return;
+    // Deliberately not [_rescanAssets]. Purge only touches the recycle bin,
+    // which is hidden from the pickers and unreachable from any script, so
+    // the asset library is unchanged and the scene has nothing stale to
+    // reload. Notifying here would cost a full resimulation for a folder
+    // nothing renders from.
     invalidateAssetPreviews();
     setState(() => _recycleItems = _recycleEntries());
 
@@ -1613,7 +1885,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     for (final e in entries) {
       try {
         total += File(e.absolutePath).lengthSync();
-      } catch (_) {}
+      } catch (_) {
+        // A file that vanished under us contributes nothing and is not an
+        // error worth surfacing on a size readout.
+      }
     }
     return total;
   }
@@ -1625,6 +1900,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
+  /// Confirmation is required and cannot be defaulted through: the primary
+  /// action is Cancel, and the destructive one has to be chosen. Everywhere
+  /// else in this app an accident is undoable, so this is the one dialog
+  /// that has to be read.
   Future<bool> _confirmPurge(int count, int bytes) async {
     final t = widget.theme;
     final bool? yes = await showDialog<bool>(
@@ -1663,6 +1942,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
     return yes ?? false;
   }
+
+  // --- Recycle panel -------------------------------------------------
 
   Widget _buildRecyclePanel() {
     final t = widget.theme;
@@ -1768,6 +2049,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
   }
 
+  // --- Properties panel ----------------------------------------------
+
   Widget _buildNodePropertiesPanel() {
     final ScriptNode? node = _selectedNode;
     if (node == null) {
@@ -1813,6 +2096,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
   }
 
+  // -------------------------------------------------------------------
+  // Form controls
+  // -------------------------------------------------------------------
+
   Widget _wrap(Widget child) =>
       Padding(padding: EdgeInsets.only(bottom: sc(16)), child: child);
 
@@ -1829,6 +2116,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
   }
 
+  /// Dims and disables a control the positional grammar does not allow to
+  /// be set yet, and says why. This is the whole reason the form beats
+  /// hand-written markup: an invalid segment order cannot be produced.
   Widget _gate(bool enabled, String reason, Widget child) {
     if (enabled) return child;
     return Column(
@@ -1844,6 +2134,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
   }
 
+  /// Dropdown without R3Dropdown's label gutter, for rows that already
+  /// carry their own header.
   Widget _bareDropdown({
     required String value,
     required List<String> items,
@@ -1931,6 +2223,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     ));
   }
 
+  /// Slider for feel plus chevrons for exact values. Frame counts need
+  /// both: you drag to find the timing, then nudge to land on it.
   Widget _fInt(ScriptNode node, String label, String key,
       {required double min,
       required double max,
@@ -2020,6 +2314,17 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     ));
   }
 
+  /// Asset picker: a menu of what actually exists in the workspace, a
+  /// preview of what the current value points at, a manual-entry escape
+  /// hatch, and a drop target that imports straight into the workspace.
+  ///
+  /// The whole field is the drop region, not just the visible bar: a drop
+  /// on the label or the thumbnail obviously means this field.
+  ///
+  /// [maxDimension] is the pixel cap the tag enforces at load time, passed
+  /// through to the preview. Over the cap the runtime plays the tag as a
+  /// dud with its timing preserved, which is a failure with no visible
+  /// symptom until the bake, so it is reported here instead.
   Widget _fAsset(ScriptNode node, String label, String key, AssetSlot slot,
       {bool optional = false, int? maxDimension}) {
     final t = widget.theme;
@@ -2051,6 +2356,11 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
                 const R3Tally(state: R3TallyState.ok),
               const Spacer(),
               Text(_assets.slotLabel(slot), style: t.fine),
+              // Enabled only where it can succeed. A field naming nothing
+              // has no path, and one naming something the scan did not
+              // find would open a directory that is not there: both are
+              // better said by a dead control than by a status line
+              // arriving a moment after the click.
               _iconAction(
                 slot.isFolder ? Icons.folder_open : Icons.image_search,
                 slot.isFolder ? 'OPEN FOLDER' : 'SHOW FILE',
@@ -2126,6 +2436,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     ));
   }
 
+  /// One line saying what a drop will do, which differs by slot and by
+  /// whether the field already names something.
   String _dropHint(AssetSlot slot, String current) {
     final String v = current.trim();
     if (!slot.isFolder) {
@@ -2141,9 +2453,19 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     if (abs.isEmpty) return const SizedBox.shrink();
 
     if (slot.isFolder) {
+      // Page breaks are an APP MOSAIC concept. Every other folder tag
+      // plays its images as one run, so offering break markers there would
+      // draw a control that means nothing.
       final bool paged = node.type == 'APP' &&
           node.param('layout', 'GRID').toUpperCase().startsWith('MOSAIC');
+
+      // Whether clicking a thumbnail opens the per-image profile at all.
+      // A MOSAIC pane can carry a caption; a BROWSER page needs an address.
+      // Both are facts about the file rather than the shot, so both are
+      // authored in the same panel, and every other folder tag has nothing
+      // per-image to say and leaves its thumbnails inert.
       final bool profiled = paged || node.type == 'BROWSER';
+
       final Map<String, ImageCaption> folderCaptions =
           profiled ? _captionsFor(abs) : const {};
       final String? selName =
@@ -2162,6 +2484,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             expectedCount: _declaredFolderCount(value),
             onRecycle:
                 slot == AssetSlot.imageFolder ? _recycleFolderImage : null,
+            // Offered for every folder slot, not just rasters. SVGFLASH
+            // flickers its folder in sequence, so its order is authored too,
+            // and the engine reads the same manifest for both.
             onReorder: (names) => _reorderFolder(abs, names),
             onResetOrder: () => _resetFolderOrder(abs),
             pagePlan: paged ? parsePagePlan(node.param('pages')) : null,
@@ -2170,11 +2495,16 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             panePlan: paged ? parseAppPanePlan(node.param('panes')) : null,
             onPanePlanChanged:
                 paged ? (plan) => _setPanePlan(node, plan) : null,
+            // Captions are a MOSAIC band, so the furniture only appears
+            // where a band can actually be drawn.
             captions: paged ? folderCaptions : null,
             selectedName: selName,
             onSelectName: profiled
                 ? (name, index, total) => setState(() {
                       final String key = '$abs|$name';
+                      // Clicking the open thumbnail closes the profile, so
+                      // the panel can be dismissed without hunting for an
+                      // X, the same way the ★ clears itself.
                       final bool closing = _profileTarget == key;
                       _profileTarget = closing ? null : key;
                       _profileIndex = closing ? -1 : index;
@@ -2197,12 +2527,21 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     );
   }
 
+  /// Reads a [#NEEDS:folder:N] directive out of the live document, so the
+  /// contact sheet can flag a folder that came up short.
+  ///
+  /// The directive is a comment: the preprocessor strips it before the tag
+  /// parser runs, and the asset manager reads it off the raw script for
+  /// exactly this reason. Reading the cache rather than the saved file
+  /// keeps it honest against unsaved edits.
   int? _declaredFolderCount(String folder) {
     final String name = folder.trim();
     if (name.isEmpty) return null;
     return _declaredCounts[name.toLowerCase()];
   }
 
+  /// RGB swatch. Optional slots offer a clear action, which is how a
+  /// stencil goes back to inheriting the live pen color.
   Widget _fRgb(ScriptNode node, String label, String key,
       {required String def, bool optional = false, String? clearedLabel}) {
     final t = widget.theme;
@@ -2385,10 +2724,15 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return '$r,$g,$b';
   }
 
+  // -------------------------------------------------------------------
+  // Per-type forms
+  // -------------------------------------------------------------------
+
   List<Widget> _buildNodeFormFields(ScriptNode node) {
     final List<Widget> f = [];
 
     switch (node.type) {
+      // --- Text -----------------------------------------------------
       case 'TEXT':
         f.add(_fArea(node, 'Typing text', 'body', node.body,
             (v) => node.body = v,
@@ -2399,6 +2743,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         }
         break;
 
+      // --- Core typing ---------------------------------------------
       case 'WIPE':
         f.add(_hint('Clears the terminal instantly and resets the cursor to '
             'the top left. Also clears any stacked PHOTO layers.'));
@@ -2414,6 +2759,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.addAll(_speedForm(node));
         break;
 
+      // --- Formatting ------------------------------------------------
       case 'SIZE':
         f.addAll(_defaultableForm(node, 'size', 'Font size', 8, 200, '48',
             'Returns to the size set in the main menu TYPE panel.'));
@@ -2436,6 +2782,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             node, 'Align', 'align', ['LEFT', 'CENTER', 'RIGHT'], 'LEFT'));
         break;
 
+      // --- Color and effects -----------------------------------------
       case 'COLOR':
         f.add(_fEnum(
             node,
@@ -2473,17 +2820,19 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.add(_hint('Open and close markers wrap the text they hide.'));
         break;
 
+      // --- Progress bar ----------------------------------------------
       case 'BAR':
         f.add(_fInt(node, 'Width', 'width',
             min: 1, max: 120, def: '20', suffix: 'ch'));
         f.add(_fInt(node, 'Fill time', 'frames',
             min: 1, max: 900, def: '60', suffix: 'fr'));
-        f.add(_fText(node, 'Fill char', 'fill', fallback: '█'));
+        f.add(_fText(node, 'Fill char', 'fill', fallback: '\u2588'));
         f.add(_fText(node, 'Empty char', 'empty', fallback: ' '));
         f.add(_fText(node, 'Brackets', 'brackets', fallback: '[]'));
         f.add(_hint('Set brackets to NONE for a bare bar.'));
         break;
 
+      // --- Regions ----------------------------------------------------
       case 'REGION':
         f.add(_fText(node, 'Region id', 'id', fallback: 'region'));
         f.add(_hint('Close the span with a /REGION node.'));
@@ -2500,14 +2849,17 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             def: '0,255,0', optional: true, clearedLabel: 'ENGINE DEFAULT'));
         break;
 
+      // --- Config ------------------------------------------------------
       case 'CONFIG':
         f.addAll(_configForm(node));
         break;
 
+      // --- Structural placement ----------------------------------------
       case 'STRUCT':
         f.addAll(_structForm(node));
         break;
 
+      // --- Desktop presentations ---------------------------------------
       case 'GALLERY':
         f.add(_fAsset(node, 'Image folder', 'folder', AssetSlot.imageFolder));
         f.add(_fInt(node, 'Per image', 'hold',
@@ -2592,6 +2944,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.addAll(_timelineForm(node));
         break;
 
+      // --- Stencils -----------------------------------------------------
       case 'SVG':
         f.add(_fAsset(node, 'Stencil file', 'file', AssetSlot.svgFile));
         f.add(_fInt(node, 'Hold', 'hold',
@@ -2618,6 +2971,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
             maxDimension: 512));
         f.add(_fInt(node, 'Repeats', 'repeat', min: 1, max: 200, def: '1'));
         f.add(_fEnum(node, 'Channel', 'channel', ['R', 'G', 'B'], 'R'));
+        // The label follows the repeat count, because the parameter does.
+        // Calling it "Per copy" on a single tile would name a thing that
+        // is not happening.
         final bool imgTiled =
             (int.tryParse(node.param('repeat', '1')) ?? 1) > 1;
         f.add(_fInt(node, imgTiled ? 'Per copy' : 'Scan time', 'framesPer',
@@ -2647,6 +3003,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.add(_hint('Freezes that sprite on its current frame.'));
         break;
 
+      // --- Macro menus -------------------------------------------------
       case 'DEF_MENU':
         f.addAll(_defMenuForm(node));
         break;
@@ -2663,6 +3020,7 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.addAll(_macroCfgForm(node));
         break;
 
+      // --- Anything the form does not model -----------------------------
       default:
         f.add(_fArea(node, 'Raw markup', 'raw', node.rawText,
             (v) => node.rawText = v,
@@ -2678,8 +3036,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
   /// First-class controls for one `[STRUCT:...]` placement.
   ///
   /// EDIT and MOSAIC definitions are authored in their own structural panels.
-  /// This form owns only this placement: source, window/fullscreen mode, clip
-  /// audio intent, window title, and informational player overlay presentation.
+  /// This form owns only this placement: source, window/fullscreen mode, window
+  /// title, and informational player overlay presentation.
   List<Widget> _structForm(ScriptNode node) {
     final List<Widget> f = [];
     final String current = node.param('source').trim();
@@ -2739,15 +3097,6 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           'inside a desktop window.',
     ));
 
-    f.add(_fToggle(
-      node,
-      'Audio',
-      'audio',
-      'AUDIO',
-      'Play the audio belonging to clips in this sequence. Workspace voice '
-          'and music beds are authored separately and are unaffected.',
-    ));
-
     f.add(_wrap(
       StructuralChromeControls(
         theme: widget.theme,
@@ -2784,6 +3133,1250 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return f;
   }
 
-  // Remaining helpers and forms continue unchanged from the current file.
-  // They are omitted here only for brevity in this attempted replacement.
+  /// APP's layout sits positionally behind the title, so the control is
+  /// gated the same way TIMELINE's stage is. The hold label changes with the
+  /// mode because its meaning changes: once per window in GRID, once per
+  /// page in MOSAIC.
+  List<Widget> _appForm(ScriptNode node) {
+    final List<Widget> f = [];
+
+    final bool hasTitle = node.param('title').trim().isNotEmpty;
+    final String layout = node.param('layout', 'GRID').toUpperCase();
+    final bool isMosaic = layout.startsWith('MOSAIC');
+    final bool isFull = layout == 'MOSAIC_FULL';
+
+    f.add(_fAsset(node, 'Image folder', 'folder', AssetSlot.imageFolder));
+    f.add(_fInt(node, isMosaic ? 'Hold per page' : 'Hold after cascade',
+        'hold',
+        min: 0, max: 900, def: '90', suffix: 'fr'));
+    f.add(_fText(node, 'Window title', 'title', hintText: 'App'));
+
+    f.add(_gate(
+      hasTitle,
+      'A layout requires a title',
+      _fEnum(node, 'Layout', 'layout',
+          const ['GRID', 'MOSAIC', 'MOSAIC_FULL'], 'GRID'),
+    ));
+
+    if (isMosaic) {
+      f.add(_hint('Up to three unequal panes per page, hero geometry '
+          'alternating sides, '
+          'panning horizontally for the rest. Nine one-image panes make three '
+          'pages by default; grouping images into shared panes can reduce '
+          'that page count. The hold above '
+          'applies to each page.'));
+      f.add(_hint(isFull
+          ? 'MOSAIC_FULL: the window maximizes out to the whole frame once '
+              'open, then restores to its desktop rect on the way out.'
+          : 'MOSAIC: stays a chromed window on the desktop. Use '
+              'MOSAIC_FULL to have it fill the frame.'));
+
+      f.add(_fText(node, 'Page plan', 'pages', hintText: '1,3,2'));
+      f.add(_appPagePlanReadout(node));
+      f.add(_hint('Panes per page, comma separated, ending a page early '
+          'like a clear. Blank chunks three at a time. Each page costs a '
+          'hold plus a pan, so this changes how long the tag runs, which '
+          'is why it lives in the script rather than beside the images. '
+          'Image ORDER lives in the folder, since reordering changes no '
+          'timing.'));
+      f.add(_fText(node, 'Pane structure', 'panes',
+          hintText: '3@2-LR;1;2@2-RL'));
+      f.add(_hint('Optional MOSAIC pane grouping + Pane Life selection. '
+          'Tokens are IMAGES[@HERO][-DIRECTION][-FIT], separated by '
+          'semicolons. '
+          '3-LR groups three images but selects no motion; 3@2-LR selects '
+          'image 2 as that pane\'s Pane Life hero. ★ is a real toggle: click '
+          'again to remove @HERO. FIT on the pane\'s first thumbnail cycles '
+          'the scaling rule: FILL crops to fill, FIT scales to the vertical '
+          'edge (letterboxing a source taller than the pane rather than '
+          'losing its top and bottom), FITW scales to the horizontal edge '
+          'for a panorama in a tall pane. Independent of Pane Life in both '
+          'directions. A +FRAMES tail holds an image longer and is the one '
+          'pane fact that makes the piece run longer. Blank keeps one image '
+          'per pane with no Pane Life selection.'));
+    } else {
+      f.add(_hint('Up to nine tiles, all the same size. The grid shape '
+          'follows the image count.'));
+    }
+
+    return f;
+  }
+
+  /// Writes a page plan back to the tag from the contact sheet.
+  ///
+  /// Always writes an EXPLICIT plan, even when the strip was showing the
+  /// implicit default chunking. Once you have moved a break by hand the
+  /// arrangement is authored, and leaving it implicit would mean the next
+  /// image you add silently re-flows the pages you just set.
+  ///
+  /// An empty plan clears the parameter rather than writing '', so the tag
+  /// goes back to its shortest legal form instead of carrying a dangling
+  /// separator.
+  void _setPagePlan(ScriptNode node, List<int> plan) {
+    node.set('pages', plan.isEmpty ? '' : plan.join(','));
+    _notifyChanged();
+  }
+
+  /// How many images the contact sheet is showing for [node].
+  ///
+  /// Taken from the last selection when there is one, because that is the
+  /// only place the real folder count is known here: the sheet reads the
+  /// directory, this panel does not. Falls back to the declared count,
+  /// which is what the script claims rather than what is on disk, and is
+  /// only used to size a display array.
+  int _paneCountFor(ScriptNode node) {
+    if (_profileTotal > 0) return _profileTotal;
+    return _declaredFolderCount(node.param('folder')) ?? 0;
+  }
+
+  /// Hold extension per load position, for the contact sheet badges.
+  List<int> _holdsByImage(ScriptNode node, int count) {
+    if (count <= 0) return const [];
+    final List<AppPaneSpec> panes = resolveAppPanePlan(
+        count, parseAppPanePlan(node.param('panes')));
+    final List<int> out = List<int>.filled(count, 0);
+    int at = 0;
+    for (final AppPaneSpec pane in panes) {
+      for (int k = 0; k < pane.imageCount && at < count; k++, at++) {
+        out[at] = pane.holdAt(k);
+      }
+    }
+    return out;
+  }
+
+  /// Which pane owns load position [index], and where inside it.
+  ///
+  /// Returns null when the plan cannot place it, which happens while the
+  /// folder count and the authored plan disagree mid-edit.
+  ({int pane, int within})? _paneAddressOf(
+      ScriptNode node, int index, int count) {
+    if (index < 0 || count <= 0) return null;
+    final List<AppPaneSpec> panes = resolveAppPanePlan(
+        count, parseAppPanePlan(node.param('panes')));
+    int at = 0;
+    for (int p = 0; p < panes.length; p++) {
+      final int end = at + panes[p].imageCount;
+      if (index < end) return (pane: p, within: index - at);
+      at = end;
+    }
+    return null;
+  }
+
+  /// Writes a hold extension onto the pane that owns this image.
+  ///
+  /// Goes through the pane plan and the APP tag, NOT the caption sidecar.
+  /// A hold is composition: it changes how long the piece runs, and it
+  /// belongs to the cut rather than to the photograph. The same scan held
+  /// two seconds in one film is held four in another.
+  void _setHoldFrames(ScriptNode node, int index, int count, int frames) {
+    final addr = _paneAddressOf(node, index, count);
+    if (addr == null) return;
+    final List<AppPaneSpec> panes = resolveAppPanePlan(
+        count, parseAppPanePlan(node.param('panes')));
+    if (addr.pane >= panes.length) return;
+    panes[addr.pane] = panes[addr.pane].withHoldAt(addr.within, frames);
+    _setPanePlan(node, panes);
+  }
+
+  /// Captions for [dir], read once and then held.
+  Map<String, ImageCaption> _captionsFor(String dir) {
+    if (_captionCacheDir != dir) {
+      _captionCacheDir = dir;
+      _captionCacheForDir = readFolderCaptions(dir);
+    }
+    return _captionCacheForDir;
+  }
+
+  /// Writes one image's record back to the sidecar.
+  ///
+  /// Writes on every keystroke, like every other field in this panel. The
+  /// sidecar is a few hundred bytes and the alternative is a save button,
+  /// which is a thing to forget. A failed write is surfaced rather than
+  /// swallowed: a caption that looked saved and was not is the one failure
+  /// this feature cannot afford, because you will not find out until the
+  /// bake.
+  /// What the chosen page fit will actually do, in the panel, at the moment
+  /// the choice is made.
+  ///
+  /// Worth the words because two of the three answers are "nothing moves",
+  /// and a scroll that correctly declined to run looks exactly like a scroll
+  /// that is broken. Naming the frame-neutrality rule here is the only place
+  /// an author meets it before a bake.
+  /// Hint for the scroll segment, which carries two facts.
+  ///
+  /// Split before switching rather than adding six cases, because the two
+  /// halves say unrelated things: one is how the capture meets the viewport,
+  /// the other is how big the window is. Six cases would have written the
+  /// same sentence about FULL three times.
+  String _browserScrollHint(String segment) {
+    final seg = parseBrowserScrollSegment(segment);
+
+    String fit;
+    switch (seg.scroll) {
+      case BrowserScroll.top:
+        fit = 'TOP fits the capture to the window width and holds above '
+            'the fold. Nothing moves.';
+        break;
+      case BrowserScroll.fit:
+        fit = 'FIT contains the whole capture in the window, letterboxed '
+            'against the page plate. For a short page or a phone capture, '
+            'where a scroll would have nowhere to go. Nothing moves.';
+        break;
+      case BrowserScroll.scroll:
+        fit = 'SCROLL fits the width and pans down through whatever is '
+            'below the fold, inside this hold. The travel divides the hold '
+            'rather than extending it, so a capture twenty screens tall runs '
+            'exactly as long as one that fits. A hold too short to travel '
+            'legibly plays static at the top rather than scrolling faster.';
+        break;
+    }
+
+    if (!seg.maximizes) return fit;
+
+    return '$fit\n\n_FULL maximizes the window out to the whole frame once '
+        'it has opened, and restores to its desktop rect on the way out. '
+        'Unlike MOSAIC_FULL the chrome stays: a browser without its tab '
+        'strip and address bar is a photograph of a webpage. It gives up '
+        'the shadow, the rounded corners, and the desktop around it. Under '
+        'APPSWITCH:SLIDE a full window will only absorb another full one, '
+        'since there is no animation between two sizes inside a navigation.';
+  }
+
+  void _setCaption(String dir, String name, ImageCaption record) {
+    final Map<String, ImageCaption> all =
+        Map<String, ImageCaption>.from(_captionsFor(dir));
+    all[name] = record;
+    final bool ok = writeFolderCaptions(dir, all);
+    setState(() {
+      _captionCacheForDir = all;
+      _captionCacheDir = dir;
+    });
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('COULD NOT WRITE $kFolderCaptionFile')),
+      );
+    }
+    // The band is geometry, so the preview has to re-simulate to show it.
+    _notifyChanged();
+  }
+
+  /// Per-image profile, opened by clicking a thumbnail in the contact
+  /// sheet.
+  ///
+  /// Lives here rather than in the sheet because the sheet is out of room:
+  /// four corners of every thumbnail are already spoken for by position,
+  /// ★, LR/RL, FIT, and the recycle X. A caption is also not a toggle, and
+  /// a text field the width of a 54px thumbnail is not a text field.
+  Widget _imageProfile(String dir, String name,
+      Map<String, ImageCaption> captions, ScriptNode node) {
+    final t = widget.theme;
+    final ImageCaption rec = captions[name] ?? ImageCaption.none;
+    final String key = '$dir|$name';
+
+    final bool isBrowser = node.type == 'BROWSER';
+
+    // Pane arithmetic is an APP MOSAIC question. A browser has pages rather
+    // than panes, so asking for a pane address on one would resolve against
+    // a pane plan that does not exist and hand back a hold slider for a
+    // token nothing will ever write.
+    final int count = isBrowser ? 0 : _paneCountFor(node);
+    final addr = isBrowser ? null : _paneAddressOf(node, _profileIndex, count);
+    final List<AppPaneSpec> panes = isBrowser
+        ? const []
+        : resolveAppPanePlan(count, parseAppPanePlan(node.param('panes')));
+    final int hold = (addr != null && addr.pane < panes.length)
+        ? panes[addr.pane].holdAt(addr.within)
+        : 0;
+
+    return Container(
+      margin: EdgeInsets.only(top: sc(10)),
+      padding: EdgeInsets.all(sc(10)),
+      decoration: BoxDecoration(
+        color: R3Theme.panelHi,
+        borderRadius: BorderRadius.circular(sc(4)),
+        border: Border.all(color: t.accentDim),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(name.toUpperCase(),
+                    style: t.micro.copyWith(color: t.accent),
+                    overflow: TextOverflow.ellipsis),
+              ),
+              InkWell(
+                onTap: () => setState(() => _profileTarget = null),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: sc(4)),
+                  child: Icon(Icons.close,
+                      size: sc(14), color: R3Theme.textDim),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: sc(8)),
+          if (isBrowser) ...[
+            R3MicroLabel('ADDRESS', theme: t),
+            SizedBox(height: sc(6)),
+            TextField(
+              controller: _ctl('$key|url', rec.url),
+              style: t.value,
+              decoration: const InputDecoration(
+                  isDense: true, hintText: 'https://example.org/page'),
+              onChanged: (v) => _setCaption(dir, name, rec.copyWith(url: v)),
+            ),
+            SizedBox(height: sc(10)),
+            R3MicroLabel('PAGE TITLE', theme: t),
+            SizedBox(height: sc(6)),
+            TextField(
+              controller: _ctl('$key|pageTitle', rec.pageTitle),
+              style: t.value,
+              decoration: InputDecoration(
+                  isDense: true,
+                  hintText: rec.displayTabTitle.isEmpty
+                      ? 'Shown on the tab'
+                      : rec.displayTabTitle),
+              onChanged: (v) =>
+                  _setCaption(dir, name, rec.copyWith(pageTitle: v)),
+            ),
+            SizedBox(height: sc(8)),
+            Text(
+              'Both live in $kFolderCaptionFile beside the captures, not in '
+              'the script: a URL cannot survive a grammar that splits on '
+              '":". An empty page title falls back to the host out of the '
+              'address, which is what a browser does anyway. Neither is '
+              'affected by HAS CAPTION below: that decides whether a MOSAIC '
+              'band draws, and an address bar is chrome rather than a label.',
+              style: t.fine.copyWith(color: R3Theme.textDim, height: 1.4),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: sc(10)),
+              child: Container(height: 1, color: t.accentFaint),
+            ),
+          ],
+          // The checkbox is authored separately from the text, so
+          // unchecking a caption keeps the words. Dropping a label for one
+          // cut must not destroy the research that produced it.
+          InkWell(
+            onTap: () =>
+                _setCaption(dir, name, rec.copyWith(enabled: !rec.enabled)),
+            child: Row(
+              children: [
+                Icon(
+                  rec.enabled
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: sc(16),
+                  color: rec.enabled ? t.accent : R3Theme.textDim,
+                ),
+                SizedBox(width: sc(6)),
+                Text('HAS CAPTION', style: t.micro),
+              ],
+            ),
+          ),
+          SizedBox(height: sc(10)),
+          R3MicroLabel('CAPTION', theme: t),
+          SizedBox(height: sc(6)),
+          TextField(
+            controller: _ctl('$key|caption', rec.caption),
+            style: t.value,
+            maxLines: null,
+            minLines: 2,
+            decoration: const InputDecoration(isDense: true),
+            onChanged: (v) =>
+                _setCaption(dir, name, rec.copyWith(caption: v)),
+          ),
+          SizedBox(height: sc(10)),
+          R3MicroLabel('CREDIT', theme: t),
+          SizedBox(height: sc(6)),
+          TextField(
+            controller: _ctl('$key|credit', rec.credit),
+            style: t.value,
+            decoration: const InputDecoration(
+                isDense: true, hintText: 'Collection, box, accession'),
+            onChanged: (v) => _setCaption(dir, name, rec.copyWith(credit: v)),
+          ),
+          SizedBox(height: sc(8)),
+          Text(
+            'Stored in $kFolderCaptionFile beside the images, not in the '
+            'script. The caption travels with the photograph.',
+            style: t.fine.copyWith(color: R3Theme.textDim, height: 1.4),
+          ),
+          if (addr != null) ...[
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: sc(10)),
+              child: Container(height: 1, color: t.accentFaint),
+            ),
+            R3MicroLabel('HOLD LONGER', theme: t),
+            SizedBox(height: sc(6)),
+            R3Slider(
+              theme: t,
+              label: 'Extra frames',
+              value: hold.toDouble(),
+              min: 0,
+              max: 600,
+              format: (v) => v <= 0 ? 'none' : '+${v.toStringAsFixed(0)} fr',
+              onChanged: (v) => _setHoldFrames(
+                  node, _profileIndex, count, v.round()),
+            ),
+            SizedBox(height: sc(8)),
+            Text(
+              'Unlike the caption, this is script state: it goes in the APP '
+              'pane token and it MAKES THE PIECE LONGER. Every scene after '
+              'this page moves by the frames you add. It applies whether or '
+              'not Pane Life is on.',
+              style: t.fine.copyWith(color: R3Theme.textDim, height: 1.4),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Writes authored MOSAIC pane structure from the contact sheet.
+  ///
+  /// Empty clears back to one-image-per-pane with no Pane Life selection.
+  /// The same collapse happens when the explicit plan is only unselected
+  /// one-image LR panes, so toggling the final ★ off removes the pane segment
+  /// instead of leaving script noise like `1;1;1`. Real grouping, direction,
+  /// or fit remains authored even when no hero is selected.
+  ///
+  /// Fit has to be in this test. A plan of all `1-FIT` panes is one image
+  /// per pane, unselected, and left to right, so without the fit clause it
+  /// reads as the default and the collapse throws the fit away the moment
+  /// it is set.
+  void _setPanePlan(ScriptNode node, List<AppPaneSpec> plan) {
+    final bool implicit = plan.isEmpty || plan.every((p) =>
+        p.imageCount == 1 &&
+        p.heroIndex == null &&
+        p.direction == PaneDirection.leftToRight &&
+        p.fit == PaneFit.fill);
+    node.set('panes', implicit ? '' : formatAppPanePlan(plan));
+    _notifyChanged();
+  }
+
+  /// Shows what the page plan will actually do against the folder as it
+  /// stands, resolved through the same rules the engine uses.
+  ///
+  /// Worth the space because the plan is advisory in both directions: it
+  /// chunks on when it runs short and stops when it runs long, so what you
+  /// typed and what plays are often not the same list. Reading that off the
+  /// tag alone means doing the arithmetic in your head against a folder you
+  /// cannot see.
+  Widget _appPagePlanReadout(ScriptNode node) {
+    final t = widget.theme;
+    final String folder = node.param('folder').trim();
+    if (folder.isEmpty) return const SizedBox.shrink();
+
+    final int count = listFolderAssets(
+      _slotAbsolute(AssetSlot.imageFolder, folder),
+      ThumbKind.raster,
+    ).length;
+    if (count == 0) return const SizedBox.shrink();
+
+    final int capped = count > 9 ? 9 : count;
+    final List<AppPaneSpec> paneSpecs =
+        resolveAppPanePlan(capped, parseAppPanePlan(node.param('panes')));
+    final List<int> plan = parsePagePlan(node.param('pages'));
+    final List<int> pages = resolvePagePlan(paneSpecs.length, plan);
+
+    return _wrap(Row(
+      children: [
+        R3MicroLabel('PLAYS AS', theme: t),
+        SizedBox(width: sc(8)),
+        Text(
+          '${pages.join(' + ')}  '
+          '(${pages.length} page${pages.length == 1 ? '' : 's'}, '
+          '${paneSpecs.length} pane${paneSpecs.length == 1 ? '' : 's'}, '
+          '$capped image${capped == 1 ? '' : 's'})',
+          style: t.fine,
+        ),
+      ],
+    ));
+  }
+
+  // -------------------------------------------------------------------
+  // Macro menu forms
+  //
+  // These four tags reference each other by name, and until now the only
+  // way to keep them consistent was to remember what you typed twenty
+  // lines earlier. The forms read the rest of the document instead: CALL
+  // and MENU_STATE pick from the menus actually defined, and MACRO_CFG
+  // resolves its instance back to a menu to offer that menu's real items.
+  // -------------------------------------------------------------------
+
+  /// Every menu defined anywhere in the document, as id to item list.
+  Map<String, List<({String id, String text})>> get _definedMenus {
+    final Map<String, List<({String id, String text})>> out = {};
+    for (final n in _nodes) {
+      if (n.type != 'DEF_MENU') continue;
+      out[n.param('id')] = _parseMenuItems(n.body);
+    }
+    return out;
+  }
+
+  /// Instance id to the menu it belongs to, taken from MENU_STATE nodes.
+  /// MACRO_CFG names an instance but not a menu, so this is the only way
+  /// to know which items a given config row is choosing between.
+  Map<String, String> get _instanceMenus {
+    final Map<String, String> out = {};
+    for (final n in _nodes) {
+      if (n.type != 'MENU_STATE') continue;
+      final String inst = n.param('instance');
+      if (inst.isNotEmpty) out[inst] = n.param('menu');
+    }
+    return out;
+  }
+
+  static List<({String id, String text})> _parseMenuItems(String body) {
+    return _menuItemRegex
+        .allMatches(body)
+        .map((m) => (id: m.group(1)!, text: m.group(2) ?? ''))
+        .toList();
+  }
+
+  /// Rebuilds a menu body from its items. One item per line, which is how
+  /// they are written by hand and how the dashboard reads them back.
+  static String _buildMenuBody(List<({String id, String text})> items) {
+    if (items.isEmpty) return '\n';
+    final StringBuffer b = StringBuffer('\n');
+    for (final it in items) {
+      b.write('[ITEM:${it.id}]${it.text}[/ITEM]\n');
+    }
+    return b.toString();
+  }
+
+  List<Widget> _defMenuForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final items = _parseMenuItems(node.body);
+
+    f.add(_fText(node, 'Menu id', 'id', fallback: 'menu'));
+
+    void commit(List<({String id, String text})> next) {
+      node.body = _buildMenuBody(next);
+      node.dirty = true;
+      _notifyChanged();
+    }
+
+    f.add(_wrap(Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            R3MicroLabel('Items', theme: widget.theme),
+            const Spacer(),
+            _iconAction(Icons.add, 'Add item', () {
+              commit([
+                ...items,
+                (id: 'opt${items.length + 1}', text: '  NEW ITEM'),
+              ]);
+            }),
+          ],
+        ),
+        SizedBox(height: sc(6)),
+        if (items.isEmpty)
+          Text('NO ITEMS YET', style: widget.theme.micro)
+        else
+          for (int i = 0; i < items.length; i++)
+            Padding(
+              padding: EdgeInsets.only(bottom: sc(8)),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: sc(84),
+                    child: TextField(
+                      controller: _ctl(
+                          '${node.id}|item_id_$i', items[i].id),
+                      style: widget.theme.fine,
+                      decoration: const InputDecoration(
+                          isDense: true, hintText: 'id'),
+                      onChanged: (v) {
+                        final next = [...items];
+                        next[i] = (id: v, text: items[i].text);
+                        commit(next);
+                      },
+                    ),
+                  ),
+                  SizedBox(width: sc(6)),
+                  Expanded(
+                    child: TextField(
+                      controller: _ctl(
+                          '${node.id}|item_tx_$i', items[i].text),
+                      style: widget.theme.value,
+                      decoration: const InputDecoration(
+                          isDense: true, hintText: 'label'),
+                      onChanged: (v) {
+                        final next = [...items];
+                        next[i] = (id: items[i].id, text: v);
+                        commit(next);
+                      },
+                    ),
+                  ),
+                  _iconAction(Icons.arrow_upward, 'Move up',
+                      i == 0
+                          ? null
+                          : () {
+                              final next = [...items];
+                              final t = next.removeAt(i);
+                              next.insert(i - 1, t);
+                              commit(next);
+                            }),
+                  _iconAction(Icons.close, 'Remove item', () {
+                    final next = [...items]..removeAt(i);
+                    commit(next);
+                  }, danger: true),
+                ],
+              ),
+            ),
+      ],
+    )));
+
+    f.add(_hint('Leading spaces in a label are preserved, which is how the '
+        'menu gets its indent. Line breaks inside a label are stripped by '
+        'the parser, so keep each item on one line.'));
+
+    if (items.isNotEmpty) {
+      final String id = node.param('id');
+      final bool called = _nodes.any((n) => n.type == 'CALL' && n.param('menu') == id);
+      if (!called) {
+        f.add(_hint('This menu is defined but never drawn. Add a CALL node '
+            'with menu id "$id" to put it on screen.', danger: true));
+      }
+    }
+
+    return f;
+  }
+
+  List<Widget> _callForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final menus = _definedMenus.keys.toList()..sort();
+    final String current = node.param('menu');
+    final bool resolves = current.isEmpty || menus.contains(current);
+
+    f.add(_wrap(Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            R3MicroLabel('Menu', theme: widget.theme),
+            SizedBox(width: sc(8)),
+            if (!resolves)
+              const R3Tally(state: R3TallyState.error, count: 'UNDEFINED'),
+          ],
+        ),
+        SizedBox(height: sc(6)),
+        if (menus.isEmpty)
+          Text('NO MENUS DEFINED IN THIS SCRIPT', style: widget.theme.micro)
+        else
+          _bareDropdown(
+            value: current,
+            items: [
+              if (current.isNotEmpty && !menus.contains(current)) current,
+              ...menus,
+            ],
+            itemLabel: (s) => s,
+            onChanged: (v) {
+              if (v == null) return;
+              node.set('menu', v);
+              _notifyChanged();
+            },
+          ),
+      ],
+    )));
+
+    f.add(_hint('Draws the menu once at this point in the script, wrapped '
+        'in REGION tags so a later MENU_STATE can highlight a row.'));
+    return f;
+  }
+
+  List<Widget> _menuStateForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final defined = _definedMenus;
+    final menus = defined.keys.toList()..sort();
+    final String current = node.param('menu');
+
+    f.add(_wrap(Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            R3MicroLabel('Menu', theme: widget.theme),
+            SizedBox(width: sc(8)),
+            if (current.isNotEmpty && !menus.contains(current))
+              const R3Tally(state: R3TallyState.error, count: 'UNDEFINED'),
+          ],
+        ),
+        SizedBox(height: sc(6)),
+        if (menus.isEmpty)
+          Text('NO MENUS DEFINED IN THIS SCRIPT', style: widget.theme.micro)
+        else
+          _bareDropdown(
+            value: current,
+            items: [
+              if (current.isNotEmpty && !menus.contains(current)) current,
+              ...menus,
+            ],
+            itemLabel: (s) => s,
+            onChanged: (v) {
+              if (v == null) return;
+              node.set('menu', v);
+              _notifyChanged();
+            },
+          ),
+      ],
+    )));
+
+    f.add(_fText(node, 'Instance id', 'instance',
+        hintText: 'unique per highlight step'));
+
+    f.add(_hint('Each instance is a separate highlight step with its own '
+        'color and blink settings. Reusing an id reuses those settings.'));
+
+    final items = defined[current];
+    if (items != null && items.isNotEmpty) {
+      f.add(_hint('Rows available: ${items.map((e) => e.id).join(', ')}'));
+    }
+
+    return f;
+  }
+
+  List<Widget> _macroCfgForm(ScriptNode node) {
+    final List<Widget> f = [];
+
+    final String instance = node.param('instance');
+    final String? menuName = _instanceMenus[instance];
+    final items = menuName == null ? null : _definedMenus[menuName];
+
+    f.add(_hint('Written automatically by the Macro Menu Controller on the '
+        'main menu. Editing it here works, and the controller will pick up '
+        'your change the next time the template loads.'));
+
+    f.add(_fText(node, 'Instance id', 'instance'));
+
+    if (items == null || items.isEmpty) {
+      f.add(_fText(node, 'Selected item', 'item', fallback: 'NONE'));
+      f.add(_hint(menuName == null
+          ? 'No MENU_STATE node references this instance, so its rows '
+              'cannot be resolved. Add one to get a picker here.'
+          : 'Menu "$menuName" has no items yet.'));
+    } else {
+      final List<String> options = ['NONE', ...items.map((e) => e.id)];
+      f.add(_fEnum(node, 'Selected item', 'item', options, 'NONE'));
+      f.add(_hint('From menu "$menuName".'));
+    }
+
+    f.add(_fRgb(node, 'Highlight color', 'rgb', def: '0,255,0'));
+
+    f.add(_fEnum(node, 'Blink', 'blink', const ['0', '1', '2'], '0'));
+    f.add(_hint('0 is solid, 1 and 2 blink that many times before settling.'));
+
+    return f;
+  }
+
+  List<Widget> _speedForm(ScriptNode node) {
+    final bool isMax = node.param('speed', '1').toUpperCase() == 'MAX';
+
+    return [
+      _wrap(R3Dropdown<String>(
+        theme: widget.theme,
+        label: 'Mode',
+        value: isMax ? 'MAX' : 'CHARS',
+        items: const ['CHARS', 'MAX'],
+        itemLabel: (s) => s == 'MAX' ? 'MAX (instant)' : 'CHARS / FRAME',
+        onChanged: (v) {
+          if (v == null) return;
+          node.set('speed', v == 'MAX' ? 'MAX' : '5');
+          _notifyChanged();
+        },
+      )),
+      if (isMax)
+        _hint('MAX types the run instantly, with no per-frame cadence.')
+      else
+        _fInt(node, 'Chars/frame', 'speed', min: 1, max: 40, def: '1'),
+    ];
+  }
+
+  /// SIZE and LEAD share a shape: a DEFAULT sentinel or an explicit number.
+  List<Widget> _defaultableForm(ScriptNode node, String key, String label,
+      double min, double max, String customDef, String defaultHint) {
+    final String current = node.param(key, 'DEFAULT');
+    final bool isDefault = current.toUpperCase() == 'DEFAULT';
+
+    return [
+      _wrap(R3Dropdown<String>(
+        theme: widget.theme,
+        label: 'Mode',
+        value: isDefault ? 'DEFAULT' : 'CUSTOM',
+        items: const ['DEFAULT', 'CUSTOM'],
+        itemLabel: (s) => s,
+        onChanged: (v) {
+          if (v == null) return;
+          node.set(key, v == 'DEFAULT' ? 'DEFAULT' : customDef);
+          _notifyChanged();
+        },
+      )),
+      if (isDefault)
+        _hint(defaultHint)
+      else
+        _fInt(node, label, key, min: min, max: max, def: customDef),
+    ];
+  }
+
+  /// CONFIG's value type depends on its key, so the editor for it swaps
+  /// with the key and resets to a valid default when the key changes.
+  /// Controls for `[CONFIG:PANELIFE:ON[:zoom[:ease]]]`.
+  ///
+  /// The whole setting is ONE `value` param holding a colon-joined
+  /// compound, because it rides on the generic CONFIG grammar and that is
+  /// what buys the feature its zero grammar cost. This form is where that
+  /// cost gets paid back: real controls that parse the string apart and
+  /// rebuild it, instead of asking someone to type `ON:102:INOUT` into a
+  /// box labelled "Window title".
+  ///
+  /// Rebuilt shortest-first. `ON` alone stays `ON` rather than becoming
+  /// `ON:102:INOUT`, so touching an unrelated field does not rewrite a
+  /// hand-authored tag into its expanded form and pollute the diff.
+  List<Widget> _paneLifeFields(ScriptNode node) {
+    final List<String> parts = node
+        .param('value', 'ON')
+        .split(':')
+        .map((s) => s.trim())
+        .toList();
+
+    String at(int i) => i < parts.length ? parts[i] : '';
+
+    final bool on = at(0).toUpperCase() == 'ON';
+    final double zoom = (double.tryParse(at(1)) ?? kPaneDefaultZoomPercent)
+        .clamp(kPaneMinZoomPercent, kPaneMaxZoomPercent)
+        .toDouble();
+    final String ease = at(2).isEmpty ? 'INOUT' : at(2).toUpperCase();
+
+    void write({bool? onV, double? zoomV, String? easeV}) {
+      final bool o = onV ?? on;
+      if (!o) {
+        node.set('value', 'OFF');
+        _notifyChanged();
+        return;
+      }
+      final double z = zoomV ?? zoom;
+      final String e = easeV ?? ease;
+
+      final bool defaultZoom = (z - kPaneDefaultZoomPercent).abs() < 0.05;
+      final bool defaultEase = e == 'INOUT';
+
+      if (defaultZoom && defaultEase) {
+        node.set('value', 'ON');
+      } else if (defaultEase) {
+        node.set('value', 'ON:${z.toStringAsFixed(0)}');
+      } else {
+        node.set('value', 'ON:${z.toStringAsFixed(0)}:$e');
+      }
+      _notifyChanged();
+    }
+
+    final t = widget.theme;
+
+    return [
+      _wrap(R3Dropdown<String>(
+        theme: t,
+        label: 'Panel motion',
+        value: on ? 'ON' : 'OFF',
+        items: const ['ON', 'OFF'],
+        itemLabel: (s) => s,
+        onChanged: (v) => write(onV: v == 'ON'),
+      )),
+      if (on)
+        _wrap(R3Slider(
+          theme: t,
+          label: 'Push to',
+          value: zoom,
+          min: kPaneMinZoomPercent,
+          max: kPaneMaxZoomPercent,
+          format: (v) => '${v.toStringAsFixed(0)}%',
+          onChanged: (v) => write(zoomV: v),
+        )),
+      if (on)
+        _wrap(R3Dropdown<String>(
+          theme: t,
+          label: 'Easing',
+          value: ease,
+          items: const ['INOUT', 'OUT', 'IN', 'LINEAR'],
+          itemLabel: (s) => s,
+          onChanged: (v) => write(easeV: v ?? 'INOUT'),
+        )),
+      if (on && zoom <= kPaneMinZoomPercent + 0.05)
+        _hint('At 100% the panels do not move. Nudge the push up to bring '
+            'them to life.'),
+    ];
+  }
+
+  /// Controls for `[CONFIG:CAPTION:ALIGN[:size[:font]]]`.
+  ///
+  /// Same shape as the Pane Life form and for the same reason: the value
+  /// is only expanded as far as it needs to be, so touching alignment on a
+  /// tag that never set a font does not rewrite it into the full triple
+  /// and pollute the diff.
+  ///
+  /// The font picker is the reason the workspace now receives the loaded
+  /// family list. A free-text field would have been less code and would
+  /// have required you to remember, and spell, a filename minus its
+  /// extension.
+  List<Widget> _captionFields(ScriptNode node) {
+    final CaptionConfig cfg = CaptionConfig.parse(node.param('value', 'LEFT'));
+    final t = widget.theme;
+
+    void write(CaptionConfig next) {
+      node.set('value', next.toConfigValue());
+      _notifyChanged();
+    }
+
+    // "Script font" is a real selection, not an absence: it means follow
+    // whatever font the piece is set in, which is what a caption should do
+    // unless you have a reason otherwise.
+    const String kScriptFont = 'Script font';
+    final List<String> fonts = [
+      kScriptFont,
+      ...widget.availableFonts,
+    ];
+    final String currentFont =
+        (cfg.fontFamily != null && cfg.fontFamily!.trim().isNotEmpty)
+            ? cfg.fontFamily!.trim()
+            : kScriptFont;
+
+    return [
+      _wrap(R3Dropdown<String>(
+        theme: t,
+        label: 'Caption alignment',
+        value: cfg.align == CaptionAlign.center
+            ? 'CENTER'
+            : (cfg.align == CaptionAlign.right ? 'RIGHT' : 'LEFT'),
+        items: const ['LEFT', 'CENTER', 'RIGHT'],
+        itemLabel: (s) => s,
+        onChanged: (v) => write(cfg.copyWith(
+            align: captionAlignFromName(v ?? 'LEFT') ?? CaptionAlign.left)),
+      )),
+      _wrap(R3Slider(
+        theme: t,
+        label: 'Caption size',
+        value: cfg.sizePx,
+        min: kCaptionMinSizePx,
+        max: kCaptionMaxSizePx,
+        format: (v) => '${v.toStringAsFixed(0)}px',
+        onChanged: (v) => write(cfg.copyWith(sizePx: v)),
+      )),
+      _wrap(R3Dropdown<String>(
+        theme: t,
+        label: 'Caption font',
+        value: fonts.contains(currentFont) ? currentFont : kScriptFont,
+        items: fonts,
+        itemLabel: (s) => s,
+        onChanged: (v) => write(v == null || v == kScriptFont
+            ? cfg.copyWith(clearFont: true)
+            : cfg.copyWith(fontFamily: v)),
+      )),
+      if (cfg.fontFamily != null &&
+          !widget.availableFonts.contains(cfg.fontFamily))
+        _hint(
+            'This script names the font "${cfg.fontFamily}", which is not in '
+            'this workspace\'s fonts folder. Captions will fall back to the '
+            'script font rather than failing. Drop the file into fonts/ if '
+            'you want it here too.',
+            danger: false),
+      _hint('Applies to every MOSAIC caption band in the script. What a '
+          'caption SAYS is stored per image in $kFolderCaptionFile beside '
+          'the photographs; this is only how it is set.'),
+    ];
+  }
+
+  List<Widget> _configForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final String key = node.param('key', 'SIZE').toUpperCase();
+
+    // Keys and their defaults come from config_keys.dart. They used to be
+    // two hand-maintained literals here and a third in the tag palette,
+    // which meant a new key needed three edits in two files with nothing
+    // to catch a miss.
+    f.add(_fEnum(
+      node,
+      'Key',
+      'key',
+      kConfigKeyNames,
+      'SIZE',
+      onPicked: (v) {
+        // The value's type changes with the key, so carrying the old value
+        // across would emit something the engine cannot read.
+        node.set('key', v);
+        node.set('value', configDefaultFor(v));
+      },
+    ));
+
+    switch (key) {
+      case 'FG':
+        f.add(_fRgb(node, 'Foreground', 'value', def: '0,255,0'));
+        f.add(_hint('Overrides the phosphor color chosen in the main menu '
+            'when this template loads.'));
+        break;
+      case 'BG':
+        f.add(_fRgb(node, 'Background', 'value', def: '10,15,10'));
+        break;
+      case 'SIZE':
+        f.add(_fInt(node, 'Base font size', 'value',
+            min: 8, max: 200, def: '48', suffix: 'px'));
+        break;
+      case 'DESKTOP':
+        f.add(_fAsset(node, 'Wallpaper', 'value', AssetSlot.rasterFile));
+        f.add(_hint('Setting a wallpaper is what unlocks the windowed OS '
+            'mode for GALLERY, APP, CARD, DOSSIER, and TIMELINE.'));
+        break;
+      case 'PANELIFE':
+        f.addAll(_paneLifeFields(node));
+        f.add(_hint('PANELIFE:ON enables the capability only. It does not '
+            'animate every MOSAIC pane. A pane moves only when its APP pane '
+            'token contains an explicit @HERO, which the contact-sheet ★ '
+            'writes and removes. LR/RL controls the walk inside a selected '
+            'multi-image pane.'));
+        f.add(_hint('Frame counts do not change. Only selected panes divide '
+            'the hold the page already has, so one selected hero can use the '
+            'whole hold while two selected panes split it. Each selected pane '
+            'needs at least $kPaneMinPushFrames frames; if the available hold '
+            'is shorter, the selected heroes render still and a warning says '
+            'why.'));
+        break;
+      case 'CAPTION':
+        f.addAll(_captionFields(node));
+        break;
+      case 'APPSWITCH':
+        f.add(_wrap(R3Dropdown<String>(
+          theme: widget.theme,
+          label: 'Between adjacent APP tags',
+          value: node.param('value', 'DESKTOP').trim().toUpperCase() == 'SLIDE'
+              ? 'SLIDE'
+              : 'DESKTOP',
+          items: const ['DESKTOP', 'SLIDE'],
+          itemLabel: (v) => v == 'SLIDE'
+              ? 'SLIDE  (stay open, pan across)'
+              : 'DESKTOP  (close and reopen)',
+          onChanged: (v) {
+            node.set('value', v ?? 'DESKTOP');
+            _notifyChanged();
+          },
+        )));
+        f.add(_hint('DESKTOP is the original behaviour: the window '
+            'un-maximizes, shrinks away, and the next APP grows back out. '
+            'SLIDE keeps the window and treats the next tag as more pages '
+            'of it, so the transition is the same horizontal pan MOSAIC '
+            'already uses between pages. SLIDE applies only between '
+            'adjacent APP tags with the same layout and maximize state; '
+            'anything else still opens its own window. It makes the piece '
+            'SHORTER, since four window animations are replaced by one '
+            'pan.'));
+        break;
+      default:
+        f.add(_fText(node, 'Window title', 'value',
+            hintText: 'operator@field-terminal: ~'));
+        break;
+    }
+    return f;
+  }
+
+  /// TIMELINE's tail is strictly positional: a stage needs a heading, thumb
+  /// width needs a stage, gap needs a thumb width, FOCUS needs a gap. Each
+  /// control is gated on its predecessor so an unparseable tag cannot be
+  /// produced from this form.
+  List<Widget> _timelineForm(ScriptNode node) {
+    final List<Widget> f = [];
+
+    final bool hasHeading = node.param('heading').trim().isNotEmpty;
+    final bool hasStage = node.param('stage').trim().isNotEmpty;
+
+    f.add(_fInt(node, 'Hold', 'hold',
+        min: 0, max: 1200, def: '240', suffix: 'fr'));
+    f.add(_fRgb(node, 'Panel color', 'rgb', def: '30,30,38'));
+    f.add(_fText(node, 'Heading', 'heading'));
+
+    f.add(_gate(
+      hasHeading,
+      'A stage requires a heading',
+      _fAsset(node, 'Center stage folder', 'stage', AssetSlot.imageFolder,
+          optional: true),
+    ));
+
+    f.add(_gate(
+      hasStage,
+      'Thumbnails require a stage folder',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _fInt(node, 'Thumb width', 'thumbW',
+              min: 40, max: 600, def: '150', suffix: 'px'),
+          _fInt(node, 'Thumb gap', 'gap',
+              min: 0, max: 200, def: '40', suffix: 'px'),
+          _fToggle(node, 'Focus', 'focus', 'FOCUS',
+              'Dims the wallpaper into a vignette while the panel is up.'),
+        ],
+      ),
+    ));
+
+    f.add(_fArea(node, 'Events', 'body', node.body, (v) => node.body = v,
+        minLines: 6));
+    f.add(_hint('One event per line as "date | text". A line with no pipe '
+        'continues the previous event. Photo i pairs with event i.'));
+
+    return f;
+  }
+
+  /// PHOTO's release percentage sits positionally behind the tint override,
+  /// so the gate control unlocks only once a tint is set.
+  List<Widget> _photoForm(ScriptNode node) {
+    final List<Widget> f = [];
+    final bool hasRgb = node.param('rgb').trim().isNotEmpty;
+
+    f.add(_fAsset(node, 'Scan file', 'file', AssetSlot.rasterFile,
+        maxDimension: 1024));
+    f.add(_fInt(node, 'Hold', 'hold',
+        min: 1, max: 900, def: '120', suffix: 'fr'));
+    f.add(_fEnum(node, 'Channel', 'channel', ['R', 'G', 'B'], 'R'));
+    f.add(_fRgb(node, 'Tint override', 'rgb',
+        def: '0,255,0', optional: true, clearedLabel: 'INHERIT PEN'));
+
+    f.add(_gate(
+      hasRgb,
+      'A release requires a tint override',
+      _fInt(node, 'Release gate', 'release',
+          min: 0, max: 100, def: '100', suffix: '%'),
+    ));
+
+    f.add(_hint('A release turns this into a stacking onion layer that '
+        'persists until the next WIPE. Without one it is a classic '
+        'fullscreen photo that replaces the screen. Layers cap at six.'));
+
+    return f;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Recycle browser thumbnail
+// ---------------------------------------------------------------------
+
+class _RecycleThumbCard extends StatefulWidget {
+  final _RecycleEntry entry;
+  final R3Theme theme;
+  final Future<void> Function() onRestore;
+
+  const _RecycleThumbCard({
+    required this.entry,
+    required this.theme,
+    required this.onRestore,
+  });
+
+  @override
+  State<_RecycleThumbCard> createState() => _RecycleThumbCardState();
+}
+
+class _RecycleThumbCardState extends State<_RecycleThumbCard> {
+  bool _hovered = false;
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final double width = sc(98);
+    final double thumb = sc(98);
+    final String folder = widget.entry.originalFolder.isEmpty
+        ? 'IMAGES/'
+        : widget.entry.originalFolder;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: SizedBox(
+        width: width,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Stack(
+              children: [
+                AssetThumb(
+                  path: widget.entry.absolutePath,
+                  kind: ThumbKind.raster,
+                  size: thumb,
+                  theme: widget.theme,
+                ),
+                if (_hovered || _busy)
+                  Positioned.fill(
+                    child: Container(
+                      alignment: Alignment.bottomCenter,
+                      decoration: const BoxDecoration(
+                        color: Color(0x66000000),
+                      ),
+                      padding: EdgeInsets.all(sc(6)),
+                      child: Material(
+                        color: const Color(0xE61A1A1A),
+                        borderRadius: BorderRadius.circular(sc(3)),
+                        child: InkWell(
+                          onTap: _busy
+                              ? null
+                              : () async {
+                                  setState(() => _busy = true);
+                                  try {
+                                    await widget.onRestore();
+                                  } finally {
+                                    if (mounted) setState(() => _busy = false);
+                                  }
+                                },
+                          borderRadius: BorderRadius.circular(sc(3)),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: sc(7), vertical: sc(5)),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_busy)
+                                  SizedBox(
+                                    width: sc(12),
+                                    height: sc(12),
+                                    child: const CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                else
+                                  Icon(Icons.restore,
+                                      size: sc(13), color: Colors.white),
+                                SizedBox(width: sc(4)),
+                                Text(
+                                  _busy ? 'RESTORING' : 'RESTORE',
+                                  style: widget.theme.micro
+                                      .copyWith(color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            SizedBox(height: sc(5)),
+            Text(
+              widget.entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: widget.theme.fine.copyWith(color: R3Theme.textMid),
+            ),
+            SizedBox(height: sc(2)),
+            Text(
+              folder,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: widget.theme.micro.copyWith(color: R3Theme.textDim),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
