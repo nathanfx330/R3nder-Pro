@@ -3097,6 +3097,15 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           'inside a desktop window.',
     ));
 
+    f.add(_fToggle(
+      node,
+      'Audio',
+      'audio',
+      'AUDIO',
+      'Play the audio belonging to clips in this sequence. Workspace voice '
+          'and music beds are authored separately and are unaffected.',
+    ));
+
     f.add(_wrap(
       StructuralChromeControls(
         theme: widget.theme,
