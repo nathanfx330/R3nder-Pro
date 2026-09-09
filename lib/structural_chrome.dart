@@ -2,22 +2,25 @@
 //
 // Placement-owned chrome metadata for [STRUCT:...] video presentations.
 //
-// EDIT and MOSAIC remain reusable composition sources. Window title and
-// informational overlays belong to the STRUCT placement, alongside FULL, so
-// the same source can be presented with different chrome in different places.
+// EDIT and MOSAIC remain reusable composition sources. Window title,
+// informational overlays, fullscreen state, and clip-audio intent belong to the
+// STRUCT placement, so the same source can be presented differently in
+// different places.
 //
 // Canonical examples:
 //
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
+//   [STRUCT:EDIT.main:AUDIO]
 //   [STRUCT:MOSAIC.wall:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:OVERLAY=NONE:TITLE="Archive Viewer"]
-//   [STRUCT:MOSAIC.wall:FULL:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972 · F[frame]":BOTTOM="16MM TRANSFER · REEL 4"]
+//   [STRUCT:MOSAIC.wall:FULL:AUDIO:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972 · F[frame]":BOTTOM="16MM TRANSFER · REEL 4"]
 //
-// Text values are quoted. Colons inside quoted text are data, not segment
-// separators. Backslash, quote, newline, carriage return, and tab use the
-// conventional escaped forms. Unknown keyed segments make the tag invalid so
-// an author typo cannot silently become a different presentation.
+// FULL and AUDIO are bare placement tokens. Text values are quoted. Colons
+// inside quoted text are data, not segment separators. Backslash, quote,
+// newline, carriage return, and tab use the conventional escaped forms.
+// Unknown segments make the tag invalid so an author typo cannot silently
+// become a different presentation.
 //
 // `[frame]` inside TITLE, TOP, or BOTTOM is a render-time expression. It is
 // preserved verbatim in script state and expands to the current structural
@@ -64,6 +67,11 @@ String expandStructuralChromeExpressions(
 class StructuralChromeSpec {
   final String source;
   final bool fullscreen;
+
+  /// Placement-owned intent to play the audio belonging to clips in [source].
+  /// This is deliberately independent of workspace voice/music beds.
+  final bool clipAudio;
+
   final StructuralOverlayMode overlayMode;
 
   /// Empty means the existing default: the canonical structural source name.
@@ -77,6 +85,7 @@ class StructuralChromeSpec {
   const StructuralChromeSpec({
     required this.source,
     this.fullscreen = false,
+    this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
     this.topOverlay = '',
@@ -89,6 +98,7 @@ class StructuralChromeSpec {
   StructuralChromeSpec copyWith({
     String? source,
     bool? fullscreen,
+    bool? clipAudio,
     StructuralOverlayMode? overlayMode,
     String? windowTitle,
     String? topOverlay,
@@ -97,6 +107,7 @@ class StructuralChromeSpec {
     return StructuralChromeSpec(
       source: source ?? this.source,
       fullscreen: fullscreen ?? this.fullscreen,
+      clipAudio: clipAudio ?? this.clipAudio,
       overlayMode: overlayMode ?? this.overlayMode,
       windowTitle: windowTitle ?? this.windowTitle,
       topOverlay: topOverlay ?? this.topOverlay,
@@ -123,6 +134,7 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
   if (!_structuralSource.hasMatch(source)) return null;
 
   bool fullscreen = false;
+  bool clipAudio = false;
   StructuralOverlayMode overlay = StructuralOverlayMode.defaultOverlay;
   String title = '';
   String top = '';
@@ -137,9 +149,15 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
     final String segment = rawSegment.trim();
     if (segment.isEmpty) return null;
 
-    if (segment.toUpperCase() == 'FULL') {
+    final String bare = segment.toUpperCase();
+    if (bare == 'FULL') {
       if (fullscreen) return null;
       fullscreen = true;
+      continue;
+    }
+    if (bare == 'AUDIO') {
+      if (clipAudio) return null;
+      clipAudio = true;
       continue;
     }
 
@@ -186,6 +204,7 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
   return StructuralChromeSpec(
     source: source,
     fullscreen: fullscreen,
+    clipAudio: clipAudio,
     overlayMode: overlay,
     windowTitle: title,
     topOverlay: top,
@@ -205,6 +224,7 @@ String formatStructuralChromeTag(StructuralChromeSpec spec) {
 
   final StringBuffer out = StringBuffer('[STRUCT:${spec.source}');
   if (spec.fullscreen) out.write(':FULL');
+  if (spec.clipAudio) out.write(':AUDIO');
   if (spec.overlayMode != StructuralOverlayMode.defaultOverlay) {
     out.write(':OVERLAY=${spec.overlayMode.token}');
   }
