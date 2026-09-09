@@ -146,7 +146,7 @@ class StructuralAudioSegment {
   final StructuralAudioFade? incomingFade;
   final StructuralAudioFade? outgoingFade;
 
-  /// Non-null only when [source] is EDIT.<id> or MOSAIC.<id>.
+  /// Non-null only when [source] is EDIT.id or MOSAIC.id.
   ///
   /// Keeping this as a plan rather than a path is the audio equivalent of the
   /// video compositor's structural recursion rule: nested structural sources
