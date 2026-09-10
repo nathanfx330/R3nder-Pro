@@ -23,6 +23,7 @@ import 'program_structural_audio_preview.dart';
 import 'scene_engine.dart';
 import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
+import 'structural_sequence.dart';
 
 /// Exact program facts PREVIEW needs before it may start its audio transport.
 ///
@@ -107,8 +108,10 @@ class ProgramStructuralAudioPreviewArtifact {
 /// Builds PREVIEW's ephemeral full-program STRUCT WAV.
 ///
 /// Returns null when the document has no resolved AUDIO-enabled STRUCT
-/// placement. That is the fast path which preserves the historical workspace
-/// bed player unchanged.
+/// placement. That check happens before the timing dry run, so ordinary
+/// previews that do not opt into clip audio retain the historical startup cost
+/// rather than simulating the whole piece just to rediscover that there is
+/// nothing to render.
 ///
 /// [tempDirectory] is supplied by the caller rather than guessed here. The app
 /// can use the operating-system temp directory while tests own an isolated temp
@@ -122,6 +125,14 @@ Future<ProgramStructuralAudioPreviewArtifact?>
   required String tempDirectory,
   StructuralAudioLeafDecodeBackend? leafDecoder,
 }) async {
+  final bool hasAudioPlacement = parseStructuralSequencePlacements(rawDocument)
+      .any((StructuralSequencePlacement placement) =>
+          placement.resolves && placement.clipAudio);
+  if (!hasAudioPlacement) {
+    scene.reset();
+    return null;
+  }
+
   final ProgramStructuralAudioPreviewTiming timing =
       measureProgramStructuralAudioPreviewTiming(scene);
 
