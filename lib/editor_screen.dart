@@ -20,9 +20,11 @@ import 'diag.dart';
 import 'editor_text_controller.dart';
 import 'editor_tag_menu.dart'; // Added import for the tag menu
 import 'script_lint.dart';
+import 'edit_media_import.dart';
 import 'edit_workspace.dart';
 import 'structural_sequence.dart';
 import 'structural_sequence_preview.dart';
+import 'text_structural_audio_preview.dart';
 
 /// Wraps ScenePainter for the editor preview. ScenePainter already always
 /// repaints, but the editor keeps its own delegate so preview-specific
@@ -207,6 +209,12 @@ class _EditorScreenState extends State<EditorScreen> {
   /// Frame playback resumed from, since the clock restarts at zero on every
   /// play and the current frame is rarely zero.
   int _playStartFrame = 0;
+
+  final TextStructuralAudioPreview _textStructuralAudio =
+      TextStructuralAudioPreview();
+  int _playGeneration = 0;
+  bool _startingTextPlayback = false;
+  bool _structuralAudioOwnsRun = false;
 
   int _totalFrames = 0;
   int _currentFrame = 0;
@@ -438,11 +446,13 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   void dispose() {
+    _playGeneration++;
     _debounce?.cancel();
     _playTimer?.cancel();
     // Stop, never dispose: the player belongs to main and outlives this
     // screen. Disposing it here would leave the menu with a dead backend.
     _stopBed();
+    _textStructuralAudio.dispose();
     _searchFocusNode.dispose();
     _tagSearchFocusNode.dispose();
     _editorFocusNode.dispose();
@@ -972,7 +982,9 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Future<void> _resimulate({required int targetFrame}) async {
-    if (_isPlaying) _stopPlayback();
+    if (_isPlaying || _startingTextPlayback) {
+      _stopPlayback(invalidateStructuralAudio: true);
+    }
 
     final int gen = ++_simGeneration;
     final String docText = _textController.text;
@@ -1091,12 +1103,54 @@ class _EditorScreenState extends State<EditorScreen> {
     widget.bedPlayer?.stop();
   }
 
-  void _togglePlay() {
+  void _restoreSceneToFrame(int frame) {
+    final int target = frame.clamp(0, _totalFrames);
+    _scene.reset();
+    for (int i = 0; i < target; i++) {
+      _scene.tick();
+    }
+    _currentFrame = target;
+    _updateHighlight();
+  }
+
+  Future<bool> _startStructuralProgramAudioAt(int frame) async {
+    final String document = _textController.text;
+    if (!_textStructuralAudio.documentHasClipAudio(document)) return false;
+
+    final AudioBedPlayer? backend = widget.bedPlayer;
+    if (backend == null) {
+      throw StateError('No preview audio backend is active.');
+    }
+
+    final bool hadPrepared = _textStructuralAudio.isPrepared;
+    try {
+      return await _textStructuralAudio.prepareAndPlay(
+        scene: _scene,
+        rawDocument: document,
+        startFrame: frame,
+        backend: backend,
+        resolveSource: resolveWorkspaceMediaSource,
+        voicePath: widget.bedPath,
+        voiceGainDb: widget.bedGainDb,
+        musicPath: widget.musicPath,
+        musicGainDb: widget.musicGainDb,
+        musicLoop: widget.musicLoop,
+        deviceId: widget.bedDevice?.id,
+      );
+    } finally {
+      // Program preparation dry-runs SceneEngine and deliberately leaves it at
+      // frame zero. Restore the editor's authored playhead only when a fresh
+      // artifact was actually prepared. Replays of the same document stay hot.
+      if (!hadPrepared) _restoreSceneToFrame(frame);
+    }
+  }
+
+  Future<void> _togglePlay() async {
     if (_isPlaying) {
       _stopPlayback();
       return;
     }
-    if (_isSimulating) return;
+    if (_isSimulating || _startingTextPlayback) return;
 
     if (_currentFrame >= _totalFrames) {
       _scene.reset();
@@ -1104,11 +1158,34 @@ class _EditorScreenState extends State<EditorScreen> {
       _updateHighlight();
     }
 
+    final int generation = ++_playGeneration;
+    final int startFrame = _currentFrame;
+    _startingTextPlayback = true;
+    if (mounted) setState(() {});
+
+    bool structuralStarted = false;
+    try {
+      structuralStarted = await _startStructuralProgramAudioAt(startFrame);
+    } catch (error) {
+      if (generation == _playGeneration && mounted) {
+        _toast('STRUCT audio unavailable: $error');
+      }
+    }
+
+    if (!mounted || generation != _playGeneration) {
+      unawaited(_textStructuralAudio.pause());
+      return;
+    }
+
+    _startingTextPlayback = false;
+    _structuralAudioOwnsRun = structuralStarted;
     _isPlaying = true;
-    _playStartFrame = _currentFrame;
+    _playStartFrame = startFrame;
     _playClock = Stopwatch()..start();
 
-    _startBedAt(_currentFrame);
+    if (!structuralStarted) {
+      _startBedAt(startFrame);
+    }
 
     _playTimer = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mounted) return;
@@ -1145,16 +1222,29 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {});
   }
 
-  void _stopPlayback() {
+  void _stopPlayback({bool invalidateStructuralAudio = false}) {
+    _playGeneration++;
     _playTimer?.cancel();
     _playTimer = null;
     _playClock = null;
     _isPlaying = false;
-    _stopBed();
+    _startingTextPlayback = false;
+
+    final bool structuralOwned = _structuralAudioOwnsRun;
+    _structuralAudioOwnsRun = false;
+    if (invalidateStructuralAudio) {
+      unawaited(_textStructuralAudio.invalidate());
+    } else if (structuralOwned || _textStructuralAudio.isPlaying) {
+      unawaited(_textStructuralAudio.pause());
+    } else {
+      _stopBed();
+    }
+
     if (mounted) setState(() {});
   }
 
   void _onAssetsChanged() {
+    _stopPlayback(invalidateStructuralAudio: true);
     _debounce?.cancel();
     _debounce = Timer(_debounceDelay, () {
       if (!mounted) return;
@@ -1179,7 +1269,7 @@ class _EditorScreenState extends State<EditorScreen> {
       _lastText = text;
       _isDirty = true;
       _saveFlash = null;
-      _stopPlayback();
+      _stopPlayback(invalidateStructuralAudio: true);
       _debounce?.cancel();
       _debounce = Timer(_debounceDelay, () {
         _resimulate(targetFrame: kMaxSimFrames);
@@ -1435,7 +1525,7 @@ class _EditorScreenState extends State<EditorScreen> {
                     (_lintFindings.isEmpty && _scene.warnings.isEmpty))
                   const Spacer(),
 
-                if (_isSimulating && _isTextMode)
+                if ((_isSimulating || _startingTextPlayback) && _isTextMode)
                   Padding(
                     padding: EdgeInsets.only(right: sc(14)),
                     child: SizedBox(
@@ -1549,7 +1639,11 @@ class _EditorScreenState extends State<EditorScreen> {
                   Row(
                     children: [
                       InkWell(
-                        onTap: (_totalFrames > 0 && !_isSimulating) ? _togglePlay : null,
+                        onTap: (_totalFrames > 0 &&
+                                !_isSimulating &&
+                                !_startingTextPlayback)
+                            ? () => unawaited(_togglePlay())
+                            : null,
                         borderRadius: BorderRadius.circular(3),
                         child: Container(
                           padding: EdgeInsets.all(sc(5)),
@@ -1563,7 +1657,9 @@ class _EditorScreenState extends State<EditorScreen> {
                           child: Icon(
                             _isPlaying ? Icons.pause : Icons.play_arrow,
                             size: sc(17),
-                            color: (_totalFrames > 0 && !_isSimulating)
+                            color: (_totalFrames > 0 &&
+                                    !_isSimulating &&
+                                    !_startingTextPlayback)
                                 ? (_isPlaying ? t.accent : R3Theme.textMid)
                                 : R3Theme.textDim,
                           ),
