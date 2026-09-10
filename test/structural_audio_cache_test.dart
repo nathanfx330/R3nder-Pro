@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/structural_audio_cache.dart';
 import 'package:r3nder/structural_audio_decode.dart';
 import 'package:r3nder/structural_audio_plan.dart';
+import 'package:r3nder/structural_audio_render.dart';
 
 class _CountingNoAudioDecoder implements StructuralAudioLeafDecodeBackend {
   int calls = 0;
