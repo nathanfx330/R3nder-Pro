@@ -1,20 +1,15 @@
 // ./lib/program_structural_audio_preview.dart
 //
-// M21 Stage 5A: realtime transport for a pre-rendered program STRUCT bed.
+// Realtime transport for a pre-rendered program STRUCT audio bed.
 //
 // structural_audio_* owns source decode/composition. program_structural_audio
 // owns absolute program placement. This module owns only the final PREVIEW
 // transport once that program WAV already exists.
 //
-// It deliberately does not live in audio_bed.dart. Workspace voice/music are
-// one authoring subsystem; STRUCT clip audio is another. PREVIEW is the point
-// where their already-authored results meet. The only shared fact is the mix
-// arithmetic in audio_mix.dart.
-//
-// One ffmpeg process feeds one sink. With the native Linux sink, that one sink
-// remains the sole AUDIO ProjectClock authority. Voice and music receive the
-// same preroll delay BAKE gives them. The program STRUCT WAV receives no delay:
-// its leading silence and every placement are already in absolute project time.
+// One ffmpeg process feeds one sink. With the native Linux sink, that sink is
+// the sole AUDIO ProjectClock authority. Voice and music receive the same
+// preroll delay BAKE gives them. The program STRUCT WAV receives no delay
+// because it is already expressed in absolute project time.
 
 import 'dart:async';
 import 'dart:io';
@@ -29,6 +24,8 @@ const int _kPreviewBytesPerFrame = _kPreviewChannels * 2;
 const int _kPreviewPacketFrames = 480;
 const int _kPreviewPacketBytes =
     _kPreviewPacketFrames * _kPreviewBytesPerFrame;
+const Duration _kNativeStartTimeout = Duration(seconds: 2);
+const Duration _kNativeStartPoll = Duration(milliseconds: 5);
 const String kProgramStructuralPreviewMixLabel = 'r3previewmix';
 
 enum ProgramStructuralAudioPreviewBackend {
@@ -62,16 +59,22 @@ String? _presentPath(String? value) {
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
+/// True once the native sink has accepted more PCM than its measured device
+/// latency. At that point the sink worker has had enough data to release the
+/// frame-zero SCRUB hold into AUDIO authority.
+///
+/// A reported zero latency is treated conservatively: require two complete
+/// producer packets. That avoids racing the first write between the submitted
+/// counter increment and the worker's immediately following latency refresh.
+bool programStructuralAudioNativeReady(AudioSinkStats stats) {
+  if (!stats.healthy || stats.submittedSamples <= 0) return false;
+  if (stats.latencySamples <= 0) {
+    return stats.submittedSamples >= _kPreviewPacketFrames * 2;
+  }
+  return stats.submittedSamples > stats.latencySamples;
+}
+
 /// Builds the ffmpeg side of PREVIEW's one-process, one-sink audio pipeline.
-///
-/// The process always begins at project sample zero. [bedDelayMs] therefore
-/// parks workspace voice/music behind the preroll exactly as BAKE does, while
-/// [structuralAudioPath] is consumed without a delay because it is already a
-/// full program-time artifact.
-///
-/// [programSampleFrames] trims after the sum in exact canonical 48 kHz sample
-/// geometry. The structural WAV already owns this duration, so the trim mainly
-/// prevents a longer workspace bed or looping score from outliving picture.
 List<String> buildProgramStructuralAudioPreviewArgs({
   required String structuralAudioPath,
   required int programSampleFrames,
@@ -179,10 +182,11 @@ List<String> buildProgramStructuralAudioPreviewArgs({
 
 /// PREVIEW transport used only when a program STRUCT WAV exists.
 ///
-/// The dashboard's ordinary AudioBedPlayer remains untouched for auditioning,
-/// editor scrub playback, and previews with no STRUCT clip audio. Once M21 has
-/// a program bed, this player takes the whole preview mix so two sinks can never
-/// compete for one device.
+/// For libpulse, [play] does not report success merely because ffmpeg spawned.
+/// The native sink holds ProjectClock in SCRUB while opening. We therefore wait
+/// until enough PCM has actually crossed the sink to cover measured latency.
+/// A decoder/device path that never becomes live fails within a bounded two
+/// seconds instead of leaving the whole program frozen on frame zero.
 class ProgramStructuralAudioPreviewPlayer {
   final ProgramStructuralAudioPreviewBackend backend;
 
@@ -276,6 +280,8 @@ class ProgramStructuralAudioPreviewPlayer {
           _feedNative(decoder.stdout, nativeSink, gen);
       _feeder = feeder;
       unawaited(_finishNative(gen, decoder, nativeSink, feeder));
+
+      await _waitForNativeStart(nativeSink, gen);
       return;
     }
 
@@ -339,6 +345,51 @@ class ProgramStructuralAudioPreviewPlayer {
         if (identical(_feeder, feeder)) _feeder = null;
       }
     }).catchError((_) {}));
+  }
+
+  Future<void> _waitForNativeStart(
+    NativeAudioSink sink,
+    int gen,
+  ) async {
+    final DateTime deadline = DateTime.now().add(_kNativeStartTimeout);
+    AudioSinkStats? last;
+
+    while (gen == _generation) {
+      try {
+        final AudioSinkStats stats = sink.stats;
+        last = stats;
+        if (!stats.healthy) {
+          throw ProgramStructuralAudioPreviewException(
+            'Native program-audio sink failed before playback: '
+            '${sink.lastError}',
+          );
+        }
+        if (programStructuralAudioNativeReady(stats)) return;
+      } on ProgramStructuralAudioPreviewException {
+        rethrow;
+      } catch (e) {
+        throw ProgramStructuralAudioPreviewException(
+          'Native program-audio sink disappeared before playback: $e',
+        );
+      }
+
+      if (DateTime.now().isAfter(deadline)) {
+        final AudioSinkStats? stats = last;
+        throw ProgramStructuralAudioPreviewException(
+          'Program audio did not reach the native sink within '
+          '${_kNativeStartTimeout.inMilliseconds} ms '
+          '(submitted=${stats?.submittedSamples ?? 0}, '
+          'latency=${stats?.latencySamples ?? 0}, '
+          'queued=${stats?.queuedSamples ?? 0}, '
+          'healthy=${stats?.healthy ?? false}).',
+        );
+      }
+      await Future<void>.delayed(_kNativeStartPoll);
+    }
+
+    throw const ProgramStructuralAudioPreviewException(
+      'Program audio startup was superseded by a newer playback request.',
+    );
   }
 
   Future<void> _feedNative(
@@ -431,8 +482,9 @@ class ProgramStructuralAudioPreviewPlayer {
       sink.requestDrain();
       await _waitForNativeDrain(sink, gen);
     } catch (_) {
-      // Preview transport has no asynchronous error channel. A failed
-      // generation simply ends, matching AudioBedPlayer's established rule.
+      // Startup failures are surfaced synchronously by _waitForNativeStart.
+      // Failures after a successful start end the current preview transport;
+      // native teardown releases ProjectClock to MONOTONIC.
     } finally {
       if (gen == _generation) {
         _playing = false;
