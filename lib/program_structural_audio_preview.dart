@@ -10,6 +10,11 @@
 // the sole AUDIO ProjectClock authority. Voice and music receive the same
 // preroll delay BAKE gives them. The program STRUCT WAV receives no delay
 // because it is already expressed in absolute project time.
+//
+// The same transport is also useful to authoring surfaces once they have a
+// deterministic structural WAV. [startSampleFrame] trims the already-aligned
+// program/source mix after composition, so a playhead start never changes the
+// relationship between contributors merely because preview began mid-piece.
 
 import 'dart:async';
 import 'dart:io';
@@ -61,7 +66,7 @@ String? _presentPath(String? value) {
 
 /// True once the native sink has accepted more PCM than its measured device
 /// latency. At that point the sink worker has had enough data to release the
-/// frame-zero SCRUB hold into AUDIO authority.
+/// caller's SCRUB hold into AUDIO authority.
 ///
 /// A reported zero latency is treated conservatively: require two complete
 /// producer packets. That avoids racing the first write between the submitted
@@ -75,10 +80,17 @@ bool programStructuralAudioNativeReady(AudioSinkStats stats) {
 }
 
 /// Builds the ffmpeg side of PREVIEW's one-process, one-sink audio pipeline.
+///
+/// [startSampleFrame] is in the same canonical 48 kHz timeline as
+/// [programSampleFrames]. Trimming happens after every contributor has been
+/// placed in that timeline. Main PREVIEW leaves it at zero; authoring views can
+/// start from their playhead without inventing separate seek arithmetic for
+/// structural audio, voice, and music.
 List<String> buildProgramStructuralAudioPreviewArgs({
   required String structuralAudioPath,
   required int programSampleFrames,
   required int bedDelayMs,
+  int startSampleFrame = 0,
   String? voicePath,
   double voiceGainDb = 0.0,
   String? musicPath,
@@ -98,6 +110,13 @@ List<String> buildProgramStructuralAudioPreviewArgs({
       programSampleFrames,
       'programSampleFrames',
       'Program audio must own at least one sample frame.',
+    );
+  }
+  if (startSampleFrame < 0 || startSampleFrame >= programSampleFrames) {
+    throw ArgumentError.value(
+      startSampleFrame,
+      'startSampleFrame',
+      'Preview start must fall inside the rendered audio timeline.',
     );
   }
   if (bedDelayMs < 0) {
@@ -155,11 +174,14 @@ List<String> buildProgramStructuralAudioPreviewArgs({
     ),
   );
 
+  final String trimChain = startSampleFrame == 0
+      ? 'atrim=end_sample=$programSampleFrames,asetpts=N/SR/TB'
+      : 'atrim=start_sample=$startSampleFrame:'
+          'end_sample=$programSampleFrames,asetpts=N/SR/TB';
   final String graph = audioMixGraph(
     tracks: tracks,
     outputLabel: kProgramStructuralPreviewMixLabel,
-    postMixChain:
-        'atrim=end_sample=$programSampleFrames,asetpts=N/SR/TB',
+    postMixChain: trimChain,
   );
 
   args.addAll(<String>[
@@ -180,13 +202,13 @@ List<String> buildProgramStructuralAudioPreviewArgs({
   return args;
 }
 
-/// PREVIEW transport used only when a program STRUCT WAV exists.
+/// PREVIEW transport used once a deterministic structural WAV exists.
 ///
 /// For libpulse, [play] does not report success merely because ffmpeg spawned.
 /// The native sink holds ProjectClock in SCRUB while opening. We therefore wait
 /// until enough PCM has actually crossed the sink to cover measured latency.
 /// A decoder/device path that never becomes live fails within a bounded two
-/// seconds instead of leaving the whole program frozen on frame zero.
+/// seconds instead of leaving the picture frozen at its authored start.
 class ProgramStructuralAudioPreviewPlayer {
   final ProgramStructuralAudioPreviewBackend backend;
 
@@ -213,6 +235,7 @@ class ProgramStructuralAudioPreviewPlayer {
     required String structuralAudioPath,
     required int programSampleFrames,
     required int bedDelayMs,
+    int startSampleFrame = 0,
     String? voicePath,
     double voiceGainDb = 0.0,
     String? musicPath,
@@ -232,6 +255,7 @@ class ProgramStructuralAudioPreviewPlayer {
       structuralAudioPath: structuralAudioPath,
       programSampleFrames: programSampleFrames,
       bedDelayMs: bedDelayMs,
+      startSampleFrame: startSampleFrame,
       voicePath: voicePath,
       voiceGainDb: voiceGainDb,
       musicPath: musicPath,
