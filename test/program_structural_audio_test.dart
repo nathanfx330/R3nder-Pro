@@ -70,9 +70,11 @@ Future<void> _setupScene(
   WidgetTester tester,
   SceneEngine scene,
   Directory images,
-  Directory sprites,
-) async {
-  final CompiledScript compiled = compileScript(_runtimeSource);
+  Directory sprites, {
+  bool lineMarkers = false,
+}) async {
+  final CompiledScript compiled =
+      compileScript(_runtimeSource, lineMarkers: lineMarkers);
   await tester.runAsync(() async {
     await scene.setup(
       templateText: compiled.engineText,
@@ -238,5 +240,76 @@ void main() {
     );
     expect(scene.frameCount, 0,
         reason: 'Tracing must leave the caller scene reset.');
+  });
+
+  testWidgets(
+      'editor line-map trace finds AUDIO placements without runtime regions',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_text_struct_audio_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      images,
+      sprites,
+      lineMarkers: true,
+    );
+    final int totalFrames = _programDuration(scene);
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_runtimeSource);
+
+    final Map<int, int> eventStarts = <int, int>{};
+    scene.reset();
+    for (int frame = 0; frame < totalFrames; frame++) {
+      scene.tick();
+      for (int index = 0; index < placements.length; index++) {
+        if (scene.terminal.currentRawLine == placements[index].lineIndex) {
+          eventStarts.putIfAbsent(index, () => frame);
+        }
+      }
+    }
+    scene.reset();
+
+    expect(eventStarts.keys, containsAll(<int>[0, 1, 2]));
+    expect(scene.terminal.currentRegion, isNot(startsWith('STRUCTSEQ_')));
+
+    final ProgramStructuralAudioTimeline timeline =
+        traceProgramStructuralAudioTimeline(
+      scene: scene,
+      rawDocument: _runtimeSource,
+      totalFrames: totalFrames,
+      useEditorLineMap: true,
+    );
+
+    expect(timeline.durationFrames, totalFrames);
+    expect(timeline.occurrences, hasLength(2));
+    expect(
+      timeline.occurrences.map((occurrence) => occurrence.placementIndex),
+      <int>[0, 2],
+    );
+    expect(
+      timeline.occurrences.map((occurrence) => occurrence.sourceDurationFrames),
+      <int>[3, 3],
+    );
+    expect(
+      timeline.occurrences[0].programStartFrame,
+      eventStarts[0]! + placements[0].contentStartFrame,
+    );
+    expect(
+      timeline.occurrences[1].programStartFrame,
+      eventStarts[2]! + placements[2].contentStartFrame,
+    );
+    expect(scene.frameCount, 0,
+        reason: 'Editor tracing must leave the caller scene reset.');
   });
 }
