@@ -113,6 +113,11 @@ class ProgramStructuralAudioPreviewArtifact {
 /// rather than simulating the whole piece just to rediscover that there is
 /// nothing to render.
 ///
+/// [useEditorLineMap] is false for dashboard PREVIEW and BAKE-style scenes,
+/// which carry internal STRUCT REGION markers. TEXT authoring sets it true
+/// because its SceneEngine is compiled with raw-line markers instead so the
+/// editor ribbon and cursor mapping remain intact.
+///
 /// [tempDirectory] is supplied by the caller rather than guessed here. The app
 /// can use the operating-system temp directory while tests own an isolated temp
 /// tree. The fixed per-process filename is safe because R3nder runs one PREVIEW
@@ -124,6 +129,7 @@ Future<ProgramStructuralAudioPreviewArtifact?>
   required String Function(String source) resolveSource,
   required String tempDirectory,
   StructuralAudioLeafDecodeBackend? leafDecoder,
+  bool useEditorLineMap = false,
 }) async {
   final bool hasAudioPlacement = parseStructuralSequencePlacements(rawDocument)
       .any((StructuralSequencePlacement placement) =>
@@ -141,6 +147,7 @@ Future<ProgramStructuralAudioPreviewArtifact?>
     scene: scene,
     rawDocument: rawDocument,
     totalFrames: timing.totalFrames,
+    useEditorLineMap: useEditorLineMap,
   );
 
   if (timeline.occurrences.isEmpty) return null;
@@ -232,6 +239,7 @@ class ProgramStructuralAudioPreviewSession {
     required String Function(String source) resolveSource,
     required String tempDirectory,
     StructuralAudioLeafDecodeBackend? leafDecoder,
+    bool useEditorLineMap = false,
   }) async {
     await stop();
 
@@ -242,6 +250,7 @@ class ProgramStructuralAudioPreviewSession {
       resolveSource: resolveSource,
       tempDirectory: tempDirectory,
       leafDecoder: leafDecoder,
+      useEditorLineMap: useEditorLineMap,
     );
     _artifact = prepared;
     return prepared != null;
