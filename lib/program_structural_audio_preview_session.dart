@@ -113,10 +113,11 @@ class ProgramStructuralAudioPreviewArtifact {
 /// rather than simulating the whole piece just to rediscover that there is
 /// nothing to render.
 ///
-/// [useEditorLineMap] is false for dashboard PREVIEW and BAKE-style scenes,
-/// which carry internal STRUCT REGION markers. TEXT authoring sets it true
-/// because its SceneEngine is compiled with raw-line markers instead so the
-/// editor ribbon and cursor mapping remain intact.
+/// Dashboard PREVIEW and BAKE-style scenes carry internal STRUCT REGION markers.
+/// TEXT authoring instead supplies [editorRawLineAtFrame], the exact frame map
+/// already produced by runEditorSimulation and already used by the editor's
+/// picture preview. [useEditorLineMap] remains for tests/compatibility when only
+/// an editor-marked SceneEngine is available.
 ///
 /// [tempDirectory] is supplied by the caller rather than guessed here. The app
 /// can use the operating-system temp directory while tests own an isolated temp
@@ -130,6 +131,7 @@ Future<ProgramStructuralAudioPreviewArtifact?>
   required String tempDirectory,
   StructuralAudioLeafDecodeBackend? leafDecoder,
   bool useEditorLineMap = false,
+  List<int>? editorRawLineAtFrame,
 }) async {
   final bool hasAudioPlacement = parseStructuralSequencePlacements(rawDocument)
       .any((StructuralSequencePlacement placement) =>
@@ -148,6 +150,7 @@ Future<ProgramStructuralAudioPreviewArtifact?>
     rawDocument: rawDocument,
     totalFrames: timing.totalFrames,
     useEditorLineMap: useEditorLineMap,
+    editorRawLineAtFrame: editorRawLineAtFrame,
   );
 
   if (timeline.occurrences.isEmpty) return null;
@@ -240,6 +243,7 @@ class ProgramStructuralAudioPreviewSession {
     required String tempDirectory,
     StructuralAudioLeafDecodeBackend? leafDecoder,
     bool useEditorLineMap = false,
+    List<int>? editorRawLineAtFrame,
   }) async {
     await stop();
 
@@ -251,6 +255,7 @@ class ProgramStructuralAudioPreviewSession {
       tempDirectory: tempDirectory,
       leafDecoder: leafDecoder,
       useEditorLineMap: useEditorLineMap,
+      editorRawLineAtFrame: editorRawLineAtFrame,
     );
     _artifact = prepared;
     return prepared != null;
