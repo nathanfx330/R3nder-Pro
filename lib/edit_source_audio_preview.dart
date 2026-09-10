@@ -4,8 +4,13 @@
 //
 // EDIT playback is source-relative, not program-relative. The selected
 // structural source is rendered with the same StructuralAudioSourceRenderer
-// used by program Preview and BAKE, written to a temporary IEEE-float WAV,
-// then handed to the proven one-process/one-sink preview transport.
+// used by program Preview and BAKE, then handed to the proven one-process / one-
+// sink preview transport.
+//
+// The expensive source render is content-addressed and persisted inside the
+// active workspace. Repeated PLAY presses therefore reuse the same whole-source
+// WAV as long as authored geometry, resolved leaf metadata, renderer policy,
+// and ffmpeg identity are unchanged.
 //
 // This object owns no ProjectClock. EditWorkspace parks the authoritative
 // clock on the authored playhead before calling play(). On libpulse the native
@@ -17,11 +22,10 @@
 // The AUDIO token only decides whether a placement contributes that source mix
 // to TEXT/program Preview and BAKE.
 
-import 'dart:io';
-
+import 'edit_media_import.dart';
 import 'program_structural_audio_preview.dart';
+import 'structural_audio_cache.dart';
 import 'structural_audio_plan.dart';
-import 'structural_audio_render.dart';
 
 abstract interface class EditSourceAudioPreviewTransport {
   bool get isPlaying;
@@ -52,7 +56,9 @@ EditSourceAudioPreviewTransport createEditSourceAudioPreview(
 class DeterministicEditSourceAudioPreview
     implements EditSourceAudioPreviewTransport {
   final ProgramStructuralAudioPreviewPlayer _player;
-  String? _artifactPath;
+  StructuralSourceAudioCache? _cache;
+  String? _cacheWorkspaceRoot;
+  String Function(String source)? _cacheResolver;
   int _generation = 0;
   bool _disposed = false;
 
@@ -63,6 +69,27 @@ class DeterministicEditSourceAudioPreview
 
   @override
   bool get isPlaying => !_disposed && _player.isPlaying;
+
+  StructuralSourceAudioCache _ensureCache(
+    String workspaceRoot,
+    String Function(String source) resolveSource,
+  ) {
+    final StructuralSourceAudioCache? existing = _cache;
+    if (existing != null &&
+        _cacheWorkspaceRoot == workspaceRoot &&
+        identical(_cacheResolver, resolveSource)) {
+      return existing;
+    }
+
+    final StructuralSourceAudioCache created = StructuralSourceAudioCache.ffmpeg(
+      workspaceRoot: workspaceRoot,
+      resolveSource: resolveSource,
+    );
+    _cache = created;
+    _cacheWorkspaceRoot = workspaceRoot;
+    _cacheResolver = resolveSource;
+    return created;
+  }
 
   @override
   Future<bool> play({
@@ -85,47 +112,28 @@ class DeterministicEditSourceAudioPreview
 
     final int generation = ++_generation;
     await _player.stop();
-    _deleteArtifact();
 
-    final StructuralAudioSourceRenderer renderer = StructuralAudioSourceRenderer(
-      planner: StructuralAudioPlanner.parse(rawDocument),
-      leafDecoder: FfmpegStructuralAudioLeafDecodeBackend(),
-      resolveSource: resolveSource,
+    final String workspaceRoot = resolveActiveWorkspaceRoot();
+    final StructuralSourceAudioCache cache =
+        _ensureCache(workspaceRoot, resolveSource);
+    final StructuralSourceAudioArtifact artifact = await cache.prepare(
+      rawDocument: rawDocument,
+      structuralSource: structuralSource,
     );
-    final StructuralAudioSourceRender rendered =
-        await renderer.render(structuralSource);
     if (_disposed || generation != _generation) return false;
 
     final int startSample = structuralAudioSampleAtProjectFrame(startFrame);
-    if (rendered.sampleFrames <= 0 || startSample >= rendered.sampleFrames) {
+    if (artifact.sampleFrames <= 0 || startSample >= artifact.sampleFrames) {
       return false;
     }
 
-    final String path = '${Directory.systemTemp.path}${Platform.pathSeparator}'
-        '.r3nder_edit_source_audio_${identityHashCode(this)}_${pid}_$generation.wav';
-    final File file = File(path);
-    if (file.existsSync()) file.deleteSync();
-    await file.writeAsBytes(rendered.toWavBytes(), flush: true);
-    if (_disposed || generation != _generation) {
-      try {
-        if (file.existsSync()) file.deleteSync();
-      } catch (_) {}
-      return false;
-    }
-    _artifactPath = path;
-
-    try {
-      await _player.play(
-        structuralAudioPath: path,
-        programSampleFrames: rendered.sampleFrames,
-        bedDelayMs: 0,
-        startSampleFrame: startSample,
-        deviceId: deviceId,
-      );
-    } catch (_) {
-      if (generation == _generation) _deleteArtifact();
-      rethrow;
-    }
+    await _player.play(
+      structuralAudioPath: artifact.path,
+      programSampleFrames: artifact.sampleFrames,
+      bedDelayMs: 0,
+      startSampleFrame: startSample,
+      deviceId: deviceId,
+    );
 
     if (_disposed || generation != _generation) {
       await _player.stop();
@@ -138,11 +146,7 @@ class DeterministicEditSourceAudioPreview
   Future<void> stop() async {
     if (_disposed) return;
     _generation++;
-    try {
-      await _player.stop();
-    } finally {
-      _deleteArtifact();
-    }
+    await _player.stop();
   }
 
   @override
@@ -151,16 +155,8 @@ class DeterministicEditSourceAudioPreview
     _disposed = true;
     _generation++;
     _player.dispose();
-    _deleteArtifact();
-  }
-
-  void _deleteArtifact() {
-    final String? path = _artifactPath;
-    _artifactPath = null;
-    if (path == null) return;
-    try {
-      final File file = File(path);
-      if (file.existsSync()) file.deleteSync();
-    } catch (_) {}
+    _cache = null;
+    _cacheWorkspaceRoot = null;
+    _cacheResolver = null;
   }
 }
