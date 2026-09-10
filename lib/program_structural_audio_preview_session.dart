@@ -248,6 +248,7 @@ class ProgramStructuralAudioPreviewSession {
   }
 
   Future<void> playPrepared({
+    int startSampleFrame = 0,
     String? voicePath,
     double voiceGainDb = 0.0,
     String? musicPath,
@@ -267,6 +268,7 @@ class ProgramStructuralAudioPreviewSession {
         structuralAudioPath: prepared.path,
         programSampleFrames: prepared.programSampleFrames,
         bedDelayMs: prepared.bedDelayMs,
+        startSampleFrame: startSampleFrame,
         voicePath: voicePath,
         voiceGainDb: voiceGainDb,
         musicPath: musicPath,
@@ -279,6 +281,15 @@ class ProgramStructuralAudioPreviewSession {
       if (identical(_artifact, prepared)) _artifact = null;
       rethrow;
     }
+  }
+
+  /// Stop realtime delivery but retain the already rendered program artifact.
+  ///
+  /// TEXT authoring uses this on PAUSE so repeated PLAY presses can seek into
+  /// the same deterministic WAV instead of rebuilding the entire program. Main
+  /// PREVIEW continues to use [stop], which also releases the temp artifact.
+  Future<void> pausePrepared() async {
+    await player.stop();
   }
 
   Future<void> stop() async {
