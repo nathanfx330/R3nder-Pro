@@ -18,6 +18,8 @@ import 'scene_engine.dart';
 import 'structural_audio_plan.dart';
 import 'structural_sequence.dart';
 
+export 'edit_video_preview.dart' show resolveWorkspaceMediaSource;
+
 class TextStructuralAudioPreview {
   ProgramStructuralAudioPreviewSession? _session;
   String? _backendName;
