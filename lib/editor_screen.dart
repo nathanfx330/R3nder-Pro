@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'engine.dart';
 import 'parser.dart';
+import 'project_clock.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'ui_theme.dart';
@@ -140,7 +141,7 @@ class EditorScreen extends StatefulWidget {
   /// computes from its own props; a mismatch means the document or the
   /// render settings moved after it was built. A stale warm is worse than
   /// no warm, because it would show a confident ribbon and frame count for
-  /// a script that no longer exists.
+  /// a script you no longer have.
   final EditorWarmup? warmup;
 
   const EditorScreen({
@@ -201,13 +202,13 @@ class _EditorScreenState extends State<EditorScreen> {
   Timer? _debounce;
   Timer? _playTimer;
 
-  /// Wall clock for playback. Frame position is derived from elapsed time
-  /// rather than counted per callback, so the picture stays locked to the
-  /// bed instead of sliding off it whenever a frame overruns.
+  /// Historical wall-clock playback source. TEXT keeps it only for runs where
+  /// no structural clip audio owns realtime time. AUDIO-enabled runs sample the
+  /// shared ProjectClock instead, matching dashboard Preview and EDIT.
   Stopwatch? _playClock;
 
-  /// Frame playback resumed from, since the clock restarts at zero on every
-  /// play and the current frame is rarely zero.
+  /// Frame playback resumed from, since the fallback clock restarts at zero on
+  /// every play and the current frame is rarely zero.
   int _playStartFrame = 0;
 
   final TextStructuralAudioPreview _textStructuralAudio =
@@ -1122,27 +1123,21 @@ class _EditorScreenState extends State<EditorScreen> {
       throw StateError('No preview audio backend is active.');
     }
 
-    final bool hadPrepared = _textStructuralAudio.isPrepared;
-    try {
-      return await _textStructuralAudio.prepareAndPlay(
-        scene: _scene,
-        rawDocument: document,
-        startFrame: frame,
-        backend: backend,
-        resolveSource: resolveWorkspaceMediaSource,
-        voicePath: widget.bedPath,
-        voiceGainDb: widget.bedGainDb,
-        musicPath: widget.musicPath,
-        musicGainDb: widget.musicGainDb,
-        musicLoop: widget.musicLoop,
-        deviceId: widget.bedDevice?.id,
-      );
-    } finally {
-      // Program preparation dry-runs SceneEngine and deliberately leaves it at
-      // frame zero. Restore the editor's authored playhead only when a fresh
-      // artifact was actually prepared. Replays of the same document stay hot.
-      if (!hadPrepared) _restoreSceneToFrame(frame);
-    }
+    return _textStructuralAudio.prepareAndPlay(
+      scene: _scene,
+      rawDocument: document,
+      editorRawLineAtFrame: _rawLineAtFrame,
+      startFrame: frame,
+      backend: backend,
+      resolveSource: resolveWorkspaceMediaSource,
+      voicePath: widget.bedPath,
+      voiceGainDb: widget.bedGainDb,
+      musicPath: widget.musicPath,
+      musicGainDb: widget.musicGainDb,
+      musicLoop: widget.musicLoop,
+      deviceId: widget.bedDevice?.id,
+      onPrepared: () => _restoreSceneToFrame(frame),
+    );
   }
 
   Future<void> _togglePlay() async {
@@ -1173,7 +1168,7 @@ class _EditorScreenState extends State<EditorScreen> {
     }
 
     if (!mounted || generation != _playGeneration) {
-      unawaited(_textStructuralAudio.pause());
+      unawaited(_textStructuralAudio.pause(holdFrame: _currentFrame));
       return;
     }
 
@@ -1181,6 +1176,8 @@ class _EditorScreenState extends State<EditorScreen> {
     _structuralAudioOwnsRun = structuralStarted;
     _isPlaying = true;
     _playStartFrame = startFrame;
+    // Keep the legacy stopwatch alive only as a no-audio/fallback source. It
+    // is never consulted while a structural run has a shared ProjectClock.
     _playClock = Stopwatch()..start();
 
     if (!structuralStarted) {
@@ -1190,12 +1187,19 @@ class _EditorScreenState extends State<EditorScreen> {
     _playTimer = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mounted) return;
 
-      final Stopwatch? clock = _playClock;
-      if (clock == null) return;
+      final Stopwatch? fallbackClock = _playClock;
+      final NativeRealtimeProjectClock? projectClock =
+          _structuralAudioOwnsRun ? sharedRealtimeProjectClock : null;
 
-      final int target = _playStartFrame +
-          (clock.elapsedMicroseconds * engineFps) ~/
-              Duration.microsecondsPerSecond;
+      final int target;
+      if (projectClock != null) {
+        target = projectClock.sample().frame;
+      } else {
+        if (fallbackClock == null) return;
+        target = _playStartFrame +
+            (fallbackClock.elapsedMicroseconds * engineFps) ~/
+                Duration.microsecondsPerSecond;
+      }
 
       if (target >= _totalFrames) {
         while (_currentFrame < _totalFrames) {
@@ -1230,12 +1234,16 @@ class _EditorScreenState extends State<EditorScreen> {
     _isPlaying = false;
     _startingTextPlayback = false;
 
+    final int holdFrame = _currentFrame;
     final bool structuralOwned = _structuralAudioOwnsRun;
+    final bool structuralPlaying = _textStructuralAudio.isPlaying;
     _structuralAudioOwnsRun = false;
     if (invalidateStructuralAudio) {
-      unawaited(_textStructuralAudio.invalidate());
-    } else if (structuralOwned || _textStructuralAudio.isPlaying) {
-      unawaited(_textStructuralAudio.pause());
+      unawaited(_textStructuralAudio.invalidate(
+        holdFrame: structuralOwned || structuralPlaying ? holdFrame : null,
+      ));
+    } else if (structuralOwned || structuralPlaying) {
+      unawaited(_textStructuralAudio.pause(holdFrame: holdFrame));
     } else {
       _stopBed();
     }
