@@ -8,6 +8,14 @@
 // single plain EDIT leaf clip keeps the Linux external texture fast path. Any
 // structural source, overlap, transition, test backend, or unsupported platform
 // uses the deterministic CPU compositor fallback.
+//
+// Inside EditPlaybackFrameScope only, PLAY also auditions the selected source's
+// own clip audio. The source is rendered through the same deterministic
+// StructuralAudioSourceRenderer used by program Preview/BAKE, then the existing
+// one-process/one-sink preview transport starts from the exact edit playhead.
+// This is source authoring, so it is deliberately independent of a later
+// STRUCT placement's AUDIO switch. Outside EditPlaybackFrameScope this widget
+// remains picture-only; program/text preview owns its own audio mix.
 
 import 'dart:async';
 import 'dart:io';
@@ -17,13 +25,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'audio_bed.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
 import 'media_layer.dart';
+import 'program_structural_audio_preview.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
+import 'structural_audio_plan.dart';
+import 'structural_audio_render.dart';
 import 'ui_theme.dart';
 
 bool _isAbsolutePath(String path) {
@@ -53,6 +65,28 @@ String resolveWorkspaceMediaSource(String source) {
       .replaceAll('\\', Platform.pathSeparator)
       .replaceAll('/', Platform.pathSeparator);
   return File('$workspace${Platform.pathSeparator}$portable').path;
+}
+
+Future<PlaybackDevice> _authoringPlaybackDevice(AudioBedPlayer player) async {
+  String? storedId;
+  try {
+    final SessionStore session = SessionStore(
+      baseDir: resolvePortableBaseDir(),
+    )..load();
+    storedId = session.audioDeviceId;
+  } catch (_) {
+    storedId = null;
+  }
+
+  try {
+    final List<PlaybackDevice> available = await player.listDevices();
+    return resolveDevice(available, storedId);
+  } catch (_) {
+    return const PlaybackDevice(
+      id: null,
+      description: 'System Default',
+    );
+  }
 }
 
 /// Retained as a small public ordering helper for tests and diagnostics.
@@ -154,6 +188,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
   EditPlaybackFrameState? _lastPlaybackState;
 
+  ProgramStructuralAudioPreviewPlayer? _sourceAudioPlayer;
+  String? _sourceAudioBackend;
+  String? _sourceAudioPath;
+  String? _sourceAudioDocument;
+  String? _sourceAudioRef;
+  int _sourceAudioSampleFrames = 0;
+  int _sourceAudioGeneration = 0;
+
   int _epoch = 0;
   int _requestSerial = 0;
   int _parkedScheduleGeneration = 0;
@@ -187,10 +229,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         EditPlaybackFrameScope.maybeOf(context);
     if (identical(next, _playbackFrames)) return;
 
+    final EditPlaybackFrameState? oldState = _lastPlaybackState;
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = next;
     _lastPlaybackState = next?.value;
     next?.addListener(_onPlaybackFrameChanged);
+    if (oldState?.isPlaying == true && next == null) {
+      _stopSourceAudioAt(oldState!.frame);
+    }
     _epoch++;
     _scheduleParkedRender();
   }
@@ -204,6 +250,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         oldWidget.resolveSource != widget.resolveSource;
 
     if (sourceChanged) {
+      _stopSourceAudioAt(_effectivePlaybackState.frame);
+      _clearSourceAudioArtifact();
       _cancelParkedRender();
       _setNativeTexture(null);
       _disposeLayer();
@@ -233,6 +281,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   @override
   void dispose() {
     _requestSerial++;
+    _sourceAudioGeneration++;
+    _sourceAudioPlayer?.dispose();
+    _sourceAudioPlayer = null;
+    _sourceAudioBackend = null;
+    _clearSourceAudioArtifact();
     _cancelParkedRender();
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = null;
@@ -256,6 +309,161 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _layer = null;
     _layerSource = null;
     _layerStructuralSource = null;
+  }
+
+  void _clearSourceAudioArtifact() {
+    final String? path = _sourceAudioPath;
+    _sourceAudioPath = null;
+    _sourceAudioDocument = null;
+    _sourceAudioRef = null;
+    _sourceAudioSampleFrames = 0;
+    if (path == null) return;
+    try {
+      final File file = File(path);
+      if (file.existsSync()) file.deleteSync();
+    } catch (_) {}
+  }
+
+  Future<String> _ensureSourceAudioArtifact() async {
+    final String document = widget.source;
+    final String sourceRef = widget.sourceRef;
+    final String? cachedPath = _sourceAudioPath;
+    if (_sourceAudioDocument == document &&
+        _sourceAudioRef == sourceRef &&
+        _sourceAudioSampleFrames > 0 &&
+        cachedPath != null &&
+        File(cachedPath).existsSync()) {
+      return cachedPath;
+    }
+
+    _clearSourceAudioArtifact();
+    final StructuralAudioSourceRenderer renderer = StructuralAudioSourceRenderer(
+      planner: StructuralAudioPlanner.parse(document),
+      leafDecoder: FfmpegStructuralAudioLeafDecodeBackend(),
+      resolveSource: widget.resolveSource ?? resolveWorkspaceMediaSource,
+    );
+    final StructuralAudioSourceRender rendered = await renderer.render(sourceRef);
+    if (rendered.sampleFrames <= 0) {
+      throw StateError('$sourceRef has no authored audio timeline.');
+    }
+
+    final String path = '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        '.r3nder_edit_source_audio_${identityHashCode(this)}_$pid.wav';
+    final File stale = File(path);
+    if (stale.existsSync()) stale.deleteSync();
+    await rendered.writeWav(path);
+
+    _sourceAudioPath = path;
+    _sourceAudioDocument = document;
+    _sourceAudioRef = sourceRef;
+    _sourceAudioSampleFrames = rendered.sampleFrames;
+    return path;
+  }
+
+  ProgramStructuralAudioPreviewPlayer _ensureSourceAudioPlayer(
+    String backendName,
+  ) {
+    final ProgramStructuralAudioPreviewPlayer? existing = _sourceAudioPlayer;
+    if (existing != null && _sourceAudioBackend == backendName) return existing;
+    existing?.dispose();
+    final ProgramStructuralAudioPreviewPlayer created =
+        ProgramStructuralAudioPreviewPlayer.forBackendName(backendName);
+    _sourceAudioPlayer = created;
+    _sourceAudioBackend = backendName;
+    return created;
+  }
+
+  Future<void> _startSourceAudioAt(int frame) async {
+    // Only the EDIT workspace provides EditPlaybackFrameScope. Structural
+    // sequence/text/program previews use this same picture widget but own audio
+    // elsewhere and must never start a second sink here.
+    if (_playbackFrames == null) return;
+
+    final AudioBedPlayer? backend = sharedAudioBedPlayer;
+    final NativeRealtimeProjectClock? clock = sharedRealtimeProjectClock;
+    if (backend == null || clock == null) return;
+
+    // An explicit inherited workspace bed is the old specialist EditWorkspace
+    // mode. If it is already playing, it owns this transport and source audio
+    // stays out rather than creating a second sink.
+    if (backend.isPlaying) return;
+
+    final int generation = ++_sourceAudioGeneration;
+    final ProjectTime start = ProjectTime(
+      frame: frame,
+      mode: ProjectClockMode.scrub,
+    );
+
+    // EditWorkspace publishes the PLAY transition before starting its ticker.
+    // Its listener reaches here synchronously, so park the shared clock back on
+    // the exact authored frame before any display poll can run ahead of audio
+    // preparation/device prefill.
+    clock.seekScrub(start);
+
+    try {
+      final String path = await _ensureSourceAudioArtifact();
+      if (!mounted || generation != _sourceAudioGeneration) return;
+
+      final int startSample = structuralAudioSampleAtProjectFrame(frame);
+      final int totalSamples = _sourceAudioSampleFrames;
+      if (startSample < 0 || startSample >= totalSamples) {
+        clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
+        return;
+      }
+
+      final PlaybackDevice device = await _authoringPlaybackDevice(backend);
+      if (!mounted || generation != _sourceAudioGeneration) return;
+
+      final ProgramStructuralAudioPreviewPlayer player =
+          _ensureSourceAudioPlayer(backend.backendName);
+      await player.play(
+        structuralAudioPath: path,
+        programSampleFrames: totalSamples,
+        bedDelayMs: 0,
+        startSampleFrame: startSample,
+        deviceId: device.id,
+      );
+      if (!mounted || generation != _sourceAudioGeneration) {
+        await player.stop();
+        return;
+      }
+
+      // aplay has no native AUDIO clock handoff. Its sink still starts from the
+      // exact trimmed sample; let ProjectClock run monotonically from that same
+      // authored frame once the subprocesses are live.
+      if (backend.backendName != 'libpulse') {
+        clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
+      }
+    } catch (error) {
+      try {
+        await _sourceAudioPlayer?.stop();
+      } catch (_) {}
+      if (!mounted || generation != _sourceAudioGeneration) return;
+      clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
+      debugPrint('EDIT source audio unavailable for ${widget.sourceRef}: $error');
+    }
+  }
+
+  void _stopSourceAudioAt(int frame) {
+    final int generation = ++_sourceAudioGeneration;
+    final ProgramStructuralAudioPreviewPlayer? player = _sourceAudioPlayer;
+    final NativeRealtimeProjectClock? clock = sharedRealtimeProjectClock;
+    if (player == null) return;
+
+    unawaited(() async {
+      try {
+        await player.stop();
+      } catch (_) {}
+      if (!mounted || generation != _sourceAudioGeneration || clock == null) {
+        return;
+      }
+      // Native sink teardown may release AUDIO onto MONOTONIC. Reassert the
+      // parent's paused playhead after that bounded teardown completes.
+      clock.seekScrub(ProjectTime(
+        frame: frame,
+        mode: ProjectClockMode.scrub,
+      ));
+    }());
   }
 
   void _replaceImage(ui.Image? next) {
@@ -417,9 +625,16 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final EditPlaybackFrameState next = scoped.value;
     if (next == _lastPlaybackState) return;
 
+    final EditPlaybackFrameState? previous = _lastPlaybackState;
     _lastPlaybackState = next;
     _cancelParkedRender();
     _epoch++;
+
+    if (previous?.isPlaying != true && next.isPlaying) {
+      unawaited(_startSourceAudioAt(next.frame));
+    } else if (previous?.isPlaying == true && !next.isPlaying) {
+      _stopSourceAudioAt(next.frame);
+    }
 
     unawaited(
       _renderFrame(
