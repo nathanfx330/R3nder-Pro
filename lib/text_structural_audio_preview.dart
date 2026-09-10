@@ -14,6 +14,7 @@ import 'dart:io';
 
 import 'audio_bed.dart';
 import 'program_structural_audio_preview_session.dart';
+import 'project_clock.dart';
 import 'scene_engine.dart';
 import 'structural_audio_plan.dart';
 import 'structural_sequence.dart';
@@ -52,6 +53,7 @@ class TextStructuralAudioPreview {
   Future<bool> prepareAndPlay({
     required SceneEngine scene,
     required String rawDocument,
+    required List<int> editorRawLineAtFrame,
     required int startFrame,
     required AudioBedPlayer backend,
     required String Function(String source) resolveSource,
@@ -83,7 +85,7 @@ class TextStructuralAudioPreview {
         rawDocument: rawDocument,
         resolveSource: resolveSource,
         tempDirectory: Directory.systemTemp.path,
-        useEditorLineMap: true,
+        editorRawLineAtFrame: editorRawLineAtFrame,
       );
       if (!prepared) {
         _preparedDocument = null;
@@ -98,27 +100,74 @@ class TextStructuralAudioPreview {
     final int startSample = structuralAudioSampleAtProjectFrame(startFrame);
     if (startSample >= artifact.programSampleFrames) return false;
 
-    await session.playPrepared(
-      startSampleFrame: startSample,
-      voicePath: voicePath,
-      voiceGainDb: voiceGainDb,
-      musicPath: musicPath,
-      musicGainDb: musicGainDb,
-      musicLoop: musicLoop,
-      deviceId: deviceId,
+    // TEXT borrows the application's one realtime ProjectClock. Anchor that
+    // clock at the authored editor playhead BEFORE NativeAudioSink is opened.
+    // The libpulse sink captures this exact point, holds it through prefill,
+    // then releases the same point under AUDIO authority when PCM is audible.
+    // Without this seek the sink would inherit whatever project position the
+    // dashboard/editor last left behind, which is not a TEXT playback origin.
+    final NativeRealtimeProjectClock? clock = sharedRealtimeProjectClock;
+    clock?.seekScrub(
+      ProjectTime(
+        frame: startFrame,
+        mode: ProjectClockMode.scrub,
+      ),
     );
+
+    try {
+      await session.playPrepared(
+        startSampleFrame: startSample,
+        voicePath: voicePath,
+        voiceGainDb: voiceGainDb,
+        musicPath: musicPath,
+        musicGainDb: musicGainDb,
+        musicLoop: musicLoop,
+        deviceId: deviceId,
+      );
+    } catch (_) {
+      // A failed transport must not strand the shared application clock in
+      // SCRUB. Keep the historical no-STRUCT fallback able to run immediately.
+      clock?.seekMonotonic(ProjectTime(frame: startFrame));
+      rethrow;
+    }
+
+    // aplay has no native ProjectClock handoff. Start its picture authority
+    // from the same authored point immediately after the process is live.
+    if (backend.backendName != 'libpulse') {
+      clock?.seekMonotonic(ProjectTime(frame: startFrame));
+    }
+
     return session.isPlaying;
   }
 
-  Future<void> pause() async {
+  Future<void> pause({int? holdFrame}) async {
     if (_disposed) return;
     await _session?.pausePrepared();
+
+    // Native sink teardown releases AUDIO to MONOTONIC. TEXT pause is an
+    // authored hold, so reassert the visible frame after teardown completes.
+    if (holdFrame != null) {
+      sharedRealtimeProjectClock?.seekScrub(
+        ProjectTime(
+          frame: holdFrame,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+    }
   }
 
-  Future<void> invalidate() async {
+  Future<void> invalidate({int? holdFrame}) async {
     if (_disposed) return;
     _preparedDocument = null;
     await _session?.stop();
+    if (holdFrame != null) {
+      sharedRealtimeProjectClock?.seekScrub(
+        ProjectTime(
+          frame: holdFrame,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+    }
   }
 
   void dispose() {
