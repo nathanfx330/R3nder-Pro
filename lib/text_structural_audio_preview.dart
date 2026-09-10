@@ -83,6 +83,7 @@ class TextStructuralAudioPreview {
         rawDocument: rawDocument,
         resolveSource: resolveSource,
         tempDirectory: Directory.systemTemp.path,
+        useEditorLineMap: true,
       );
       if (!prepared) {
         _preparedDocument = null;
