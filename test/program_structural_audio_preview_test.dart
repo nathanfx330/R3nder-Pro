@@ -1,6 +1,7 @@
 // ./test/program_structural_audio_preview_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/audio_sink.dart';
 import 'package:r3nder/program_structural_audio_preview.dart';
 
 void main() {
@@ -99,6 +100,60 @@ void main() {
       () => programStructuralPreviewBackend('other'),
       throwsUnsupportedError,
     );
+  });
+
+  test('native startup readiness waits beyond measured sink latency', () {
+    const AudioSinkStats exactlyAtLatency = AudioSinkStats(
+      submittedSamples: 2400,
+      latencySamples: 2400,
+      queuedSamples: 0,
+      sampleRate: 48000,
+      channels: 2,
+      healthy: true,
+      draining: false,
+    );
+    const AudioSinkStats beyondLatency = AudioSinkStats(
+      submittedSamples: 2880,
+      latencySamples: 2400,
+      queuedSamples: 0,
+      sampleRate: 48000,
+      channels: 2,
+      healthy: true,
+      draining: false,
+    );
+    const AudioSinkStats firstZeroLatencyPacket = AudioSinkStats(
+      submittedSamples: 480,
+      latencySamples: 0,
+      queuedSamples: 0,
+      sampleRate: 48000,
+      channels: 2,
+      healthy: true,
+      draining: false,
+    );
+    const AudioSinkStats secondZeroLatencyPacket = AudioSinkStats(
+      submittedSamples: 960,
+      latencySamples: 0,
+      queuedSamples: 0,
+      sampleRate: 48000,
+      channels: 2,
+      healthy: true,
+      draining: false,
+    );
+    const AudioSinkStats unhealthy = AudioSinkStats(
+      submittedSamples: 9600,
+      latencySamples: 2400,
+      queuedSamples: 0,
+      sampleRate: 48000,
+      channels: 2,
+      healthy: false,
+      draining: false,
+    );
+
+    expect(programStructuralAudioNativeReady(exactlyAtLatency), isFalse);
+    expect(programStructuralAudioNativeReady(beyondLatency), isTrue);
+    expect(programStructuralAudioNativeReady(firstZeroLatencyPacket), isFalse);
+    expect(programStructuralAudioNativeReady(secondZeroLatencyPacket), isTrue);
+    expect(programStructuralAudioNativeReady(unhealthy), isFalse);
   });
 
   test('program geometry rejects empty or non-positive transport bounds', () {
