@@ -7,9 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/program_structural_audio.dart';
-import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
-import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_audio_decode.dart';
 import 'package:r3nder/structural_audio_plan.dart';
@@ -112,6 +110,20 @@ int _programDuration(SceneEngine scene) {
   }
   scene.reset();
   return frames;
+}
+
+List<int> _editorLineMap(SceneEngine scene) {
+  scene.reset();
+  final List<int> lineMap = <int>[];
+  while (!scene.isFinished) {
+    scene.tick();
+    lineMap.add(scene.terminal.currentRawLine);
+    if (lineMap.length > 1000) {
+      fail('Editor scene did not finish while building its line map.');
+    }
+  }
+  scene.reset();
+  return lineMap;
 }
 
 void main() {
@@ -245,7 +257,7 @@ void main() {
   });
 
   testWidgets(
-      'editor line-map trace finds AUDIO placements without runtime regions',
+      'editor trace starts audio from the same frame map that drives TEXT picture',
       (WidgetTester tester) async {
     final Directory root =
         Directory.systemTemp.createTempSync('r3_text_struct_audio_');
@@ -267,28 +279,31 @@ void main() {
       lineMarkers: true,
     );
     final int totalFrames = _programDuration(scene);
+    final List<int> lineMap = _editorLineMap(scene);
     final List<StructuralSequencePlacement> placements =
         parseStructuralSequencePlacements(_runtimeSource);
 
+    expect(lineMap, hasLength(totalFrames));
+    expect(scene.terminal.currentRegion, isNot(startsWith('STRUCTSEQ_')));
+
     final Map<int, int> eventStarts = <int, int>{};
-    scene.reset();
-    for (int frame = 0; frame < totalFrames; frame++) {
-      final SceneEvaluationResult evaluation = scene.evaluate(
-        ProjectTime(frame: frame, mode: ProjectClockMode.scrub),
-      );
-      expect(evaluation.exact, isTrue);
+    for (int frame = 0; frame < lineMap.length; frame++) {
       for (int index = 0; index < placements.length; index++) {
-        if (scene.terminal.currentRawLine == placements[index].lineIndex) {
+        if (lineMap[frame] == placements[index].lineIndex) {
           eventStarts.putIfAbsent(index, () => frame);
         }
       }
     }
-    scene.reset();
-
     expect(eventStarts.keys, containsAll(<int>[0, 1, 2]));
-    expect(scene.terminal.currentRegion, isNot(startsWith('STRUCTSEQ_')));
 
-    final ProgramStructuralAudioTimeline timeline =
+    final ProgramStructuralAudioTimeline fromSavedMap =
+        traceProgramStructuralAudioTimeline(
+      scene: scene,
+      rawDocument: _runtimeSource,
+      totalFrames: totalFrames,
+      editorRawLineAtFrame: lineMap,
+    );
+    final ProgramStructuralAudioTimeline fromMarkedScene =
         traceProgramStructuralAudioTimeline(
       scene: scene,
       rawDocument: _runtimeSource,
@@ -296,25 +311,67 @@ void main() {
       useEditorLineMap: true,
     );
 
-    expect(timeline.durationFrames, totalFrames);
-    expect(timeline.occurrences, hasLength(2));
+    expect(fromSavedMap.durationFrames, totalFrames);
+    expect(fromSavedMap.occurrences, hasLength(2));
     expect(
-      timeline.occurrences.map((occurrence) => occurrence.placementIndex),
+      fromSavedMap.occurrences.map((occurrence) => occurrence.placementIndex),
       <int>[0, 2],
     );
     expect(
-      timeline.occurrences.map((occurrence) => occurrence.sourceDurationFrames),
+      fromSavedMap.occurrences.map((occurrence) => occurrence.sourceDurationFrames),
       <int>[3, 3],
     );
     expect(
-      timeline.occurrences[0].programStartFrame,
+      fromSavedMap.occurrences[0].programStartFrame,
       eventStarts[0]! + placements[0].contentStartFrame,
     );
     expect(
-      timeline.occurrences[1].programStartFrame,
+      fromSavedMap.occurrences[1].programStartFrame,
       eventStarts[2]! + placements[2].contentStartFrame,
+    );
+    expect(
+      fromMarkedScene.occurrences
+          .map((occurrence) => occurrence.programStartFrame),
+      fromSavedMap.occurrences
+          .map((occurrence) => occurrence.programStartFrame),
+      reason: 'Fallback editor tracing must match the saved simulation map.',
     );
     expect(scene.frameCount, 0,
         reason: 'Editor tracing must leave the caller scene reset.');
+  });
+
+  testWidgets('editor frame-map length mismatch is rejected',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_text_struct_audio_bad_map_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      images,
+      sprites,
+      lineMarkers: true,
+    );
+    final int totalFrames = _programDuration(scene);
+    final List<int> lineMap = _editorLineMap(scene);
+
+    expect(
+      () => traceProgramStructuralAudioTimeline(
+        scene: scene,
+        rawDocument: _runtimeSource,
+        totalFrames: totalFrames,
+        editorRawLineAtFrame: lineMap.sublist(1),
+      ),
+      throwsA(isA<ProgramStructuralAudioException>()),
+    );
   });
 }
