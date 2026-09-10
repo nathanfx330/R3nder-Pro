@@ -154,12 +154,20 @@ int _runtimeLocalFrame(
 /// SceneEngine dry run. The trace samples frames 0 through totalFrames - 1 with
 /// the same explicit ProjectTime seam used by Preview and BAKE video.
 ///
+/// Preview and BAKE scenes carry internal STRUCT REGION markers. Editor TEXT
+/// scenes deliberately do not, because their compiled projection preserves raw
+/// document line ownership for the ribbon. Set [useEditorLineMap] for that
+/// second representation. A STRUCT line is already contract-tested to own its
+/// complete event duration contiguously, so its first owned project frame is
+/// local frame zero and the normal placement geometry remains authoritative.
+///
 /// The supplied scene is reset before tracing and again before returning, even
 /// on failure. No hidden playback position leaks out of audio preparation.
 ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
   required SceneEngine scene,
   required String rawDocument,
   required int totalFrames,
+  bool useEditorLineMap = false,
 }) {
   if (totalFrames < 0) {
     throw ArgumentError.value(
@@ -177,6 +185,13 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
   };
   final Map<int, _RuntimeOccurrenceTrace> traces =
       <int, _RuntimeOccurrenceTrace>{};
+  final Map<int, int> placementIndexByLine = useEditorLineMap
+      ? <int, int>{
+          for (int i = 0; i < placements.length; i++)
+            placements[i].lineIndex: i,
+        }
+      : const <int, int>{};
+  final Map<int, int> editorEventStarts = <int, int>{};
 
   scene.reset();
   try {
@@ -196,27 +211,55 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
 
       final StructuralRuntimeMarker? marker =
           parseStructuralRuntimeRegion(scene.terminal.currentRegion);
-      if (marker == null) continue;
 
-      final int placementIndex = marker.placementIndex;
-      if (placementIndex < 0 || placementIndex >= placements.length) {
-        throw ProgramStructuralAudioException(
-          'Runtime STRUCT marker references placement $placementIndex, but '
-          'the document has ${placements.length} placements.',
+      int? placementIndex;
+      int? localFrame;
+
+      if (marker != null) {
+        placementIndex = marker.placementIndex;
+        if (placementIndex < 0 || placementIndex >= placements.length) {
+          throw ProgramStructuralAudioException(
+            'Runtime STRUCT marker references placement $placementIndex, but '
+            'the document has ${placements.length} placements.',
+          );
+        }
+
+        final StructuralSequencePlacement placement =
+            placements[placementIndex];
+        if (marker.durationFrames != placement.durationFrames) {
+          throw ProgramStructuralAudioException(
+            'Runtime STRUCT marker $placementIndex owns '
+            '${marker.durationFrames} frames, while placement planning owns '
+            '${placement.durationFrames}.',
+          );
+        }
+        localFrame = _runtimeLocalFrame(scene, marker);
+      } else if (useEditorLineMap) {
+        placementIndex =
+            placementIndexByLine[scene.terminal.currentRawLine];
+        if (placementIndex == null) continue;
+
+        final StructuralSequencePlacement placement =
+            placements[placementIndex];
+        final int eventStart = editorEventStarts.putIfAbsent(
+          placementIndex,
+          () => projectFrame,
         );
+        localFrame = projectFrame - eventStart;
+        if (localFrame < 0 || localFrame >= placement.durationFrames) {
+          throw ProgramStructuralAudioException(
+            'Editor STRUCT line ${placement.lineIndex} exposed local frame '
+            '$localFrame outside placement $placementIndex duration '
+            '${placement.durationFrames}.',
+          );
+        }
+      } else {
+        continue;
       }
 
       final StructuralSequencePlacement placement = placements[placementIndex];
-      if (marker.durationFrames != placement.durationFrames) {
-        throw ProgramStructuralAudioException(
-          'Runtime STRUCT marker $placementIndex owns '
-          '${marker.durationFrames} frames, while placement planning owns '
-          '${placement.durationFrames}.',
-        );
-      }
       if (!placement.resolves || !placement.clipAudio) continue;
 
-      final int localFrame = _runtimeLocalFrame(scene, marker);
       if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
         continue;
       }
