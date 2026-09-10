@@ -207,6 +207,16 @@ class ExportProjectClock implements ProjectClock {
   void dispose() {}
 }
 
+/// The application-owned realtime clock, when one exists.
+///
+/// Main creates this before any authoring surface. EDIT must borrow it instead
+/// of creating a second native clock: the native audio sink binds the active
+/// realtime clock by handle, so replacing that handle for an editor and then
+/// destroying it would leave the still-live dashboard clock unreachable.
+NativeRealtimeProjectClock? _sharedRealtimeProjectClock;
+NativeRealtimeProjectClock? get sharedRealtimeProjectClock =>
+    _sharedRealtimeProjectClock;
+
 /// Realtime clock whose authority lives in the native control block.
 ///
 /// This is also a [Listenable]. A Flutter Ticker may call [sample] at display
@@ -232,6 +242,7 @@ class NativeRealtimeProjectClock extends ChangeNotifier
     if (_handle == nullptr) {
       throw StateError('Native ProjectClock allocation failed.');
     }
+    _sharedRealtimeProjectClock ??= this;
     _current = sample();
   }
 
@@ -369,6 +380,9 @@ class NativeRealtimeProjectClock extends ChangeNotifier
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    if (identical(_sharedRealtimeProjectClock, this)) {
+      _sharedRealtimeProjectClock = null;
+    }
     _native.destroy(_handle);
     super.dispose();
   }
