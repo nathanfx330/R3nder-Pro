@@ -10,9 +10,11 @@
 // WAV, and own its cleanup for the lifetime of a preview run.
 //
 // Nothing here owns project time. SceneEngine is sampled only while preview is
-// still stopped. ProgramStructuralAudioPreviewPlayer opens the native sink only
-// after this artifact is complete, so the existing sink remains the sole AUDIO
-// ProjectClock authority once realtime begins.
+// still stopped. Preparation and playback are deliberately separate operations:
+// Main must reset ProjectClock to project zero AFTER the dry run and BEFORE the
+// native sink opens. That ordering lets NativeAudioSink hold exactly frame zero
+// through device open and decoder prefill, then release the same authored point
+// under AUDIO authority.
 
 import 'dart:io';
 
@@ -109,7 +111,7 @@ class ProgramStructuralAudioPreviewArtifact {
 /// bed player unchanged.
 ///
 /// [tempDirectory] is supplied by the caller rather than guessed here. The app
-/// can keep the file beside its workspace while tests can own an isolated temp
+/// can use the operating-system temp directory while tests own an isolated temp
 /// tree. The fixed per-process filename is safe because R3nder runs one PREVIEW
 /// at a time; a stale file from an interrupted run is removed before writing.
 Future<ProgramStructuralAudioPreviewArtifact?>
@@ -186,31 +188,38 @@ Future<ProgramStructuralAudioPreviewArtifact?>
 
 /// Owns PREVIEW's program-audio player and temporary artifact as one lifetime.
 ///
-/// Main can create one of these only when it already has a playback backend.
-/// [prepareAndPlay] returns false for documents with no STRUCT audio, allowing
-/// the existing AudioBedPlayer path to run untouched. A true result means this
-/// session owns the ENTIRE preview mix, including optional voice and music, so a
-/// second workspace player must not be started for the same run.
+/// [prepare] performs every expensive deterministic step while realtime is
+/// stopped. The caller then resets ProjectClock to the intended authored start
+/// and calls [playPrepared]. This split is load-bearing: opening NativeAudioSink
+/// itself captures and holds the active ProjectClock point.
+///
+/// A false [prepare] result means there is no STRUCT clip audio, so Main should
+/// keep using the historical AudioBedPlayer path. Once [playPrepared] succeeds,
+/// this session owns the ENTIRE preview mix, including optional voice and music,
+/// and a second workspace player must not start for that run.
 class ProgramStructuralAudioPreviewSession {
   final ProgramStructuralAudioPreviewPlayer player;
   ProgramStructuralAudioPreviewArtifact? _artifact;
 
   ProgramStructuralAudioPreviewSession({required this.player});
 
+  factory ProgramStructuralAudioPreviewSession.forBackendName(
+    String backendName,
+  ) {
+    return ProgramStructuralAudioPreviewSession(
+      player: ProgramStructuralAudioPreviewPlayer.forBackendName(backendName),
+    );
+  }
+
   ProgramStructuralAudioPreviewArtifact? get artifact => _artifact;
+  bool get isPrepared => _artifact != null;
   bool get isPlaying => player.isPlaying;
 
-  Future<bool> prepareAndPlay({
+  Future<bool> prepare({
     required SceneEngine scene,
     required String rawDocument,
     required String Function(String source) resolveSource,
     required String tempDirectory,
-    String? voicePath,
-    double voiceGainDb = 0.0,
-    String? musicPath,
-    double musicGainDb = 0.0,
-    bool musicLoop = false,
-    String? deviceId,
     StructuralAudioLeafDecodeBackend? leafDecoder,
   }) async {
     await stop();
@@ -223,9 +232,25 @@ class ProgramStructuralAudioPreviewSession {
       tempDirectory: tempDirectory,
       leafDecoder: leafDecoder,
     );
-    if (prepared == null) return false;
-
     _artifact = prepared;
+    return prepared != null;
+  }
+
+  Future<void> playPrepared({
+    String? voicePath,
+    double voiceGainDb = 0.0,
+    String? musicPath,
+    double musicGainDb = 0.0,
+    bool musicLoop = false,
+    String? deviceId,
+  }) async {
+    final ProgramStructuralAudioPreviewArtifact? prepared = _artifact;
+    if (prepared == null) {
+      throw const ProgramStructuralAudioPreviewException(
+        'Program STRUCT preview playback was requested before preparation.',
+      );
+    }
+
     try {
       await player.play(
         structuralAudioPath: prepared.path,
@@ -238,7 +263,6 @@ class ProgramStructuralAudioPreviewSession {
         musicLoop: musicLoop,
         deviceId: deviceId,
       );
-      return true;
     } catch (_) {
       prepared.delete();
       if (identical(_artifact, prepared)) _artifact = null;
