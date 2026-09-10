@@ -145,14 +145,16 @@ void main() {
       sprites,
     );
 
-    final ProgramStructuralAudioPreviewArtifact? artifact =
-        await tester.runAsync(() => prepareProgramStructuralAudioPreviewArtifact(
-              scene: scene,
-              rawDocument: _audioDocument,
-              resolveSource: (String source) => '${root.path}/$source',
-              tempDirectory: temp.path,
-              leafDecoder: decoder,
-            ));
+    final ProgramStructuralAudioPreviewArtifact? artifact = await tester
+        .runAsync<ProgramStructuralAudioPreviewArtifact?>(
+      () => prepareProgramStructuralAudioPreviewArtifact(
+        scene: scene,
+        rawDocument: _audioDocument,
+        resolveSource: (String source) => '${root.path}/$source',
+        tempDirectory: temp.path,
+        leafDecoder: decoder,
+      ),
+    );
 
     expect(artifact, isNotNull);
     final ProgramStructuralAudioPreviewArtifact ready = artifact!;
@@ -192,14 +194,16 @@ void main() {
       sprites,
     );
 
-    final ProgramStructuralAudioPreviewArtifact? artifact =
-        await tester.runAsync(() => prepareProgramStructuralAudioPreviewArtifact(
-              scene: scene,
-              rawDocument: _silentDocument,
-              resolveSource: (String source) => '${root.path}/$source',
-              tempDirectory: temp.path,
-              leafDecoder: decoder,
-            ));
+    final ProgramStructuralAudioPreviewArtifact? artifact = await tester
+        .runAsync<ProgramStructuralAudioPreviewArtifact?>(
+      () => prepareProgramStructuralAudioPreviewArtifact(
+        scene: scene,
+        rawDocument: _silentDocument,
+        resolveSource: (String source) => '${root.path}/$source',
+        tempDirectory: temp.path,
+        leafDecoder: decoder,
+      ),
+    );
 
     expect(artifact, isNull);
     expect(decoder.calls, 0);
