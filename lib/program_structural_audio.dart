@@ -6,15 +6,17 @@
 // project time. This file owns the next coordinate system: where AUDIO-enabled
 // STRUCT placements land in the whole authored program.
 //
-// There is deliberately no realtime audio state here. The existing SceneEngine
-// is evaluated at explicit ProjectTime values to discover the exact frames on
-// which a STRUCT placement is in its showing stage. Source PCM is then copied
-// into one full-program 48 kHz stereo float buffer. Terminal typing, desktop
-// zooms, window opening/closing, and AUDIO-disabled placements therefore remain
-// silence by construction.
+// There is deliberately no realtime audio state here. Preview/BAKE scenes are
+// evaluated at explicit ProjectTime values to discover the exact frames on
+// which a STRUCT placement is in its showing stage. TEXT authoring already owns
+// an exact frame-to-raw-line map from its simulation pass, so that map is used
+// directly rather than reconstructing a second approximation of editor time.
+// Source PCM is then copied into one full-program 48 kHz stereo float buffer.
+// Terminal typing, desktop zooms, window opening/closing, and AUDIO-disabled
+// placements therefore remain silence by construction.
 //
-// Preview and BAKE can later consume the same program WAV. Neither needs to
-// infer placement timing again, and ProjectClock remains the only realtime
+// Preview and BAKE can consume the same program WAV. Neither needs to infer
+// source placement timing again, and ProjectClock remains the only realtime
 // authority.
 
 import 'dart:io';
@@ -151,15 +153,19 @@ int _runtimeLocalFrame(
 /// Resolves AUDIO-enabled STRUCT placements into absolute project-frame spans.
 ///
 /// [totalFrames] is the exact program duration already owned by the caller's
-/// SceneEngine dry run. The trace samples frames 0 through totalFrames - 1 with
-/// the same explicit ProjectTime seam used by Preview and BAKE video.
+/// SceneEngine dry run. Preview and BAKE use the engine-internal STRUCT REGION
+/// markers and explicit ProjectTime evaluation.
 ///
-/// Preview and BAKE scenes carry internal STRUCT REGION markers. Editor TEXT
-/// scenes deliberately do not, because their compiled projection preserves raw
-/// document line ownership for the ribbon. Set [useEditorLineMap] for that
-/// second representation. A STRUCT line is already contract-tested to own its
-/// complete event duration contiguously, so its first owned project frame is
-/// local frame zero and the normal placement geometry remains authoritative.
+/// TEXT authoring is different: its compiled projection preserves raw document
+/// line ownership for the ribbon and preview pane. When [editorRawLineAtFrame]
+/// is supplied, that already-authoritative map is used directly. This is the
+/// load-bearing synchronization rule for TEXT: the same frame map that decides
+/// when StructuralSequencePreview appears also decides where clip PCM begins.
+/// No second simulation is allowed to guess that boundary.
+///
+/// [useEditorLineMap] remains as a compatibility/testing path when a caller has
+/// an editor-marked SceneEngine but not the saved map. It reproduces the editor
+/// simulation's tick-then-sample semantics exactly.
 ///
 /// The supplied scene is reset before tracing and again before returning, even
 /// on failure. No hidden playback position leaks out of audio preparation.
@@ -168,12 +174,20 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
   required String rawDocument,
   required int totalFrames,
   bool useEditorLineMap = false,
+  List<int>? editorRawLineAtFrame,
 }) {
   if (totalFrames < 0) {
     throw ArgumentError.value(
       totalFrames,
       'totalFrames',
       'Program duration must be non-negative.',
+    );
+  }
+  if (editorRawLineAtFrame != null &&
+      editorRawLineAtFrame.length != totalFrames) {
+    throw ProgramStructuralAudioException(
+      'Editor frame map owns ${editorRawLineAtFrame.length} frames, while '
+      'program timing owns $totalFrames.',
     );
   }
 
@@ -185,7 +199,9 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
   };
   final Map<int, _RuntimeOccurrenceTrace> traces =
       <int, _RuntimeOccurrenceTrace>{};
-  final Map<int, int> placementIndexByLine = useEditorLineMap
+
+  final bool editorMode = useEditorLineMap || editorRawLineAtFrame != null;
+  final Map<int, int> placementIndexByLine = editorMode
       ? <int, int>{
           for (int i = 0; i < placements.length; i++)
             placements[i].lineIndex: i,
@@ -193,108 +209,164 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
       : const <int, int>{};
   final Map<int, int> editorEventStarts = <int, int>{};
 
-  scene.reset();
-  try {
-    for (int projectFrame = 0; projectFrame < totalFrames; projectFrame++) {
-      final SceneEvaluationResult evaluation = scene.evaluate(
-        ProjectTime(
-          frame: projectFrame,
-          mode: ProjectClockMode.scrub,
-        ),
+  void observePlacement({
+    required int placementIndex,
+    required int localFrame,
+    required int projectFrame,
+  }) {
+    if (placementIndex < 0 || placementIndex >= placements.length) {
+      throw ProgramStructuralAudioException(
+        'Runtime STRUCT marker references placement $placementIndex, but '
+        'the document has ${placements.length} placements.',
       );
-      if (!evaluation.exact) {
+    }
+
+    final StructuralSequencePlacement placement = placements[placementIndex];
+    if (!placement.resolves || !placement.clipAudio) return;
+    if (localFrame < 0 || localFrame >= placement.durationFrames) {
+      throw ProgramStructuralAudioException(
+        'STRUCT placement $placementIndex exposed local frame $localFrame '
+        'outside its ${placement.durationFrames}-frame event.',
+      );
+    }
+    if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
+      return;
+    }
+
+    final int sourceFrame = placement.sourceFrameAt(localFrame);
+    final _RuntimeOccurrenceTrace? existing = traces[placementIndex];
+    if (existing == null) {
+      if (sourceFrame != 0) {
         throw ProgramStructuralAudioException(
-          'Scene could not evaluate project frame $projectFrame while '
-          'planning STRUCT audio; reached ${evaluation.reachedFrame}.',
+          'STRUCT placement $placementIndex entered audio at source frame '
+          '$sourceFrame instead of source frame zero.',
         );
       }
+      traces[placementIndex] = _RuntimeOccurrenceTrace(
+        programStartFrame: projectFrame,
+        lastProgramFrame: projectFrame,
+        lastSourceFrame: sourceFrame,
+        framesSeen: 1,
+      );
+      return;
+    }
 
-      final StructuralRuntimeMarker? marker =
-          parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (projectFrame != existing.lastProgramFrame + 1 ||
+        sourceFrame != existing.lastSourceFrame + 1) {
+      throw ProgramStructuralAudioException(
+        'STRUCT placement $placementIndex audio is not contiguous: '
+        'project $projectFrame/source $sourceFrame followed '
+        'project ${existing.lastProgramFrame}/source '
+        '${existing.lastSourceFrame}.',
+      );
+    }
 
-      int? placementIndex;
-      int? localFrame;
+    existing.lastProgramFrame = projectFrame;
+    existing.lastSourceFrame = sourceFrame;
+    existing.framesSeen++;
+  }
 
-      if (marker != null) {
-        placementIndex = marker.placementIndex;
-        if (placementIndex < 0 || placementIndex >= placements.length) {
+  void observeEditorLine(int projectFrame, int rawLine) {
+    final int? placementIndex = placementIndexByLine[rawLine];
+    if (placementIndex == null) return;
+
+    final StructuralSequencePlacement placement = placements[placementIndex];
+    final int eventStart = editorEventStarts.putIfAbsent(
+      placementIndex,
+      () => projectFrame,
+    );
+    final int localFrame = projectFrame - eventStart;
+    if (localFrame < 0 || localFrame >= placement.durationFrames) {
+      throw ProgramStructuralAudioException(
+        'Editor STRUCT line ${placement.lineIndex} exposed local frame '
+        '$localFrame outside placement $placementIndex duration '
+        '${placement.durationFrames}.',
+      );
+    }
+
+    observePlacement(
+      placementIndex: placementIndex,
+      localFrame: localFrame,
+      projectFrame: projectFrame,
+    );
+  }
+
+  scene.reset();
+  try {
+    if (editorRawLineAtFrame != null) {
+      for (int projectFrame = 0;
+          projectFrame < totalFrames;
+          projectFrame++) {
+        observeEditorLine(
+          projectFrame,
+          editorRawLineAtFrame[projectFrame],
+        );
+      }
+    } else if (useEditorLineMap) {
+      // runEditorSimulation records line ownership AFTER each scene tick. Do
+      // exactly the same thing here. Using SceneProjectEvaluation(frame: N)
+      // samples the state before the editor's Nth recorded tick and therefore
+      // creates a second, shifted timeline.
+      for (int projectFrame = 0;
+          projectFrame < totalFrames;
+          projectFrame++) {
+        if (scene.isFinished) {
           throw ProgramStructuralAudioException(
-            'Runtime STRUCT marker references placement $placementIndex, but '
-            'the document has ${placements.length} placements.',
+            'Editor scene finished at project frame $projectFrame while '
+            'program timing requires $totalFrames frames.',
+          );
+        }
+        scene.tick();
+        observeEditorLine(
+          projectFrame,
+          scene.terminal.currentRawLine,
+        );
+      }
+    } else {
+      for (int projectFrame = 0;
+          projectFrame < totalFrames;
+          projectFrame++) {
+        final SceneEvaluationResult evaluation = scene.evaluate(
+          ProjectTime(
+            frame: projectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        );
+        if (!evaluation.exact) {
+          throw ProgramStructuralAudioException(
+            'Scene could not evaluate project frame $projectFrame while '
+            'planning STRUCT audio; reached ${evaluation.reachedFrame}.',
+          );
+        }
+
+        final StructuralRuntimeMarker? marker =
+            parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+        if (marker == null) continue;
+        if (marker.placementIndex < 0 ||
+            marker.placementIndex >= placements.length) {
+          throw ProgramStructuralAudioException(
+            'Runtime STRUCT marker references placement '
+            '${marker.placementIndex}, but the document has '
+            '${placements.length} placements.',
           );
         }
 
         final StructuralSequencePlacement placement =
-            placements[placementIndex];
+            placements[marker.placementIndex];
         if (marker.durationFrames != placement.durationFrames) {
           throw ProgramStructuralAudioException(
-            'Runtime STRUCT marker $placementIndex owns '
+            'Runtime STRUCT marker ${marker.placementIndex} owns '
             '${marker.durationFrames} frames, while placement planning owns '
             '${placement.durationFrames}.',
           );
         }
-        localFrame = _runtimeLocalFrame(scene, marker);
-      } else if (useEditorLineMap) {
-        placementIndex =
-            placementIndexByLine[scene.terminal.currentRawLine];
-        if (placementIndex == null) continue;
 
-        final StructuralSequencePlacement placement =
-            placements[placementIndex];
-        final int eventStart = editorEventStarts.putIfAbsent(
-          placementIndex,
-          () => projectFrame,
-        );
-        localFrame = projectFrame - eventStart;
-        if (localFrame < 0 || localFrame >= placement.durationFrames) {
-          throw ProgramStructuralAudioException(
-            'Editor STRUCT line ${placement.lineIndex} exposed local frame '
-            '$localFrame outside placement $placementIndex duration '
-            '${placement.durationFrames}.',
-          );
-        }
-      } else {
-        continue;
-      }
-
-      final StructuralSequencePlacement placement = placements[placementIndex];
-      if (!placement.resolves || !placement.clipAudio) continue;
-
-      if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
-        continue;
-      }
-
-      final int sourceFrame = placement.sourceFrameAt(localFrame);
-      final _RuntimeOccurrenceTrace? existing = traces[placementIndex];
-      if (existing == null) {
-        if (sourceFrame != 0) {
-          throw ProgramStructuralAudioException(
-            'STRUCT placement $placementIndex entered audio at source frame '
-            '$sourceFrame instead of source frame zero.',
-          );
-        }
-        traces[placementIndex] = _RuntimeOccurrenceTrace(
-          programStartFrame: projectFrame,
-          lastProgramFrame: projectFrame,
-          lastSourceFrame: sourceFrame,
-          framesSeen: 1,
-        );
-        continue;
-      }
-
-      if (projectFrame != existing.lastProgramFrame + 1 ||
-          sourceFrame != existing.lastSourceFrame + 1) {
-        throw ProgramStructuralAudioException(
-          'STRUCT placement $placementIndex audio is not contiguous: '
-          'project $projectFrame/source $sourceFrame followed '
-          'project ${existing.lastProgramFrame}/source '
-          '${existing.lastSourceFrame}.',
+        observePlacement(
+          placementIndex: marker.placementIndex,
+          localFrame: _runtimeLocalFrame(scene, marker),
+          projectFrame: projectFrame,
         );
       }
-
-      existing.lastProgramFrame = projectFrame;
-      existing.lastSourceFrame = sourceFrame;
-      existing.framesSeen++;
     }
   } finally {
     scene.reset();
