@@ -376,7 +376,7 @@ class ProgramStructuralAudioPreviewPlayer {
     int gen,
   ) async {
     final DateTime deadline = DateTime.now().add(_kNativeStartTimeout);
-    AudioSinkStats? last;
+    late AudioSinkStats last;
 
     while (gen == _generation) {
       try {
@@ -398,14 +398,13 @@ class ProgramStructuralAudioPreviewPlayer {
       }
 
       if (DateTime.now().isAfter(deadline)) {
-        final AudioSinkStats? stats = last;
         throw ProgramStructuralAudioPreviewException(
           'Program audio did not reach the native sink within '
           '${_kNativeStartTimeout.inMilliseconds} ms '
-          '(submitted=${stats?.submittedSamples ?? 0}, '
-          'latency=${stats?.latencySamples ?? 0}, '
-          'queued=${stats?.queuedSamples ?? 0}, '
-          'healthy=${stats?.healthy ?? false}).',
+          '(submitted=${last.submittedSamples}, '
+          'latency=${last.latencySamples}, '
+          'queued=${last.queuedSamples}, '
+          'healthy=${last.healthy}).',
         );
       }
       await Future<void>.delayed(_kNativeStartPoll);
