@@ -351,7 +351,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         '.r3nder_edit_source_audio_${identityHashCode(this)}_$pid.wav';
     final File stale = File(path);
     if (stale.existsSync()) stale.deleteSync();
-    await rendered.writeWav(path);
+    await File(path).writeAsBytes(rendered.toWavBytes(), flush: true);
 
     _sourceAudioPath = path;
     _sourceAudioDocument = document;
