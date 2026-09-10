@@ -62,6 +62,7 @@ class TextStructuralAudioPreview {
     required String? musicPath,
     required double musicGainDb,
     required bool musicLoop,
+    void Function()? onPrepared,
     String? deviceId,
   }) async {
     if (_disposed) {
@@ -92,6 +93,13 @@ class TextStructuralAudioPreview {
         return false;
       }
       _preparedDocument = rawDocument;
+
+      // Preparation deliberately resets SceneEngine to frame zero. Give the
+      // TEXT owner one synchronous seam to restore its authored picture state
+      // before the realtime sink is allowed to start. Otherwise a resume from
+      // a later playhead can spend deterministic replay time while audio is
+      // already advancing.
+      onPrepared?.call();
     }
 
     final ProgramStructuralAudioPreviewArtifact? artifact = session.artifact;
