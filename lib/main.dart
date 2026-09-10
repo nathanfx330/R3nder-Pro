@@ -14,6 +14,7 @@ import 'parser.dart';
 import 'scene_engine.dart';
 import 'scene_evaluator.dart';
 import 'program_preview_surface.dart';
+import 'program_structural_audio_preview_session.dart';
 import 'exporter.dart';
 import 'editor_screen.dart';
 import 'edit_video_preview.dart';
@@ -225,6 +226,18 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// no sink.
   AudioBedPlayer? _bedPlayer;
 
+  /// Unified PREVIEW audio owner for runs containing at least one resolved
+  /// `[STRUCT:...:AUDIO]` placement. Its one ffmpeg process mixes the absolute
+  /// program STRUCT WAV with optional workspace voice/music and feeds one sink.
+  /// The historical AudioBedPlayer remains the path for runs without STRUCT
+  /// clip audio, editor scrub, and dashboard audition.
+  ProgramStructuralAudioPreviewSession? _structPreviewSession;
+
+  /// True only while the unified STRUCT preview session owns the entire run's
+  /// audio mix. The legacy _onTick bed start must stay silent in that case or
+  /// two independent sinks would compete for the same device and clock.
+  bool _structAudioOwnsThisRun = false;
+
   /// Sinks present right now. Re-enumerated on demand, not cached forever:
   /// USB interfaces and Bluetooth sinks come and go while the app is open.
   List<PlaybackDevice> _bedDevices = const [];
@@ -247,10 +260,9 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// level you hear scrubbing is the level that lands in the mux.
   double _bedGainDb = 0.0;
 
-  /// Guards one-shot playback start inside _onTick. The bed begins when the
-  /// terminal engine takes its first tick, which is after the preroll wipe
-  /// with preroll on and immediately without it, so the same test covers
-  /// both paths.
+  /// Guards the historical workspace-only playback start inside _onTick.
+  /// When STRUCT clip audio owns a run, voice/music already live in that
+  /// unified program stream and this flag deliberately remains false.
   bool _bedStartedThisRun = false;
 
   /// Debounce for workspace.json writes while the gain slider is dragging.
@@ -1065,8 +1077,10 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       _cancelToken!.cancel();
       await Future.delayed(const Duration(milliseconds: 500));
     }
-    // Subprocess sinks are not our children's children: if we exit without
-    // killing them they keep the pipeline alive and hold the device.
+    // Both preview transports can own subprocess/native sink resources. The
+    // STRUCT session goes first so its native sink releases ProjectClock before
+    // the long-lived clock is destroyed during widget disposal.
+    _structPreviewSession?.dispose();
     _bedPlayer?.dispose();
     _scene.disposeImages();
     await windowManager.destroy();
@@ -1078,6 +1092,7 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     _warmDebounce?.cancel();
     _warm?.dispose();
     _bedGainSaveTimer?.cancel();
+    _structPreviewSession?.dispose();
     _bedPlayer?.dispose();
     _ticker.dispose();
     _projectClock.dispose();
@@ -1343,7 +1358,7 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     // schedules) BEFORE flipping the state back to menu, so the fire-time
     // check alone let a timer armed in the editor survive. The trace caught
     // one doing a full 1029ms asset decode alongside the library the editor
-    // was already holding, to prepare an open that was not going to happen.
+    // was already holding, to prepare an open that is not going to happen.
     //
     // Nothing is lost by refusing: returning to the dashboard schedules a
     // warm anyway, through _applyTemplateText on close.
@@ -1618,31 +1633,106 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     if (_isLoadingScene) return;
 
     setState(() => _isLoadingScene = true);
+
+    // A previous preview may still be completing its bounded sink shutdown.
+    // Quiesce both transports before the scene or workspace paths are reused.
+    await _structPreviewSession?.stop();
+    await _bedPlayer?.stop();
+
     await _setupScene(withPreroll: withPreroll);
     if (!mounted) return;
 
+    _bedStartedThisRun = false;
+    _structAudioOwnsThisRun = false;
+
+    final AudioBedPlayer? bedPlayer = _bedPlayer;
+    if (bedPlayer != null) {
+      final ProgramStructuralAudioPreviewSession session =
+          _structPreviewSession ??=
+              ProgramStructuralAudioPreviewSession.forBackendName(
+        bedPlayer.backendName,
+      );
+
+      try {
+        final bool prepared = await session.prepare(
+          scene: _scene,
+          rawDocument: _docText,
+          resolveSource: resolveWorkspaceMediaSource,
+          tempDirectory: Directory.systemTemp.path,
+        );
+        if (!mounted) {
+          await session.stop();
+          return;
+        }
+
+        if (prepared) {
+          // Hold exact frame zero before opening the unified sink. The native
+          // libpulse sink captures this authored point synchronously, keeps it
+          // in SCRUB through device/decoder prefill, then releases the same
+          // point under AUDIO authority when samples become audible.
+          _projectClock.seekScrub(
+            ProjectTime.zero(mode: ProjectClockMode.scrub),
+          );
+
+          await session.playPrepared(
+            voicePath: _usableBedPath,
+            voiceGainDb: _bedGainDb,
+            musicPath: _usableMusicPath,
+            musicGainDb: _musicGainDb,
+            musicLoop: _musicLoop,
+            deviceId: _activeDevice.id,
+          );
+
+          // aplay has no native ProjectClock handoff. It still benefits from
+          // being spawned behind the frame-zero SCRUB hold, then the picture
+          // is released from exactly zero immediately before ticker polling.
+          if (bedPlayer.backendName != 'libpulse') {
+            _projectClock.seekMonotonic(ProjectTime.zero());
+          }
+          _structAudioOwnsThisRun = true;
+        }
+      } catch (e) {
+        await session.stop();
+        // A failed sink must never strand the dashboard clock in SCRUB.
+        _projectClock.seekMonotonic(ProjectTime.zero());
+        _logError('STRUCT preview audio failed: $e');
+        if (!mounted) return;
+        setState(() => _isLoadingScene = false);
+        _snack('Preview audio failed. See r3nder_error.log', Colors.red);
+        return;
+      }
+    }
+
+    // No STRUCT clip-audio artifact means PREVIEW keeps the historical path:
+    // monotonic picture time starts now, and _onTick starts workspace
+    // voice/music only when the terminal reaches its established anchor.
+    if (!_structAudioOwnsThisRun) {
+      _projectClock.seekMonotonic(ProjectTime.zero());
+    }
+
+    if (!mounted) return;
     setState(() {
       _isLoadingScene = false;
       _currentState = AppState.preview;
     });
-    // Not started here: with preroll on, the bed must wait for the wipe to
-    // finish. _onTick starts it on the terminal engine's first tick, which
-    // is the same instant in both preroll and classic runs.
-    _bedStartedThisRun = false;
-    await _bedPlayer?.stop();
-
-    // Reset authoritative project time immediately before polling begins.
-    _projectClock.seekMonotonic(ProjectTime.zero());
     _ticker.start();
   }
 
-  /// Ends a preview run: stops the clock, silences the bed, returns to menu.
-  /// Every exit path routes through here so none of them can leave a sink
-  /// playing into an empty screen.
+  /// Ends a preview run: stops the clock, silences whichever audio transport
+  /// owns this run, returns to menu, and releases the ephemeral STRUCT WAV.
+  /// Every exit path routes through here so none can leave a sink playing into
+  /// an empty screen.
   void _endPreview() {
     _ticker.stop();
     _bedPlayer?.stop();
+    final ProgramStructuralAudioPreviewSession? session = _structPreviewSession;
+    if (session != null) {
+      unawaited(session.stop().catchError((Object e) {
+        _logError('STRUCT preview audio stop failed: $e');
+      }));
+    }
     _bedStartedThisRun = false;
+    _structAudioOwnsThisRun = false;
     if (mounted) setState(() => _currentState = AppState.menu);
     // Nothing changed, so any existing warm still stands. This only fills
     // the hole where the debounce fired mid-preview and was refused.
@@ -1765,10 +1855,11 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       return;
     }
 
-    // Audio remains the existing ffmpeg -> paplay/aplay path for now.
-    // AUDIO clock authority comes later when the native sink reports played
-    // samples and device latency.
-    if (!_bedStartedThisRun &&
+    // A run with STRUCT clip audio is already one complete ffmpeg mix feeding
+    // one sink from project sample zero. Only the historical workspace-only
+    // path starts here at the terminal anchor.
+    if (!_structAudioOwnsThisRun &&
+        !_bedStartedThisRun &&
         _bedPlayer != null &&
         (_usableBedPath != null || _usableMusicPath != null) &&
         _scene.terminal.frameCount > 0) {
