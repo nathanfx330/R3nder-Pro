@@ -343,6 +343,9 @@ class SceneExporter {
       );
     }
 
+    // M21 program STRUCT audio is a BAKE-side transport artifact. It is built
+    // after the authoritative dry run, consumed as an ffmpeg input, and never
+    // survives the export call.
     String? structuralAudioFile;
     void deleteStructuralAudioTemp() {
       final String? path = structuralAudioFile;
@@ -354,536 +357,530 @@ class SceneExporter {
       structuralAudioFile = null;
     }
 
-    try {
-      // M21: create one absolute-program WAV before the video encode begins.
-      // Source rendering is still source-relative EDIT/MOSAIC PCM; this second
-      // artifact inserts only AUDIO-enabled STRUCT occurrences at the exact
-      // showing frames discovered through SceneEngine's ProjectTime seam.
-      if (structuralDocument != null) {
-        try {
-          final ProgramStructuralAudioTimeline timeline =
-              traceProgramStructuralAudioTimeline(
-            scene: scene,
-            rawDocument: structuralDocument,
-            totalFrames: totalFrames,
-          );
-
-          if (timeline.occurrences.isNotEmpty) {
-            if (resolveStructuralSource == null) {
-              return ExportResult(
-                success: false,
-                cancelled: false,
-                framesWritten: 0,
-                outputPath: actualOutputPath,
-                mattePath: mattePath,
-                error: 'STRUCT AUDIO requires a structural source resolver.',
-              );
-            }
-            if (fps != kStructuralAudioProjectFps) {
-              return ExportResult(
-                success: false,
-                cancelled: false,
-                framesWritten: 0,
-                outputPath: actualOutputPath,
-                mattePath: mattePath,
-                error: 'STRUCT AUDIO is authored at '
-                    '$kStructuralAudioProjectFps fps; BAKE requested $fps fps.',
-              );
-            }
-            if (cancelToken?.isCancelled ?? false) {
-              return ExportResult(
-                success: false,
-                cancelled: true,
-                framesWritten: 0,
-                outputPath: actualOutputPath,
-                mattePath: mattePath,
-              );
-            }
-
-            onStatus?.call('Rendering Structural Audio...');
-            final StructuralAudioSourceRenderer sourceRenderer =
-                StructuralAudioSourceRenderer(
-              planner: StructuralAudioPlanner.parse(structuralDocument),
-              leafDecoder: structuralAudioLeafDecoder ??
-                  FfmpegStructuralAudioLeafDecodeBackend(),
-              resolveSource: resolveStructuralSource,
-            );
-            final ProgramStructuralAudioRender programAudio =
-                await ProgramStructuralAudioRenderer(
-              timeline: timeline,
-              renderSource: sourceRenderer.render,
-            ).render();
-
-            final String tempPath =
-                '$exportDir/.r3nder_struct_audio_$pid.wav';
-            final File stale = File(tempPath);
-            if (stale.existsSync()) stale.deleteSync();
-            structuralAudioFile = tempPath;
-            await programAudio.writeWav(tempPath);
-
-            if (cancelToken?.isCancelled ?? false) {
-              return ExportResult(
-                success: false,
-                cancelled: true,
-                framesWritten: 0,
-                outputPath: actualOutputPath,
-                mattePath: mattePath,
-              );
-            }
-          }
-        } catch (e) {
-          return ExportResult(
-            success: false,
-            cancelled: false,
-            framesWritten: 0,
-            outputPath: actualOutputPath,
-            mattePath: mattePath,
-            error: 'Structural audio render failed: $e',
-          );
-        }
-      }
-
-      // traceProgramStructuralAudioTimeline resets the scene on exit. Keep the
-      // same explicit reset here so the following picture encode starts from
-      // the historical frame-zero state whether or not STRUCT audio exists.
-      scene.reset();
-
-      final String fifoPath = '$exportDir/.r3nder_fifo_$pid';
+    if (structuralDocument != null) {
       try {
-        final File f = File(fifoPath);
-        if (f.existsSync()) f.deleteSync();
-        final ProcessResult mk = await Process.run('mkfifo', [fifoPath]);
-        if (mk.exitCode != 0) {
-          return ExportResult(
-            success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
-            error: 'mkfifo failed: ${mk.stderr}',
+        final ProgramStructuralAudioTimeline timeline =
+            traceProgramStructuralAudioTimeline(
+          scene: scene,
+          rawDocument: structuralDocument,
+          totalFrames: totalFrames,
+        );
+        if (timeline.occurrences.isNotEmpty) {
+          if (resolveStructuralSource == null) {
+            return ExportResult(
+              success: false,
+              cancelled: false,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+              error: 'STRUCT AUDIO requires a structural source resolver.',
+            );
+          }
+          if (fps != kStructuralAudioProjectFps) {
+            return ExportResult(
+              success: false,
+              cancelled: false,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+              error: 'STRUCT AUDIO is authored at '
+                  '$kStructuralAudioProjectFps fps; BAKE requested $fps fps.',
+            );
+          }
+          if (cancelToken?.isCancelled ?? false) {
+            return ExportResult(
+              success: false,
+              cancelled: true,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+            );
+          }
+
+          onStatus?.call('Rendering Structural Audio...');
+          final StructuralAudioSourceRenderer sourceRenderer =
+              StructuralAudioSourceRenderer(
+            planner: StructuralAudioPlanner.parse(structuralDocument),
+            leafDecoder: structuralAudioLeafDecoder ??
+                FfmpegStructuralAudioLeafDecodeBackend(),
+            resolveSource: resolveStructuralSource,
           );
+          final ProgramStructuralAudioRender programAudio =
+              await ProgramStructuralAudioRenderer(
+            timeline: timeline,
+            renderSource: sourceRenderer.render,
+          ).render();
+
+          final String tempPath = '$exportDir/.r3nder_struct_audio_$pid.wav';
+          final File stale = File(tempPath);
+          if (stale.existsSync()) stale.deleteSync();
+          structuralAudioFile = tempPath;
+          await programAudio.writeWav(tempPath);
+
+          if (cancelToken?.isCancelled ?? false) {
+            deleteStructuralAudioTemp();
+            return ExportResult(
+              success: false,
+              cancelled: true,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+            );
+          }
         }
       } catch (e) {
+        deleteStructuralAudioTemp();
+        return ExportResult(
+          success: false,
+          cancelled: false,
+          framesWritten: 0,
+          outputPath: actualOutputPath,
+          mattePath: mattePath,
+          error: 'Structural audio render failed: $e',
+        );
+      }
+    }
+
+    // The timeline trace resets the scene on exit. This explicit reset also
+    // preserves the historical frame-zero encode start when no STRUCT audio
+    // was requested.
+    scene.reset();
+
+    final String fifoPath = '$exportDir/.r3nder_fifo_$pid';
+    try {
+      final File f = File(fifoPath);
+      if (f.existsSync()) f.deleteSync();
+      final ProcessResult mk = await Process.run('mkfifo', [fifoPath]);
+      if (mk.exitCode != 0) {
+        deleteStructuralAudioTemp();
         return ExportResult(
           success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
-          error: 'mkfifo unavailable: $e',
+          error: 'mkfifo failed: ${mk.stderr}',
         );
       }
+    } catch (e) {
+      deleteStructuralAudioTemp();
+      return ExportResult(
+        success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
+        error: 'mkfifo unavailable: $e',
+      );
+    }
 
-      // Captured as nullable locals rather than bool flags: Dart promotes
-      // these final values inside collection-ifs below.
-      final String? bedFile =
-          (audioPath != null && File(audioPath).existsSync()) ? audioPath : null;
-      final String? musicFile =
-          (musicPath != null && File(musicPath).existsSync()) ? musicPath : null;
-      final String? structuralFile = structuralAudioFile;
+    // Captured as nullable locals rather than bool flags: Dart promotes
+    // `bedFile != null` inside the collection-ifs below, but cannot tie a
+    // separate boolean back to the variable it was derived from.
+    final String? bedFile =
+        (audioPath != null && File(audioPath).existsSync()) ? audioPath : null;
+    final String? musicFile =
+        (musicPath != null && File(musicPath).existsSync()) ? musicPath : null;
+    final String? structuralFile = structuralAudioFile;
 
-      // Any one contributor is enough to make this a bake with sound.
-      final bool hasAudio =
-          bedFile != null || musicFile != null || structuralFile != null;
+    // Any one contributor is enough to make this a bake with sound.
+    final bool hasAudio =
+        bedFile != null || musicFile != null || structuralFile != null;
 
-      final List<String> args = [
-        '-n',
-        '-v', 'error',
-        '-nostats',
-        '-nostdin',
-        '-f', 'rawvideo',
-        '-pix_fmt', 'rgba',
-        '-s', '${width}x$height',
-        '-framerate', '$fps',
-        '-i', fifoPath, // Input 0: FIFO (Video)
-        if (bedFile != null) ...['-i', bedFile], // Input 1: voice bed
-        if (musicFile != null) ...[
-          // Infinite here, finite at the output -t below. A loop that had to
-          // be counted would need the picture length before the input list is
-          // built, and would be wrong by a frame whenever the score did not
-          // divide evenly into it.
-          if (musicLoop) ...['-stream_loop', '-1'],
-          '-i', musicFile, // Next input: music bed
-        ],
-        if (structuralFile != null) ...[
-          // Already full-program 48 kHz stereo PCM. Unlike workspace beds it
-          // contains its own leading silence and therefore takes no adelay.
-          '-i', structuralFile,
-        ],
-      ];
+    final List<String> args = [
+      '-n',
+      '-v', 'error',
+      '-nostats',
+      '-nostdin',
+      '-f', 'rawvideo',
+      '-pix_fmt', 'rgba',
+      '-s', '${width}x$height',
+      '-framerate', '$fps',
+      '-i', fifoPath, // Input 0: FIFO (Video)
+      if (bedFile != null) ...['-i', bedFile], // Input 1: voice bed
+      if (musicFile != null) ...[
+        // Infinite here, finite at the output -t below. A loop that had to
+        // be counted would need the picture length before the input list is
+        // built, and would be wrong by a frame whenever the score did not
+        // divide evenly into it.
+        if (musicLoop) ...['-stream_loop', '-1'],
+        '-i', musicFile, // Input 1 or 2: music bed
+      ],
+      if (structuralFile != null) ...[
+        // Full-program PCM already contains silence before each placement.
+        '-i', structuralFile,
+      ],
+    ];
 
-      // Existing workspace input slots remain unchanged. STRUCT is appended
-      // after them, so adding clip audio cannot renumber a historical bake.
-      final String voiceInput = '1:a';
-      final String musicInput = bedFile != null ? '2:a' : '1:a';
-      final String structuralInput =
-          '${1 + (bedFile != null ? 1 : 0) + (musicFile != null ? 1 : 0)}:a';
+    // Existing workspace input slots stay unchanged. STRUCT is appended after
+    // them, so adding clip audio cannot renumber a historical BAKE.
+    final String voiceInput = '1:a';
+    final String musicInput = bedFile != null ? '2:a' : '1:a';
+    final String structuralInput =
+        '${1 + (bedFile != null ? 1 : 0) + (musicFile != null ? 1 : 0)}:a';
 
-      // Audio filter chain, in order:
-      //
-      //   adelay  parks WORKSPACE beds behind the preroll wipe. STRUCT audio
-      //           does not take this delay: its WAV is already authored in
-      //           absolute program time, including its own leading silence.
-      //   volume  matches the preview player's shared filter spelling.
-      //   amix    sums two or three contributors without renormalizing.
-      //   apad    backfills silence to the end after the final sum, bounded by
-      //           the output -t below.
-      //
-      // WHY THIS IS A GRAPH AND NOT -af. A stream summed inside filter_complex
-      // is a label, and -af cannot address a label. Once multiple tracks can
-      // be attached, every format has to build the chain here, including the
-      // plain H.264 path that previously needed no filter_complex at all.
-      final int bedDelayMs = (audioStartFrame * 1000 / fps).round();
-      final String delayChain =
-          bedDelayMs > 0 ? 'adelay=$bedDelayMs:all=1' : '';
+    // Audio filter chain, in order:
+    //
+    //   adelay  parks the workspace beds behind the preroll wipe. This used to
+    //           be -itsoffset, which records the shift as container metadata
+    //           instead of real silence. STRUCT audio takes NO adelay because
+    //           its program WAV already owns absolute project time.
+    //   volume  matches the preview player's filter spelling.
+    //   amix    sums two or three contributors without renormalizing.
+    //   apad    backfills silence to the end after the final sum.
+    //
+    // WHY THIS IS A GRAPH AND NOT -af. A stream summed inside filter_complex
+    // is a label, and -af cannot address a label. Once multiple tracks can be
+    // attached, every format has to build the chain here, including the plain
+    // H.264 path that previously needed no filter_complex at all.
+    final int bedDelayMs = (audioStartFrame * 1000 / fps).round();
+    final String delayChain =
+        bedDelayMs > 0 ? 'adelay=$bedDelayMs:all=1' : '';
 
-      /// Label the mixed, padded audio lands on. Mapped by name below.
-      const String audioOutLabel = 'bedout';
+    /// Label the mixed, padded audio lands on. Mapped by name below.
+    const String audioOutLabel = 'bedout';
 
-      String audioGraph = '';
-      if (structuralFile != null) {
-        // M21 path. The generic registry handles STRUCT alone, either
-        // workspace bed plus STRUCT, or all three contributors. Only the two
-        // workspace beds receive preroll delay.
-        audioGraph = audioMixGraph(
-          tracks: <AudioMixTrack>[
-            if (bedFile != null)
-              AudioMixTrack(
-                input: voiceInput,
-                label: 'bedvo',
-                gainDb: audioGainDb,
-                chain: delayChain,
-              ),
-            if (musicFile != null)
-              AudioMixTrack(
-                input: musicInput,
-                label: 'bedmus',
-                gainDb: musicGainDb,
-                chain: delayChain,
-              ),
+    String audioGraph = '';
+    if (structuralFile != null) {
+      audioGraph = audioMixGraph(
+        tracks: <AudioMixTrack>[
+          if (bedFile != null)
             AudioMixTrack(
-              input: structuralInput,
-              label: 'structprogram',
-              gainDb: 0.0,
+              input: voiceInput,
+              label: 'bedvo',
+              gainDb: audioGainDb,
+              chain: delayChain,
             ),
-          ],
-          outputLabel: audioOutLabel,
-          postMixChain: 'apad',
-        );
-      } else if (bedFile != null && musicFile != null) {
-        // Preserve the historical two-bed graph exactly when M21 audio is not
-        // present. This keeps old BAKE arithmetic and ffmpeg graph spelling
-        // untouched for projects that do not opt in.
-        audioGraph = '${bedMixGraph(
-          voiceGainDb: audioGainDb,
-          musicGainDb: musicGainDb,
-          voiceChain: delayChain,
-          musicChain: delayChain,
-          voiceInput: voiceInput,
-          musicInput: musicInput,
-        )};[$kBedMixOutLabel]apad[$audioOutLabel]';
-      } else if (hasAudio) {
-        // Historical one-workspace-track path. Same chain minus the sum.
-        final String src = bedFile != null ? voiceInput : musicInput;
-        final double gain = bedFile != null ? audioGainDb : musicGainDb;
-        audioGraph = '[$src]${<String>[
-          if (delayChain.isNotEmpty) delayChain,
-          bedVolumeFilter(gain),
-          'apad',
-        ].join(',')}[$audioOutLabel]';
-      }
+          if (musicFile != null)
+            AudioMixTrack(
+              input: musicInput,
+              label: 'bedmus',
+              gainDb: musicGainDb,
+              chain: delayChain,
+            ),
+          AudioMixTrack(
+            input: structuralInput,
+            label: 'structprogram',
+            gainDb: 0.0,
+          ),
+        ],
+        outputLabel: audioOutLabel,
+        postMixChain: 'apad',
+      );
+    } else if (bedFile != null && musicFile != null) {
+      // Preserve the historical two-bed graph exactly when STRUCT audio is
+      // absent, including its intermediate bedmix label.
+      audioGraph = '${bedMixGraph(
+        voiceGainDb: audioGainDb,
+        musicGainDb: musicGainDb,
+        voiceChain: delayChain,
+        musicChain: delayChain,
+        voiceInput: voiceInput,
+        musicInput: musicInput,
+      )};[$kBedMixOutLabel]apad[$audioOutLabel]';
+    } else if (hasAudio) {
+      // Historical one-workspace-track path. Same chain minus the sum.
+      final String src = bedFile != null ? voiceInput : musicInput;
+      final double gain = bedFile != null ? audioGainDb : musicGainDb;
+      audioGraph = '[$src]${<String>[
+        if (delayChain.isNotEmpty) delayChain,
+        bedVolumeFilter(gain),
+        'apad',
+      ].join(',')}[$audioOutLabel]';
+    }
 
-      // Video length stays authoritative. The engine already stretched its end
-      // hold to cover a longer VOICE bed, so for that track this only trims the
-      // sub-frame remainder left by rounding a duration up to whole frames.
+    // Video length stays authoritative. The engine already stretched its end
+    // hold to cover a longer VOICE bed, so for that track this only trims the
+    // sub-frame remainder left by rounding a duration up to whole frames.
+    //
+    // For music it does real work. Nothing stretched to accommodate a score,
+    // so this is the cut that keeps a four minute track under a forty second
+    // piece from producing a four minute file. The STRUCT program WAV is
+    // already exactly this duration and therefore cannot extend the picture.
+    final String outDuration = (totalFrames / fps).toStringAsFixed(6);
+
+    if (format == VideoExportFormat.proresAlpha) {
+      // Flutter produces Premultiplied Alpha. Unpremultiply it so glows
+      // composite correctly in NLEs.
+      const String videoGraph =
+          '[0:v]unpremultiply=inplace=1,format=rgba[straight]';
+      args.addAll([
+        '-filter_complex',
+        hasAudio ? '$videoGraph;$audioGraph' : videoGraph,
+        '-map', '[straight]',
+        if (hasAudio) ...[
+          // filter_complex suppresses automatic stream selection, so the
+          // audio has to be mapped by hand or it is silently dropped.
+          '-map', '[$audioOutLabel]',
+          // .mov wants uncompressed audio next to a 4444 video track: this
+          // is a mastering file headed for an NLE, not a delivery file.
+          '-c:a', 'pcm_s24le',
+        ],
+        '-c:v', 'prores_ks', '-profile:v', '4444',
+        '-qscale:v', '11', '-pix_fmt', 'yuva444p10le',
+        '-threads', '0',
+        if (hasAudio) ...['-t', outDuration],
+        actualOutputPath,
+      ]);
+    } else if (format == VideoExportFormat.lumaMatte) {
+      // One invocation, two outputs. split=2 after the unpremultiply feeds
+      // both branches from a single decode: the fill drops alpha via
+      // yuv420p, the matte pulls the alpha plane out as luminance.
       //
-      // Music and STRUCT audio cannot extend picture duration. Music is cut to
-      // picture; the STRUCT program WAV is generated at this exact duration.
-      final String outDuration = (totalFrames / fps).toStringAsFixed(6);
+      // The format=rgba pin between unpremultiply and alphaextract is load
+      // bearing. Without it the two filters fail to negotiate a common
+      // format and the whole graph dies at runtime with "The following
+      // filters could not choose their formats". The ProRes branch above
+      // carries the same pin.
+      //
+      // Fill must be STRAIGHT, not premultiplied: the comp reconstructs as
+      // fill multiplied by matte, so a premultiplied fill would apply alpha
+      // a second time and every soft edge would darken.
+      const String videoGraph =
+          '[0:v]unpremultiply=inplace=1,format=rgba,split=2[fg][fa]; '
+          '[fg]format=yuv420p[color]; '
+          '[fa]alphaextract,format=yuv420p[matte]';
+      args.addAll([
+        '-filter_complex',
+        hasAudio ? '$videoGraph; $audioGraph' : videoGraph,
 
-      if (format == VideoExportFormat.proresAlpha) {
-        // Flutter produces Premultiplied Alpha. Unpremultiply it so glows
-        // composite correctly in NLEs.
-        const String videoGraph =
-            '[0:v]unpremultiply=inplace=1,format=rgba[straight]';
-        args.addAll([
-          '-filter_complex',
-          hasAudio ? '$videoGraph;$audioGraph' : videoGraph,
-          '-map', '[straight]',
-          if (hasAudio) ...[
-            // filter_complex suppresses automatic stream selection, so the
-            // audio has to be mapped by hand or it is silently dropped.
-            '-map', '[$audioOutLabel]',
-            // .mov wants uncompressed audio next to a 4444 video track: this
-            // is a mastering file headed for an NLE, not a delivery file.
-            '-c:a', 'pcm_s24le',
-          ],
-          '-c:v', 'prores_ks', '-profile:v', '4444',
-          '-qscale:v', '11', '-pix_fmt', 'yuva444p10le',
-          '-threads', '0',
-          if (hasAudio) ...['-t', outDuration],
-          actualOutputPath,
-        ]);
-      } else if (format == VideoExportFormat.lumaMatte) {
-        // One invocation, two outputs. split=2 after the unpremultiply feeds
-        // both branches from a single decode: the fill drops alpha via
-        // yuv420p, the matte pulls the alpha plane out as luminance.
-        //
-        // The format=rgba pin between unpremultiply and alphaextract is load
-        // bearing. Without it the two filters fail to negotiate a common
-        // format and the whole graph dies at runtime with "The following
-        // filters could not choose their formats". The ProRes branch above
-        // carries the same pin.
-        //
-        // Fill must be STRAIGHT, not premultiplied: the comp reconstructs as
-        // fill multiplied by matte, so a premultiplied fill would apply alpha
-        // a second time and every soft edge would darken.
-        const String videoGraph =
-            '[0:v]unpremultiply=inplace=1,format=rgba,split=2[fg][fa]; '
-            '[fg]format=yuv420p[color]; '
-            '[fa]alphaextract,format=yuv420p[matte]';
-        args.addAll([
-          '-filter_complex',
-          hasAudio ? '$videoGraph; $audioGraph' : videoGraph,
+        // Output 1: the color fill, carrying the audio.
+        '-map', '[color]',
+        if (hasAudio) ...[
+          '-map', '[$audioOutLabel]',
+          '-c:a', 'aac', '-b:a', '192k',
+        ],
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-crf', '18', '-threads', '0',
+        if (hasAudio) ...['-t', outDuration],
+        actualOutputPath,
 
-          // Output 1: the color fill, carrying the audio.
-          '-map', '[color]',
-          if (hasAudio) ...[
-            '-map', '[$audioOutLabel]',
-            '-c:a', 'aac', '-b:a', '192k',
-          ],
-          '-c:v', 'libx264', '-preset', 'veryfast',
-          '-crf', '18', '-threads', '0',
-          if (hasAudio) ...['-t', outDuration],
-          actualOutputPath,
+        // Output 2: the matte. Silent by design. Audio on both files would
+        // double up the moment someone drops the pair into a timeline
+        // without muting one.
+        '-map', '[matte]',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-crf', '18', '-threads', '0',
+        '-an',
+        if (hasAudio) ...['-t', outDuration],
+        mattePath!,
+      ]);
+    } else {
+      args.addAll([
+        if (hasAudio) ...[
+          // This path had no filter_complex before two tracks existed. It
+          // needs one now, and adding it means video must be mapped by hand:
+          // filter_complex turns off automatic stream selection for the whole
+          // command, not just for the streams it touches.
+          '-filter_complex', audioGraph,
+          '-map', '0:v',
+          '-map', '[$audioOutLabel]',
+          // pcm is not legal in an .mp4 container; aac is.
+          '-c:a', 'aac', '-b:a', '192k',
+        ],
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-crf', '18', '-pix_fmt', 'yuv420p',
+        '-threads', '0',
+        if (hasAudio) ...['-t', outDuration],
+        actualOutputPath,
+      ]);
+    }
 
-          // Output 2: the matte. Silent by design. Audio on both files would
-          // double up the moment someone drops the pair into a timeline
-          // without muting one.
-          '-map', '[matte]',
-          '-c:v', 'libx264', '-preset', 'veryfast',
-          '-crf', '18', '-threads', '0',
-          '-an',
-          if (hasAudio) ...['-t', outDuration],
-          mattePath!,
-        ]);
+    final ReceivePort fromWriter = ReceivePort();
+    final Completer<SendPort> portC = Completer<SendPort>();
+    final Completer<void> readyC = Completer<void>();
+    final Completer<void> doneC = Completer<void>();
+    String? writerError;
+    int pendingAcks = 0;
+    Completer<void>? ackSlot;
+
+    fromWriter.listen((dynamic msg) {
+      if (msg is SendPort) {
+        if (!portC.isCompleted) portC.complete(msg);
+      } else if (msg == 'ready') {
+        if (!readyC.isCompleted) readyC.complete();
+      } else if (msg == 'ack') {
+        pendingAcks--;
+        ackSlot?.complete();
+        ackSlot = null;
+      } else if (msg == 'done') {
+        if (!doneC.isCompleted) doneC.complete();
+      } else if (msg is String && msg.startsWith('error:')) {
+        writerError = msg.substring(6);
+        if (!readyC.isCompleted) readyC.complete();
+        if (!doneC.isCompleted) doneC.complete();
+        ackSlot?.complete();
+        ackSlot = null;
+      }
+    });
+
+    ProgramStructuralFrameRenderer? structuralRenderer;
+    if (structuralDocument != null && resolveStructuralSource != null) {
+      final ProgramStructuralFrameRenderer candidate =
+          ProgramStructuralFrameRenderer(
+        rawDocument: structuralDocument,
+        width: width,
+        height: height,
+        backend: structuralBackend ?? NativeMltMediaBackend(),
+        resolveSource: resolveStructuralSource,
+      );
+      if (candidate.hasPlacements) {
+        structuralRenderer = candidate;
       } else {
-        args.addAll([
-          if (hasAudio) ...[
-            // filter_complex turns off automatic stream selection for the
-            // whole command, so video and the named audio stream are mapped.
-            '-filter_complex', audioGraph,
-            '-map', '0:v',
-            '-map', '[$audioOutLabel]',
-            // pcm is not legal in an .mp4 container; aac is.
-            '-c:a', 'aac', '-b:a', '192k',
-          ],
-          '-c:v', 'libx264', '-preset', 'veryfast',
-          '-crf', '18', '-pix_fmt', 'yuv420p',
-          '-threads', '0',
-          if (hasAudio) ...['-t', outDuration],
-          actualOutputPath,
-        ]);
+        candidate.dispose();
       }
+    }
 
-      final ReceivePort fromWriter = ReceivePort();
-      final Completer<SendPort> portC = Completer<SendPort>();
-      final Completer<void> readyC = Completer<void>();
-      final Completer<void> doneC = Completer<void>();
-      String? writerError;
-      int pendingAcks = 0;
-      Completer<void>? ackSlot;
+    final Isolate writerIsolate = await Isolate.spawn(_fifoWriterMain, (fifoPath, fromWriter.sendPort));
+    final Process proc = await Process.start('ffmpeg', args);
 
-      fromWriter.listen((dynamic msg) {
-        if (msg is SendPort) {
-          if (!portC.isCompleted) portC.complete(msg);
-        } else if (msg == 'ready') {
-          if (!readyC.isCompleted) readyC.complete();
-        } else if (msg == 'ack') {
-          pendingAcks--;
-          ackSlot?.complete();
-          ackSlot = null;
-        } else if (msg == 'done') {
-          if (!doneC.isCompleted) doneC.complete();
-        } else if (msg is String && msg.startsWith('error:')) {
-          writerError = msg.substring(6);
-          if (!readyC.isCompleted) readyC.complete();
-          if (!doneC.isCompleted) doneC.complete();
-          ackSlot?.complete();
-          ackSlot = null;
-        }
-      });
+    bool procDead = false;
+    final Completer<int> exitC = Completer<int>();
+    unawaited(proc.exitCode.then((int code) {
+      procDead = true;
+      exitC.complete(code);
+    }));
 
-      ProgramStructuralFrameRenderer? structuralRenderer;
-      if (structuralDocument != null && resolveStructuralSource != null) {
-        final ProgramStructuralFrameRenderer candidate =
-            ProgramStructuralFrameRenderer(
-          rawDocument: structuralDocument,
-          width: width,
-          height: height,
-          backend: structuralBackend ?? NativeMltMediaBackend(),
-          resolveSource: resolveStructuralSource,
-        );
-        if (candidate.hasPlacements) {
-          structuralRenderer = candidate;
-        } else {
-          candidate.dispose();
-        }
-      }
+    final StringBuffer errBuf = StringBuffer();
+    proc.stderr.transform(utf8.decoder).listen(errBuf.write);
 
-      final Isolate writerIsolate = await Isolate.spawn(_fifoWriterMain, (fifoPath, fromWriter.sendPort));
-      final Process proc = await Process.start('ffmpeg', args);
-
-      bool procDead = false;
-      final Completer<int> exitC = Completer<int>();
-      unawaited(proc.exitCode.then((int code) {
-        procDead = true;
-        exitC.complete(code);
-      }));
-
-      final StringBuffer errBuf = StringBuffer();
-      proc.stderr.transform(utf8.decoder).listen(errBuf.write);
-
-      Future<void> teardown() async {
-        structuralRenderer?.dispose();
-        try { proc.kill(ProcessSignal.sigterm); } catch (_) {}
-        if (!readyC.isCompleted) {
-          try {
-            final RandomAccessFile r = File(fifoPath).openSync(mode: FileMode.read);
-            r.closeSync();
-          } catch (_) {}
-        }
-        writerIsolate.kill(priority: Isolate.immediate);
-        fromWriter.close();
+    Future<void> teardown() async {
+      structuralRenderer?.dispose();
+      try { proc.kill(ProcessSignal.sigterm); } catch (_) {}
+      if (!readyC.isCompleted) {
         try {
-          final File f = File(fifoPath);
-          if (f.existsSync()) f.deleteSync();
+          final RandomAccessFile r = File(fifoPath).openSync(mode: FileMode.read);
+          r.closeSync();
         } catch (_) {}
       }
-
-      final SendPort toWriter = await portC.future;
-      final SceneCompositor compositor = SceneCompositor(width: width, height: height);
-
-      onStatus?.call('Rendering Frames...');
-
-      int renderedFrames = 0;
-      _InFlightReadback? inFlight;
-      final Stopwatch wall = Stopwatch()..start();
-      int lastProgressMs = -_progressIntervalMs;
-
-      Future<void> resolveInFlight() async {
-        final _InFlightReadback f = inFlight!;
-        inFlight = null;
-
-        final ByteData? rawBytes = await f.bytes;
-        f.frame.dispose();
-
-        if (rawBytes == null) {
-          throw Exception('Failed to extract raw pixels at frame ${f.index}.');
-        }
-        final Uint8List bytes = rawBytes.buffer.asUint8List(rawBytes.offsetInBytes, rawBytes.lengthInBytes);
-
-        while (pendingAcks >= _maxFramesInFlight && writerError == null) {
-          ackSlot = Completer<void>();
-          await ackSlot!.future;
-        }
-        if (writerError != null) {
-          throw Exception('Frame writer failed: $writerError\n${errBuf.toString().trim()}');
-        }
-
-        toWriter.send(TransferableTypedData.fromList([bytes]));
-        pendingAcks++;
-        renderedFrames++;
-
-        final int nowMs = wall.elapsedMilliseconds;
-        if (nowMs - lastProgressMs >= _progressIntervalMs || renderedFrames == totalFrames) {
-          lastProgressMs = nowMs;
-          onProgress?.call(renderedFrames, totalFrames);
-          await Future<void>(() {}); // Yield event loop
-        }
-      }
-
-      try {
-        await readyC.future;
-        if (writerError != null) throw Exception('Writer failed to attach: $writerError');
-
-        for (int i = 0; i < totalFrames; i++) {
-          if (cancelToken?.isCancelled ?? false) {
-            inFlight?.frame.dispose();
-            await teardown();
-            return ExportResult(success: false, cancelled: true, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
-          }
-          if (procDead) throw Exception('FFmpeg died during encode (at frame $i)\n${errBuf.toString().trim()}');
-          if (writerError != null) throw Exception('Frame writer failed: $writerError\n${errBuf.toString().trim()}');
-
-          // Frame i means ProjectTime(frame: i), exactly as it does in preview.
-          // The dry run counted a duration of totalFrames ticks, so the file
-          // contains project frames 0 through totalFrames - 1: same duration as
-          // before, with no hidden one-frame offset at either end.
-          final SceneEvaluationResult evaluation = scene.evaluate(
-            ProjectTime(frame: i, mode: ProjectClockMode.scrub),
-          );
-          if (!evaluation.exact) {
-            throw Exception(
-                'Scene could not evaluate export frame $i '
-                '(reached ${evaluation.reachedFrame}).');
-          }
-
-          // STRUCT observes the same already-evaluated SceneEngine frame Preview
-          // does. Exact media decode may block here, but it cannot advance the
-          // engine or select any project frame other than i.
-          final ui.Image? structuralFrame = structuralRenderer == null
-              ? null
-              : await structuralRenderer.renderIfActive(
-                  scene: scene,
-                  fontFamily: fontFamily,
-                );
-
-          // Non-STRUCT frames stay on the original terminal SceneCompositor.
-          final ui.Image frame = structuralFrame ??
-              await compositor.advanceExportAsync(scene, fontFamily);
-          final Future<ByteData?> bytesF = frame.toByteData(format: ui.ImageByteFormat.rawRgba);
-
-          if (inFlight != null) await resolveInFlight();
-          inFlight = _InFlightReadback(frame, bytesF, i);
-        }
-
-        if (inFlight != null) await resolveInFlight();
-
-        toWriter.send(null);
-        await doneC.future;
-        if (writerError != null) throw Exception('Frame writer failed during close: $writerError');
-
-        onStatus?.call('Finalizing File...');
-
-        while (!exitC.isCompleted) {
-          if (cancelToken?.isCancelled ?? false) {
-            await teardown();
-            return ExportResult(success: false, cancelled: true, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
-          }
-          await Future.delayed(const Duration(milliseconds: 100));
-        }
-
-        final int exitCode = await exitC.future;
-        if (exitCode != 0) {
-          throw Exception('FFmpeg failed with code $exitCode\n${errBuf.toString().trim()}');
-        }
-
-        onProgress?.call(totalFrames, totalFrames);
-
-      } catch (e) {
-        inFlight?.frame.dispose();
-        await teardown();
-        return ExportResult(
-          success: false, cancelled: false, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath,
-          error: e.toString(),
-        );
-      }
-
-      structuralRenderer?.dispose();
+      writerIsolate.kill(priority: Isolate.immediate);
       fromWriter.close();
       try {
         final File f = File(fifoPath);
         if (f.existsSync()) f.deleteSync();
       } catch (_) {}
-
-      return ExportResult(success: true, cancelled: false, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
-    } finally {
-      // The program STRUCT WAV is an encode-side transport artifact, not a
-      // project asset. It must not survive success, cancellation, or failure.
       deleteStructuralAudioTemp();
     }
+
+    final SendPort toWriter = await portC.future;
+    final SceneCompositor compositor = SceneCompositor(width: width, height: height);
+
+    onStatus?.call('Rendering Frames...');
+
+    int renderedFrames = 0;
+    _InFlightReadback? inFlight;
+    final Stopwatch wall = Stopwatch()..start();
+    int lastProgressMs = -_progressIntervalMs;
+
+    Future<void> resolveInFlight() async {
+      final _InFlightReadback f = inFlight!;
+      inFlight = null;
+
+      final ByteData? rawBytes = await f.bytes;
+      f.frame.dispose();
+
+      if (rawBytes == null) {
+        throw Exception('Failed to extract raw pixels at frame ${f.index}.');
+      }
+      final Uint8List bytes = rawBytes.buffer.asUint8List(rawBytes.offsetInBytes, rawBytes.lengthInBytes);
+
+      while (pendingAcks >= _maxFramesInFlight && writerError == null) {
+        ackSlot = Completer<void>();
+        await ackSlot!.future;
+      }
+      if (writerError != null) {
+        throw Exception('Frame writer failed: $writerError\n${errBuf.toString().trim()}');
+      }
+
+      toWriter.send(TransferableTypedData.fromList([bytes]));
+      pendingAcks++;
+      renderedFrames++;
+
+      final int nowMs = wall.elapsedMilliseconds;
+      if (nowMs - lastProgressMs >= _progressIntervalMs || renderedFrames == totalFrames) {
+        lastProgressMs = nowMs;
+        onProgress?.call(renderedFrames, totalFrames);
+        await Future<void>(() {}); // Yield event loop
+      }
+    }
+
+    try {
+      await readyC.future;
+      if (writerError != null) throw Exception('Writer failed to attach: $writerError');
+
+      for (int i = 0; i < totalFrames; i++) {
+        if (cancelToken?.isCancelled ?? false) {
+          inFlight?.frame.dispose();
+          await teardown();
+          return ExportResult(success: false, cancelled: true, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
+        }
+        if (procDead) throw Exception('FFmpeg died during encode (at frame $i)\n${errBuf.toString().trim()}');
+        if (writerError != null) throw Exception('Frame writer failed: $writerError\n${errBuf.toString().trim()}');
+
+        // Frame i means ProjectTime(frame: i), exactly as it does in preview.
+        // The dry run counted a duration of totalFrames ticks, so the file
+        // contains project frames 0 through totalFrames - 1: same duration as
+        // before, with no hidden one-frame offset at either end.
+        final SceneEvaluationResult evaluation = scene.evaluate(
+          ProjectTime(frame: i, mode: ProjectClockMode.scrub),
+        );
+        if (!evaluation.exact) {
+          throw Exception(
+              'Scene could not evaluate export frame $i '
+              '(reached ${evaluation.reachedFrame}).');
+        }
+
+        // STRUCT observes the same already-evaluated SceneEngine frame Preview
+        // does. Exact media decode may block here, but it cannot advance the
+        // engine or select any project frame other than i.
+        final ui.Image? structuralFrame = structuralRenderer == null
+            ? null
+            : await structuralRenderer.renderIfActive(
+                scene: scene,
+                fontFamily: fontFamily,
+              );
+
+        // Non-STRUCT frames stay on the original terminal SceneCompositor.
+        final ui.Image frame = structuralFrame ??
+            await compositor.advanceExportAsync(scene, fontFamily);
+        final Future<ByteData?> bytesF = frame.toByteData(format: ui.ImageByteFormat.rawRgba);
+
+        if (inFlight != null) await resolveInFlight();
+        inFlight = _InFlightReadback(frame, bytesF, i);
+      }
+
+      if (inFlight != null) await resolveInFlight();
+
+      toWriter.send(null);
+      await doneC.future;
+      if (writerError != null) throw Exception('Frame writer failed during close: $writerError');
+
+      onStatus?.call('Finalizing File...');
+
+      while (!exitC.isCompleted) {
+        if (cancelToken?.isCancelled ?? false) {
+          await teardown();
+          return ExportResult(success: false, cancelled: true, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      final int exitCode = await exitC.future;
+      if (exitCode != 0) {
+        throw Exception('FFmpeg failed with code $exitCode\n${errBuf.toString().trim()}');
+      }
+
+      onProgress?.call(totalFrames, totalFrames);
+
+    } catch (e) {
+      inFlight?.frame.dispose();
+      await teardown();
+      return ExportResult(
+        success: false, cancelled: false, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath,
+        error: e.toString(),
+      );
+    }
+
+    structuralRenderer?.dispose();
+    fromWriter.close();
+    try {
+      final File f = File(fifoPath);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+    deleteStructuralAudioTemp();
+
+    return ExportResult(success: true, cancelled: false, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
   }
 }
