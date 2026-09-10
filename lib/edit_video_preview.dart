@@ -9,13 +9,10 @@
 // structural source, overlap, transition, test backend, or unsupported platform
 // uses the deterministic CPU compositor fallback.
 //
-// Inside EditPlaybackFrameScope only, PLAY also auditions the selected source's
-// own clip audio. The source is rendered through the same deterministic
-// StructuralAudioSourceRenderer used by program Preview/BAKE, then the existing
-// one-process/one-sink preview transport starts from the exact edit playhead.
-// This is source authoring, so it is deliberately independent of a later
-// STRUCT placement's AUDIO switch. Outside EditPlaybackFrameScope this widget
-// remains picture-only; program/text preview owns its own audio mix.
+// Audio deliberately does not live here. EditWorkspace owns authoring transport
+// and source-audio audition; program Preview owns the program mix. Keeping this
+// widget picture-only prevents a child rebuild/listener from becoming a second
+// playback authority.
 
 import 'dart:async';
 import 'dart:io';
@@ -25,10 +22,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'audio_bed.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
-import 'edit_source_audio_preview.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
 import 'media_layer.dart';
@@ -63,28 +58,6 @@ String resolveWorkspaceMediaSource(String source) {
       .replaceAll('\\', Platform.pathSeparator)
       .replaceAll('/', Platform.pathSeparator);
   return File('$workspace${Platform.pathSeparator}$portable').path;
-}
-
-Future<PlaybackDevice> _authoringPlaybackDevice(AudioBedPlayer player) async {
-  String? storedId;
-  try {
-    final SessionStore session = SessionStore(
-      baseDir: resolvePortableBaseDir(),
-    )..load();
-    storedId = session.audioDeviceId;
-  } catch (_) {
-    storedId = null;
-  }
-
-  try {
-    final List<PlaybackDevice> available = await player.listDevices();
-    return resolveDevice(available, storedId);
-  } catch (_) {
-    return const PlaybackDevice(
-      id: null,
-      description: 'System Default',
-    );
-  }
 }
 
 /// Retained as a small public ordering helper for tests and diagnostics.
@@ -186,12 +159,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
   EditPlaybackFrameState? _lastPlaybackState;
 
-  EditSourceAudioPreviewTransport? _sourceAudioPreview;
-  String? _sourceAudioBackend;
-  int _sourceAudioGeneration = 0;
-  bool _sourceAudioRequested = false;
-  String? _sourceAudioStatus;
-
   int _epoch = 0;
   int _requestSerial = 0;
   int _parkedScheduleGeneration = 0;
@@ -225,14 +192,10 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         EditPlaybackFrameScope.maybeOf(context);
     if (identical(next, _playbackFrames)) return;
 
-    final EditPlaybackFrameState? oldState = _lastPlaybackState;
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = next;
     _lastPlaybackState = next?.value;
     next?.addListener(_onPlaybackFrameChanged);
-    if (oldState?.isPlaying == true && next == null) {
-      _stopSourceAudioAt(oldState!.frame);
-    }
     _epoch++;
     _scheduleParkedRender();
   }
@@ -246,12 +209,10 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         oldWidget.resolveSource != widget.resolveSource;
 
     if (sourceChanged) {
-      _stopSourceAudioAt(_effectivePlaybackState.frame);
       _cancelParkedRender();
       _setNativeTexture(null);
       _disposeLayer();
       _replaceImage(null);
-      _sourceAudioStatus = null;
       _firstFrameReadyReported = false;
       _epoch++;
       _scheduleParkedRender();
@@ -268,20 +229,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // The ValueNotifier transition is the normal source of truth. The widget
-    // flag is a second delivery path for the same transition because the
-    // authoring surface itself rebuilds when PLAY/PAUSE changes. Keeping both
-    // makes source audio robust to an inherited-listenable attachment racing a
-    // view switch; _sourceAudioRequested deduplicates the two paths.
-    if (oldWidget.isPlaying != widget.isPlaying) {
-      final EditPlaybackFrameState state = _effectivePlaybackState;
-      if (widget.isPlaying) {
-        _requestSourceAudioAt(state.frame);
-      } else {
-        _stopSourceAudioAt(state.frame);
-      }
-    }
-
     if (oldWidget.fastPreview != widget.fastPreview) {
       _epoch++;
       _scheduleParkedRender();
@@ -291,11 +238,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   @override
   void dispose() {
     _requestSerial++;
-    _sourceAudioGeneration++;
-    _sourceAudioRequested = false;
-    _sourceAudioPreview?.dispose();
-    _sourceAudioPreview = null;
-    _sourceAudioBackend = null;
     _cancelParkedRender();
     _playbackFrames?.removeListener(_onPlaybackFrameChanged);
     _playbackFrames = null;
@@ -319,143 +261,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _layer = null;
     _layerSource = null;
     _layerStructuralSource = null;
-  }
-
-  EditSourceAudioPreviewTransport _ensureSourceAudioPreview(
-    String backendName,
-  ) {
-    final EditSourceAudioPreviewTransport? existing = _sourceAudioPreview;
-    if (existing != null && _sourceAudioBackend == backendName) return existing;
-    existing?.dispose();
-    final EditSourceAudioPreviewTransport created =
-        createEditSourceAudioPreview(backendName);
-    _sourceAudioPreview = created;
-    _sourceAudioBackend = backendName;
-    return created;
-  }
-
-  void _requestSourceAudioAt(int frame) {
-    if (_sourceAudioRequested) return;
-    _sourceAudioRequested = true;
-    unawaited(_startSourceAudioAt(frame));
-  }
-
-  Future<void> _startSourceAudioAt(int frame) async {
-    // Only the EDIT workspace provides EditPlaybackFrameScope. Structural
-    // sequence/text/program previews use this same picture widget but own audio
-    // elsewhere and must never start a second sink here.
-    if (_playbackFrames == null) {
-      _sourceAudioRequested = false;
-      return;
-    }
-
-    final AudioBedPlayer? backend = sharedAudioBedPlayer;
-    final NativeRealtimeProjectClock? clock = sharedRealtimeProjectClock;
-    if (backend == null || clock == null) {
-      _sourceAudioRequested = false;
-      _setSourceAudioStatus(
-        backend == null
-            ? 'EDIT AUDIO UNAVAILABLE\nNo preview audio backend is active.'
-            : 'EDIT AUDIO UNAVAILABLE\nNo realtime ProjectClock is active.',
-      );
-      return;
-    }
-
-    // An explicit inherited workspace bed is the old specialist EditWorkspace
-    // mode. If it is already playing, it owns this transport and source audio
-    // stays out rather than creating a second sink.
-    if (backend.isPlaying) {
-      _sourceAudioRequested = false;
-      _setSourceAudioStatus(
-        'EDIT AUDIO UNAVAILABLE\nAnother workspace audio transport is active.',
-      );
-      return;
-    }
-
-    final int generation = ++_sourceAudioGeneration;
-    final ProjectTime start = ProjectTime(
-      frame: frame,
-      mode: ProjectClockMode.scrub,
-    );
-
-    // Park the shared clock before any decode work. If PLAY arrived through the
-    // widget rebuild rather than the inherited notifier, this still stops the
-    // picture at the exact authored frame until the device has audible PCM.
-    clock.seekScrub(start);
-
-    try {
-      final PlaybackDevice device = await _authoringPlaybackDevice(backend);
-      if (!mounted || generation != _sourceAudioGeneration) return;
-
-      final EditSourceAudioPreviewTransport preview =
-          _ensureSourceAudioPreview(backend.backendName);
-      final bool started = await preview.play(
-        rawDocument: widget.source,
-        structuralSource: widget.sourceRef,
-        startFrame: frame,
-        resolveSource: widget.resolveSource ?? resolveWorkspaceMediaSource,
-        deviceId: device.id,
-      );
-      if (!mounted || generation != _sourceAudioGeneration) {
-        await preview.stop();
-        return;
-      }
-
-      if (!started) {
-        _sourceAudioRequested = false;
-        clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
-        _setSourceAudioStatus(
-          'EDIT AUDIO UNAVAILABLE\nNo authored audio remains at this playhead.',
-        );
-        return;
-      }
-
-      _setSourceAudioStatus(null);
-
-      // aplay has no native AUDIO clock handoff. Its sink still starts from the
-      // exact trimmed sample; let ProjectClock run monotonically from that same
-      // authored frame once the subprocesses are live.
-      if (backend.backendName != 'libpulse') {
-        clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
-      }
-    } catch (error) {
-      try {
-        await _sourceAudioPreview?.stop();
-      } catch (_) {}
-      if (!mounted || generation != _sourceAudioGeneration) return;
-      _sourceAudioRequested = false;
-      clock.seekMonotonic(start.withMode(ProjectClockMode.monotonic));
-      _setSourceAudioStatus('EDIT AUDIO UNAVAILABLE\n$error');
-      debugPrint('EDIT source audio unavailable for ${widget.sourceRef}: $error');
-    }
-  }
-
-  void _stopSourceAudioAt(int frame) {
-    _sourceAudioRequested = false;
-    final int generation = ++_sourceAudioGeneration;
-    final EditSourceAudioPreviewTransport? preview = _sourceAudioPreview;
-    final NativeRealtimeProjectClock? clock = sharedRealtimeProjectClock;
-    if (preview == null) return;
-
-    unawaited(() async {
-      try {
-        await preview.stop();
-      } catch (_) {}
-      if (!mounted || generation != _sourceAudioGeneration || clock == null) {
-        return;
-      }
-      // Native sink teardown may release AUDIO onto MONOTONIC. Reassert the
-      // parent's paused playhead after that bounded teardown completes.
-      clock.seekScrub(ProjectTime(
-        frame: frame,
-        mode: ProjectClockMode.scrub,
-      ));
-    }());
-  }
-
-  void _setSourceAudioStatus(String? value) {
-    if (!mounted || _sourceAudioStatus == value) return;
-    setState(() => _sourceAudioStatus = value);
   }
 
   void _replaceImage(ui.Image? next) {
@@ -617,16 +422,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final EditPlaybackFrameState next = scoped.value;
     if (next == _lastPlaybackState) return;
 
-    final EditPlaybackFrameState? previous = _lastPlaybackState;
     _lastPlaybackState = next;
     _cancelParkedRender();
     _epoch++;
-
-    if (previous?.isPlaying != true && next.isPlaying) {
-      _requestSourceAudioAt(next.frame);
-    } else if (previous?.isPlaying == true && !next.isPlaying) {
-      _stopSourceAudioAt(next.frame);
-    }
 
     unawaited(
       _renderFrame(
@@ -930,26 +728,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                           textAlign: TextAlign.center,
                           style: widget.theme.micro.copyWith(
                             color: R3Theme.textDim,
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (_sourceAudioStatus != null)
-                    Positioned(
-                      right: sc(8),
-                      top: sc(7),
-                      child: Container(
-                        constraints: BoxConstraints(maxWidth: sc(380)),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: sc(7),
-                          vertical: sc(4),
-                        ),
-                        color: Colors.black.withValues(alpha: 0.82),
-                        child: Text(
-                          _sourceAudioStatus!,
-                          textAlign: TextAlign.right,
-                          style: widget.theme.micro.copyWith(
-                            color: R3Theme.danger,
                           ),
                         ),
                       ),
