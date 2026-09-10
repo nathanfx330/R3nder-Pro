@@ -8,10 +8,10 @@
 // MosaicSurfaceDocument. ProjectClock remains the sole playback authority for
 // whichever structural source is selected.
 //
-// Structural source authoring is below the main sequence mix. By default this
-// workspace previews and exports picture/source time only. The document-level
-// narration/music beds belong to TEXT sequence playback and are inherited here
-// only when a caller explicitly opts into the legacy integration seam.
+// Structural source authoring sits below the main TEXT sequence. By default
+// PLAY auditions the selected EDIT/MOSAIC source's own clip audio, because that
+// audio is part of the material being cut. The document-level narration/music
+// beds remain a separate explicit opt-in compatibility path.
 //
 // Playback follows the same timing rule as the terminal renderer: Flutter
 // vsync asks ProjectClock what project time is current. A Ticker does not
@@ -19,13 +19,11 @@
 // change for authored/edit semantics, while exact rational position is
 // published every vsync for smooth presentation paint.
 //
-// When inherited workspace audio is explicitly enabled and a native libpulse
-// bed is available, structural PLAY begins from SCRUB rather than MONOTONIC.
-// NativeAudioSink captures that exact authored point, holds it through
-// decoder/device prefill, then hands the SAME ProjectClock to AUDIO authority
-// only when samples become audible. PAUSE reverses the order: the sink
-// generation is stopped first, then SCRUB is reasserted, so a late native
-// release can never overwrite the parked frame.
+// Source audio is owned here, at the transport that receives PLAY and PAUSE.
+// The picture widget never owns audio. On native libpulse, PLAY parks the
+// ProjectClock at the authored playhead while deterministic source PCM is
+// prepared and the sink prefills, then the sink hands that same clock to AUDIO
+// authority. PAUSE stops audio first and reasserts SCRUB at the parked frame.
 
 import 'dart:async';
 import 'dart:convert';
@@ -40,6 +38,7 @@ import 'edit_media_import.dart';
 import 'edit_model.dart';
 import 'edit_playback_clock.dart';
 import 'edit_playback_frame.dart';
+import 'edit_source_audio_preview.dart';
 import 'edit_surface.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
@@ -165,8 +164,9 @@ class EditWorkspace extends StatefulWidget {
 
   /// Test seams. Production uses the GTK chooser, workspace MLT import, native
   /// realtime ProjectClock adapter, active workspace, structural exporter,
-  /// native preview decoder, and workspace media resolver. Audio seams are
-  /// consulted only when [inheritWorkspaceAudio] is true.
+  /// native preview decoder, workspace media resolver, and deterministic source
+  /// audio preview. [audioPlayerResolver] and [playbackDeviceResolver] are also
+  /// used to discover the actual output backend/device for normal source audio.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
   final EditPlaybackClockFactory? playbackClockFactory;
@@ -174,6 +174,7 @@ class EditWorkspace extends StatefulWidget {
   final EditAudioPlayerResolver? audioPlayerResolver;
   final EditPlaybackDeviceResolver? playbackDeviceResolver;
   final EditAudioProbe? audioProbe;
+  final EditSourceAudioPreviewFactory? sourceAudioPreviewFactory;
   final EditStructuralExportRunner? exportSource;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
@@ -196,6 +197,7 @@ class EditWorkspace extends StatefulWidget {
     this.audioPlayerResolver,
     this.playbackDeviceResolver,
     this.audioProbe,
+    this.sourceAudioPreviewFactory,
     this.exportSource,
     this.backend,
     this.resolveSource,
@@ -214,6 +216,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
   late final ValueNotifier<EditPlaybackExactState> _playbackExact;
   EditPlaybackClock? _playClock;
   AudioBedPlayer? _activeAudioPlayer;
+  EditSourceAudioPreviewTransport? _sourceAudioPreview;
+  String? _sourceAudioBackend;
   String? _selectedSourceRef;
   bool _importing = false;
   bool _playing = false;
@@ -291,6 +295,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
     final AudioBedPlayer? player = _activeAudioPlayer;
     _activeAudioPlayer = null;
+    final EditSourceAudioPreviewTransport? sourcePreview = _sourceAudioPreview;
+    _sourceAudioPreview = null;
+    _sourceAudioBackend = null;
+    sourcePreview?.dispose();
+
     final EditPlaybackClock? clock = _playClock;
     _playClock = null;
     if (player != null) {
@@ -343,6 +352,21 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final EditPlaybackClock created =
         (widget.playbackClockFactory ?? NativeEditPlaybackClock.new)(rate);
     _playClock = created;
+    return created;
+  }
+
+  EditSourceAudioPreviewTransport _ensureSourceAudioPreview(
+    String backendName,
+  ) {
+    final EditSourceAudioPreviewTransport? existing = _sourceAudioPreview;
+    if (existing != null && _sourceAudioBackend == backendName) return existing;
+    existing?.dispose();
+    final EditSourceAudioPreviewTransport created =
+        (widget.sourceAudioPreviewFactory ?? createEditSourceAudioPreview)(
+      backendName,
+    );
+    _sourceAudioPreview = created;
+    _sourceAudioBackend = backendName;
     return created;
   }
 
@@ -477,13 +501,66 @@ class _EditWorkspaceState extends State<EditWorkspace>
       );
 
       if (!widget.inheritWorkspaceAudio) {
-        clock.playFrom(startTime);
-        _activeAudioPlayer = null;
+        final AudioBedPlayer? backend =
+            (widget.audioPlayerResolver ?? _defaultAudioPlayerResolver)();
+        if (backend == null) {
+          clock.playFrom(startTime);
+          _commitPlaybackStarted(
+            generation,
+            source,
+            start,
+            startTime,
+            warning: 'EDIT AUDIO UNAVAILABLE\nNo preview audio backend is active.',
+          );
+          return;
+        }
+
+        PlaybackDevice device;
+        try {
+          device = await (widget.playbackDeviceResolver ??
+              _defaultPlaybackDeviceResolver)(backend);
+        } catch (_) {
+          device = const PlaybackDevice(
+            id: null,
+            description: 'System Default',
+          );
+        }
+        if (generation != _transportGeneration || !mounted) return;
+
+        clock.holdAt(startTime.withMode(ProjectClockMode.scrub));
+        final EditSourceAudioPreviewTransport sourcePreview =
+            _ensureSourceAudioPreview(backend.backendName);
+        bool started = false;
+        String? audioWarning;
+        try {
+          started = await sourcePreview.play(
+            rawDocument: _workingSource,
+            structuralSource: source.canonicalSource,
+            startFrame: start,
+            resolveSource: widget.resolveSource ?? resolveWorkspaceMediaSource,
+            deviceId: device.id,
+          );
+        } catch (error) {
+          audioWarning = 'EDIT AUDIO UNAVAILABLE\n$error';
+        }
+
+        if (generation != _transportGeneration || !mounted) {
+          try {
+            await sourcePreview.stop();
+          } catch (_) {}
+          return;
+        }
+
+        if (!started || backend.backendName != 'libpulse') {
+          clock.playFrom(startTime);
+        }
+
         _commitPlaybackStarted(
           generation,
           source,
           start,
           startTime,
+          warning: audioWarning,
         );
         return;
       }
@@ -594,6 +671,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final AudioBedPlayer? player = _activeAudioPlayer;
       _activeAudioPlayer = null;
       if (player != null) unawaited(player.stop());
+      final EditSourceAudioPreviewTransport? sourcePreview = _sourceAudioPreview;
+      if (sourcePreview != null) unawaited(sourcePreview.stop());
       setState(() {
         _startingPlayback = false;
         _playing = false;
@@ -626,6 +705,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final AudioBedPlayer? player = _activeAudioPlayer;
       _activeAudioPlayer = null;
       if (player != null) unawaited(player.stop());
+      final EditSourceAudioPreviewTransport? sourcePreview = _sourceAudioPreview;
+      if (sourcePreview != null) unawaited(sourcePreview.stop());
       setState(() {
         _playing = false;
         _startingPlayback = false;
@@ -689,6 +770,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final EditPlaybackClock? clock = _playClock;
     final AudioBedPlayer? player = _activeAudioPlayer;
     _activeAudioPlayer = null;
+    final EditSourceAudioPreviewTransport? sourcePreview = _sourceAudioPreview;
 
     _lastPolledPlaybackFrame = safeFrame;
     final bool changed =
@@ -700,12 +782,15 @@ class _EditWorkspaceState extends State<EditWorkspace>
     _publishPlaybackExactFrame(safeFrame, playing: false);
     PlaybackTrace.instance.stop(reason: traceReason);
 
-    if (player == null) {
+    if (player == null && sourcePreview == null) {
       _holdClockAt(clock, safeFrame);
     } else {
       unawaited(() async {
         try {
-          await player.stop();
+          await player?.stop();
+        } catch (_) {}
+        try {
+          await sourcePreview?.stop();
         } catch (_) {}
         if (generation != _transportGeneration) return;
         _holdClockAt(clock, safeFrame);
