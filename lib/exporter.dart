@@ -14,14 +14,16 @@ import 'compositor.dart';
 import 'motion.dart';
 import 'diag.dart';
 import 'media_layer.dart';
+import 'program_structural_audio.dart';
 import 'program_structural_export.dart';
 import 'render_naming.dart';
+import 'structural_audio_plan.dart';
+import 'structural_audio_render.dart';
 
-// The sum of two beds, and the gain spelling, shared with the preview
-// player. NOT an import of audio_bed.dart: export and preview remain
-// unrelated code paths, and this registry holds no state, spawns nothing,
-// and imports nothing. It exists so the balance you rode a fader to find in
-// the editor is arithmetically the same balance that lands in the file.
+// Audio arithmetic shared with the preview player. NOT an import of
+// audio_bed.dart: export and preview remain unrelated code paths, and this
+// registry holds no state, spawns nothing, and imports nothing. It exists so
+// workspace beds and M21's program STRUCT bed use one explicit sum policy.
 import 'audio_mix.dart';
 
 enum VideoExportFormat {
@@ -155,9 +157,12 @@ class SceneExporter {
     /// Resolves relative CLIP/luma paths for [structuralDocument]. Both this
     /// and the document must be present before whole-program STRUCT is enabled.
     String Function(String source)? resolveStructuralSource,
-    /// Decoder seam for deterministic exporter tests. Production uses native
-    /// persistent MLT when omitted.
+    /// Decoder seam for deterministic exporter picture tests. Production uses
+    /// native persistent MLT when omitted.
     MediaDecoderBackend? structuralBackend,
+    /// Leaf-audio decoder seam for deterministic STRUCT audio tests. Production
+    /// uses the pinned offline ffmpeg decoder from structural_audio_render.dart.
+    StructuralAudioLeafDecodeBackend? structuralAudioLeafDecoder,
     /// Background audio bed, muxed as a second ffmpeg input. Null means a
     /// silent bake. Export never touches the preview player: ffmpeg reads the
     /// original file, so the bake gets full source rate and channel count
@@ -338,18 +343,123 @@ class SceneExporter {
       );
     }
 
+    // M21 program STRUCT audio is a BAKE-side transport artifact. It is built
+    // after the authoritative dry run, consumed as an ffmpeg input, and never
+    // survives the export call.
+    String? structuralAudioFile;
+    void deleteStructuralAudioTemp() {
+      final String? path = structuralAudioFile;
+      if (path == null) return;
+      try {
+        final File file = File(path);
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {}
+      structuralAudioFile = null;
+    }
+
+    if (structuralDocument != null) {
+      try {
+        final ProgramStructuralAudioTimeline timeline =
+            traceProgramStructuralAudioTimeline(
+          scene: scene,
+          rawDocument: structuralDocument,
+          totalFrames: totalFrames,
+        );
+        if (timeline.occurrences.isNotEmpty) {
+          if (resolveStructuralSource == null) {
+            return ExportResult(
+              success: false,
+              cancelled: false,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+              error: 'STRUCT AUDIO requires a structural source resolver.',
+            );
+          }
+          if (fps != kStructuralAudioProjectFps) {
+            return ExportResult(
+              success: false,
+              cancelled: false,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+              error: 'STRUCT AUDIO is authored at '
+                  '$kStructuralAudioProjectFps fps; BAKE requested $fps fps.',
+            );
+          }
+          if (cancelToken?.isCancelled ?? false) {
+            return ExportResult(
+              success: false,
+              cancelled: true,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+            );
+          }
+
+          onStatus?.call('Rendering Structural Audio...');
+          final StructuralAudioSourceRenderer sourceRenderer =
+              StructuralAudioSourceRenderer(
+            planner: StructuralAudioPlanner.parse(structuralDocument),
+            leafDecoder: structuralAudioLeafDecoder ??
+                FfmpegStructuralAudioLeafDecodeBackend(),
+            resolveSource: resolveStructuralSource,
+          );
+          final ProgramStructuralAudioRender programAudio =
+              await ProgramStructuralAudioRenderer(
+            timeline: timeline,
+            renderSource: sourceRenderer.render,
+          ).render();
+
+          final String tempPath = '$exportDir/.r3nder_struct_audio_$pid.wav';
+          final File stale = File(tempPath);
+          if (stale.existsSync()) stale.deleteSync();
+          structuralAudioFile = tempPath;
+          await programAudio.writeWav(tempPath);
+
+          if (cancelToken?.isCancelled ?? false) {
+            deleteStructuralAudioTemp();
+            return ExportResult(
+              success: false,
+              cancelled: true,
+              framesWritten: 0,
+              outputPath: actualOutputPath,
+              mattePath: mattePath,
+            );
+          }
+        }
+      } catch (e) {
+        deleteStructuralAudioTemp();
+        return ExportResult(
+          success: false,
+          cancelled: false,
+          framesWritten: 0,
+          outputPath: actualOutputPath,
+          mattePath: mattePath,
+          error: 'Structural audio render failed: $e',
+        );
+      }
+    }
+
+    // The timeline trace resets the scene on exit. This explicit reset also
+    // preserves the historical frame-zero encode start when no STRUCT audio
+    // was requested.
+    scene.reset();
+
     final String fifoPath = '$exportDir/.r3nder_fifo_$pid';
     try {
       final File f = File(fifoPath);
       if (f.existsSync()) f.deleteSync();
       final ProcessResult mk = await Process.run('mkfifo', [fifoPath]);
       if (mk.exitCode != 0) {
+        deleteStructuralAudioTemp();
         return ExportResult(
           success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
           error: 'mkfifo failed: ${mk.stderr}',
         );
       }
     } catch (e) {
+      deleteStructuralAudioTemp();
       return ExportResult(
         success: false, cancelled: false, framesWritten: 0, outputPath: actualOutputPath, mattePath: mattePath,
         error: 'mkfifo unavailable: $e',
@@ -363,10 +473,11 @@ class SceneExporter {
         (audioPath != null && File(audioPath).existsSync()) ? audioPath : null;
     final String? musicFile =
         (musicPath != null && File(musicPath).existsSync()) ? musicPath : null;
+    final String? structuralFile = structuralAudioFile;
 
-    // Either track alone is enough to make this a bake with sound, so every
-    // audio decision below keys on this rather than on the voice bed.
-    final bool hasAudio = bedFile != null || musicFile != null;
+    // Any one contributor is enough to make this a bake with sound.
+    final bool hasAudio =
+        bedFile != null || musicFile != null || structuralFile != null;
 
     final List<String> args = [
       '-n',
@@ -387,47 +498,33 @@ class SceneExporter {
         if (musicLoop) ...['-stream_loop', '-1'],
         '-i', musicFile, // Input 1 or 2: music bed
       ],
+      if (structuralFile != null) ...[
+        // Full-program PCM already contains silence before each placement.
+        '-i', structuralFile,
+      ],
     ];
 
-    // Music takes the slot after the voice bed, or the voice bed's slot when
-    // there is no voice bed. Derived rather than hardcoded: a bake with music
-    // and no voiceover is an ordinary case, not an edge one.
+    // Existing workspace input slots stay unchanged. STRUCT is appended after
+    // them, so adding clip audio cannot renumber a historical BAKE.
     final String voiceInput = '1:a';
     final String musicInput = bedFile != null ? '2:a' : '1:a';
+    final String structuralInput =
+        '${1 + (bedFile != null ? 1 : 0) + (musicFile != null ? 1 : 0)}:a';
 
     // Audio filter chain, in order:
     //
-    //   adelay  parks the beds behind the preroll wipe. This used to be
-    //           -itsoffset, which is wrong in a way that only shows up in
-    //           someone else's software: -itsoffset records the shift as a
-    //           container start_time rather than as actual samples, so any
-    //           tool that ignores start_time slams the voiceover to zero and
-    //           plays it underneath the green. adelay writes real silence,
-    //           leaving nothing to interpret. Verified: with adelay the audio
-    //           stream starts at 0.000 and runs the full video duration, with
-    //           the content offset exactly where it belongs.
-    //           BOTH tracks take the same delay. They are locked to one
-    //           timeline, and a score that started under the green while the
-    //           voiceover waited would be two different timelines.
-    //   volume  matches the preview player's filter, so the level you hear
-    //           scrubbing is the level that lands here. Spelled by
-    //           audio_mix.dart so the two cannot drift.
-    //   amix    sums the two, without renormalizing. See audio_mix.dart:
-    //           normalize=1 would drop the voice 6dB the moment a score was
-    //           attached, with no fader moved and nothing said.
-    //   apad    backfills silence to the end so the track runs the full
-    //           length of the picture instead of stopping early. AFTER the
-    //           sum rather than on each branch: padding both inputs would
-    //           make both infinite, which turns amix's duration=longest into
-    //           a statement about nothing. Bounded by the output -t below.
+    //   adelay  parks the workspace beds behind the preroll wipe. This used to
+    //           be -itsoffset, which records the shift as container metadata
+    //           instead of real silence. STRUCT audio takes NO adelay because
+    //           its program WAV already owns absolute project time.
+    //   volume  matches the preview player's filter spelling.
+    //   amix    sums two or three contributors without renormalizing.
+    //   apad    backfills silence to the end after the final sum.
     //
     // WHY THIS IS A GRAPH AND NOT -af. A stream summed inside filter_complex
-    // is a label, and -af cannot address a label. Once two tracks can be
+    // is a label, and -af cannot address a label. Once multiple tracks can be
     // attached, every format has to build the chain here, including the plain
-    // H.264 path that previously needed no filter_complex at all. That in
-    // turn is why -map 0:v appears on that path: filter_complex suppresses
-    // automatic stream selection, so an unmapped video stream is silently
-    // dropped rather than diagnosed.
+    // H.264 path that previously needed no filter_complex at all.
     final int bedDelayMs = (audioStartFrame * 1000 / fps).round();
     final String delayChain =
         bedDelayMs > 0 ? 'adelay=$bedDelayMs:all=1' : '';
@@ -436,7 +533,35 @@ class SceneExporter {
     const String audioOutLabel = 'bedout';
 
     String audioGraph = '';
-    if (bedFile != null && musicFile != null) {
+    if (structuralFile != null) {
+      audioGraph = audioMixGraph(
+        tracks: <AudioMixTrack>[
+          if (bedFile != null)
+            AudioMixTrack(
+              input: voiceInput,
+              label: 'bedvo',
+              gainDb: audioGainDb,
+              chain: delayChain,
+            ),
+          if (musicFile != null)
+            AudioMixTrack(
+              input: musicInput,
+              label: 'bedmus',
+              gainDb: musicGainDb,
+              chain: delayChain,
+            ),
+          AudioMixTrack(
+            input: structuralInput,
+            label: 'structprogram',
+            gainDb: 0.0,
+          ),
+        ],
+        outputLabel: audioOutLabel,
+        postMixChain: 'apad',
+      );
+    } else if (bedFile != null && musicFile != null) {
+      // Preserve the historical two-bed graph exactly when STRUCT audio is
+      // absent, including its intermediate bedmix label.
       audioGraph = '${bedMixGraph(
         voiceGainDb: audioGainDb,
         musicGainDb: musicGainDb,
@@ -446,8 +571,7 @@ class SceneExporter {
         musicInput: musicInput,
       )};[$kBedMixOutLabel]apad[$audioOutLabel]';
     } else if (hasAudio) {
-      // One track. Same chain minus the sum, so a workspace with no score
-      // produces the identical filtergraph it always did.
+      // Historical one-workspace-track path. Same chain minus the sum.
       final String src = bedFile != null ? voiceInput : musicInput;
       final double gain = bedFile != null ? audioGainDb : musicGainDb;
       audioGraph = '[$src]${<String>[
@@ -463,8 +587,8 @@ class SceneExporter {
     //
     // For music it does real work. Nothing stretched to accommodate a score,
     // so this is the cut that keeps a four minute track under a forty second
-    // piece from producing a four minute file. It is the designed behavior
-    // and not a safety net: see the musicPath parameter above.
+    // piece from producing a four minute file. The STRUCT program WAV is
+    // already exactly this duration and therefore cannot extend the picture.
     final String outDuration = (totalFrames / fps).toStringAsFixed(6);
 
     if (format == VideoExportFormat.proresAlpha) {
@@ -627,6 +751,7 @@ class SceneExporter {
         final File f = File(fifoPath);
         if (f.existsSync()) f.deleteSync();
       } catch (_) {}
+      deleteStructuralAudioTemp();
     }
 
     final SendPort toWriter = await portC.future;
@@ -754,6 +879,7 @@ class SceneExporter {
       final File f = File(fifoPath);
       if (f.existsSync()) f.deleteSync();
     } catch (_) {}
+    deleteStructuralAudioTemp();
 
     return ExportResult(success: true, cancelled: false, framesWritten: renderedFrames, outputPath: actualOutputPath, mattePath: mattePath);
   }
