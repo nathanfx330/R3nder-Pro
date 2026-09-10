@@ -74,6 +74,22 @@ void main() {
     );
   });
 
+  test('authoring start trims the aligned source mix at an exact sample', () {
+    final List<String> args = buildProgramStructuralAudioPreviewArgs(
+      structuralAudioPath: '/tmp/edit.wav',
+      programSampleFrames: 96000,
+      startSampleFrame: 32000,
+      bedDelayMs: 0,
+    );
+
+    expect(
+      args[args.indexOf('-filter_complex') + 1],
+      '[0:a]volume=0.00dB,'
+      'atrim=start_sample=32000:end_sample=96000,asetpts=N/SR/TB'
+      '[r3previewmix]',
+    );
+  });
+
   test('blank workspace paths are absent rather than phantom inputs', () {
     final List<String> args = buildProgramStructuralAudioPreviewArgs(
       structuralAudioPath: '/tmp/program.wav',
@@ -156,7 +172,7 @@ void main() {
     expect(programStructuralAudioNativeReady(unhealthy), isFalse);
   });
 
-  test('program geometry rejects empty or non-positive transport bounds', () {
+  test('program geometry rejects invalid transport and authoring bounds', () {
     expect(
       () => buildProgramStructuralAudioPreviewArgs(
         structuralAudioPath: '',
@@ -169,6 +185,24 @@ void main() {
       () => buildProgramStructuralAudioPreviewArgs(
         structuralAudioPath: '/tmp/program.wav',
         programSampleFrames: 0,
+        bedDelayMs: 0,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildProgramStructuralAudioPreviewArgs(
+        structuralAudioPath: '/tmp/program.wav',
+        programSampleFrames: 1600,
+        startSampleFrame: -1,
+        bedDelayMs: 0,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildProgramStructuralAudioPreviewArgs(
+        structuralAudioPath: '/tmp/program.wav',
+        programSampleFrames: 1600,
+        startSampleFrame: 1600,
         bedDelayMs: 0,
       ),
       throwsArgumentError,
