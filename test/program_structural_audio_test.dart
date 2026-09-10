@@ -7,7 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/program_structural_audio.dart';
+import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
+import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_audio_decode.dart';
 import 'package:r3nder/structural_audio_plan.dart';
@@ -271,7 +273,10 @@ void main() {
     final Map<int, int> eventStarts = <int, int>{};
     scene.reset();
     for (int frame = 0; frame < totalFrames; frame++) {
-      scene.tick();
+      final SceneEvaluationResult evaluation = scene.evaluate(
+        ProjectTime(frame: frame, mode: ProjectClockMode.scrub),
+      );
+      expect(evaluation.exact, isTrue);
       for (int index = 0; index < placements.length; index++) {
         if (scene.terminal.currentRawLine == placements[index].lineIndex) {
           eventStarts.putIfAbsent(index, () => frame);
