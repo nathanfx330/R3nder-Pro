@@ -5,6 +5,8 @@
 // This widget is intentionally a view over EDIT / TRACK / CLIP source. It
 // keeps only transient gesture state. Every completed edit is serialized back
 // through EditSurfaceDocument and returned to the caller as script text.
+// Undo/redo is likewise transient: it retains exact prior source snapshots but
+// never becomes a second project model or persistent project state.
 // During playback, the static timeline document does not rebuild every frame.
 // Integer edit state stays quantized while the playhead paints directly from
 // the exact rational ProjectClock position published at display cadence.
@@ -31,6 +33,7 @@ import 'package:flutter/services.dart';
 import 'edit_clip_inspector.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
+import 'edit_source_history.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
@@ -97,6 +100,7 @@ class _EditSurfaceState extends State<EditSurface> {
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
   ValueListenable<EditPlaybackExactState>? _playbackExact;
 
+  final EditSourceHistory _history = EditSourceHistory();
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
   final FocusNode _timelineFocusNode = FocusNode(
@@ -134,9 +138,20 @@ class _EditSurfaceState extends State<EditSurface> {
   @override
   void didUpdateWidget(covariant EditSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.source != oldWidget.source && widget.source != _workingSource) {
+
+    if (widget.editId != oldWidget.editId) {
+      _workingSource = widget.source;
+      _selectedTrackId = null;
+      _selectedClipId = null;
+      _error = null;
+      _history.clear();
+    } else if (widget.source != oldWidget.source &&
+        widget.source != _workingSource) {
+      // An outside source replacement is a new authoring branch. Keeping old
+      // EDIT snapshots would let undo replay stale source over the new branch.
       _workingSource = widget.source;
       _error = null;
+      _history.clear();
       final String? trackId = _selectedTrackId;
       final String? clipId = _selectedClipId;
       if (trackId != null && clipId != null) {
@@ -149,6 +164,7 @@ class _EditSurfaceState extends State<EditSurface> {
         }
       }
     }
+
     if (widget.currentFrame != oldWidget.currentFrame) {
       _lastSeekSent = widget.currentFrame;
       if (!widget.isPlaying) {
@@ -202,6 +218,14 @@ class _EditSurfaceState extends State<EditSurface> {
     }
   }
 
+  EditSourceSnapshot _snapshot() {
+    return EditSourceSnapshot(
+      source: _workingSource,
+      selectedTrackId: _selectedTrackId,
+      selectedClipId: _selectedClipId,
+    );
+  }
+
   bool _commit(String Function(EditSurfaceDocument document) operation) {
     final EditSurfaceDocument? document = _parse();
     if (document == null) {
@@ -210,9 +234,15 @@ class _EditSurfaceState extends State<EditSurface> {
     }
 
     try {
+      final EditSourceSnapshot before = _snapshot();
       final String next = operation(document);
       EditSurfaceDocument.parse(next, widget.editId);
+      if (next == _workingSource) {
+        setState(() => _error = null);
+        return true;
+      }
       setState(() {
+        _history.record(before);
         _workingSource = next;
         _error = null;
       });
@@ -222,6 +252,50 @@ class _EditSurfaceState extends State<EditSurface> {
       setState(() => _error = '$error');
       return false;
     }
+  }
+
+  void _applyHistorySnapshot(EditSourceSnapshot snapshot) {
+    try {
+      final EditSurfaceDocument document =
+          EditSurfaceDocument.parse(snapshot.source, widget.editId);
+      String? trackId = snapshot.selectedTrackId;
+      String? clipId = snapshot.selectedClipId;
+      if (trackId != null && clipId != null) {
+        try {
+          document.clip(trackId, clipId);
+        } catch (_) {
+          trackId = null;
+          clipId = null;
+        }
+      } else {
+        trackId = null;
+        clipId = null;
+      }
+
+      setState(() {
+        _workingSource = snapshot.source;
+        _selectedTrackId = trackId;
+        _selectedClipId = clipId;
+        _error = null;
+      });
+      widget.onSourceChanged(snapshot.source);
+      _timelineFocusNode.requestFocus();
+    } catch (error) {
+      _history.clear();
+      setState(() => _error = 'Unable to restore EDIT history: $error');
+    }
+  }
+
+  void _undoEdit() {
+    final EditSourceSnapshot? target = _history.undo(_snapshot());
+    if (target == null) return;
+    _applyHistorySnapshot(target);
+  }
+
+  void _redoEdit() {
+    final EditSourceSnapshot? target = _history.redo(_snapshot());
+    if (target == null) return;
+    _applyHistorySnapshot(target);
   }
 
   EditSurfaceClip? _selected(EditSurfaceDocument document) {
@@ -264,7 +338,29 @@ class _EditSurfaceState extends State<EditSurface> {
     if (!_timelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    if (event.logicalKey != LogicalKeyboardKey.delete) {
+
+    final LogicalKeyboardKey key = event.logicalKey;
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    final bool command = keyboard.isControlPressed || keyboard.isMetaPressed;
+
+    if (command && key == LogicalKeyboardKey.keyZ) {
+      if (keyboard.isShiftPressed) {
+        if (!_history.canRedo) return KeyEventResult.ignored;
+        _redoEdit();
+      } else {
+        if (!_history.canUndo) return KeyEventResult.ignored;
+        _undoEdit();
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (command && key == LogicalKeyboardKey.keyY) {
+      if (!_history.canRedo) return KeyEventResult.ignored;
+      _redoEdit();
+      return KeyEventResult.handled;
+    }
+
+    if (key != LogicalKeyboardKey.delete) {
       return KeyEventResult.ignored;
     }
 
@@ -761,6 +857,17 @@ class _EditSurfaceState extends State<EditSurface> {
             runSpacing: sc(4),
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              _toolButton(
+                'UNDO',
+                key: const ValueKey<String>('edit-undo'),
+                onPressed: _history.canUndo ? _undoEdit : null,
+              ),
+              _toolButton(
+                'REDO',
+                key: const ValueKey<String>('edit-redo'),
+                onPressed: _history.canRedo ? _redoEdit : null,
+              ),
+              SizedBox(width: sc(4)),
               if (selected != null) ...[
                 _toolButton(
                   'TRIM IN',
@@ -858,8 +965,13 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _toolButton(String label, {required VoidCallback? onPressed}) {
+  Widget _toolButton(
+    String label, {
+    required VoidCallback? onPressed,
+    Key? key,
+  }) {
     return InkWell(
+      key: key,
       onTap: onPressed,
       borderRadius: BorderRadius.circular(3),
       child: Opacity(
