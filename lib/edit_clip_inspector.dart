@@ -252,7 +252,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
                       ClipAudioGain.parse(value),
                     );
                   } on FormatException catch (error) {
-                    setDialogState(() => errorText = error.message);
+                    setDialogState(() => errorText = '${error.message}');
                   }
                 },
               ),
@@ -268,7 +268,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
                         ClipAudioGain.parse(controller.text),
                       );
                     } on FormatException catch (error) {
-                      setDialogState(() => errorText = error.message);
+                      setDialogState(() => errorText = '${error.message}');
                     }
                   },
                   child: const Text('APPLY'),
@@ -343,7 +343,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
           min: -60.0,
           max: 12.0,
           divisions: 720,
-          value: _draftDb.clamp(-60.0, 12.0),
+          value: _draftDb.clamp(-60.0, 12.0).toDouble(),
           onChanged: widget.onGainChanged == null
               ? null
               : (double value) => setState(() => _draftDb = value),
