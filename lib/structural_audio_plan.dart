@@ -14,6 +14,7 @@
 //   * clip AT, duration, fade boundaries, and source placement are derived
 //     from frame integers, never accumulated from seconds;
 //   * speed stays exact rational state;
+//   * clip gain stays exact fixed-point authored state until render;
 //   * leaf media is not probed here, so every authored video clip remains in
 //     the plan even when a later probe discovers that it has no audio stream;
 //   * structural sources recurse as structural plans and are never treated as
@@ -143,6 +144,8 @@ class StructuralAudioSegment {
   final int durationFrames;
   final int sourceInFrame;
   final ExactClipSpeed speed;
+  final ClipAudioGain audioGain;
+  final bool muted;
   final StructuralAudioFade? incomingFade;
   final StructuralAudioFade? outgoingFade;
 
@@ -162,6 +165,8 @@ class StructuralAudioSegment {
     required this.durationFrames,
     required this.sourceInFrame,
     required this.speed,
+    this.audioGain = ClipAudioGain.unity,
+    this.muted = false,
     required this.incomingFade,
     required this.outgoingFade,
     required this.nestedPlan,
@@ -176,8 +181,7 @@ class StructuralAudioSegment {
   bool get isLeafMedia => nestedPlan == null;
   bool get isStructural => nestedPlan != null;
 
-  StructuralSourceRef? get structuralSourceRef =>
-      nestedPlan?.sourceRef;
+  StructuralSourceRef? get structuralSourceRef => nestedPlan?.sourceRef;
 
   /// Exact integer source-frame sample used by the existing picture model.
   int sourceFrameAtProjectOffset(int projectOffset) {
@@ -321,7 +325,7 @@ class StructuralAudioPlanner {
       maxNesting: maxNesting,
     );
     if (!lint.isValid) {
-      final EditLintIssue issue = lint.issues.first;
+      final EditLintIssue issue = lint.errors.first;
       throw StructuralAudioPlanException(
         '${issue.message} Path: ${issue.editPath.join(' -> ')}',
       );
@@ -445,6 +449,8 @@ class StructuralAudioPlanner {
       durationFrames: clip.durationFrames,
       sourceInFrame: clip.inFrame,
       speed: clip.speed,
+      audioGain: clip.audioGain,
+      muted: clip.muted,
       incomingFade: incomingFrames == 0
           ? null
           : StructuralAudioFade(
