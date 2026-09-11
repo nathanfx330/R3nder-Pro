@@ -161,22 +161,32 @@ void main() {
     }
   });
 
-  test('gain bounds and duplicate known options fail explicitly', () {
+  test('gain bounds, duplicate options, and malformed known keys fail', () {
     expect(() => ClipAudioGain.parse('-60.0'), returnsNormally);
     expect(() => ClipAudioGain.parse('12.0'), returnsNormally);
     expect(() => ClipAudioGain.parse('-60.1'), throwsFormatException);
     expect(() => ClipAudioGain.parse('12.1'), throwsFormatException);
 
-    const String duplicate = '''[EDIT:main]
+    const List<String> invalid = <String>[
+      'GAIN=-6.0:GAIN=-3.0',
+      'MUTE:MUTE',
+      'GAIN',
+      'GAIN=',
+      'MUTE=true',
+    ];
+    for (final String suffix in invalid) {
+      final String source = '''[EDIT:main]
 [TRACK:V1]
-[CLIP:a:video/a.mp4:0:0:1:1:GAIN=-6.0:GAIN=-3.0]
+[CLIP:a:video/a.mp4:0:0:1:1:$suffix]
 [/CLIP]
 [/TRACK]
 [/EDIT]
 ''';
-    expect(
-      () => EditDocumentModel.parse(duplicate),
-      throwsA(isA<EditLanguageFormatException>()),
-    );
+      expect(
+        () => EditDocumentModel.parse(source),
+        throwsA(isA<EditLanguageFormatException>()),
+        reason: 'Known malformed suffix should fail: $suffix',
+      );
+    }
   });
 }
