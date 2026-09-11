@@ -120,8 +120,8 @@ void main() {
     expect(reparsed.speed, ExactClipSpeed(1, 2));
   });
 
-  test('CLIP has no canonical out field', () {
-    const String withOut = '''[EDIT:main]
+  test('CLIP has no canonical out field; fields after speed are suffix tokens', () {
+    const String withSeventhToken = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:a:a.mp4:0:0:30:1:999]
 [/CLIP]
@@ -129,10 +129,14 @@ void main() {
 [/EDIT]
 ''';
 
-    expect(
-      () => EditDocumentModel.parse(withOut),
-      throwsA(isA<EditLanguageFormatException>()),
-    );
+    final EditClip clip = EditDocumentModel.parse(withSeventhToken)
+        .edit('main')
+        .track('V1')
+        .clip('a');
+    expect(clip.durationFrames, 30);
+    expect(clip.speed, ExactClipSpeed(1));
+    expect(clip.optionTokens, <String>['999']);
+    expect(clip.unknownOptionTokens, <String>['999']);
   });
 
   test('duplicate structural ids are rejected in their ownership scope', () {
