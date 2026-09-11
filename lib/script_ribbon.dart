@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'diag.dart';
 import 'script_nodes.dart';
+import 'structural_sequence.dart';
 import 'ui_theme.dart';
 
 /// Dumps the block list to r3nder_trace.log after every simulation.
@@ -64,14 +65,35 @@ class RibbonBlock {
   final int startFrame;
   final int endFrame;
 
+  /// Absolute program span in which an AUDIO-enabled STRUCT placement exposes
+  /// its source picture/audio content. Null for every other ribbon block.
+  ///
+  /// The span deliberately uses the same placement geometry as the STRUCT
+  /// picture: event start + contentStartFrame through sourceDurationFrames.
+  /// It is diagnostic truth, not a second audio scheduler. If audible MP4
+  /// audio ever disagrees with this lane, the playback transport is wrong.
+  final int? clipAudioStartFrame;
+  final int? clipAudioEndFrameExclusive;
+
   const RibbonBlock({
     required this.nodeIndex,
     required this.type,
     required this.startFrame,
     required this.endFrame,
+    this.clipAudioStartFrame,
+    this.clipAudioEndFrameExclusive,
   });
 
   int get frames => endFrame - startFrame;
+
+  bool get hasClipAudio =>
+      clipAudioStartFrame != null &&
+      clipAudioEndFrameExclusive != null &&
+      clipAudioEndFrameExclusive! > clipAudioStartFrame!;
+
+  int get clipAudioFrames => hasClipAudio
+      ? clipAudioEndFrameExclusive! - clipAudioStartFrame!
+      : 0;
 }
 
 /// Broad families, used for colour. Four bands rather than one hue per tag,
@@ -277,6 +299,28 @@ List<RibbonBlock> buildRibbonBlocks(
     }
   }
 
+  // STRUCT clip audio gets its own diagnostic lane. Derive it from the exact
+  // placement parser rather than from node parameters alone, because adjacency
+  // can change a placement's entry budget and therefore its content start.
+  // Reassembling untouched nodes is lossless; dirty nodes emit their current
+  // markup, so the placement view describes the same document the ribbon does.
+  final Map<int, StructuralSequencePlacement> audioPlacementAtLine =
+      <int, StructuralSequencePlacement>{};
+  try {
+    final String rawDocument =
+        nodes.map((ScriptNode node) => node.toMarkup()).join();
+    for (final StructuralSequencePlacement placement
+        in parseStructuralSequencePlacements(rawDocument)) {
+      if (placement.resolves && placement.clipAudio) {
+        audioPlacementAtLine[placement.lineIndex] = placement;
+      }
+    }
+  } catch (_) {
+    // The editor is also a repair surface. A malformed structural document
+    // must not take down the ordinary pacing ribbon merely because the AUDIO
+    // diagnostic cannot be derived yet.
+  }
+
   final List<RibbonBlock> out = [];
   int runNode = -2;
   int runStart = 0;
@@ -284,11 +328,29 @@ List<RibbonBlock> buildRibbonBlocks(
   void closeRun(int endFrame) {
     if (runNode < 0 || endFrame <= runStart) return;
     final ScriptNode n = nodes[runNode];
+
+    int? clipAudioStartFrame;
+    int? clipAudioEndFrameExclusive;
+    if (n.type == 'STRUCT' &&
+        runStart >= 0 &&
+        runStart < rawLineAtFrame.length) {
+      final int rawLine = rawLineAtFrame[runStart];
+      final StructuralSequencePlacement? placement =
+          audioPlacementAtLine[rawLine];
+      if (placement != null) {
+        clipAudioStartFrame = runStart + placement.contentStartFrame;
+        clipAudioEndFrameExclusive =
+            clipAudioStartFrame + placement.sourceDurationFrames;
+      }
+    }
+
     out.add(RibbonBlock(
       nodeIndex: runNode,
       type: n.type,
       startFrame: runStart,
       endFrame: endFrame,
+      clipAudioStartFrame: clipAudioStartFrame,
+      clipAudioEndFrameExclusive: clipAudioEndFrameExclusive,
     ));
   }
 
@@ -325,6 +387,13 @@ List<RibbonBlock> buildRibbonBlocks(
       diag('ribbon',
           '  ${b.type.padRight(10)} ${b.startFrame}..${b.endFrame} '
           '(${b.frames}f) node ${b.nodeIndex}');
+      if (b.hasClipAudio) {
+        diag(
+          'ribbon',
+          '    MP4 AUDIO ${b.clipAudioStartFrame}..'
+          '${b.clipAudioEndFrameExclusive} (${b.clipAudioFrames}f)',
+        );
+      }
     }
     // The node list itself, so a block typed TEXT can be traced back to
     // whether the node was mistyped or the line map pointed at the wrong
@@ -423,15 +492,19 @@ class ScriptRibbon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Up to three lanes, deliberately thin. This is an orientation strip,
+    // Up to four lanes, deliberately thin. This is an orientation strip,
     // not an NLE: chunky tracks would claim vertical space the viewer and
     // script need, to say something a few pixels already say.
     //
-    // Music gets its own lane rather than sharing the audio one. Two beds
-    // stacked in one row would read as a single longer track, and the whole
-    // reason to look here is which of them runs past the picture.
+    // The STRUCT clip-audio lane is the diagnostic bottom lane. Its blocks
+    // are absolute authored program spans, so an MP4 that becomes audible
+    // before its lane reaches the playhead is a transport bug, while a lane
+    // that itself sits early is a placement-geometry bug.
+    final bool hasClipAudio = blocks.any((RibbonBlock b) => b.hasClipAudio);
     final int audioLanes =
-        (bedFrames > 0 ? 1 : 0) + (musicFrames > 0 ? 1 : 0);
+        (bedFrames > 0 ? 1 : 0) +
+        (musicFrames > 0 ? 1 : 0) +
+        (hasClipAudio ? 1 : 0);
     final double h = _kLaneH * (1 + audioLanes) + _kLaneGap * audioLanes;
 
     return LayoutBuilder(
@@ -522,13 +595,24 @@ class _RibbonPainter extends CustomPainter {
 
     final bool hasBed = bedFrames > 0;
     final bool hasMusic = musicFrames > 0;
+    final bool hasClipAudio = blocks.any((RibbonBlock b) => b.hasClipAudio);
 
-    // Lane origins, computed once. Music sits under the bed when both are
-    // present and takes the bed's row when it is alone, so a score-only
-    // workspace gets a two-lane strip rather than a gap where a voiceover
-    // would have been.
-    final double bedY = _kLaneH + _kLaneGap;
-    final double musicY = hasBed ? bedY + _kLaneH + _kLaneGap : bedY;
+    // Lane origins, computed on one shared axis. Optional lanes pack upward
+    // without leaving holes, and STRUCT clip audio always sits below the two
+    // workspace beds when they exist.
+    int audioSlot = 0;
+    final double? bedY = hasBed
+        ? _kLaneH + _kLaneGap +
+            (audioSlot++ * (_kLaneH + _kLaneGap))
+        : null;
+    final double? musicY = hasMusic
+        ? _kLaneH + _kLaneGap +
+            (audioSlot++ * (_kLaneH + _kLaneGap))
+        : null;
+    final double? clipAudioY = hasClipAudio
+        ? _kLaneH + _kLaneGap +
+            (audioSlot++ * (_kLaneH + _kLaneGap))
+        : null;
 
     // NOT YET SIMULATED. The strip is rendered from the editor's first
     // frame now, so it has to have something to say before there is any
@@ -541,22 +625,25 @@ class _RibbonPainter extends CustomPainter {
     if (totalFrames <= 0) {
       final Paint guide = Paint()..color = R3Theme.hairline;
       canvas.drawRect(Rect.fromLTWH(0, 0, size.width, _kLaneH), guide);
-      if (hasBed) {
+      if (bedY != null) {
         canvas.drawRect(
             Rect.fromLTWH(0, bedY, size.width, _kLaneH), guide);
       }
-      if (hasMusic) {
+      if (musicY != null) {
         canvas.drawRect(
             Rect.fromLTWH(0, musicY, size.width, _kLaneH), guide);
+      }
+      if (clipAudioY != null) {
+        canvas.drawRect(
+            Rect.fromLTWH(0, clipAudioY, size.width, _kLaneH), guide);
       }
       return;
     }
 
     // ONE SHARED AXIS. totalFrames already covers the bed, because the
-    // engine stretches its end hold to reach it, so the two lanes are
-    // measured against the same width and the audio visibly running past
-    // the last block IS the overhang. Scaling the lanes independently
-    // would destroy the only thing worth reading here.
+    // engine stretches its end hold to reach it, so every lane is measured
+    // against the same width. Scaling any audio lane independently would hide
+    // exactly the sync error these lanes are meant to expose.
     final double perFrame = size.width / totalFrames;
 
     // --- Script lane -------------------------------------------------
@@ -604,7 +691,7 @@ class _RibbonPainter extends CustomPainter {
     }
 
     // --- Audio lanes -------------------------------------------------
-    if (hasBed) {
+    if (bedY != null) {
       final double bw = (bedFrames * perFrame).clamp(1.0, size.width);
       canvas.drawRect(
         Rect.fromLTWH(0, bedY, bw, _kLaneH),
@@ -628,7 +715,7 @@ class _RibbonPainter extends CustomPainter {
     // and the surplus is reported instead: a hatch of ticks over the final
     // stretch, saying "this continues and is discarded" rather than adding
     // width that would lie about the length.
-    if (hasMusic) {
+    if (musicY != null) {
       // A LOOP FILLS THE WIDTH. Without one, the lane ends where the track
       // ends and the gap after it is real silence you can see. With one, the
       // score plays under every frame, so the lane runs the full width and
@@ -683,9 +770,45 @@ class _RibbonPainter extends CustomPainter {
       }
     }
 
+    // STRUCT / MP4 CLIP AUDIO. Unlike voice or music this is not a bed from
+    // project zero. Each painted block is the exact absolute program interval
+    // in which its AUDIO-enabled structural source is scheduled to run. It is
+    // intentionally geometry-only rather than a waveform: first establish
+    // whether scheduling and audible playback agree on WHERE the source lives.
+    if (clipAudioY != null) {
+      for (final RibbonBlock b in blocks) {
+        if (!b.hasClipAudio) continue;
+        final int start = b.clipAudioStartFrame!.clamp(0, totalFrames);
+        final int end = b.clipAudioEndFrameExclusive!.clamp(0, totalFrames);
+        if (end <= start) continue;
+
+        final double x = start * perFrame;
+        final double rawW = (end - start) * perFrame;
+        final double drawW = rawW < 1.0 ? 1.0 : rawW;
+        final Color clipColor = dimmed
+            ? R3Theme.ribbonMedia.withValues(alpha: 0.30)
+            : R3Theme.ribbonMedia.withValues(alpha: 0.82);
+        canvas.drawRect(
+          Rect.fromLTWH(x, clipAudioY, drawW, _kLaneH),
+          Paint()..color = clipColor,
+        );
+
+        // Hard leading edge: this is the exact frame at which source sample
+        // zero is scheduled. It makes a large offset obvious even when the
+        // block itself spans most of the piece.
+        canvas.drawRect(
+          Rect.fromLTWH(x, clipAudioY, sc(1.5), _kLaneH),
+          Paint()
+            ..color = dimmed
+                ? R3Theme.textDim
+                : R3Theme.textBright,
+        );
+      }
+    }
+
     // --- Playhead ----------------------------------------------------
-    // Full height across both lanes and drawn last, so it is never buried
-    // and so the two lanes read as one timeline rather than two charts.
+    // Full height across every lane and drawn last, so it is never buried
+    // and so all lanes read as one timeline rather than separate charts.
     final double px = (currentFrame * perFrame).clamp(0.0, size.width - 1);
     canvas.drawRect(
       Rect.fromLTWH(px, 0, sc(1.5), size.height),
