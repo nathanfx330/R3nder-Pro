@@ -18,13 +18,14 @@
 //
 // FIRST-FRAME PRELOAD CONTRACT
 //
-// A moving parent transport must not turn the invisible entry preload into a
+// A self-owned moving preview must not turn the invisible entry preload into a
 // moving-target nonblocking decode before one presentable frame exists. TEXT
 // can update faster than the decoder completes; if every rebuild replaces the
 // requested source frame, readiness can be starved while project audio keeps
-// advancing. Until the first frame is resident, the client therefore stays on
-// the exact parked render path. Once readiness is reported, normal fast moving
-// preview resumes without changing authored project time.
+// advancing. Until the first frame is resident, TEXT therefore stays on the
+// exact parked render path. ProgramPreviewSurface supplies onFirstFrameReady and
+// owns its own preload/cover coordination, so its established moving path is
+// deliberately unchanged.
 //
 // EDITOR DIRECT-HANDOFF CONTRACT
 //
@@ -224,6 +225,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final double linear = placement.stageProgressAt(widget.localFrame);
     final double eased = Curves.easeInOutCubic.transform(linear);
     final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
+    final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
     return ColoredBox(
       color: Colors.black,
@@ -482,13 +484,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
-                      // Before the first presentable frame exists, keep the
-                      // invisible entry client on EditVideoPreview's exact
-                      // parked render path. A moving nonblocking request can be
-                      // superseded every TEXT rebuild and never become ready.
-                      // Once frame zero is resident, switch to the normal fast
-                      // moving profile without changing project time.
-                      fastPreview: widget.isPlaying && _firstFrameReady,
+                      // Program PREVIEW has a parent-level preload/cover owner;
+                      // TEXT does not. Only self-owned moving previews must park
+                      // until one exact frame is resident, otherwise a rapid
+                      // TEXT rebuild can supersede every nonblocking request.
+                      fastPreview: widget.isPlaying &&
+                          (parentOwnsReadiness || _firstFrameReady),
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
                           stage == StructuralSequenceStage.opening ||
                           stage == StructuralSequenceStage.showing ||
