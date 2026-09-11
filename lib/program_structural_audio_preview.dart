@@ -15,6 +15,17 @@
 // deterministic structural WAV. [startSampleFrame] trims the already-aligned
 // program/source mix after composition, so a playhead start never changes the
 // relationship between contributors merely because preview began mid-piece.
+//
+// SAMPLE-SEEK CONTRACT
+//
+// [startSampleFrame] and [programSampleFrames] are canonical 48 kHz sample
+// coordinates. Workspace voice/music inputs are not guaranteed to be 48 kHz.
+// FFmpeg's amix negotiates one input rate before the final output conversion,
+// so sample-based atrim must never run directly on that negotiated rate. The
+// mixed stream is explicitly resampled to the canonical project-audio rate
+// before atrim. Otherwise a 44.1 kHz bed makes a 48 kHz sample index seek too
+// far forward, which is especially visible when TEXT starts near a later
+// STRUCT clip: its MP4 audio can become audible before the authored picture.
 
 import 'dart:async';
 import 'dart:io';
@@ -174,9 +185,15 @@ List<String> buildProgramStructuralAudioPreviewArgs({
     ),
   );
 
+  // startSampleFrame is defined at the canonical 48 kHz project-audio rate.
+  // Force the post-mix stream to that rate before sample-count trimming. The
+  // final -ar remains as an output contract, but it is deliberately too late
+  // to define atrim's sample coordinate and therefore cannot replace this.
   final String trimChain = startSampleFrame == 0
-      ? 'atrim=end_sample=$programSampleFrames,asetpts=N/SR/TB'
-      : 'atrim=start_sample=$startSampleFrame:'
+      ? 'aresample=$kStructuralAudioSampleRate,'
+          'atrim=end_sample=$programSampleFrames,asetpts=N/SR/TB'
+      : 'aresample=$kStructuralAudioSampleRate,'
+          'atrim=start_sample=$startSampleFrame:'
           'end_sample=$programSampleFrames,asetpts=N/SR/TB';
   final String graph = audioMixGraph(
     tracks: tracks,
