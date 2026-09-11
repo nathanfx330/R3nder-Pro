@@ -9,6 +9,8 @@
 // replaced media may change what can be decoded, but it cannot change how many
 // project frames the authored container owns.
 
+import 'dart:math' as math;
+
 import 'script_cst.dart';
 
 class EditLanguageFormatException implements Exception {
@@ -159,6 +161,83 @@ class ExactClipSpeed {
 
   @override
   int get hashCode => Object.hash(numerator, denominator);
+
+  @override
+  String toString() => canonicalMarkup;
+}
+
+/// Exact authored CLIP audio gain in tenths of a decibel.
+///
+/// Keeping the source value as fixed-point integer state prevents UI slider
+/// rounding from becoming project data. Runtime conversion to a linear scalar
+/// happens only when structural source PCM is rendered.
+class ClipAudioGain {
+  static const int minTenthsDb = -600;
+  static const int maxTenthsDb = 120;
+  static const ClipAudioGain unity = ClipAudioGain._(0);
+
+  final int tenthsDb;
+
+  const ClipAudioGain._(this.tenthsDb);
+
+  factory ClipAudioGain.fromTenthsDb(int tenthsDb) {
+    if (tenthsDb < minTenthsDb || tenthsDb > maxTenthsDb) {
+      throw ArgumentError.value(
+        tenthsDb,
+        'tenthsDb',
+        'CLIP gain must be between -60.0 dB and +12.0 dB.',
+      );
+    }
+    return tenthsDb == 0 ? unity : ClipAudioGain._(tenthsDb);
+  }
+
+  factory ClipAudioGain.fromDecibels(double decibels) {
+    if (!decibels.isFinite || decibels < -60.0 || decibels > 12.0) {
+      throw ArgumentError.value(
+        decibels,
+        'decibels',
+        'CLIP gain must be between -60.0 dB and +12.0 dB.',
+      );
+    }
+    return ClipAudioGain.fromTenthsDb((decibels * 10.0).round());
+  }
+
+  factory ClipAudioGain.parse(String source) {
+    final String value = source.trim();
+    final RegExpMatch? match = RegExp(
+      r'^(?<sign>[+-]?)(?<whole>\d+)(?:\.(?<fraction>\d))?$',
+    ).firstMatch(value);
+    if (match == null) {
+      throw FormatException(
+        'CLIP GAIN must be a decimal with at most one fractional digit.',
+      );
+    }
+
+    final int whole = int.parse(match.namedGroup('whole')!);
+    final int fraction = int.parse(match.namedGroup('fraction') ?? '0');
+    int tenths = whole * 10 + fraction;
+    if (match.namedGroup('sign') == '-') tenths = -tenths;
+
+    if (tenths < minTenthsDb || tenths > maxTenthsDb) {
+      throw const FormatException(
+        'CLIP GAIN must be between -60.0 dB and +12.0 dB.',
+      );
+    }
+    return ClipAudioGain.fromTenthsDb(tenths);
+  }
+
+  bool get isUnity => tenthsDb == 0;
+  double get decibels => tenthsDb / 10.0;
+  double get linearMultiplier =>
+      math.pow(10.0, decibels / 20.0).toDouble();
+  String get canonicalMarkup => decibels.toStringAsFixed(1);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ClipAudioGain && other.tenthsDb == tenthsDb;
+
+  @override
+  int get hashCode => tenthsDb.hashCode;
 
   @override
   String toString() => canonicalMarkup;
@@ -322,6 +401,43 @@ class EditDocumentModel {
     return cst.replaceOpeningTag(clip.block, '[CLIP:${segments.join(':')}]');
   }
 
+  /// Rewrites only the authored GAIN suffix while preserving every other
+  /// optional CLIP token byte-for-byte. Unity is represented by absence.
+  String rewriteClipAudioGain(EditClip clip, ClipAudioGain gain) {
+    _checkClipOwned(clip);
+    final List<String> segments = List<String>.from(clip.headerSegments);
+    final int index = _optionIndex(segments, 'GAIN');
+
+    if (gain.isUnity) {
+      if (index >= 0) segments.removeAt(index);
+    } else {
+      final String replacement = 'GAIN=${gain.canonicalMarkup}';
+      if (index >= 0) {
+        segments[index] = replacement;
+      } else {
+        segments.add(replacement);
+      }
+    }
+
+    return cst.replaceOpeningTag(clip.block, '[CLIP:${segments.join(':')}]');
+  }
+
+  /// Adds or removes the bare MUTE flag without altering the authored gain.
+  /// MUTE wins during rendering, so removing it restores the prior GAIN value.
+  String rewriteClipMuted(EditClip clip, bool muted) {
+    _checkClipOwned(clip);
+    final List<String> segments = List<String>.from(clip.headerSegments);
+    final int index = _optionIndex(segments, 'MUTE');
+
+    if (muted) {
+      if (index < 0) segments.add('MUTE');
+    } else if (index >= 0) {
+      segments.removeAt(index);
+    }
+
+    return cst.replaceOpeningTag(clip.block, '[CLIP:${segments.join(':')}]');
+  }
+
   void _checkClipOwned(EditClip clip) {
     for (final EditSequence edit in edits) {
       for (final EditTrack track in edit.tracks) {
@@ -460,6 +576,8 @@ class EditClip {
   final int inFrame;
   final int durationFrames;
   final ExactClipSpeed speed;
+  final ClipAudioGain audioGain;
+  final bool muted;
   final ScriptCstBlock block;
   final List<String> headerSegments;
 
@@ -470,11 +588,21 @@ class EditClip {
     required this.inFrame,
     required this.durationFrames,
     required this.speed,
+    required this.audioGain,
+    required this.muted,
     required this.block,
     required this.headerSegments,
   });
 
   int get endFrameExclusive => atFrame + durationFrames;
+
+  List<String> get optionTokens => headerSegments.length <= 6
+      ? const <String>[]
+      : List<String>.unmodifiable(headerSegments.sublist(6));
+
+  List<String> get unknownOptionTokens => List<String>.unmodifiable(
+        optionTokens.where((String token) => !_isRecognizedOptionToken(token)),
+      );
 
   /// Returns the integer source frame sampled at one project-frame offset.
   /// The mapping is exact rational arithmetic. Fractional source positions are
@@ -613,9 +741,9 @@ String _parseSingleIdHeader(ScriptCstBlock block, String type) {
 
 EditClip _parseClip(ScriptCstBlock block) {
   final List<String> segments = block.header.split(':');
-  if (segments.length != 6) {
+  if (segments.length < 6) {
     throw EditLanguageFormatException(
-      'CLIP requires exactly id:source:at:in:duration:speed. '
+      'CLIP requires id:source:at:in:duration:speed before optional suffixes. '
       'There is no canonical out field.',
       block.startOffset,
     );
@@ -647,6 +775,48 @@ EditClip _parseClip(ScriptCstBlock block) {
     throw EditLanguageFormatException('${error.message}', block.startOffset);
   }
 
+  ClipAudioGain audioGain = ClipAudioGain.unity;
+  bool muted = false;
+  bool sawGain = false;
+  bool sawMute = false;
+
+  for (int i = 6; i < segments.length; i++) {
+    final String token = segments[i].trim();
+    if (token.isEmpty) {
+      throw EditLanguageFormatException(
+        'CLIP optional suffix tokens cannot be empty.',
+        block.startOffset,
+      );
+    }
+
+    if (token == 'MUTE') {
+      if (sawMute) {
+        throw EditLanguageFormatException(
+          'CLIP MUTE may appear at most once.',
+          block.startOffset,
+        );
+      }
+      sawMute = true;
+      muted = true;
+      continue;
+    }
+
+    if (token.startsWith('GAIN=')) {
+      if (sawGain) {
+        throw EditLanguageFormatException(
+          'CLIP GAIN may appear at most once.',
+          block.startOffset,
+        );
+      }
+      sawGain = true;
+      try {
+        audioGain = ClipAudioGain.parse(token.substring('GAIN='.length));
+      } on FormatException catch (error) {
+        throw EditLanguageFormatException('${error.message}', block.startOffset);
+      }
+    }
+  }
+
   return EditClip._(
     id: id,
     source: source,
@@ -654,6 +824,8 @@ EditClip _parseClip(ScriptCstBlock block) {
     inFrame: inFrame,
     durationFrames: durationFrames,
     speed: speed,
+    audioGain: audioGain,
+    muted: muted,
     block: block,
     headerSegments: List<String>.unmodifiable(segments),
   );
@@ -690,6 +862,20 @@ void _validateSource(String source, int offset) {
       offset,
     );
   }
+}
+
+int _optionIndex(List<String> segments, String key) {
+  for (int i = 6; i < segments.length; i++) {
+    final String token = segments[i].trim();
+    if (key == 'MUTE' && token == 'MUTE') return i;
+    if (key == 'GAIN' && token.startsWith('GAIN=')) return i;
+  }
+  return -1;
+}
+
+bool _isRecognizedOptionToken(String raw) {
+  final String token = raw.trim();
+  return token == 'MUTE' || token.startsWith('GAIN=');
 }
 
 final RegExp _idPattern = RegExp(r'^[A-Za-z0-9_-]+$');
