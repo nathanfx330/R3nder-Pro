@@ -20,10 +20,12 @@ class _StarvingDecoder implements NonBlockingMediaDecoder {
   int renderCalls = 0;
   int requestCalls = 0;
   int pollCalls = 0;
+  final List<String> operations = <String>[];
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
     renderCalls++;
+    operations.add('render');
     final Uint8List rgba = Uint8List(width * height * 4);
     for (int i = 0; i < rgba.length; i += 4) {
       rgba[i] = 40;
@@ -44,6 +46,7 @@ class _StarvingDecoder implements NonBlockingMediaDecoder {
   @override
   void request(int requestedSourceFrame, int width, int height) {
     requestCalls++;
+    operations.add('request');
   }
 
   @override
@@ -53,6 +56,7 @@ class _StarvingDecoder implements NonBlockingMediaDecoder {
     int height,
   ) {
     pollCalls++;
+    operations.add('poll');
     return null;
   }
 
@@ -111,9 +115,13 @@ void main() {
 
     expect(placement.stageAt(5), StructuralSequenceStage.zoomOut);
     expect(backend.decoder.renderCalls, greaterThan(0));
-    expect(backend.decoder.requestCalls, 0,
-        reason: 'The first invisible preload must not chase moving targets.');
-    expect(backend.decoder.pollCalls, 0);
+    expect(backend.decoder.operations, isNotEmpty);
+    expect(
+      backend.decoder.operations.first,
+      'render',
+      reason: 'The first invisible preload must use the exact parked path. '
+          'Once readiness is reported, later moving requests are expected.',
+    );
     expect(ready, findsOneWidget);
   });
 }
