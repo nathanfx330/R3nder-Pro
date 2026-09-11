@@ -26,7 +26,9 @@ import 'package:flutter/gestures.dart'
         PointerUpEvent,
         kSecondaryMouseButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import 'edit_clip_inspector.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
@@ -97,6 +99,9 @@ class _EditSurfaceState extends State<EditSurface> {
 
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
+  final FocusNode _timelineFocusNode = FocusNode(
+    debugLabel: 'edit-timeline-focus',
+  );
 
   @override
   void initState() {
@@ -132,6 +137,17 @@ class _EditSurfaceState extends State<EditSurface> {
     if (widget.source != oldWidget.source && widget.source != _workingSource) {
       _workingSource = widget.source;
       _error = null;
+      final String? trackId = _selectedTrackId;
+      final String? clipId = _selectedClipId;
+      if (trackId != null && clipId != null) {
+        try {
+          EditSurfaceDocument.parse(_workingSource, widget.editId)
+              .clip(trackId, clipId);
+        } catch (_) {
+          _selectedTrackId = null;
+          _selectedClipId = null;
+        }
+      }
     }
     if (widget.currentFrame != oldWidget.currentFrame) {
       _lastSeekSent = widget.currentFrame;
@@ -152,6 +168,7 @@ class _EditSurfaceState extends State<EditSurface> {
     _scrubTimer?.cancel();
     _horizontal.dispose();
     _vertical.dispose();
+    _timelineFocusNode.dispose();
     super.dispose();
   }
 
@@ -224,6 +241,39 @@ class _EditSurfaceState extends State<EditSurface> {
       _selectedClipId = clip.id;
       _error = null;
     });
+    _timelineFocusNode.requestFocus();
+  }
+
+  void _deleteSelected(EditSurfaceDocument document) {
+    final EditSurfaceClip? selected = _selected(document);
+    if (selected == null) return;
+
+    final bool deleted = _commit((EditSurfaceDocument current) {
+      return current.deleteClip(selected.trackId, selected.id);
+    });
+    if (!deleted || !mounted) return;
+
+    setState(() {
+      _selectedTrackId = null;
+      _selectedClipId = null;
+    });
+    _timelineFocusNode.requestFocus();
+  }
+
+  KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_timelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.delete) {
+      return KeyEventResult.ignored;
+    }
+
+    final EditSurfaceDocument? document = _parse();
+    if (document == null || _selected(document) == null) {
+      return KeyEventResult.ignored;
+    }
+    _deleteSelected(document);
+    return KeyEventResult.handled;
   }
 
   void _moveSelectedToTrack(EditSurfaceClip clip, String targetTrackId) {
@@ -403,6 +453,7 @@ class _EditSurfaceState extends State<EditSurface> {
   }
 
   void _startScrub(int frame) {
+    _timelineFocusNode.requestFocus();
     if (!_scrubbing) setState(() => _scrubbing = true);
     _queueScrub(frame);
   }
@@ -419,6 +470,7 @@ class _EditSurfaceState extends State<EditSurface> {
   }
 
   void _seekOnce(int frame) {
+    _timelineFocusNode.requestFocus();
     _scrubTimer?.cancel();
     _scrubTimer = null;
     _pendingScrubFrame = null;
@@ -473,103 +525,139 @@ class _EditSurfaceState extends State<EditSurface> {
     final double timelineContentHeight =
         _kRulerHeight + tracks.length * _kTrackHeight;
 
-    return Column(
-      children: [
-        _buildToolbar(document, selected),
-        if (_error != null)
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(horizontal: sc(12), vertical: sc(5)),
-            color: R3Theme.danger.withValues(alpha: 0.12),
-            child: Text(
-              _error!,
-              style: widget.theme.fine.copyWith(color: R3Theme.danger),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+    return Focus(
+      focusNode: _timelineFocusNode,
+      onKeyEvent: _handleTimelineKeyEvent,
+      child: Column(
+        children: [
+          _buildToolbar(document, selected),
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: sc(12),
+                vertical: sc(5),
+              ),
+              color: R3Theme.danger.withValues(alpha: 0.12),
+              child: Text(
+                _error!,
+                style: widget.theme.fine.copyWith(color: R3Theme.danger),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        Container(
-          height: _kPreviewHeight,
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: R3Theme.hairline)),
-          ),
-          child: EditVideoPreview(
-            source: _workingSource,
-            editId: widget.editId,
-            currentFrame: widget.currentFrame,
-            isPlaying: widget.isPlaying,
-            fastPreview: _scrubbing || widget.isPlaying,
-            theme: widget.theme,
-            backend: widget.backend,
-            resolveSource: widget.resolveSource,
-          ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final double viewportTimelineWidth =
-                  math.max(0.0, constraints.maxWidth - _kLabelWidth);
-              final double timelineWidth = math.max(
-                viewportTimelineWidth,
-                math.max(1, contentFrames) * _pixelsPerFrame + sc(80),
-              );
-
-              return Scrollbar(
-                controller: _vertical,
-                thumbVisibility: timelineContentHeight > constraints.maxHeight,
-                child: SingleChildScrollView(
-                  controller: _vertical,
-                  child: SizedBox(
-                    width: constraints.maxWidth,
-                    height: timelineContentHeight,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          width: _kLabelWidth,
-                          child: _buildLabels(tracks),
-                        ),
-                        Expanded(
-                          child: Scrollbar(
-                            controller: _horizontal,
-                            thumbVisibility: true,
-                            child: SingleChildScrollView(
-                              controller: _horizontal,
-                              scrollDirection: Axis.horizontal,
-                              child: SizedBox(
-                                width: timelineWidth,
-                                height: timelineContentHeight,
-                                child: Stack(
-                                  children: [
-                                    RepaintBoundary(
-                                      child: Column(
-                                        children: [
-                                          _buildRuler(
-                                            timelineWidth,
-                                            contentFrames,
-                                          ),
-                                          for (final EditSurfaceTrack track
-                                              in tracks)
-                                            _buildTrackLane(track),
-                                        ],
-                                      ),
-                                    ),
-                                    _playheadWidget(),
-                                  ],
-                                ),
-                              ),
-                            ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      Container(
+                        height: _kPreviewHeight,
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(color: R3Theme.hairline),
                           ),
                         ),
-                      ],
-                    ),
+                        child: EditVideoPreview(
+                          source: _workingSource,
+                          editId: widget.editId,
+                          currentFrame: widget.currentFrame,
+                          isPlaying: widget.isPlaying,
+                          fastPreview: _scrubbing || widget.isPlaying,
+                          theme: widget.theme,
+                          backend: widget.backend,
+                          resolveSource: widget.resolveSource,
+                        ),
+                      ),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (
+                            BuildContext context,
+                            BoxConstraints constraints,
+                          ) {
+                            final double viewportTimelineWidth = math.max(
+                              0.0,
+                              constraints.maxWidth - _kLabelWidth,
+                            );
+                            final double timelineWidth = math.max(
+                              viewportTimelineWidth,
+                              math.max(1, contentFrames) * _pixelsPerFrame +
+                                  sc(80),
+                            );
+
+                            return Scrollbar(
+                              controller: _vertical,
+                              thumbVisibility:
+                                  timelineContentHeight > constraints.maxHeight,
+                              child: SingleChildScrollView(
+                                controller: _vertical,
+                                child: SizedBox(
+                                  width: constraints.maxWidth,
+                                  height: timelineContentHeight,
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      SizedBox(
+                                        width: _kLabelWidth,
+                                        child: _buildLabels(tracks),
+                                      ),
+                                      Expanded(
+                                        child: Scrollbar(
+                                          controller: _horizontal,
+                                          thumbVisibility: true,
+                                          child: SingleChildScrollView(
+                                            controller: _horizontal,
+                                            scrollDirection: Axis.horizontal,
+                                            child: SizedBox(
+                                              width: timelineWidth,
+                                              height: timelineContentHeight,
+                                              child: Stack(
+                                                children: [
+                                                  RepaintBoundary(
+                                                    child: Column(
+                                                      children: [
+                                                        _buildRuler(
+                                                          timelineWidth,
+                                                          contentFrames,
+                                                        ),
+                                                        for (final EditSurfaceTrack track
+                                                            in tracks)
+                                                          _buildTrackLane(track),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  _playheadWidget(),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
+                EditClipInspector(
+                  clip: selected,
+                  theme: widget.theme,
+                  onDelete:
+                      selected == null ? null : () => _deleteSelected(document),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
