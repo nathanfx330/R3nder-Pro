@@ -13,7 +13,10 @@ const String _externalSource = '''[EDIT:main]\n  [TRACK:V1]\n    [CLIP:intro:vid
 class _HistoryHarness extends StatefulWidget {
   final bool withTextField;
 
-  const _HistoryHarness({this.withTextField = false});
+  const _HistoryHarness({
+    super.key,
+    this.withTextField = false,
+  });
 
   @override
   State<_HistoryHarness> createState() => _HistoryHarnessState();
