@@ -217,9 +217,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
   }
 
   Future<void> _editNumericGain() async {
-    final TextEditingController controller = TextEditingController(
-      text: widget.gain.canonicalMarkup,
-    );
+    String draft = widget.gain.canonicalMarkup;
     String? errorText;
 
     final ClipAudioGain? next = await showDialog<ClipAudioGain>(
@@ -230,12 +228,22 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
             BuildContext context,
             void Function(VoidCallback fn) setDialogState,
           ) {
+            void apply(String value) {
+              try {
+                Navigator.of(dialogContext).pop(
+                  ClipAudioGain.parse(value),
+                );
+              } on FormatException catch (error) {
+                setDialogState(() => errorText = '${error.message}');
+              }
+            }
+
             return AlertDialog(
               backgroundColor: R3Theme.panel,
               title: Text('Clip audio gain', style: widget.theme.value),
-              content: TextField(
+              content: TextFormField(
                 key: const ValueKey<String>('edit-inspector-gain-field'),
-                controller: controller,
+                initialValue: draft,
                 autofocus: true,
                 keyboardType: const TextInputType.numberWithOptions(
                   signed: true,
@@ -246,15 +254,8 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
                   errorText: errorText,
                 ),
                 style: widget.theme.value,
-                onSubmitted: (String value) {
-                  try {
-                    Navigator.of(dialogContext).pop(
-                      ClipAudioGain.parse(value),
-                    );
-                  } on FormatException catch (error) {
-                    setDialogState(() => errorText = '${error.message}');
-                  }
-                },
+                onChanged: (String value) => draft = value,
+                onFieldSubmitted: apply,
               ),
               actions: [
                 TextButton(
@@ -262,15 +263,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
                   child: const Text('CANCEL'),
                 ),
                 TextButton(
-                  onPressed: () {
-                    try {
-                      Navigator.of(dialogContext).pop(
-                        ClipAudioGain.parse(controller.text),
-                      );
-                    } on FormatException catch (error) {
-                      setDialogState(() => errorText = '${error.message}');
-                    }
-                  },
+                  onPressed: () => apply(draft),
                   child: const Text('APPLY'),
                 ),
               ],
@@ -280,7 +273,6 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
       },
     );
 
-    controller.dispose();
     if (!mounted || next == null || next == widget.gain) return;
     setState(() => _draftDb = next.decibels);
     widget.onGainChanged?.call(next);
