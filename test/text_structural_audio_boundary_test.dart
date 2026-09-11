@@ -9,8 +9,8 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/program_structural_audio.dart';
+import 'package:r3nder/structural_audio_decode.dart';
 import 'package:r3nder/structural_audio_plan.dart';
 import 'package:r3nder/structural_audio_render.dart';
 import 'package:r3nder/structural_sequence.dart';
@@ -24,40 +24,8 @@ const String _document = '''[EDIT:main]
 [STRUCT:EDIT.main:AUDIO]
 ''';
 
-class _ConstantLeafDecoder implements StructuralAudioLeafDecodeBackend {
-  @override
-  Future<StructuralAudioLeafDecode> decode(
-    StructuralAudioSegment segment,
-    String resolvedPath,
-  ) async {
-    final int frames = segment.sampleCount;
-    final Float32List stereo = Float32List(frames * 2);
-    for (int i = 0; i < frames; i++) {
-      stereo[i * 2] = 0.25;
-      stereo[i * 2 + 1] = -0.25;
-    }
-
-    return StructuralAudioLeafDecode(
-      sourceInfo: StructuralAudioSourceInfo(
-        path: resolvedPath,
-        sourceFpsNumerator: 30,
-        sourceFpsDenominator: 1,
-        sampleRate: kStructuralAudioSampleRate,
-        channels: 2,
-        hasAudio: true,
-      ),
-      window: StructuralAudioDecodeWindow(
-        requiredStartSampleFrame: 0,
-        requiredSampleFrames: frames,
-      ),
-      authoredProjectSampleFrames: frames,
-      interleavedStereo: stereo,
-    );
-  }
-}
-
 void main() {
-  test('TEXT STRUCT audio is silent before the picture content boundary',
+  test('TEXT STRUCT program audio starts at the picture content boundary',
       () async {
     final List<StructuralSequencePlacement> placements =
         parseStructuralSequencePlacements(_document);
@@ -67,19 +35,26 @@ void main() {
     expect(placement.clipAudio, isTrue);
     expect(placement.sourceDurationFrames, 3);
 
-    final StructuralAudioSourceRenderer sourceRenderer =
-        StructuralAudioSourceRenderer(
-      planner: StructuralAudioPlanner.parse(_document),
-      leafDecoder: _ConstantLeafDecoder(),
-      resolveSource: (String source) => source,
-    );
-    final StructuralAudioSourceRender source =
-        await sourceRenderer.render('EDIT.main');
+    final StructuralAudioPlan sourcePlan =
+        StructuralAudioPlanner.parse(_document).plan('EDIT.main');
+    expect(sourcePlan.durationFrames, placement.sourceDurationFrames);
 
-    final int programFrames = placement.durationFrames;
-    final ProgramStructuralAudioTimeline timeline =
-        ProgramStructuralAudioTimeline(
-      durationFrames: programFrames,
+    final Float32List sourcePcm = Float32List(
+      sourcePlan.durationSamples * kStructuralAudioChannels,
+    );
+    for (int sampleFrame = 0;
+        sampleFrame < sourcePlan.durationSamples;
+        sampleFrame++) {
+      sourcePcm[sampleFrame * 2] = 0.25;
+      sourcePcm[sampleFrame * 2 + 1] = -0.25;
+    }
+
+    final StructuralAudioSourceRender source = StructuralAudioSourceRender(
+      plan: sourcePlan,
+      interleavedStereo: sourcePcm,
+    );
+    final ProgramStructuralAudioTimeline timeline = ProgramStructuralAudioTimeline(
+      durationFrames: placement.durationFrames,
       occurrences: <ProgramStructuralAudioOccurrence>[
         ProgramStructuralAudioOccurrence(
           placementIndex: 0,
@@ -90,29 +65,31 @@ void main() {
       ],
     );
 
-    final Float32List program = renderProgramStructuralAudio(
+    final ProgramStructuralAudioRender program =
+        await ProgramStructuralAudioRenderer(
       timeline: timeline,
-      sourceAudio: <String, StructuralAudioSourceRender>{
-        placement.sourceRef.canonicalSource: source,
+      renderSource: (String structuralSource) async {
+        expect(structuralSource, placement.sourceRef.canonicalSource);
+        return source;
       },
-    );
+    ).render();
 
     final int boundarySample =
         structuralAudioSampleAtProjectFrame(placement.contentStartFrame);
     for (int sampleFrame = 0; sampleFrame < boundarySample; sampleFrame++) {
       expect(
-        program[sampleFrame * 2],
+        program.interleavedStereo[sampleFrame * 2],
         0.0,
         reason: 'Left channel became audible before the picture boundary.',
       );
       expect(
-        program[sampleFrame * 2 + 1],
+        program.interleavedStereo[sampleFrame * 2 + 1],
         0.0,
         reason: 'Right channel became audible before the picture boundary.',
       );
     }
 
-    expect(program[boundarySample * 2], 0.25);
-    expect(program[boundarySample * 2 + 1], -0.25);
+    expect(program.interleavedStereo[boundarySample * 2], 0.25);
+    expect(program.interleavedStereo[boundarySample * 2 + 1], -0.25);
   });
 }
