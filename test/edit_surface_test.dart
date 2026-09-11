@@ -102,12 +102,41 @@ void main() {
     );
   });
 
-  testWidgets('crossfade controls are owned by clip edges, not the toolbar',
+  testWidgets('clip property controls live in the inspector, not the toolbar',
       (WidgetTester tester) async {
     await tester.pumpWidget(_host(onSourceChanged: (_) {}));
     await tester.pumpAndSettle();
 
-    expect(find.text('XFADE'), findsNothing);
+    await tester.tap(find.text('intro'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-inspector-slip-minus')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-inspector-slip-plus')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-inspector-speed-menu')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-inspector-transition-in-menu')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-inspector-transition-out-menu')),
+      findsOneWidget,
+    );
+
+    expect(find.text('SLIP -1'), findsNothing);
+    expect(find.text('SLIP +1'), findsNothing);
+    expect(find.byTooltip('Speed'), findsNothing);
+
+    // Clip edges remain trim handles. Transition authoring no longer depends on
+    // a hidden secondary-click menu on those handles.
     expect(
       find.byKey(const ValueKey<String>('edit-clip-V1-intro-in-handle')),
       findsOneWidget,
