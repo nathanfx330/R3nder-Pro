@@ -356,6 +356,16 @@ class EditSurfaceDocument {
     return next;
   }
 
+  /// Removes exactly one authored CLIP block. No neighboring CLIP is moved,
+  /// rewritten, or otherwise repaired; authored gaps and neighboring edge
+  /// directives remain exactly as written.
+  String deleteClip(String trackId, String clipId) {
+    final EditSurfaceClip selected = clip(trackId, clipId);
+    final String next = model.cst.replaceBlock(selected.clip.block, '');
+    EditSurfaceDocument.parse(next, editId);
+    return next;
+  }
+
   String moveClip(String trackId, String clipId, int atFrame) {
     if (atFrame < 0) {
       throw ArgumentError.value(atFrame, 'atFrame', 'Must be non-negative.');
