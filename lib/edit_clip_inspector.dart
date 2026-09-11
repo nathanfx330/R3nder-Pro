@@ -812,7 +812,10 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
 Widget _selectorFace(String label, R3Theme theme, {Key? key}) {
   return Container(
     key: key,
-    constraints: BoxConstraints(minWidth: sc(104)),
+    constraints: BoxConstraints(
+      minWidth: sc(104),
+      maxWidth: sc(170),
+    ),
     padding: EdgeInsets.symmetric(horizontal: sc(8), vertical: sc(6)),
     decoration: BoxDecoration(
       color: R3Theme.bg,
