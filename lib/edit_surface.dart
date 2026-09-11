@@ -334,6 +334,55 @@ class _EditSurfaceState extends State<EditSurface> {
     _timelineFocusNode.requestFocus();
   }
 
+  void _slipSelected(EditSurfaceClip selected, int sourceFrameDelta) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.slipClip(
+        selected.trackId,
+        selected.id,
+        sourceFrameDelta,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _setSelectedSpeed(
+    EditSurfaceClip selected,
+    ExactClipSpeed speed,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.setSpeed(selected.trackId, selected.id, speed);
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _setSelectedIncomingTransition(
+    EditSurfaceClip selected,
+    EditTransition transition,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.setTransition(
+        selected.trackId,
+        selected.id,
+        transition,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _setSelectedOutgoingTransition(
+    EditSurfaceClip selected,
+    EditTransition transition,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.setOutgoingTransition(
+        selected.trackId,
+        selected.id,
+        transition,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
   void _setSelectedAudioGain(
     EditSurfaceClip selected,
     ClipAudioGain gain,
@@ -458,83 +507,6 @@ class _EditSurfaceState extends State<EditSurface> {
         selected.trackId,
         selected.id,
         frame,
-      );
-    });
-  }
-
-  Future<void> _setLuma(EditSurfaceDocument document) async {
-    final EditSurfaceClip? selected = _selected(document);
-    if (selected == null) return;
-
-    final TextEditingController sourceController = TextEditingController(
-      text: selected.transition.kind == EditTransitionKind.luma
-          ? selected.transition.lumaSource
-          : '',
-    );
-    final TextEditingController framesController = TextEditingController(
-      text: selected.transition.kind == EditTransitionKind.luma
-          ? '${selected.transition.frames}'
-          : '12',
-    );
-
-    final EditTransition? transition = await showDialog<EditTransition>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: R3Theme.panel,
-          title: Text('Luma transition', style: widget.theme.value),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: sourceController,
-                decoration: const InputDecoration(labelText: 'Mask source'),
-                style: widget.theme.value,
-              ),
-              SizedBox(height: sc(10)),
-              TextField(
-                controller: framesController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Frames'),
-                style: widget.theme.value,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(
-                const EditTransition.none(),
-              ),
-              child: const Text('Clear'),
-            ),
-            TextButton(
-              onPressed: () {
-                final int? frames = int.tryParse(framesController.text.trim());
-                if (frames == null || frames <= 0) return;
-                Navigator.of(context).pop(
-                  EditTransition.luma(sourceController.text.trim(), frames),
-                );
-              },
-              child: const Text('Apply'),
-            ),
-          ],
-        );
-      },
-    );
-
-    sourceController.dispose();
-    framesController.dispose();
-
-    if (!mounted || transition == null) return;
-    _commit((EditSurfaceDocument current) {
-      return current.setTransition(
-        selected.trackId,
-        selected.id,
-        transition,
       );
     });
   }
@@ -763,6 +735,21 @@ class _EditSurfaceState extends State<EditSurface> {
                 EditClipInspector(
                   clip: selected,
                   theme: widget.theme,
+                  onSlipBy: selected == null
+                      ? null
+                      : (int delta) => _slipSelected(selected, delta),
+                  onSpeedChanged: selected == null
+                      ? null
+                      : (ExactClipSpeed speed) =>
+                          _setSelectedSpeed(selected, speed),
+                  onIncomingTransitionChanged: selected == null
+                      ? null
+                      : (EditTransition transition) =>
+                          _setSelectedIncomingTransition(selected, transition),
+                  onOutgoingTransitionChanged: selected == null
+                      ? null
+                      : (EditTransition transition) =>
+                          _setSelectedOutgoingTransition(selected, transition),
                   onAudioGainChanged: selected == null
                       ? null
                       : (ClipAudioGain gain) =>
@@ -924,47 +911,6 @@ class _EditSurfaceState extends State<EditSurface> {
                     'TO V2',
                     onPressed: () => _moveSelectedToTrack(selected, 'V2'),
                   ),
-                _toolButton(
-                  'SLIP -1',
-                  onPressed: selected.inFrame > 0
-                      ? () => _commit((EditSurfaceDocument current) {
-                            return current.slipClip(
-                              selected.trackId,
-                              selected.id,
-                              -1,
-                            );
-                          })
-                      : null,
-                ),
-                _toolButton(
-                  'SLIP +1',
-                  onPressed: () => _commit((EditSurfaceDocument current) {
-                    return current.slipClip(selected.trackId, selected.id, 1);
-                  }),
-                ),
-                PopupMenuButton<String>(
-                  tooltip: 'Speed',
-                  color: R3Theme.panelHi,
-                  onSelected: (String value) {
-                    _commit((EditSurfaceDocument current) {
-                      return current.setSpeed(
-                        selected.trackId,
-                        selected.id,
-                        ExactClipSpeed.parse(value),
-                      );
-                    });
-                  },
-                  itemBuilder: (_) => const <String>['1/4', '1/2', '1', '2', '4']
-                      .map(
-                        (String value) => PopupMenuItem<String>(
-                          value: value,
-                          child: Text('$value X'),
-                        ),
-                      )
-                      .toList(),
-                  child: _toolFace('SPEED'),
-                ),
-                _toolButton('LUMA', onPressed: () => _setLuma(document)),
               ],
               SizedBox(width: sc(6)),
               Text('ZOOM', style: widget.theme.micro),
@@ -1114,28 +1060,6 @@ class _EditSurfaceState extends State<EditSurface> {
                     return current.trimEnd(track.id, clip.id, endFrame);
                   });
                 },
-                onSetIncomingCrossfade: (int frames) {
-                  _commit((EditSurfaceDocument current) {
-                    return current.setTransition(
-                      track.id,
-                      clip.id,
-                      frames <= 0
-                          ? const EditTransition.none()
-                          : EditTransition.crossfade(frames),
-                    );
-                  });
-                },
-                onSetOutgoingCrossfade: (int frames) {
-                  _commit((EditSurfaceDocument current) {
-                    return current.setOutgoingTransition(
-                      track.id,
-                      clip.id,
-                      frames <= 0
-                          ? const EditTransition.none()
-                          : EditTransition.crossfade(frames),
-                    );
-                  });
-                },
               ),
             ),
         ],
@@ -1153,8 +1077,6 @@ class _EditableClipBlock extends StatefulWidget {
   final ValueChanged<int> onMove;
   final ValueChanged<int> onTrimStart;
   final ValueChanged<int> onTrimEnd;
-  final ValueChanged<int> onSetIncomingCrossfade;
-  final ValueChanged<int> onSetOutgoingCrossfade;
 
   const _EditableClipBlock({
     super.key,
@@ -1166,8 +1088,6 @@ class _EditableClipBlock extends StatefulWidget {
     required this.onMove,
     required this.onTrimStart,
     required this.onTrimEnd,
-    required this.onSetIncomingCrossfade,
-    required this.onSetOutgoingCrossfade,
   });
 
   @override
@@ -1208,14 +1128,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
-  void _pointerDown(
-    _ClipDragMode mode,
-    PointerDownEvent event, {
-    ValueChanged<Offset>? onSecondary,
-  }) {
+  void _pointerDown(_ClipDragMode mode, PointerDownEvent event) {
     if ((event.buttons & kSecondaryMouseButton) != 0) {
       widget.onSelect();
-      onSecondary?.call(event.position);
       return;
     }
     if (_activePointer != null) return;
@@ -1278,158 +1193,13 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
   }
 
-  Future<int?> _showCustomCrossfadeDialog({
-    required int currentFrames,
-  }) async {
-    final int maxFrames = widget.clip.durationFrames;
-    final int initial = currentFrames > 0
-        ? currentFrames
-        : maxFrames >= 48
-            ? 48
-            : maxFrames;
-    String draft = '$initial';
-
-    return showDialog<int>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          backgroundColor: R3Theme.panel,
-          title: Text('Crossfade frames', style: widget.theme.value),
-          content: TextFormField(
-            key: const ValueKey<String>('edit-xfade-custom-field'),
-            initialValue: draft,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: '1 to $maxFrames frames'),
-            style: widget.theme.value,
-            onChanged: (String value) => draft = value,
-            onFieldSubmitted: (String value) {
-              final int? frames = int.tryParse(value.trim());
-              if (frames != null && frames > 0 && frames <= maxFrames) {
-                Navigator.of(dialogContext).pop(frames);
-              }
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('CANCEL'),
-            ),
-            TextButton(
-              onPressed: () {
-                final int? frames = int.tryParse(draft.trim());
-                if (frames == null || frames <= 0 || frames > maxFrames) return;
-                Navigator.of(dialogContext).pop(frames);
-              },
-              child: const Text('APPLY'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _showCrossfadeMenu({
-    required bool incoming,
-    required Offset globalPosition,
-  }) async {
-    final OverlayState overlayState = Overlay.of(context);
-    final RenderObject? renderObject = overlayState.context.findRenderObject();
-    if (renderObject is! RenderBox) return;
-
-    final int currentFrames = incoming
-        ? widget.clip.transition.kind == EditTransitionKind.crossfade
-            ? widget.clip.transition.frames
-            : 0
-        : widget.clip.outgoingTransition.kind == EditTransitionKind.crossfade
-            ? widget.clip.outgoingTransition.frames
-            : 0;
-    final String edge = incoming ? 'in' : 'out';
-    final RelativeRect position = RelativeRect.fromRect(
-      Rect.fromPoints(globalPosition, globalPosition),
-      Offset.zero & renderObject.size,
-    );
-
-    final int? selected = await showMenu<int>(
-      context: context,
-      color: R3Theme.panelHi,
-      position: position,
-      items: <PopupMenuEntry<int>>[
-        PopupMenuItem<int>(
-          enabled: false,
-          height: sc(30),
-          child: Text(
-            incoming ? 'XFADE IN' : 'XFADE OUT',
-            style: widget.theme.microAccent,
-          ),
-        ),
-        PopupMenuItem<int>(
-          key: ValueKey<String>('edit-xfade-$edge-clear'),
-          value: 0,
-          child: Row(
-            children: [
-              SizedBox(
-                width: sc(18),
-                child: currentFrames == 0
-                    ? const Icon(Icons.check, size: 14)
-                    : null,
-              ),
-              const Text('CLEAR'),
-            ],
-          ),
-        ),
-        for (final int frames in const <int>[12, 24, 48, 72])
-          PopupMenuItem<int>(
-            key: ValueKey<String>('edit-xfade-$edge-$frames'),
-            value: frames,
-            enabled: frames <= widget.clip.durationFrames,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: sc(18),
-                  child: currentFrames == frames
-                      ? const Icon(Icons.check, size: 14)
-                      : null,
-                ),
-                Text('$frames FRAMES'),
-              ],
-            ),
-          ),
-        const PopupMenuDivider(),
-        PopupMenuItem<int>(
-          key: ValueKey<String>('edit-xfade-$edge-custom'),
-          value: -1,
-          child: const Text('CUSTOM…'),
-        ),
-      ],
-    );
-
-    if (!mounted || selected == null) return;
-    int frames = selected;
-    if (selected == -1) {
-      final int? custom = await _showCustomCrossfadeDialog(
-        currentFrames: currentFrames,
-      );
-      if (!mounted || custom == null) return;
-      frames = custom;
-    }
-
-    if (incoming) {
-      widget.onSetIncomingCrossfade(frames);
-    } else {
-      widget.onSetOutgoingCrossfade(frames);
-    }
-  }
-
   Widget _pointerRegion({
     required _ClipDragMode mode,
     required Widget child,
-    ValueChanged<Offset>? onSecondary,
   }) {
     return Listener(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: (PointerDownEvent event) =>
-          _pointerDown(mode, event, onSecondary: onSecondary),
+      onPointerDown: (PointerDownEvent event) => _pointerDown(mode, event),
       onPointerMove: _pointerMove,
       onPointerUp: _pointerUp,
       onPointerCancel: _pointerCancel,
@@ -1562,14 +1332,6 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: _pointerRegion(
                   mode: _ClipDragMode.trimStart,
-                  onSecondary: (Offset position) {
-                    unawaited(
-                      _showCrossfadeMenu(
-                        incoming: true,
-                        globalPosition: position,
-                      ),
-                    );
-                  },
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
@@ -1590,14 +1352,6 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                 cursor: SystemMouseCursors.resizeLeftRight,
                 child: _pointerRegion(
                   mode: _ClipDragMode.trimEnd,
-                  onSecondary: (Offset position) {
-                    unawaited(
-                      _showCrossfadeMenu(
-                        incoming: false,
-                        globalPosition: position,
-                      ),
-                    );
-                  },
                   child: Container(
                     color: border.withValues(
                       alpha: widget.selected ? 0.55 : 0.25,
