@@ -334,6 +334,23 @@ class _EditSurfaceState extends State<EditSurface> {
     _timelineFocusNode.requestFocus();
   }
 
+  void _setSelectedAudioGain(
+    EditSurfaceClip selected,
+    ClipAudioGain gain,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.setAudioGain(selected.trackId, selected.id, gain);
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _setSelectedMuted(EditSurfaceClip selected, bool muted) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return current.setMuted(selected.trackId, selected.id, muted);
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
     if (!_timelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
@@ -746,6 +763,13 @@ class _EditSurfaceState extends State<EditSurface> {
                 EditClipInspector(
                   clip: selected,
                   theme: widget.theme,
+                  onAudioGainChanged: selected == null
+                      ? null
+                      : (ClipAudioGain gain) =>
+                          _setSelectedAudioGain(selected, gain),
+                  onMutedChanged: selected == null
+                      ? null
+                      : (bool muted) => _setSelectedMuted(selected, muted),
                   onDelete:
                       selected == null ? null : () => _deleteSelected(document),
                 ),
