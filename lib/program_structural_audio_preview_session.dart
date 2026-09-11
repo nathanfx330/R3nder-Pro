@@ -25,6 +25,19 @@ import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 import 'structural_sequence.dart';
 
+/// One process can own more than one preview session at once: dashboard PREVIEW
+/// lives at app level while TEXT authoring owns its own prepared/replay session.
+/// A PID-only temp name therefore aliases two independent artifacts. Keep a
+/// process-local serial in the filename so one session can never overwrite or
+/// delete another session's prepared program WAV.
+int _programStructuralPreviewArtifactSerial = 0;
+
+String _nextProgramStructuralPreviewArtifactPath(String tempDirectory) {
+  final int serial = _programStructuralPreviewArtifactSerial++;
+  return '$tempDirectory${Platform.pathSeparator}'
+      '.r3nder_struct_preview_audio_${pid}_$serial.wav';
+}
+
 /// Exact program facts PREVIEW needs before it may start its audio transport.
 ///
 /// [audioStartFrame] is the same historical workspace-bed anchor BAKE derives:
@@ -121,8 +134,9 @@ class ProgramStructuralAudioPreviewArtifact {
 ///
 /// [tempDirectory] is supplied by the caller rather than guessed here. The app
 /// can use the operating-system temp directory while tests own an isolated temp
-/// tree. The fixed per-process filename is safe because R3nder runs one PREVIEW
-/// at a time; a stale file from an interrupted run is removed before writing.
+/// tree. Every preparation gets its own filename. Dashboard PREVIEW and TEXT
+/// authoring are separate session owners and may overlap in lifetime even when
+/// only one of them is actively audible, so a PID-only filename is not safe.
 Future<ProgramStructuralAudioPreviewArtifact?>
     prepareProgramStructuralAudioPreviewArtifact({
   required SceneEngine scene,
@@ -162,13 +176,10 @@ Future<ProgramStructuralAudioPreviewArtifact?>
 
   final Directory dir = Directory(tempDirectory);
   if (!dir.existsSync()) dir.createSync(recursive: true);
-  final String tempPath =
-      '${dir.path}${Platform.pathSeparator}.r3nder_struct_preview_audio_$pid.wav';
+  final String tempPath = _nextProgramStructuralPreviewArtifactPath(dir.path);
   final File tempFile = File(tempPath);
 
   try {
-    if (tempFile.existsSync()) tempFile.deleteSync();
-
     final StructuralAudioSourceRenderer sourceRenderer =
         StructuralAudioSourceRenderer(
       planner: StructuralAudioPlanner.parse(rawDocument),
