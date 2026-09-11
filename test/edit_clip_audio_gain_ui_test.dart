@@ -14,7 +14,7 @@ const String _source = '''[EDIT:main]
 ''';
 
 class _GainHarness extends StatefulWidget {
-  const _GainHarness();
+  const _GainHarness({super.key});
 
   @override
   State<_GainHarness> createState() => _GainHarnessState();
