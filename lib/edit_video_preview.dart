@@ -5,9 +5,11 @@
 // R3nder owns project time, authored geometry, recursion, layer order, MOSAIC
 // pane layout, and final pixels. MLT owns persistent leaf decoders only. During
 // playback, EditWorkspace publishes ProjectClock samples at Flutter vsync. A
-// single plain EDIT leaf clip keeps the Linux external texture fast path. Any
-// structural source, overlap, transition, test backend, or unsupported platform
-// uses the deterministic CPU compositor fallback.
+// single plain EDIT leaf clip keeps the Linux external texture fast path while
+// moving. Parked work resolves through the deterministic compositor first so a
+// texture handle is never mistaken for proof that client pixels are resident.
+// Any structural source, overlap, transition, test backend, or unsupported
+// platform uses the deterministic CPU compositor fallback.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -496,10 +498,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // Only a plain leaf EDIT clip may bypass Dart pixels. MOSAIC and nested
-    // structural sources must pass through the deterministic compositor.
+    // Only a moving plain leaf EDIT clip may bypass Dart pixels. A texture
+    // request returns a registered texture handle immediately; it does not prove
+    // that the requested client frame has actually decoded into that texture.
+    // Parked STRUCT entry work therefore goes through the exact compositor once
+    // before the fast path is allowed to take over. That makes
+    // onFirstFrameReady mean resident pixels rather than "texture exists".
     final _NativeTextureTarget? textureTarget =
-        _singleNativeTextureTarget(projectFrame);
+        moving ? _singleNativeTextureTarget(projectFrame) : null;
     final MediaLayer? layer = _layer;
     if (textureTarget != null && layer != null) {
       int? textureId;
