@@ -51,10 +51,14 @@ class EditClipInspector extends StatelessWidget {
       children: [
         R3MicroLabel('CLIP INSPECTOR', theme: theme, accent: true),
         SizedBox(height: sc(14)),
-        Text(
-          'Select a clip in the timeline to inspect its authored properties.',
-          key: const ValueKey<String>('edit-inspector-empty'),
-          style: theme.fine.copyWith(color: R3Theme.textDim),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Text(
+              'Select a clip in the timeline to inspect its authored properties.',
+              key: const ValueKey<String>('edit-inspector-empty'),
+              style: theme.fine.copyWith(color: R3Theme.textDim),
+            ),
+          ),
         ),
       ],
     );
@@ -69,7 +73,7 @@ class EditClipInspector extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         R3MicroLabel('CLIP INSPECTOR', theme: theme, accent: true),
-        SizedBox(height: sc(12)),
+        SizedBox(height: sc(10)),
         Text(
           selected.id,
           key: const ValueKey<String>('edit-inspector-clip-id'),
@@ -80,22 +84,32 @@ class EditClipInspector extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        SizedBox(height: sc(12)),
-        _field('SOURCE', selected.source,
-            key: 'edit-inspector-source'),
-        _field('TRACK', selected.trackId,
-            key: 'edit-inspector-track'),
-        _field('TIMELINE START', 'F${selected.atFrame}',
-            key: 'edit-inspector-at'),
-        _field('SOURCE IN', 'F${selected.inFrame}',
-            key: 'edit-inspector-in'),
-        _field('SOURCE OUT', 'F$sourceOut',
-            key: 'edit-inspector-out'),
-        _field('DURATION', '${selected.durationFrames}F',
-            key: 'edit-inspector-duration'),
-        _field('SPEED', '${selected.speed}X',
-            key: 'edit-inspector-speed'),
-        const Spacer(),
+        SizedBox(height: sc(10)),
+        Expanded(
+          child: SingleChildScrollView(
+            key: const ValueKey<String>('edit-inspector-properties-scroll'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _field('SOURCE', selected.source,
+                    key: 'edit-inspector-source'),
+                _field('TRACK', selected.trackId,
+                    key: 'edit-inspector-track'),
+                _field('TIMELINE START', 'F${selected.atFrame}',
+                    key: 'edit-inspector-at'),
+                _field('SOURCE IN', 'F${selected.inFrame}',
+                    key: 'edit-inspector-in'),
+                _field('SOURCE OUT', 'F$sourceOut',
+                    key: 'edit-inspector-out'),
+                _field('DURATION', '${selected.durationFrames}F',
+                    key: 'edit-inspector-duration'),
+                _field('SPEED', '${selected.speed}X',
+                    key: 'edit-inspector-speed'),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(height: sc(8)),
         SizedBox(
           height: sc(34),
           child: OutlinedButton.icon(
@@ -113,6 +127,8 @@ class EditClipInspector extends StatelessWidget {
         SizedBox(height: sc(6)),
         Text(
           'Delete removes only this authored CLIP block. Timeline gaps remain.',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: theme.micro.copyWith(color: R3Theme.textDim),
         ),
       ],
