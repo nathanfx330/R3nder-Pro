@@ -16,7 +16,7 @@ import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 
-const int kStructuralSourceAudioCacheSchemaVersion = 1;
+const int kStructuralSourceAudioCacheSchemaVersion = 2;
 const int _kFloatWavHeaderBytes = 44;
 const int _kUint32Mask = 0xffffffff;
 
@@ -279,7 +279,9 @@ void _writePlanManifest(
         ..writeln('segment_duration=${segment.durationFrames}')
         ..writeln('segment_source_in=${segment.sourceInFrame}')
         ..writeln('segment_speed_num=${segment.speed.numerator}')
-        ..writeln('segment_speed_den=${segment.speed.denominator}');
+        ..writeln('segment_speed_den=${segment.speed.denominator}')
+        ..writeln('segment_gain_tenths_db=${segment.audioGain.tenthsDb}')
+        ..writeln('segment_muted=${segment.muted ? 1 : 0}');
       _writeFadeManifest(out, 'incoming', segment.incomingFade);
       _writeFadeManifest(out, 'outgoing', segment.outgoingFade);
 
