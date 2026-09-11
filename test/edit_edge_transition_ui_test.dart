@@ -70,34 +70,27 @@ Widget _host(ValueChanged<String> onSourceChanged) {
   );
 }
 
-Future<void> _secondaryTap(WidgetTester tester, Finder finder) async {
-  await tester.tap(
-    finder,
-    buttons: kSecondaryMouseButton,
-    kind: PointerDeviceKind.mouse,
-  );
+Future<void> _show(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('clip edge context menus own incoming and outgoing crossfades',
+  testWidgets('inspector owns incoming and outgoing crossfade authoring',
       (WidgetTester tester) async {
     String? changed;
     await tester.pumpWidget(_host((String value) => changed = value));
     await tester.pumpAndSettle();
 
-    expect(find.text('XFADE'), findsNothing);
+    await tester.tap(find.text('intro'));
+    await tester.pumpAndSettle();
 
-    final Finder inHandle = find.byKey(
-      const ValueKey<String>('edit-clip-V1-intro-in-handle'),
-    );
-    expect(inHandle, findsOneWidget);
-
-    await _secondaryTap(tester, inHandle);
-    expect(find.text('XFADE IN'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-xfade-in-12')),
-    );
+    final Finder incoming =
+        find.byKey(const ValueKey<String>('edit-inspector-transition-in-menu'));
+    await _show(tester, incoming);
+    await tester.tap(incoming);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('CROSSFADE 12 FRAMES'));
     await tester.pumpAndSettle();
 
     expect(changed, contains('[#EDIT_TRANSITION:CROSSFADE:12]'));
@@ -109,16 +102,12 @@ void main() {
       findsOneWidget,
     );
 
-    final Finder outHandle = find.byKey(
-      const ValueKey<String>('edit-clip-V1-intro-out-handle'),
-    );
-    expect(outHandle, findsOneWidget);
-
-    await _secondaryTap(tester, outHandle);
-    expect(find.text('XFADE OUT'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-xfade-out-24')),
-    );
+    final Finder outgoing =
+        find.byKey(const ValueKey<String>('edit-inspector-transition-out-menu'));
+    await _show(tester, outgoing);
+    await tester.tap(outgoing);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('CROSSFADE 24 FRAMES'));
     await tester.pumpAndSettle();
 
     expect(changed, contains('[#EDIT_TRANSITION:CROSSFADE:12]'));
@@ -131,35 +120,28 @@ void main() {
     );
   });
 
-  testWidgets('right edge context menu clears only outgoing crossfade',
+  testWidgets('secondary click on trim edge no longer opens transition authoring',
       (WidgetTester tester) async {
-    String? changed;
-    await tester.pumpWidget(_host((String value) => changed = value));
+    await tester.pumpWidget(_host((_) {}));
     await tester.pumpAndSettle();
 
-    final Finder outHandle = find.byKey(
-      const ValueKey<String>('edit-clip-V1-intro-out-handle'),
+    final Finder inHandle = find.byKey(
+      const ValueKey<String>('edit-clip-V1-intro-in-handle'),
     );
+    expect(inHandle, findsOneWidget);
 
-    await _secondaryTap(tester, outHandle);
     await tester.tap(
-      find.byKey(const ValueKey<String>('edit-xfade-out-12')),
-    );
-    await tester.pumpAndSettle();
-    expect(changed, contains('[#EDIT_TRANSITION_OUT:CROSSFADE:12]'));
-
-    await _secondaryTap(tester, outHandle);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-xfade-out-clear')),
+      inHandle,
+      buttons: kSecondaryMouseButton,
+      kind: PointerDeviceKind.mouse,
     );
     await tester.pumpAndSettle();
 
-    expect(changed, isNot(contains('[#EDIT_TRANSITION_OUT:CROSSFADE:')));
+    expect(find.text('XFADE IN'), findsNothing);
+    expect(find.text('XFADE OUT'), findsNothing);
     expect(
-      find.byKey(
-        const ValueKey<String>('edit-clip-V1-intro-out-transition'),
-      ),
-      findsNothing,
+      find.byKey(const ValueKey<String>('edit-inspector-transition-in-menu')),
+      findsOneWidget,
     );
   });
 }
