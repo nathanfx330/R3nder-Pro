@@ -18,6 +18,8 @@
 //   * nested EDIT/MOSAIC sources recurse as rendered project-time PCM;
 //   * speed is pitch-following resampling, not time stretching;
 //   * interpolation is pinned to linear interpolation;
+//   * authored CLIP gain is one constant linear scalar per segment;
+//   * MUTE is exact digital zero and preserves the authored gain beneath it;
 //   * fade gain comes only from Stage 1A's midpoint equal-power contract;
 //   * lane and segment accumulation follow the deterministic plan order;
 //   * accumulation rounds to float32 after every contributor addition;
@@ -32,7 +34,7 @@ import 'dart:typed_data';
 import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 
-const int kStructuralAudioSourceRendererSchemaVersion = 1;
+const int kStructuralAudioSourceRendererSchemaVersion = 2;
 const int _kFloatWavFormatCode = 3;
 const int _kFloatWavBitsPerSample = 32;
 const int _kFloatWavHeaderBytes = 44;
@@ -328,8 +330,10 @@ double _segmentGain(
   StructuralAudioSegment segment,
   int localSample,
 ) {
+  if (segment.muted) return 0.0;
+
   final int absoluteSample = segment.projectStartSample + localSample;
-  double gain = 1.0;
+  double gain = segment.audioGain.linearMultiplier;
 
   final StructuralAudioFade? incoming = segment.incomingFade;
   if (incoming != null &&
