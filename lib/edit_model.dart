@@ -789,7 +789,18 @@ EditClip _parseClip(ScriptCstBlock block) {
       );
     }
 
-    if (token == 'MUTE') {
+    final int equals = token.indexOf('=');
+    final String key = equals < 0
+        ? token
+        : token.substring(0, equals).trim();
+
+    if (key == 'MUTE') {
+      if (token != 'MUTE') {
+        throw EditLanguageFormatException(
+          'CLIP MUTE is a bare flag and cannot have a value.',
+          block.startOffset,
+        );
+      }
       if (sawMute) {
         throw EditLanguageFormatException(
           'CLIP MUTE may appear at most once.',
@@ -801,7 +812,13 @@ EditClip _parseClip(ScriptCstBlock block) {
       continue;
     }
 
-    if (token.startsWith('GAIN=')) {
+    if (key == 'GAIN') {
+      if (!token.startsWith('GAIN=') || token.length == 'GAIN='.length) {
+        throw EditLanguageFormatException(
+          'CLIP GAIN requires a value, for example GAIN=-6.0.',
+          block.startOffset,
+        );
+      }
       if (sawGain) {
         throw EditLanguageFormatException(
           'CLIP GAIN may appear at most once.',
@@ -814,6 +831,7 @@ EditClip _parseClip(ScriptCstBlock block) {
       } on FormatException catch (error) {
         throw EditLanguageFormatException('${error.message}', block.startOffset);
       }
+      continue;
     }
   }
 
