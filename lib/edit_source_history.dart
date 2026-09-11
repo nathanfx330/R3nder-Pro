@@ -2,10 +2,16 @@
 //
 // Transient undo/redo history for the source-backed EDIT surface.
 //
-// History never becomes project state. Each entry is an exact authored script
-// snapshot plus the transient clip selection that was active at that moment.
-// Restoring history therefore means restoring canonical source text, not
-// replaying or reversing individual editing operations.
+// History never becomes project state. Each entry restores one exact complete
+// authored script snapshot. It may also retain transient UI restoration
+// metadata, such as the clip selection that was active at that moment, because
+// selection is view state rather than authored creative state.
+//
+// The boundary is strict: the only project state history may restore is the
+// exact authored source snapshot. History must never reconstruct, invert, or
+// independently model CLIP state. Restoring history therefore means restoring
+// canonical source text, then restoring useful transient view context around
+// that text.
 
 class EditSourceSnapshot {
   final String source;
