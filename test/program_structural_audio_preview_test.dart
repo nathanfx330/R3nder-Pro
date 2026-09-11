@@ -37,7 +37,8 @@ void main() {
             '[r3prevvoice][r3prevmusic][r3prevstruct]'
             'amix=inputs=3:normalize=0:dropout_transition=0:'
             'duration=longest[r3mixpre];'
-            '[r3mixpre]atrim=end_sample=96000,asetpts=N/SR/TB'
+            '[r3mixpre]aresample=48000,'
+            'atrim=end_sample=96000,asetpts=N/SR/TB'
             '[r3previewmix]',
         '-map',
         '[r3previewmix]',
@@ -65,7 +66,8 @@ void main() {
     expect(args, isNot(contains('-stream_loop')));
     expect(
       args[args.indexOf('-filter_complex') + 1],
-      '[0:a]volume=0.00dB,atrim=end_sample=48000,asetpts=N/SR/TB'
+      '[0:a]volume=0.00dB,aresample=48000,'
+      'atrim=end_sample=48000,asetpts=N/SR/TB'
       '[r3previewmix]',
     );
     expect(
@@ -74,7 +76,7 @@ void main() {
     );
   });
 
-  test('authoring start trims the aligned source mix at an exact sample', () {
+  test('authoring seek canonicalizes rate before exact sample trim', () {
     final List<String> args = buildProgramStructuralAudioPreviewArgs(
       structuralAudioPath: '/tmp/edit.wav',
       programSampleFrames: 96000,
@@ -85,8 +87,30 @@ void main() {
     expect(
       args[args.indexOf('-filter_complex') + 1],
       '[0:a]volume=0.00dB,'
+      'aresample=48000,'
       'atrim=start_sample=32000:end_sample=96000,asetpts=N/SR/TB'
       '[r3previewmix]',
+    );
+  });
+
+  test('mixed authoring seek trims only after canonical 48 kHz conversion', () {
+    final List<String> args = buildProgramStructuralAudioPreviewArgs(
+      structuralAudioPath: '/tmp/program.wav',
+      programSampleFrames: 192000,
+      startSampleFrame: 96000,
+      bedDelayMs: 0,
+      voicePath: '/workspace/audio/voice-44100.wav',
+    );
+
+    final String graph = args[args.indexOf('-filter_complex') + 1];
+    expect(graph, contains('[r3mixpre]aresample=48000,'));
+    expect(
+      graph,
+      contains('aresample=48000,atrim=start_sample=96000:'),
+    );
+    expect(
+      graph.indexOf('aresample=48000'),
+      lessThan(graph.indexOf('atrim=start_sample=96000')),
     );
   });
 
