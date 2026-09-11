@@ -30,7 +30,8 @@ void main() {
   test('deleting first clip does not ripple or rewrite surviving neighbor', () {
     final EditSurfaceDocument document =
         EditSurfaceDocument.parse(_source, 'main');
-    final String middleBlock = document.clip('V1', 'middle').clip.block.source;
+    final String middleBlock =
+        document.clip('V1', 'middle').clip.block.rawSource;
 
     final String next = document.deleteClip('V1', 'first');
     final EditSurfaceDocument reparsed =
@@ -43,7 +44,7 @@ void main() {
       middle.transition,
       const EditTransition.crossfade(6),
     );
-    expect(middle.clip.block.source, middleBlock);
+    expect(middle.clip.block.rawSource, middleBlock);
     expect(next, isNot(contains('[#UNKNOWN:FIRST:BODY]')));
     expect(next, contains('[#UNKNOWN:MIDDLE:BODY]'));
   });
@@ -51,15 +52,17 @@ void main() {
   test('deleting last clip leaves earlier authored blocks byte identical', () {
     final EditSurfaceDocument document =
         EditSurfaceDocument.parse(_source, 'main');
-    final String firstBlock = document.clip('V1', 'first').clip.block.source;
-    final String middleBlock = document.clip('V1', 'middle').clip.block.source;
+    final String firstBlock =
+        document.clip('V1', 'first').clip.block.rawSource;
+    final String middleBlock =
+        document.clip('V1', 'middle').clip.block.rawSource;
 
     final String next = document.deleteClip('V1', 'last');
     final EditSurfaceDocument reparsed =
         EditSurfaceDocument.parse(next, 'main');
 
-    expect(reparsed.clip('V1', 'first').clip.block.source, firstBlock);
-    expect(reparsed.clip('V1', 'middle').clip.block.source, middleBlock);
+    expect(reparsed.clip('V1', 'first').clip.block.rawSource, firstBlock);
+    expect(reparsed.clip('V1', 'middle').clip.block.rawSource, middleBlock);
     expect(next, isNot(contains('[#UNKNOWN:LAST:BODY]')));
   });
 
