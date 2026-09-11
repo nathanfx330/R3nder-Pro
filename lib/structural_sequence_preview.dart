@@ -16,6 +16,16 @@
 // presentable image/texture is resident. Readiness is only a visibility gate.
 // It never re-anchors or stretches authored presentation time.
 //
+// FIRST-FRAME PRELOAD CONTRACT
+//
+// A moving parent transport must not turn the invisible entry preload into a
+// moving-target nonblocking decode before one presentable frame exists. TEXT
+// can update faster than the decoder completes; if every rebuild replaces the
+// requested source frame, readiness can be starved while project audio keeps
+// advancing. Until the first frame is resident, the client therefore stays on
+// the exact parked render path. Once readiness is reported, normal fast moving
+// preview resumes without changing authored project time.
+//
 // EDITOR DIRECT-HANDOFF CONTRACT
 //
 // Top-level PREVIEW owns separate keyed StructuralSequencePreview instances for
@@ -472,13 +482,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
-                      // The main transport is already moving during zoom-out
-                      // and opening even though source time is intentionally
-                      // held at frame zero. Keep the decoder in that same moving
-                      // profile so entering showing does not switch decode size
-                      // and discard the frame-zero predecode exactly when the
-                      // authored hand-off begins.
-                      fastPreview: widget.isPlaying,
+                      // Before the first presentable frame exists, keep the
+                      // invisible entry client on EditVideoPreview's exact
+                      // parked render path. A moving nonblocking request can be
+                      // superseded every TEXT rebuild and never become ready.
+                      // Once frame zero is resident, switch to the normal fast
+                      // moving profile without changing project time.
+                      fastPreview: widget.isPlaying && _firstFrameReady,
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
                           stage == StructuralSequenceStage.opening ||
                           stage == StructuralSequenceStage.showing ||
