@@ -493,14 +493,14 @@ class _ClipTransitionControlsState extends State<_ClipTransitionControls> {
 
     if (action == 'none') {
       next = const EditTransition.none();
-    } else if (action.startsWith('xfade:')) {
-      next = EditTransition.crossfade(
-        int.parse(action.substring('xfade:'.length)),
-      );
     } else if (action == 'xfade:custom') {
       final int? frames = await _customCrossfade(current);
       if (!mounted || frames == null) return;
       next = EditTransition.crossfade(frames);
+    } else if (action.startsWith('xfade:')) {
+      next = EditTransition.crossfade(
+        int.parse(action.substring('xfade:'.length)),
+      );
     } else if (action == 'luma') {
       if (!incoming) return;
       next = await _lumaTransition(current);
