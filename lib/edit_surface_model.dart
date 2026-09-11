@@ -112,6 +112,8 @@ class EditSurfaceClip {
   int get durationFrames => clip.durationFrames;
   int get endFrameExclusive => clip.endFrameExclusive;
   ExactClipSpeed get speed => clip.speed;
+  ClipAudioGain get audioGain => clip.audioGain;
+  bool get muted => clip.muted;
 }
 
 class EditSurfaceTrack {
@@ -375,8 +377,9 @@ class EditSurfaceDocument {
   }
 
   /// Moves a complete authored CLIP block between video tracks while preserving
-  /// source IN, duration, speed, transition comments, and every other opaque
-  /// child inside that CLIP. The destination track is created on demand.
+  /// source IN, duration, speed, audio suffixes, transition comments, and every
+  /// other opaque child inside that CLIP. The destination track is created on
+  /// demand.
   String moveClipToTrack(
     String sourceTrackId,
     String clipId,
@@ -413,6 +416,7 @@ class EditSurfaceDocument {
       inFrame: selected.inFrame,
       durationFrames: selected.durationFrames,
       speed: selected.speed,
+      optionTokens: selected.clip.optionTokens,
     );
     final String body = selected.clip.block.innerSource;
     final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -531,6 +535,24 @@ class EditSurfaceDocument {
     return model.rewriteClip(selected.clip, speed: speed);
   }
 
+  String setAudioGain(
+    String trackId,
+    String clipId,
+    ClipAudioGain gain,
+  ) {
+    final EditSurfaceClip selected = clip(trackId, clipId);
+    return model.rewriteClipAudioGain(selected.clip, gain);
+  }
+
+  String setMuted(
+    String trackId,
+    String clipId,
+    bool muted,
+  ) {
+    final EditSurfaceClip selected = clip(trackId, clipId);
+    return model.rewriteClipMuted(selected.clip, muted);
+  }
+
   /// Sets the incoming (left-edge) transition. This is the original M10 API
   /// and therefore keeps the historical EDIT_TRANSITION directive spelling.
   String setTransition(
@@ -614,6 +636,7 @@ class EditSurfaceDocument {
       inFrame: editClip.inFrame,
       durationFrames: leftDuration,
       speed: editClip.speed,
+      optionTokens: editClip.optionTokens,
     );
     final String rightOpening = _clipOpeningTag(
       id: rightId,
@@ -622,10 +645,12 @@ class EditSurfaceDocument {
       inFrame: rightIn,
       durationFrames: rightDuration,
       speed: editClip.speed,
+      optionTokens: editClip.optionTokens,
     );
 
     // Edge ownership survives a split: the original IN stays with the left
-    // segment and the original OUT moves with the right segment.
+    // segment and the original OUT moves with the right segment. Clip-local
+    // audio properties remain on both resulting pieces.
     final String body = editClip.block.innerSource;
     final String leftBody = body.replaceFirst(_outgoingTransitionLine, '');
     final String rightBody = body.replaceFirst(_incomingTransitionLine, '');
@@ -725,6 +750,7 @@ class EditSurfaceDocument {
     required int inFrame,
     required int durationFrames,
     required ExactClipSpeed speed,
+    List<String> optionTokens = const <String>[],
   }) {
     return _clipOpeningTagStatic(
       id: id,
@@ -733,6 +759,7 @@ class EditSurfaceDocument {
       inFrame: inFrame,
       durationFrames: durationFrames,
       speed: speed,
+      optionTokens: optionTokens,
     );
   }
 
@@ -802,9 +829,18 @@ String _clipOpeningTagStatic({
   required int inFrame,
   required int durationFrames,
   required ExactClipSpeed speed,
+  List<String> optionTokens = const <String>[],
 }) {
-  return '[CLIP:$id:$source:$atFrame:$inFrame:$durationFrames:'
-      '${speed.canonicalMarkup}]';
+  final List<String> segments = <String>[
+    id,
+    source,
+    '$atFrame',
+    '$inFrame',
+    '$durationFrames',
+    speed.canonicalMarkup,
+    ...optionTokens,
+  ];
+  return '[CLIP:${segments.join(':')}]';
 }
 
 int _floorDiv(int numerator, int denominator) {
