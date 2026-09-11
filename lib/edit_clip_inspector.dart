@@ -10,18 +10,23 @@
 
 import 'package:flutter/material.dart';
 
+import 'edit_model.dart';
 import 'edit_surface_model.dart';
 import 'ui_theme.dart';
 
 class EditClipInspector extends StatelessWidget {
   final EditSurfaceClip? clip;
   final R3Theme theme;
+  final ValueChanged<ClipAudioGain>? onAudioGainChanged;
+  final ValueChanged<bool>? onMutedChanged;
   final VoidCallback? onDelete;
 
   const EditClipInspector({
     super.key,
     required this.clip,
     required this.theme,
+    this.onAudioGainChanged,
+    this.onMutedChanged,
     this.onDelete,
   });
 
@@ -105,6 +110,24 @@ class EditClipInspector extends StatelessWidget {
                     key: 'edit-inspector-duration'),
                 _field('SPEED', '${selected.speed}X',
                     key: 'edit-inspector-speed'),
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: sc(4)),
+                  child: const Divider(height: 1, color: R3Theme.hairline),
+                ),
+                SizedBox(height: sc(9)),
+                R3MicroLabel('AUDIO', theme: theme, accent: true),
+                SizedBox(height: sc(7)),
+                _ClipAudioControls(
+                  key: ValueKey<String>(
+                    'edit-audio-controls:${selected.trackId}:${selected.id}',
+                  ),
+                  gain: selected.audioGain,
+                  muted: selected.muted,
+                  theme: theme,
+                  onGainChanged: onAudioGainChanged,
+                  onMutedChanged: onMutedChanged,
+                ),
+                SizedBox(height: sc(10)),
               ],
             ),
           ),
@@ -152,6 +175,214 @@ class EditClipInspector extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ClipAudioControls extends StatefulWidget {
+  final ClipAudioGain gain;
+  final bool muted;
+  final R3Theme theme;
+  final ValueChanged<ClipAudioGain>? onGainChanged;
+  final ValueChanged<bool>? onMutedChanged;
+
+  const _ClipAudioControls({
+    super.key,
+    required this.gain,
+    required this.muted,
+    required this.theme,
+    required this.onGainChanged,
+    required this.onMutedChanged,
+  });
+
+  @override
+  State<_ClipAudioControls> createState() => _ClipAudioControlsState();
+}
+
+class _ClipAudioControlsState extends State<_ClipAudioControls> {
+  late double _draftDb;
+
+  @override
+  void initState() {
+    super.initState();
+    _draftDb = widget.gain.decibels;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ClipAudioControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.gain != widget.gain) {
+      _draftDb = widget.gain.decibels;
+    }
+  }
+
+  Future<void> _editNumericGain() async {
+    final TextEditingController controller = TextEditingController(
+      text: widget.gain.canonicalMarkup,
+    );
+    String? errorText;
+
+    final ClipAudioGain? next = await showDialog<ClipAudioGain>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            BuildContext context,
+            void Function(VoidCallback fn) setDialogState,
+          ) {
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Clip audio gain', style: widget.theme.value),
+              content: TextField(
+                key: const ValueKey<String>('edit-inspector-gain-field'),
+                controller: controller,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  signed: true,
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: '-60.0 to +12.0 dB',
+                  errorText: errorText,
+                ),
+                style: widget.theme.value,
+                onSubmitted: (String value) {
+                  try {
+                    Navigator.of(dialogContext).pop(
+                      ClipAudioGain.parse(value),
+                    );
+                  } on FormatException catch (error) {
+                    setDialogState(() => errorText = error.message);
+                  }
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    try {
+                      Navigator.of(dialogContext).pop(
+                        ClipAudioGain.parse(controller.text),
+                      );
+                    } on FormatException catch (error) {
+                      setDialogState(() => errorText = error.message);
+                    }
+                  },
+                  child: const Text('APPLY'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+    if (!mounted || next == null || next == widget.gain) return;
+    setState(() => _draftDb = next.decibels);
+    widget.onGainChanged?.call(next);
+  }
+
+  void _commitSlider(double value) {
+    final ClipAudioGain gain = ClipAudioGain.fromDecibels(value);
+    setState(() => _draftDb = gain.decibels);
+    if (gain != widget.gain) widget.onGainChanged?.call(gain);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('GAIN', style: widget.theme.micro),
+            const Spacer(),
+            TextButton(
+              key: const ValueKey<String>('edit-inspector-gain-value'),
+              onPressed: widget.onGainChanged == null ? null : _editNumericGain,
+              style: TextButton.styleFrom(
+                minimumSize: Size.zero,
+                padding: EdgeInsets.symmetric(
+                  horizontal: sc(6),
+                  vertical: sc(3),
+                ),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                '${_draftDb.toStringAsFixed(1)} dB',
+                style: widget.theme.fine.copyWith(color: R3Theme.textBright),
+              ),
+            ),
+            SizedBox(width: sc(4)),
+            TextButton(
+              key: const ValueKey<String>('edit-inspector-gain-reset'),
+              onPressed: widget.onGainChanged == null || widget.gain.isUnity
+                  ? null
+                  : () {
+                      setState(() => _draftDb = 0.0);
+                      widget.onGainChanged?.call(ClipAudioGain.unity);
+                    },
+              style: TextButton.styleFrom(
+                minimumSize: Size.zero,
+                padding: EdgeInsets.symmetric(
+                  horizontal: sc(5),
+                  vertical: sc(3),
+                ),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text('RESET', style: widget.theme.micro),
+            ),
+          ],
+        ),
+        Slider(
+          key: const ValueKey<String>('edit-inspector-gain-slider'),
+          min: -60.0,
+          max: 12.0,
+          divisions: 720,
+          value: _draftDb.clamp(-60.0, 12.0),
+          onChanged: widget.onGainChanged == null
+              ? null
+              : (double value) => setState(() => _draftDb = value),
+          onChangeEnd:
+              widget.onGainChanged == null ? null : _commitSlider,
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('MUTE', style: widget.theme.micro),
+                  SizedBox(height: sc(2)),
+                  Text(
+                    widget.muted ? 'MUTED' : 'AUDIBLE',
+                    key: const ValueKey<String>('edit-inspector-mute-state'),
+                    style: widget.theme.fine.copyWith(
+                      color: widget.muted
+                          ? R3Theme.warn
+                          : R3Theme.textBright,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              key: const ValueKey<String>('edit-inspector-mute'),
+              value: widget.muted,
+              onChanged: widget.onMutedChanged,
+            ),
+          ],
+        ),
+        SizedBox(height: sc(3)),
+        Text(
+          'Mute keeps the authored gain so unmuting restores the same level.',
+          style: widget.theme.micro.copyWith(color: R3Theme.textDim),
+        ),
+      ],
     );
   }
 }
