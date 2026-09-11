@@ -6,23 +6,35 @@
 // Structural CLIP sources are named EDIT.<id> or MOSAIC.<id>. This linter owns
 // reference validation, cycle detection, and the maximum nesting depth across
 // both namespaces before the compositor evaluates anything.
+//
+// CLIP suffix vocabulary is also linted here. Unknown suffixes are warnings,
+// never parse failures: source preservation allows a newer script to round trip
+// through an older build without silently pretending an unknown key worked.
 
 import 'edit_model.dart';
+
+enum EditLintSeverity {
+  warning,
+  error,
+}
 
 enum EditLintCode {
   missingEditSource,
   missingMosaicSource,
   cycle,
   nestingLimit,
+  unknownClipOption,
 }
 
 class EditLintIssue {
   final EditLintCode code;
+  final EditLintSeverity severity;
   final String message;
   final List<String> editPath;
 
   const EditLintIssue({
     required this.code,
+    this.severity = EditLintSeverity.error,
     required this.message,
     required this.editPath,
   });
@@ -33,7 +45,17 @@ class EditLintResult {
 
   const EditLintResult(this.issues);
 
-  bool get isValid => issues.isEmpty;
+  bool get isValid => issues.every(
+        (EditLintIssue issue) => issue.severity != EditLintSeverity.error,
+      );
+
+  Iterable<EditLintIssue> get warnings => issues.where(
+        (EditLintIssue issue) => issue.severity == EditLintSeverity.warning,
+      );
+
+  Iterable<EditLintIssue> get errors => issues.where(
+        (EditLintIssue issue) => issue.severity == EditLintSeverity.error,
+      );
 }
 
 class EditGraphLinter {
@@ -159,6 +181,24 @@ class EditGraphLinter {
       walk(node, const <StructuralSourceRef>[]);
     }
 
+    // Warnings are appended after graph errors so legacy callers that display
+    // the first issue continue to lead with blocking structural failures.
+    for (final StructuralSourceRef node in nodes) {
+      for (final EditClip clip in document.clipsForStructuralSource(node)) {
+        for (final String rawToken in clip.unknownOptionTokens) {
+          final String key = _clipOptionKey(rawToken);
+          emit(
+            EditLintIssue(
+              code: EditLintCode.unknownClipOption,
+              severity: EditLintSeverity.warning,
+              message: 'CLIP "${clip.id}" has unknown option "$key".',
+              editPath: <String>[node.graphLabel, clip.id],
+            ),
+          );
+        }
+      }
+    }
+
     return EditLintResult(List<EditLintIssue>.unmodifiable(issues));
   }
 
@@ -173,4 +213,11 @@ class EditGraphLinter {
     if (ref == null || ref.kind != StructuralSourceKind.mosaic) return null;
     return ref.id;
   }
+}
+
+String _clipOptionKey(String rawToken) {
+  final String token = rawToken.trim();
+  final int equals = token.indexOf('=');
+  if (equals <= 0) return token;
+  return token.substring(0, equals).trim();
 }
