@@ -14,6 +14,8 @@ import 'engine.dart';
 import 'native_media_probe.dart';
 import 'session_store.dart';
 
+export 'edit_video_preview.dart' show resolveWorkspaceMediaSource;
+
 class ImportedEditVideo {
   final String authoredSource;
   final String resolvedPath;
