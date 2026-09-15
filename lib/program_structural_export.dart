@@ -9,6 +9,11 @@
 // exact EDIT/MOSAIC pixels, and composites the same authored desktop/window
 // choreography used by live Preview.
 //
+// CARD CUE presentation is composited into the structural client image before
+// that client is placed into the desktop/window choreography. Preview and BAKE
+// therefore use card_overlay.dart for the same explicit-time panel drawing;
+// decoder readiness can delay a bake call but cannot move the CARD or source.
+//
 // Structural application planning is already baked into each placement:
 // standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
 // and windowed/fullscreen geometry all use the same event budget Preview sees.
@@ -23,6 +28,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'card_overlay.dart';
+import 'edit_model.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
@@ -94,6 +101,8 @@ class ProgramStructuralFrameRenderer {
   final String Function(String source) resolveSource;
 
   final List<StructuralSequencePlacement> _placements;
+  final EditDocumentModel _editModel;
+  final CardOverlayImageCache _cardImages;
   final Map<String, StructuralSourceFrameRenderer> _sourceRenderers =
       <String, StructuralSourceFrameRenderer>{};
 
@@ -109,7 +118,9 @@ class ProgramStructuralFrameRenderer {
     required this.height,
     required this.backend,
     required this.resolveSource,
-  }) : _placements = parseStructuralSequencePlacements(rawDocument) {
+  })  : _placements = parseStructuralSequencePlacements(rawDocument),
+        _editModel = EditDocumentModel.parse(rawDocument),
+        _cardImages = CardOverlayImageCache(resolveSource) {
     if (width <= 0 || height <= 0) {
       throw ArgumentError('Program structural render size must be positive.');
     }
@@ -178,6 +189,7 @@ class ProgramStructuralFrameRenderer {
       sourceImage = await _imageForSourceFrame(
         placement.sourceRef.canonicalSource,
         visual.sourceFrame,
+        fontFamily,
       );
       defaultBottomOverlay = _cachedDiagnosticLabel;
     }
@@ -233,6 +245,7 @@ class ProgramStructuralFrameRenderer {
   Future<ui.Image> _imageForSourceFrame(
     String source,
     int sourceFrame,
+    String fontFamily,
   ) async {
     final ui.Image? cached = _cachedSourceImage;
     if (cached != null &&
@@ -258,12 +271,42 @@ class ProgramStructuralFrameRenderer {
         renderer.renderFrameDetailed(sourceFrame);
     final ui.Image decoded = await _decodeRgba(rendered.rgba, width, height);
 
+    ui.Image finalImage = decoded;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (root != null && root.id.isNotEmpty && _editModel.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacements(_editModel, root, sourceFrame);
+      if (overlays.any((StructuralCardOverlayPlacement p) => p.slide > 0.0)) {
+        await _cardImages.ensure(overlays);
+        final ui.PictureRecorder recorder = ui.PictureRecorder();
+        final Canvas canvas = Canvas(
+          recorder,
+          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+        );
+        canvas.drawImage(decoded, Offset.zero, Paint());
+        paintStructuralCardOverlays(
+          canvas: canvas,
+          size: Size(width.toDouble(), height.toDouble()),
+          placements: overlays,
+          images: _cardImages,
+          fontFamily: fontFamily,
+        );
+        final ui.Picture picture = recorder.endRecording();
+        try {
+          finalImage = await picture.toImage(width, height);
+        } finally {
+          picture.dispose();
+          decoded.dispose();
+        }
+      }
+    }
+
     _cachedSourceImage?.dispose();
-    _cachedSourceImage = decoded;
+    _cachedSourceImage = finalImage;
     _cachedSource = source;
     _cachedSourceFrame = sourceFrame;
     _cachedDiagnosticLabel = rendered.diagnosticLabel(source);
-    return decoded;
+    return finalImage;
   }
 
   Future<ui.Image> _decodeRgba(
@@ -472,7 +515,8 @@ class ProgramStructuralFrameRenderer {
 
     final double labelMax = math.max(
       0.0,
-      rightX - (header.left + horizontalPad) -
+      rightX -
+          (header.left + horizontalPad) -
           (right == null ? 0.0 : 10.0 * s),
     );
     left.layout(maxWidth: labelMax);
@@ -526,6 +570,7 @@ class ProgramStructuralFrameRenderer {
     _cachedSourceImage?.dispose();
     _cachedSourceImage = null;
     _cachedDiagnosticLabel = '';
+    _cardImages.dispose();
     for (final StructuralSourceFrameRenderer renderer
         in _sourceRenderers.values) {
       renderer.dispose();
@@ -634,9 +679,7 @@ class _StructuralProgramVisual {
             presentationRect,
             eased,
           )!;
-          terminalOpacity = placement.chainedFromPrevious
-              ? 0.0
-              : 1.0 - eased;
+          terminalOpacity = placement.chainedFromPrevious ? 0.0 : 1.0 - eased;
           structuralOpacity = Curves.easeOutCubic.transform(
             (linear * 2.2).clamp(0.0, 1.0),
           );
