@@ -57,6 +57,11 @@ class ScriptLinter {
   ///
   /// FRAME belongs to sprite text files rather than scripts, but it turns
   /// up in prose often enough that flagging it would be noise.
+  ///
+  /// CUE and SIDECARD are CLIP-local structural presentation source. They are
+  /// intentionally not terminal tags: the EDIT cue parser owns them and the
+  /// terminal must never suspend or type them. Ordinary CARD remains in the
+  /// terminal grammar because it is also a valid top-level TEXT presentation.
   static const Set<String> _nonGrammarKeywords = {
     'DEF_MENU', '/DEF_MENU',
     'ITEM', '/ITEM',
@@ -71,6 +76,8 @@ class ScriptLinter {
     'MOSAIC', '/MOSAIC',
     'PANE', '/PANE',
     'STRUCT',
+    'CUE', '/CUE',
+    'SIDECARD', '/SIDECARD',
   };
 
   /// Every tag keyword the grammar knows.
