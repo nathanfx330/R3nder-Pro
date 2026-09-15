@@ -15,6 +15,7 @@
 // this file gives the inner source just enough meaning for deterministic
 // structural presentation.
 
+import 'card_presentation.dart';
 import 'edit_model.dart';
 import 'parser.dart' show tagRegex;
 import 'presentation_requests.dart';
@@ -54,6 +55,33 @@ class EditCardCue {
   final String rawSource;
 }
 
+/// One CARD cue that is actually visible at a specific structural frame.
+///
+/// The trigger belongs to the source-relative CLIP body, but after it fires the
+/// CARD presentation is evaluated from structural time and is allowed to
+/// continue across a later cut. The containing EDIT/PANE, not the anchor CLIP,
+/// clips its lifetime. This keeps the trigger attached to content without
+/// making the owning clip a second presentation-duration authority.
+class ActiveEditCardCue {
+  const ActiveEditCardCue({
+    required this.clip,
+    required this.cue,
+    required this.triggerProjectFrame,
+    required this.localFrame,
+    required this.presentationFrame,
+  });
+
+  final EditClip clip;
+  final EditCardCue cue;
+  final int triggerProjectFrame;
+
+  /// Frame age inside the CARD presentation, zero on the trigger frame.
+  final int localFrame;
+
+  /// Pure CARD visual state for [localFrame].
+  final CardPresentationFrame presentationFrame;
+}
+
 final RegExp _cueOpening = RegExp(r'\[CUE:(\d+)\]');
 final RegExp _comment = RegExp(r'\[#.*?\]\n?', dotAll: true);
 const String _cueClosing = '[/CUE]';
@@ -83,7 +111,7 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
       }
 
       final int sourceFrame = int.parse(opening.group(1)!);
-      int contentAt = _skipWhitespace(source, opening.end);
+      final int contentAt = _skipWhitespace(source, opening.end);
 
       final RegExpMatch? presentation =
           tagRegex.matchAsPrefix(source, contentAt) as RegExpMatch?;
@@ -148,6 +176,74 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
   }
 
   return List<EditCardCue>.unmodifiable(cues);
+}
+
+/// Returns every CARD cue visible in [edit] at [projectFrame].
+///
+/// Authored order is the deterministic stacking rule for v1: tracks are
+/// visited in source order, clips in source order, cues in body order. A later
+/// active cue therefore follows an earlier one in the returned list and may be
+/// painted on top without inventing a z-order language.
+List<ActiveEditCardCue> activeCardCuesForEdit(
+  EditSequence edit,
+  int projectFrame,
+) {
+  if (projectFrame < 0 || projectFrame >= edit.projectFrameCount) {
+    return const <ActiveEditCardCue>[];
+  }
+
+  return _activeCardCues(
+    edit.tracks.expand((EditTrack track) => track.clips),
+    projectFrame,
+  );
+}
+
+/// Returns every CARD cue visible in one MOSAIC pane at [projectFrame].
+///
+/// The pane is the presentation lifetime boundary. A cue may survive the cut
+/// from its anchor clip into the next clip in the same pane, but it cannot leak
+/// beyond the pane's authored frame count or into another pane.
+List<ActiveEditCardCue> activeCardCuesForPane(
+  MosaicPane pane,
+  int projectFrame,
+) {
+  if (projectFrame < 0 || projectFrame >= pane.projectFrameCount) {
+    return const <ActiveEditCardCue>[];
+  }
+
+  return _activeCardCues(pane.clips, projectFrame);
+}
+
+List<ActiveEditCardCue> _activeCardCues(
+  Iterable<EditClip> clips,
+  int projectFrame,
+) {
+  final List<ActiveEditCardCue> active = <ActiveEditCardCue>[];
+
+  for (final EditClip clip in clips) {
+    for (final EditCardCue cue in parseClipCardCues(clip)) {
+      final int? trigger = cueProjectFrame(clip, cue.sourceFrame);
+      if (trigger == null || projectFrame < trigger) continue;
+
+      final int localFrame = projectFrame - trigger;
+      final CardPresentationFrame? presentationFrame = CardPresentationTiming(
+        holdFrames: cue.card.holdFrames,
+      ).frameAt(localFrame);
+      if (presentationFrame == null) continue;
+
+      active.add(
+        ActiveEditCardCue(
+          clip: clip,
+          cue: cue,
+          triggerProjectFrame: trigger,
+          localFrame: localFrame,
+          presentationFrame: presentationFrame,
+        ),
+      );
+    }
+  }
+
+  return List<ActiveEditCardCue>.unmodifiable(active);
 }
 
 /// Returns the project-frame offset inside [clip] where [cueSourceFrame]
