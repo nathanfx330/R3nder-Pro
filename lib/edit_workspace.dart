@@ -1083,6 +1083,10 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final String next = appendStructuralSequencePlacement(
         rawDocument: _workingSource,
         sourceRef: selected,
+        // ADD TO SEQUENCE is a GUI authoring choice: new placements begin
+        // audible. The lower-level API keeps clipAudio=false so non-UI callers
+        // must still opt into placement-owned clip audio explicitly.
+        clipAudio: true,
       );
       _applySourceChange(next, selectSource: selected.canonicalSource);
     } catch (error) {
