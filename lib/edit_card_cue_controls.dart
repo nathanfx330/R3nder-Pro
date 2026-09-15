@@ -160,16 +160,21 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Row(
                         children: [
                           Expanded(
-                            child: TextFormField(
+                            child: KeyedSubtree(
                               key: ValueKey<String>(
-                                'edit-card-cue-image-field:$imageDraft',
+                                'edit-card-cue-image-draft:$imageDraft',
                               ),
-                              initialValue: imageDraft,
-                              decoration: const InputDecoration(
-                                labelText: 'Image in workspace images/',
+                              child: TextFormField(
+                                key: const ValueKey<String>(
+                                  'edit-card-cue-image-field',
+                                ),
+                                initialValue: imageDraft,
+                                decoration: const InputDecoration(
+                                  labelText: 'Image in workspace images/',
+                                ),
+                                style: widget.theme.value,
+                                onChanged: (String value) => imageDraft = value,
                               ),
-                              style: widget.theme.value,
-                              onChanged: (String value) => imageDraft = value,
                             ),
                           ),
                           SizedBox(width: sc(8)),
