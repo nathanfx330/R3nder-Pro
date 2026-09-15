@@ -174,7 +174,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                     children: [
                       Row(
                         children: [
-                          Expanded(child: Text('PRESENTATION', style: widget.theme.micro)),
+                          Expanded(
+                            child: Text(
+                              'PRESENTATION',
+                              style: widget.theme.micro,
+                            ),
+                          ),
                           PopupMenuButton<bool>(
                             key: const ValueKey<String>('edit-card-cue-style-menu'),
                             tooltip: 'Card presentation style',
@@ -195,42 +200,43 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                 child: Text('SIDE CARD + VIDEO WINDOW'),
                               ),
                             ],
-                            child: Container(
-                              key: const ValueKey<String>('edit-card-cue-style'),
-                              constraints: BoxConstraints(minWidth: sc(190)),
-                              padding: EdgeInsets.symmetric(
-                                horizontal: sc(9),
-                                vertical: sc(7),
-                              ),
-                              decoration: BoxDecoration(
-                                color: R3Theme.bg,
-                                border: Border.all(color: R3Theme.hairline),
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      sideDraft
-                                          ? 'SIDE CARD + VIDEO WINDOW'
-                                          : 'FULLSCREEN CARD',
-                                      key: const ValueKey<String>(
-                                        'edit-card-cue-style-value',
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: widget.theme.micro.copyWith(
-                                        color: R3Theme.textBright,
+                            child: SizedBox(
+                              width: sc(210),
+                              child: Container(
+                                key: const ValueKey<String>('edit-card-cue-style'),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: sc(9),
+                                  vertical: sc(7),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: R3Theme.bg,
+                                  border: Border.all(color: R3Theme.hairline),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        sideDraft
+                                            ? 'SIDE CARD + VIDEO WINDOW'
+                                            : 'FULLSCREEN CARD',
+                                        key: const ValueKey<String>(
+                                          'edit-card-cue-style-value',
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: widget.theme.micro.copyWith(
+                                          color: R3Theme.textBright,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const Icon(
-                                    Icons.arrow_drop_down,
-                                    size: 15,
-                                    color: R3Theme.textDim,
-                                  ),
-                                ],
+                                    const Icon(
+                                      Icons.arrow_drop_down,
+                                      size: 15,
+                                      color: R3Theme.textDim,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
