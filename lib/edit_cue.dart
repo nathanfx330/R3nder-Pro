@@ -73,7 +73,8 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
   int cursor = 0;
   while (cursor < source.length) {
     if (source.startsWith('[CUE:', cursor)) {
-      final RegExpMatch? opening = _cueOpening.matchAsPrefix(source, cursor);
+      final RegExpMatch? opening =
+          _cueOpening.matchAsPrefix(source, cursor) as RegExpMatch?;
       if (opening == null) {
         throw EditCueFormatException(
           'CUE requires one non-negative integer source frame.',
@@ -135,7 +136,8 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
         continue;
       }
 
-      final RegExpMatch? comment = _comment.matchAsPrefix(source, cursor);
+      final RegExpMatch? comment =
+          _comment.matchAsPrefix(source, cursor) as RegExpMatch?;
       if (comment != null) {
         cursor = comment.end;
         continue;
