@@ -62,18 +62,21 @@ Widget _preview({
   required MediaDecoderBackend backend,
 }) {
   return MaterialApp(
-    home: SizedBox(
-      width: 800,
-      height: 500,
-      child: StructuralSequencePreview(
-        rawDocument: _source,
-        placement: placement,
-        localFrame: localFrame,
-        isPlaying: false,
-        theme: R3Theme.of(Colors.green),
-        wallpaper: null,
-        backend: backend,
-        resolveSource: _resolve,
+    home: Align(
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: 800,
+        height: 500,
+        child: StructuralSequencePreview(
+          rawDocument: _source,
+          placement: placement,
+          localFrame: localFrame,
+          isPlaying: false,
+          theme: R3Theme.of(Colors.green),
+          wallpaper: null,
+          backend: backend,
+          resolveSource: _resolve,
+        ),
       ),
     ),
   );
@@ -150,9 +153,11 @@ void main() {
       );
       expect(client.renderSideCardsInClient, isFalse);
 
-      const Size host = Size(800, 500);
-      const double renderHeight = 450;
-      const Rect renderFrame = Rect.fromLTWH(0, 25, 800, renderHeight);
+      // The Align above deliberately pins an 800x500 preview at global (0,0).
+      // StructuralSequencePreview therefore fits its 16:9 program frame to
+      // 800x450 with 25px letterbox bars, independent of the test runner's
+      // default 800x600 RenderView.
+      const Rect renderFrame = Rect.fromLTWH(0, 25, 800, 450);
       final Rect expectedWindow = sideCardSeatedVideoWindowRect(
         renderFrame.size,
       ).shift(renderFrame.topLeft);
