@@ -9,11 +9,15 @@
 // moves, trims, slips, and exact rational speed changes without introducing a
 // second project clock.
 //
-// V1 accepts CARD only. The parser is intentionally separate from the
-// structural CST: CUE is content inside a CLIP body, not another track/layer
-// owner. ScriptCstDocument continues to own the CLIP span byte-for-byte while
-// this file gives the inner source just enough meaning for deterministic
-// structural presentation.
+// Structural CUEs currently accept CARD and SIDECARD. CARD is the fullscreen
+// overlay discovered while building the first CUE path. SIDECARD is the
+// original side-by-side idea: the same structural video keeps advancing while
+// it moves into a desktop-style video window and the card sits beside it.
+// Neither form is part of the structural CST. ScriptCstDocument continues to
+// own the CLIP span byte-for-byte while this file gives the inner source just
+// enough meaning for deterministic presentation.
+
+import 'package:flutter/material.dart';
 
 import 'card_presentation.dart';
 import 'edit_model.dart';
@@ -30,7 +34,28 @@ class EditCueFormatException implements Exception {
   String toString() => 'EditCueFormatException at $offset: $message';
 }
 
-/// One CARD presentation triggered from a source-relative frame in a CLIP.
+/// CUE-local request for the side-by-side desktop composition.
+///
+/// It subclasses [CardRequest] on purpose. The inspector, history path, image
+/// cache, and CARD content contract can stay shared while runtime type carries
+/// the one extra authored fact: this card lives beside a continuously-playing
+/// windowed structural source rather than over fullscreen source pixels.
+///
+/// SIDECARD is deliberately CUE-local. It is not added to the terminal tag
+/// grammar and therefore cannot accidentally become another suspending TEXT
+/// presentation.
+class SideCardRequest extends CardRequest {
+  SideCardRequest({
+    required super.image,
+    required super.holdFrames,
+    required super.panelColor,
+    required super.heading,
+    required super.body,
+  });
+}
+
+/// One CARD-family presentation triggered from a source-relative frame in a
+/// CLIP. [card] is either an ordinary [CardRequest] or [SideCardRequest].
 class EditCardCue {
   const EditCardCue({
     required this.sourceFrame,
@@ -43,11 +68,11 @@ class EditCardCue {
   /// Authored source frame, in the same coordinate space as CLIP `in`.
   final int sourceFrame;
 
-  /// The existing canonical CARD request. Defaults still come from the same
-  /// parser used by TEXT. CUE then removes only the structural indentation
-  /// introduced by nesting CARD inside CLIP/CUE source so GUI-authored body
-  /// text round-trips as the text the author entered.
+  /// The canonical card content. Runtime type selects fullscreen CARD versus
+  /// windowed-video SIDECARD without inventing another hidden property model.
   final CardRequest card;
+
+  bool get isSideCard => card is SideCardRequest;
 
   /// Absolute source span of the complete `[CUE]...[/CUE]` block.
   final int startOffset;
@@ -57,13 +82,13 @@ class EditCardCue {
   final String rawSource;
 }
 
-/// One CARD cue that is actually visible at a specific structural frame.
+/// One CARD-family cue that is actually visible at a specific structural frame.
 ///
 /// The trigger belongs to the source-relative CLIP body, but after it fires the
-/// CARD presentation is evaluated from structural time and is allowed to
-/// continue across a later cut. The containing EDIT/PANE, not the anchor CLIP,
-/// clips its lifetime. This keeps the trigger attached to content without
-/// making the owning clip a second presentation-duration authority.
+/// presentation is evaluated from structural time and is allowed to continue
+/// across a later cut. The containing EDIT/PANE, not the anchor CLIP, clips its
+/// lifetime. This keeps the trigger attached to content without making the
+/// owning clip a second presentation-duration authority.
 class ActiveEditCardCue {
   const ActiveEditCardCue({
     required this.clip,
@@ -80,15 +105,24 @@ class ActiveEditCardCue {
   /// Frame age inside the CARD presentation, zero on the trigger frame.
   final int localFrame;
 
-  /// Pure CARD visual state for [localFrame].
+  /// Pure CARD visual state for [localFrame]. CARD and SIDECARD intentionally
+  /// share this lifetime: opening, authored hold, and closing are identical;
+  /// only their pixel choreography differs.
   final CardPresentationFrame presentationFrame;
 }
 
 final RegExp _cueOpening = RegExp(r'\[CUE:(\d+)\]');
 final RegExp _comment = RegExp(r'\[#.*?\]\n?', dotAll: true);
+final RegExp _sideCardTag = RegExp(
+  r'\[SIDECARD:([a-zA-Z0-9_\-\./]+)'
+  r'(?::(\d+))?'
+  r'(?::(\d+,\d+,\d+))?'
+  r'(?::([^:\]]+))?\]'
+  r'([\s\S]*?)\[/SIDECARD\]',
+);
 const String _cueClosing = '[/CUE]';
 
-/// Parses every CARD cue owned by [clip].
+/// Parses every CARD-family cue owned by [clip].
 ///
 /// Other CLIP body source is left uninterpreted. In particular, transition
 /// directives and future body constructs remain somebody else's grammar. The
@@ -115,33 +149,50 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
       final int sourceFrame = int.parse(opening.group(1)!);
       final int contentAt = _skipWhitespace(source, opening.end);
 
-      final RegExpMatch? presentation =
+      CardRequest? request;
+      int? presentationEnd;
+
+      final RegExpMatch? terminalPresentation =
           tagRegex.matchAsPrefix(source, contentAt) as RegExpMatch?;
-      if (presentation == null) {
+      if (terminalPresentation != null) {
+        final PresentationRequest? parsed =
+            presentationRequestFromMatch(terminalPresentation);
+        if (parsed is CardRequest) {
+          request = parsed;
+          presentationEnd = terminalPresentation.end;
+        }
+      }
+
+      if (request == null && source.startsWith('[SIDECARD:', contentAt)) {
+        final RegExpMatch? side =
+            _sideCardTag.matchAsPrefix(source, contentAt) as RegExpMatch?;
+        if (side == null) {
+          throw EditCueFormatException(
+            'SIDECARD has invalid CARD-style arguments or is not closed.',
+            absoluteBase + contentAt,
+          );
+        }
+        request = _sideCardRequestFromMatch(side);
+        presentationEnd = side.end;
+      }
+
+      if (request == null || presentationEnd == null) {
         throw EditCueFormatException(
-          'CUE must contain exactly one CARD presentation.',
+          'CUE must contain exactly one CARD or SIDECARD presentation.',
           absoluteBase + contentAt,
         );
       }
 
-      final PresentationRequest? request =
-          presentationRequestFromMatch(presentation);
-      if (request is! CardRequest) {
-        throw EditCueFormatException(
-          'CUE v1 supports CARD only.',
-          absoluteBase + contentAt,
-        );
-      }
       final CardRequest card = _normalizeNestedCardBody(
         request,
         source: source,
         cardStart: contentAt,
       );
 
-      final int closeAt = _skipWhitespace(source, presentation.end);
+      final int closeAt = _skipWhitespace(source, presentationEnd);
       if (!source.startsWith(_cueClosing, closeAt)) {
         throw EditCueFormatException(
-          'CUE must close immediately after its CARD, apart from whitespace.',
+          'CUE must close immediately after its CARD or SIDECARD, apart from whitespace.',
           absoluteBase + closeAt,
         );
       }
@@ -185,6 +236,50 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
   return List<EditCardCue>.unmodifiable(cues);
 }
 
+SideCardRequest _sideCardRequestFromMatch(RegExpMatch match) {
+  final String image = match.group(1)!;
+  final int hold = int.parse(match.group(2) ?? '240');
+  final Color color = _parsePanelColor(match.group(3));
+  final String heading = (match.group(4) ?? '').trim();
+  final String body = _cleanPresentationBody(match.group(5) ?? '');
+  return SideCardRequest(
+    image: image,
+    holdFrames: hold,
+    panelColor: color,
+    heading: heading,
+    body: body,
+  );
+}
+
+Color _parsePanelColor(String? rgb) {
+  if (rgb == null) return const Color.fromARGB(255, 30, 30, 38);
+  final List<String> parts = rgb.split(',');
+  if (parts.length != 3) {
+    throw const FormatException('SIDECARD color requires r,g,b.');
+  }
+  return Color.fromARGB(
+    255,
+    int.parse(parts[0]),
+    int.parse(parts[1]),
+    int.parse(parts[2]),
+  );
+}
+
+String _cleanPresentationBody(String raw) {
+  String value = raw.replaceAll(RegExp(r'\[LINE:\d+\]'), '');
+  if (value.startsWith('\r\n')) {
+    value = value.substring(2);
+  } else if (value.startsWith('\n')) {
+    value = value.substring(1);
+  }
+  if (value.endsWith('\r\n')) {
+    value = value.substring(0, value.length - 2);
+  } else if (value.endsWith('\n')) {
+    value = value.substring(0, value.length - 1);
+  }
+  return value;
+}
+
 CardRequest _normalizeNestedCardBody(
   CardRequest request, {
   required String source,
@@ -198,21 +293,32 @@ CardRequest _normalizeNestedCardBody(
       .split('\n');
 
   // The generic CARD parser intentionally knows nothing about surrounding
-  // source indentation. Inside a CUE, the newline before [/CARD] therefore
-  // leaves the CARD line's indent as a final whitespace-only body line.
-  // Remove only that layout line, not a user-authored blank line before it.
+  // source indentation. Inside a CUE, the newline before the closing tag
+  // therefore leaves the CARD line's indent as a final whitespace-only body
+  // line. Remove only that layout line, not a user-authored blank line before
+  // it.
   if (lines.isNotEmpty && lines.last == cardIndent) {
     lines.removeLast();
   }
 
-  // Canonical CUE authoring indents body copy one level inside the CARD tag.
-  // Strip exactly that structural prefix from each line. Any additional spaces
-  // typed by the author remain intact, including deliberate indentation and
-  // blank lines inside the body.
+  // Canonical CUE authoring indents body copy one level inside the presentation
+  // tag. Strip exactly that structural prefix from each line. Any additional
+  // spaces typed by the author remain intact, including deliberate indentation
+  // and blank lines inside the body.
   for (int i = 0; i < lines.length; i++) {
     if (bodyIndent.isNotEmpty && lines[i].startsWith(bodyIndent)) {
       lines[i] = lines[i].substring(bodyIndent.length);
     }
+  }
+
+  if (request is SideCardRequest) {
+    return SideCardRequest(
+      image: request.image,
+      holdFrames: request.holdFrames,
+      panelColor: request.panelColor,
+      heading: request.heading,
+      body: lines.join('\n'),
+    );
   }
 
   return CardRequest(
@@ -224,12 +330,12 @@ CardRequest _normalizeNestedCardBody(
   );
 }
 
-/// Returns every CARD cue visible in [edit] at [projectFrame].
+/// Returns every CARD-family cue visible in [edit] at [projectFrame].
 ///
-/// Authored order is the deterministic stacking rule for v1: tracks are
-/// visited in source order, clips in source order, cues in body order. A later
-/// active cue therefore follows an earlier one in the returned list and may be
-/// painted on top without inventing a z-order language.
+/// Authored order is the deterministic stacking rule: tracks are visited in
+/// source order, clips in source order, cues in body order. A later active cue
+/// therefore follows an earlier one in the returned list and may be painted on
+/// top without inventing a z-order language.
 List<ActiveEditCardCue> activeCardCuesForEdit(
   EditSequence edit,
   int projectFrame,
@@ -244,7 +350,7 @@ List<ActiveEditCardCue> activeCardCuesForEdit(
   );
 }
 
-/// Returns every CARD cue visible in one MOSAIC pane at [projectFrame].
+/// Returns every CARD-family cue visible in one MOSAIC pane at [projectFrame].
 ///
 /// The pane is the presentation lifetime boundary. A cue may survive the cut
 /// from its anchor clip into the next clip in the same pane, but it cannot leak
