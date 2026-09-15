@@ -1,29 +1,35 @@
 // ./lib/card_overlay.dart
 //
-// Shared explicit-time CARD overlay rendering for structural video.
+// Shared explicit-time CARD-family rendering for structural video.
 //
 // A CUE does not own presentation duration or mutable playback state. This
-// layer asks edit_cue.dart which CARD presentations are active at one exact
-// structural frame, then paints those CARDs over the caller's already-rendered
-// pixels. Live preview and program BAKE both use this same Canvas routine.
+// layer asks edit_cue.dart which presentations are active at one exact
+// structural frame, then paints them over the caller's already-rendered pixels.
+// Live preview and program BAKE both use this same Canvas routine.
 //
-// V1 deliberately supports the structural roots we can place without inventing
-// a generic overlay stack: direct EDIT cues fill that EDIT's target, and cues
-// authored directly in a MOSAIC pane are clipped to that pane. The presentation
-// is pixels only; it contributes no audio.
+// CARD is the fullscreen overlay discovered while building the first CUE path.
+// SIDECARD is the original side-by-side composition: the same structural image
+// is redrawn into a desktop-style video window on the left while the card enters
+// on the right. No second decoder, playback clock, duration, z-order language,
+// or arbitrary positioning system is introduced.
+//
+// Direct EDIT cues fill that EDIT's target. Cues authored directly in a MOSAIC
+// pane are clipped to that pane and, for SIDECARD, sample only that pane's
+// corresponding structural pixels. The presentation contributes no audio.
 
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'edit_cue.dart';
 import 'edit_model.dart';
 import 'presentation_requests.dart';
 
-/// One active CARD plus the structural pixel region it owns.
+/// One active CARD-family presentation plus the structural pixel region it owns.
 class StructuralCardOverlayPlacement {
   const StructuralCardOverlayPlacement({
     required this.card,
@@ -34,15 +40,18 @@ class StructuralCardOverlayPlacement {
   final CardRequest card;
   final double slide;
 
+  bool get isSideCard => card is SideCardRequest;
+
   /// Target rectangle in 0..1 coordinates of the structural render surface.
   /// An EDIT owns the whole surface. A MOSAIC pane owns only its pane.
   final Rect normalizedRect;
 }
 
-/// CARD overlays active at [projectFrame] for one selected structural root.
+/// CARD-family presentations active at [projectFrame] for one selected
+/// structural root.
 ///
 /// Authored order is preserved. Later placements are painted later and
-/// therefore appear on top, matching edit_cue.dart's deterministic v1 rule.
+/// therefore appear on top, matching edit_cue.dart's deterministic rule.
 List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
   EditDocumentModel model,
   StructuralSourceRef root,
@@ -85,7 +94,7 @@ List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
   }
 }
 
-/// Workspace-relative image path used by CARD.
+/// Workspace-relative image path used by CARD and SIDECARD.
 ///
 /// CARD historically names a file inside images/. Absolute paths remain
 /// absolute for test seams and portable tools; an already-prefixed images/
@@ -171,18 +180,61 @@ class CardOverlayImageCache {
   }
 }
 
-/// Paints CARD overlays over a complete structural surface.
+/// Final seated video-window geometry for SIDECARD inside [size].
 ///
-/// [size] is the actual structural render surface. The CARD choreography is
-/// evaluated inside each placement's own target rectangle, so a cue inside a
-/// MOSAIC pane is naturally sized and clipped to that pane instead of escaping
-/// to the program frame.
+/// Public only so deterministic geometry tests can lock the composition without
+/// raster readback. The rect includes title-bar chrome; its client remains the
+/// exact structural image scaled to contain.
+Rect sideCardSeatedVideoWindowRect(Size size) {
+  if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
+  final double s = math.min(size.width / 1920.0, size.height / 1080.0);
+  final double margin = size.width * 0.035;
+  final double gap = size.width * 0.024;
+  final double cardW = size.width * 0.30;
+  final double windowW = math.max(
+    1.0,
+    size.width - margin * 2.0 - gap - cardW,
+  );
+  final double titleH = 38.0 * s;
+  final double desiredClientH = windowW * 9.0 / 16.0;
+  final double maxWindowH = size.height * 0.76;
+  final double windowH = math.min(maxWindowH, desiredClientH + titleH);
+  return Rect.fromLTWH(
+    margin,
+    (size.height - windowH) / 2.0,
+    windowW,
+    windowH,
+  );
+}
+
+/// Final seated card geometry for SIDECARD inside [size].
+Rect sideCardSeatedPanelRect(Size size) {
+  if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
+  final Rect video = sideCardSeatedVideoWindowRect(size);
+  final double gap = size.width * 0.024;
+  final double cardW = size.width * 0.30;
+  return Rect.fromLTWH(
+    video.right + gap,
+    video.top,
+    cardW,
+    video.height,
+  );
+}
+
+/// Paints CARD-family presentations over a complete structural surface.
+///
+/// [structuralImage] is optional for ordinary CARD but required for SIDECARD's
+/// moving video window. Preview supplies its already-decoded structural frame;
+/// BAKE supplies the same raw frame before any cue pixels are added. SIDECARD
+/// therefore redraws existing pixels and never creates a second decoder or time
+/// authority.
 void paintStructuralCardOverlays({
   required Canvas canvas,
   required Size size,
   required Iterable<StructuralCardOverlayPlacement> placements,
   required CardOverlayImageCache images,
   required String fontFamily,
+  ui.Image? structuralImage,
 }) {
   if (size.width <= 0.0 || size.height <= 0.0) return;
 
@@ -197,18 +249,43 @@ void paintStructuralCardOverlays({
     );
     if (target.width <= 0.0 || target.height <= 0.0) continue;
 
+    Rect? sourceCrop;
+    if (structuralImage != null) {
+      sourceCrop = Rect.fromLTRB(
+        n.left * structuralImage.width,
+        n.top * structuralImage.height,
+        n.right * structuralImage.width,
+        n.bottom * structuralImage.height,
+      );
+    }
+
     canvas.save();
     canvas.clipRect(target);
     canvas.translate(target.left, target.top);
-    _paintCardPanel(
-      canvas,
-      target.width,
-      target.height,
-      placement.slide,
-      placement.card,
-      images.imageFor(placement.card),
-      fontFamily,
-    );
+
+    if (placement.isSideCard) {
+      _paintSideCardComposition(
+        canvas: canvas,
+        engineW: target.width,
+        engineH: target.height,
+        slide: placement.slide,
+        card: placement.card,
+        cardImage: images.imageFor(placement.card),
+        structuralImage: structuralImage,
+        structuralSourceRect: sourceCrop,
+        fontFamily: fontFamily,
+      );
+    } else {
+      _paintCardPanel(
+        canvas,
+        target.width,
+        target.height,
+        placement.slide,
+        placement.card,
+        images.imageFor(placement.card),
+        fontFamily,
+      );
+    }
     canvas.restore();
   }
 }
@@ -217,8 +294,9 @@ void paintStructuralCardOverlays({
 ///
 /// It contains no clock. [projectFrame] is supplied by the structural preview
 /// transport, and every build re-evaluates presentation state from that exact
-/// frame. Image decode readiness may change which pixels occupy the optional
-/// image strip, but never the cue trigger or CARD age.
+/// frame. [structuralImage] is the preview's existing decoded frame listenable;
+/// SIDECARD only redraws that image into its video window. Image readiness may
+/// change pixels, but never cue timing.
 class StructuralCardCueOverlay extends StatefulWidget {
   const StructuralCardCueOverlay({
     super.key,
@@ -226,6 +304,7 @@ class StructuralCardCueOverlay extends StatefulWidget {
     required this.sourceRef,
     required this.projectFrame,
     required this.resolveSource,
+    this.structuralImage,
     this.fontFamily = 'monospace',
   });
 
@@ -233,6 +312,7 @@ class StructuralCardCueOverlay extends StatefulWidget {
   final String sourceRef;
   final int projectFrame;
   final String Function(String source) resolveSource;
+  final ValueListenable<ui.Image?>? structuralImage;
   final String fontFamily;
 
   @override
@@ -283,7 +363,9 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
       final EditDocumentModel model = EditDocumentModel.parse(widget.source);
       final StructuralSourceRef? root =
           StructuralSourceRef.tryParse(widget.sourceRef);
-      if (root == null || root.id.isEmpty || !model.containsStructuralSource(root)) {
+      if (root == null ||
+          root.id.isEmpty ||
+          !model.containsStructuralSource(root)) {
         _model = null;
         _root = null;
         return const <StructuralCardOverlayPlacement>[];
@@ -314,14 +396,27 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
     if (placements.isEmpty) return const SizedBox.expand();
     _ensureImages(placements);
 
-    return IgnorePointer(
-      child: CustomPaint(
-        painter: _StructuralCardOverlayPainter(
-          placements: placements,
-          images: _images,
-          fontFamily: widget.fontFamily,
+    Widget painted(ui.Image? structuralImage) {
+      return IgnorePointer(
+        child: CustomPaint(
+          painter: _StructuralCardOverlayPainter(
+            placements: placements,
+            images: _images,
+            structuralImage: structuralImage,
+            fontFamily: widget.fontFamily,
+          ),
         ),
-      ),
+      );
+    }
+
+    final ValueListenable<ui.Image?>? structural = widget.structuralImage;
+    if (structural == null) return painted(null);
+
+    return ValueListenableBuilder<ui.Image?>(
+      valueListenable: structural,
+      builder: (BuildContext context, ui.Image? image, Widget? child) {
+        return painted(image);
+      },
     );
   }
 }
@@ -330,11 +425,13 @@ class _StructuralCardOverlayPainter extends CustomPainter {
   const _StructuralCardOverlayPainter({
     required this.placements,
     required this.images,
+    required this.structuralImage,
     required this.fontFamily,
   });
 
   final List<StructuralCardOverlayPlacement> placements;
   final CardOverlayImageCache images;
+  final ui.Image? structuralImage;
   final String fontFamily;
 
   @override
@@ -351,6 +448,7 @@ class _StructuralCardOverlayPainter extends CustomPainter {
       size: frame.size,
       placements: placements,
       images: images,
+      structuralImage: structuralImage,
       fontFamily: fontFamily,
     );
     canvas.restore();
@@ -360,6 +458,7 @@ class _StructuralCardOverlayPainter extends CustomPainter {
   bool shouldRepaint(covariant _StructuralCardOverlayPainter oldDelegate) =>
       oldDelegate.placements != placements ||
       !identical(oldDelegate.images, images) ||
+      !identical(oldDelegate.structuralImage, structuralImage) ||
       oldDelegate.fontFamily != fontFamily;
 }
 
@@ -380,6 +479,215 @@ Rect _fit16x9(Size size) {
   );
 }
 
+void _paintSideCardComposition({
+  required Canvas canvas,
+  required double engineW,
+  required double engineH,
+  required double slide,
+  required CardRequest card,
+  required ui.Image? cardImage,
+  required ui.Image? structuralImage,
+  required Rect? structuralSourceRect,
+  required String fontFamily,
+}) {
+  if (slide <= 0.0 || engineW <= 0.0 || engineH <= 0.0) return;
+
+  final double raw = slide.clamp(0.0, 1.0);
+  final double eased = Curves.easeOutCubic.transform(raw);
+  final Size size = Size(engineW, engineH);
+  final Rect seatedVideo = sideCardSeatedVideoWindowRect(size);
+  final Rect seatedCard = sideCardSeatedPanelRect(size);
+  final Rect full = Rect.fromLTWH(0, 0, engineW, engineH);
+  final Rect videoWindow = Rect.lerp(full, seatedVideo, eased)!;
+  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
+  final double titleH = math.min(38.0 * s * eased, videoWindow.height);
+  final double radius = 6.0 * s * eased;
+
+  // SIDECARD owns a presentation desktop inside its structural target. At the
+  // first visual frame the video still covers this entire plate, so the reveal
+  // is a geometric zoom-out rather than a desktop crossfade.
+  canvas.drawRect(
+    full,
+    Paint()..color = const Color(0xFF1B1D20),
+  );
+  final Rect taskbar = Rect.fromLTWH(
+    0,
+    engineH - 42.0 * s,
+    engineW,
+    42.0 * s,
+  );
+  canvas.drawRect(
+    taskbar,
+    Paint()..color = const Color(0xFF111214),
+  );
+  canvas.drawLine(
+    taskbar.topLeft,
+    taskbar.topRight,
+    Paint()
+      ..strokeWidth = math.max(0.5, s)
+      ..color = const Color(0xFF303236),
+  );
+  _drawTaskbarMark(canvas, taskbar, s);
+
+  final RRect window = RRect.fromRectAndRadius(
+    videoWindow,
+    Radius.circular(radius),
+  );
+  if (eased > 0.02) {
+    canvas.drawRRect(
+      window.shift(Offset(0, 12.0 * s * eased)),
+      Paint()
+        ..color = const Color(0x7A000000)
+        ..maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          24.0 * s * eased,
+        ),
+    );
+  }
+
+  canvas.drawRRect(window, Paint()..color = const Color(0xFF111111));
+  canvas.drawRRect(
+    window,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(0.5, s)
+      ..color = const Color(0xFF474747),
+  );
+
+  final Rect header = Rect.fromLTWH(
+    videoWindow.left,
+    videoWindow.top,
+    videoWindow.width,
+    titleH,
+  );
+  final Rect client = Rect.fromLTRB(
+    videoWindow.left,
+    header.bottom,
+    videoWindow.right,
+    videoWindow.bottom,
+  );
+
+  canvas.save();
+  canvas.clipRRect(window);
+  canvas.drawRect(client, Paint()..color = Colors.black);
+  if (structuralImage != null &&
+      structuralSourceRect != null &&
+      client.width > 0.0 &&
+      client.height > 0.0) {
+    _drawImageContainFromSource(
+      canvas,
+      structuralImage,
+      structuralSourceRect,
+      client,
+    );
+  }
+
+  if (header.height > 0.0) {
+    canvas.drawRect(header, Paint()..color = const Color(0xFF343231));
+    canvas.drawLine(
+      header.bottomLeft,
+      header.bottomRight,
+      Paint()
+        ..strokeWidth = math.max(0.5, s)
+        ..color = const Color(0xFF4B4846),
+    );
+    _drawVideoWindowChrome(canvas, header, s, eased, fontFamily);
+  }
+  canvas.restore();
+
+  _paintCardAtSeatedRect(
+    canvas: canvas,
+    engineW: engineW,
+    engineH: engineH,
+    seatedRect: seatedCard,
+    slide: raw,
+    card: card,
+    image: cardImage,
+    fontFamily: fontFamily,
+  );
+}
+
+void _drawTaskbarMark(Canvas canvas, Rect taskbar, double s) {
+  final double box = 7.0 * s;
+  final double gap = 2.0 * s;
+  final double total = box * 2.0 + gap;
+  final double left = 18.0 * s;
+  final double top = taskbar.center.dy - total / 2.0;
+  final Paint paint = Paint()..color = const Color(0xFF8A8D92);
+  canvas.drawRect(Rect.fromLTWH(left, top, box, box), paint);
+  canvas.drawRect(Rect.fromLTWH(left + box + gap, top, box, box), paint);
+  canvas.drawRect(Rect.fromLTWH(left, top + box + gap, box, box), paint);
+  canvas.drawRect(
+    Rect.fromLTWH(left + box + gap, top + box + gap, box, box),
+    paint,
+  );
+}
+
+void _drawVideoWindowChrome(
+  Canvas canvas,
+  Rect header,
+  double s,
+  double openness,
+  String fontFamily,
+) {
+  final TextPainter title = TextPainter(
+    text: TextSpan(
+      text: 'Video',
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontSize: 12.0 * s,
+        color: const Color(0xFFC8C5C2).withValues(alpha: openness),
+      ),
+    ),
+    maxLines: 1,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: math.max(0.0, header.width * 0.55));
+  title.paint(
+    canvas,
+    Offset(
+      header.left + 14.0 * s,
+      header.top + (header.height - title.height) / 2.0,
+    ),
+  );
+
+  final double controlW = 38.0 * s;
+  final double right = header.right;
+  final Paint line = Paint()
+    ..color = const Color(0xFFB4B0AC).withValues(alpha: openness)
+    ..strokeWidth = math.max(0.75, s);
+
+  final double cy = header.center.dy;
+  final double xClose = right - controlW / 2.0;
+  final double xMax = right - controlW * 1.5;
+  final double xMin = right - controlW * 2.5;
+  canvas.drawLine(
+    Offset(xMin - 4.0 * s, cy + 3.0 * s),
+    Offset(xMin + 4.0 * s, cy + 3.0 * s),
+    line,
+  );
+  canvas.drawRect(
+    Rect.fromCenter(
+      center: Offset(xMax, cy),
+      width: 8.0 * s,
+      height: 7.0 * s,
+    ),
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(0.75, s)
+      ..color = line.color,
+  );
+  canvas.drawLine(
+    Offset(xClose - 4.0 * s, cy - 4.0 * s),
+    Offset(xClose + 4.0 * s, cy + 4.0 * s),
+    line,
+  );
+  canvas.drawLine(
+    Offset(xClose + 4.0 * s, cy - 4.0 * s),
+    Offset(xClose - 4.0 * s, cy + 4.0 * s),
+    line,
+  );
+}
+
 void _paintCardPanel(
   Canvas canvas,
   double engineW,
@@ -395,6 +703,44 @@ void _paintCardPanel(
   const double cardTopFrac = 0.045;
   const double cardBottomFrac = 0.045;
   const double cardRightFrac = 0.022;
+
+  final double cardW = engineW * cardWidthFrac;
+  final double top = engineH * cardTopFrac;
+  final double bottom = engineH - engineH * cardBottomFrac;
+  final double rightGap = engineW * cardRightFrac;
+  final Rect seated = Rect.fromLTRB(
+    engineW - rightGap - cardW,
+    top,
+    engineW - rightGap,
+    bottom,
+  );
+
+  _paintCardAtSeatedRect(
+    canvas: canvas,
+    engineW: engineW,
+    engineH: engineH,
+    seatedRect: seated,
+    slide: slide,
+    card: card,
+    image: image,
+    fontFamily: fontFamily,
+  );
+}
+
+void _paintCardAtSeatedRect({
+  required Canvas canvas,
+  required double engineW,
+  required double engineH,
+  required Rect seatedRect,
+  required double slide,
+  required CardRequest card,
+  required ui.Image? image,
+  required String fontFamily,
+}) {
+  if (slide <= 0.0 || seatedRect.width <= 0.0 || seatedRect.height <= 0.0) {
+    return;
+  }
+
   const double cardRadius = 16.0;
   const double cardImageFrac = 0.42;
   const double cardPadFrac = 0.055;
@@ -402,17 +748,15 @@ void _paintCardPanel(
   const double cardBodySize = 20.0;
 
   final double s = math.min(engineW / 1920.0, engineH / 1080.0);
-  final double cardW = engineW * cardWidthFrac;
-  final double top = engineH * cardTopFrac;
-  final double bottom = engineH - engineH * cardBottomFrac;
-  final double rightGap = engineW * cardRightFrac;
-
   final double rawProgress = slide.clamp(0.0, 1.0);
   final double e = Curves.easeOutCubic.transform(rawProgress);
-  final double seatedLeft = engineW - rightGap - cardW;
-  final double left = engineW + (seatedLeft - engineW) * e;
-
-  final Rect cardRect = Rect.fromLTRB(left, top, left + cardW, bottom);
+  final double left = engineW + (seatedRect.left - engineW) * e;
+  final Rect cardRect = Rect.fromLTWH(
+    left,
+    seatedRect.top,
+    seatedRect.width,
+    seatedRect.height,
+  );
   final RRect rrect = RRect.fromRectAndRadius(
     cardRect,
     Radius.circular(cardRadius * s),
@@ -420,8 +764,8 @@ void _paintCardPanel(
 
   canvas.save();
 
-  final double pivotX = left + cardW / 2.0;
-  final double pivotY = top + cardRect.height / 2.0;
+  final double pivotX = left + cardRect.width / 2.0;
+  final double pivotY = cardRect.center.dy;
   final double angle = (1.0 - rawProgress) * -0.04;
   final double scaleEffect = 0.98 + 0.02 * rawProgress;
   canvas.translate(pivotX, pivotY);
@@ -449,7 +793,7 @@ void _paintCardPanel(
     _drawImageCover(
       canvas,
       image,
-      Rect.fromLTWH(cardRect.left, cardRect.top, cardW, imageH),
+      Rect.fromLTWH(cardRect.left, cardRect.top, cardRect.width, imageH),
     );
   }
 
@@ -466,8 +810,8 @@ void _paintCardPanel(
       darkPanel ? const Color(0xDDE8E5E0) : const Color(0xDD26221E);
   final Color ruleColor = headColor.withValues(alpha: 0.55);
 
-  final double pad = cardW * cardPadFrac;
-  final double textW = cardW - pad * 2.0;
+  final double pad = cardRect.width * cardPadFrac;
+  final double textW = cardRect.width - pad * 2.0;
   double cursorY = imageBottom + pad * 1.1;
 
   if (card.heading.isNotEmpty) {
@@ -529,6 +873,38 @@ void _paintCardPanel(
 
   canvas.restore();
   canvas.restore();
+}
+
+void _drawImageContainFromSource(
+  Canvas canvas,
+  ui.Image image,
+  Rect source,
+  Rect destination,
+) {
+  if (source.width <= 0.0 ||
+      source.height <= 0.0 ||
+      destination.width <= 0.0 ||
+      destination.height <= 0.0) {
+    return;
+  }
+  final double scale = math.min(
+    destination.width / source.width,
+    destination.height / source.height,
+  );
+  final double drawW = source.width * scale;
+  final double drawH = source.height * scale;
+  final Rect fitted = Rect.fromLTWH(
+    destination.left + (destination.width - drawW) / 2.0,
+    destination.top + (destination.height - drawH) / 2.0,
+    drawW,
+    drawH,
+  );
+  canvas.drawImageRect(
+    image,
+    source,
+    fitted,
+    Paint()..filterQuality = FilterQuality.low,
+  );
 }
 
 void _drawImageCover(Canvas canvas, ui.Image image, Rect rect) {
