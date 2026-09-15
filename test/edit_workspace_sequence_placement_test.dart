@@ -8,6 +8,11 @@ import 'package:r3nder/ui_theme.dart';
 void main() {
   testWidgets('ADD TO SEQUENCE places selected EDIT with clip audio enabled',
       (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
     const String source = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:base:video/base.mp4:0:0:24:1]
@@ -49,6 +54,11 @@ void main() {
 
   testWidgets('ADD TO SEQUENCE places selected MOSAIC with clip audio enabled',
       (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
     const String source = '''[EDIT:child]
 [TRACK:V1]
 [CLIP:base:video/base.mp4:0:0:24:1]
