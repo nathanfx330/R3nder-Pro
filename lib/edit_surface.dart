@@ -17,6 +17,7 @@
 // and export concerns rather than pretending to be clip-local cut material.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -31,12 +32,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'edit_clip_inspector.dart';
+import 'edit_cue.dart';
+import 'edit_cue_authoring.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_source_history.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
+import 'presentation_requests.dart';
 import 'ui_theme.dart';
 
 class EditSurface extends StatefulWidget {
@@ -400,6 +404,92 @@ class _EditSurfaceState extends State<EditSurface> {
     if (changed && mounted) _timelineFocusNode.requestFocus();
   }
 
+  List<EditCardCue> _cardCuesFor(EditSurfaceClip selected) {
+    try {
+      return parseClipCardCues(selected.clip);
+    } catch (_) {
+      return const <EditCardCue>[];
+    }
+  }
+
+  void _addSelectedCardCue(EditSurfaceClip selected, CardRequest card) {
+    final int frame = _effectiveFrame;
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return addCardCueAtProjectFrame(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        projectFrame: frame,
+        card: card,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _updateSelectedCardCue(
+    EditSurfaceClip selected,
+    int cueIndex,
+    CardRequest card,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return updateCardCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+        card: card,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _deleteSelectedCardCue(EditSurfaceClip selected, int cueIndex) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return deleteCardCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  List<String> _cardImageOptions() {
+    try {
+      final String Function(String source) resolver =
+          widget.resolveSource ?? resolveWorkspaceMediaSource;
+      final Directory images = Directory(resolver('images'));
+      if (!images.existsSync()) return const <String>[];
+
+      final String root = images.absolute.path;
+      final String prefix = root.endsWith(Platform.pathSeparator)
+          ? root
+          : '$root${Platform.pathSeparator}';
+      final List<String> result = <String>[];
+      for (final FileSystemEntity entity
+          in images.listSync(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        final String lower = entity.path.toLowerCase();
+        if (!lower.endsWith('.png') &&
+            !lower.endsWith('.jpg') &&
+            !lower.endsWith('.jpeg') &&
+            !lower.endsWith('.webp')) {
+          continue;
+        }
+        final String absolute = entity.absolute.path;
+        if (!absolute.startsWith(prefix)) continue;
+        result.add(
+          absolute.substring(prefix.length).replaceAll(Platform.pathSeparator, '/'),
+        );
+      }
+      result.sort();
+      return List<String>.unmodifiable(result);
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
     if (!_timelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
@@ -503,10 +593,11 @@ class _EditSurfaceState extends State<EditSurface> {
     }
 
     _commit((EditSurfaceDocument current) {
-      return current.splitClip(
-        selected.trackId,
-        selected.id,
-        frame,
+      return splitClipWithCardCueOwnership(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        projectFrame: frame,
       );
     });
   }
@@ -605,6 +696,9 @@ class _EditSurfaceState extends State<EditSurface> {
 
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
     final EditSurfaceClip? selected = _selected(document);
+    final List<EditCardCue> selectedCardCues = selected == null
+        ? const <EditCardCue>[]
+        : _cardCuesFor(selected);
 
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
@@ -757,6 +851,21 @@ class _EditSurfaceState extends State<EditSurface> {
                   onMutedChanged: selected == null
                       ? null
                       : (bool muted) => _setSelectedMuted(selected, muted),
+                  cardCues: selectedCardCues,
+                  playheadFrame: _effectiveFrame,
+                  cardImageOptions: selected == null ? null : _cardImageOptions,
+                  onAddCardCueAtPlayhead: selected == null || widget.isPlaying
+                      ? null
+                      : (CardRequest card) =>
+                          _addSelectedCardCue(selected, card),
+                  onCardCueChanged: selected == null
+                      ? null
+                      : (int cueIndex, CardRequest card) =>
+                          _updateSelectedCardCue(selected, cueIndex, card),
+                  onCardCueDeleted: selected == null
+                      ? null
+                      : (int cueIndex) =>
+                          _deleteSelectedCardCue(selected, cueIndex),
                   onDelete:
                       selected == null ? null : () => _deleteSelected(document),
                 ),
