@@ -11,11 +11,11 @@
 // Any structural source, overlap, transition, test backend, or unsupported
 // platform uses the deterministic CPU compositor fallback.
 //
-// CARD CUEs are a presentation projection over those same structural pixels.
-// While a CARD is active the preview deliberately leaves the external-texture
-// shortcut and evaluates exact project frames, so the overlay and underlying
-// video advance from one shared project clock rather than from two unrelated
-// presentation cadences.
+// CARD-family CUEs are a presentation projection over those same structural
+// pixels. While one is active the preview deliberately leaves the external
+// texture shortcut and evaluates exact project frames. Ordinary CARD paints
+// over them; SIDECARD redraws those already-decoded pixels into its video
+// window. Neither path creates a second decoder or clock.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -355,10 +355,11 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         root.id.isNotEmpty &&
         model.containsStructuralSource(root) &&
         structuralCardOverlayPlacements(model, root, projectFrame).isNotEmpty) {
-      // CARD must be evaluated on the same exact project frame as the picture
-      // underneath it. The native texture advances independently after the
-      // handle is published, so it is intentionally bypassed for the CARD's
-      // active lifetime.
+      // CARD-family presentation must be evaluated on the same exact project
+      // frame as the picture underneath it. SIDECARD also needs those pixels
+      // in Dart so it can redraw them into its moving video window. The native
+      // texture advances independently after the handle is published, so the
+      // shortcut is intentionally bypassed for the active presentation.
       return null;
     }
 
@@ -744,9 +745,10 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
             ),
           ),
 
-          // CARD presentation is painted over the structural client pixels,
-          // not over the surrounding STRUCT window/desktop chrome. Its frame
-          // comes from the same metadata publication as the decoded picture.
+          // CARD-family presentation is painted over the structural client
+          // pixels, not over surrounding STRUCT window/desktop chrome. The
+          // same raw image listenable is supplied to SIDECARD so its smaller
+          // video window contains this exact frame rather than a second decode.
           Positioned.fill(
             child: ValueListenableBuilder<_PreviewMetadata>(
               valueListenable: _metadata,
@@ -760,6 +762,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                   sourceRef: widget.sourceRef,
                   projectFrame: metadata.projectFrame,
                   resolveSource: resolver,
+                  structuralImage: _image,
                 );
               },
             ),
