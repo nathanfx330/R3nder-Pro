@@ -1,10 +1,11 @@
 // ./lib/edit_card_cue_controls.dart
 //
-// GUI authoring controls for clip-local CARD cues in the EDIT inspector.
+// GUI authoring controls for clip-local CARD-family cues in the EDIT inspector.
 //
 // This widget owns only transient form state. Every durable change is returned
 // to EditSurface as a CardRequest and is serialized into the canonical CLIP
-// source by edit_cue_authoring.dart.
+// source by edit_cue_authoring.dart. SideCardRequest is a CardRequest subtype,
+// so the existing inspector/history seam remains one source-backed path.
 
 import 'package:flutter/material.dart';
 
@@ -71,6 +72,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     final int green = (argb >> 8) & 0xFF;
     final int blue = argb & 0xFF;
 
+    bool sideDraft = existing is SideCardRequest;
     String imageDraft = existing?.image ?? (images.isEmpty ? '' : images.first);
     String holdDraft = '${existing?.holdFrames ?? 90}';
     String rgbDraft = '$red,$green,$blue';
@@ -117,8 +119,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   headingDraft.contains('\n') ||
                   headingDraft.contains('\r')) {
                 problem = 'Heading cannot contain colon, ] or a newline.';
-              } else if (bodyDraft.contains('[/CARD]')) {
-                problem = 'Body cannot contain [/CARD].';
+              } else if (bodyDraft.contains('[/CARD]') ||
+                  bodyDraft.contains('[/SIDECARD]')) {
+                problem = 'Body cannot contain a CARD-family closing tag.';
               }
 
               if (problem != null) {
@@ -126,20 +129,32 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 return;
               }
 
-              Navigator.of(dialogContext).pop(
-                CardRequest(
-                  image: imageValue,
-                  holdFrames: holdFrames!,
-                  panelColor: Color.fromARGB(
-                    255,
-                    parsed[0]!,
-                    parsed[1]!,
-                    parsed[2]!,
-                  ),
-                  heading: headingDraft.trim(),
-                  body: bodyDraft,
-                ),
-              );
+              final CardRequest next = sideDraft
+                  ? SideCardRequest(
+                      image: imageValue,
+                      holdFrames: holdFrames!,
+                      panelColor: Color.fromARGB(
+                        255,
+                        parsed[0]!,
+                        parsed[1]!,
+                        parsed[2]!,
+                      ),
+                      heading: headingDraft.trim(),
+                      body: bodyDraft,
+                    )
+                  : CardRequest(
+                      image: imageValue,
+                      holdFrames: holdFrames!,
+                      panelColor: Color.fromARGB(
+                        255,
+                        parsed[0]!,
+                        parsed[1]!,
+                        parsed[2]!,
+                      ),
+                      heading: headingDraft.trim(),
+                      body: bodyDraft,
+                    );
+              Navigator.of(dialogContext).pop(next);
             }
 
             return AlertDialog(
@@ -157,6 +172,71 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text('PRESENTATION', style: widget.theme.micro)),
+                          PopupMenuButton<bool>(
+                            key: const ValueKey<String>('edit-card-cue-style-menu'),
+                            tooltip: 'Card presentation style',
+                            color: R3Theme.panelHi,
+                            onSelected: (bool value) {
+                              setDialogState(() {
+                                sideDraft = value;
+                                errorText = null;
+                              });
+                            },
+                            itemBuilder: (_) => const <PopupMenuEntry<bool>>[
+                              PopupMenuItem<bool>(
+                                value: false,
+                                child: Text('FULLSCREEN CARD'),
+                              ),
+                              PopupMenuItem<bool>(
+                                value: true,
+                                child: Text('SIDE CARD + VIDEO WINDOW'),
+                              ),
+                            ],
+                            child: Container(
+                              key: const ValueKey<String>('edit-card-cue-style'),
+                              constraints: BoxConstraints(minWidth: sc(190)),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: sc(9),
+                                vertical: sc(7),
+                              ),
+                              decoration: BoxDecoration(
+                                color: R3Theme.bg,
+                                border: Border.all(color: R3Theme.hairline),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      sideDraft
+                                          ? 'SIDE CARD + VIDEO WINDOW'
+                                          : 'FULLSCREEN CARD',
+                                      key: const ValueKey<String>(
+                                        'edit-card-cue-style-value',
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: widget.theme.micro.copyWith(
+                                        color: R3Theme.textBright,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.arrow_drop_down,
+                                    size: 15,
+                                    color: R3Theme.textDim,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: sc(10)),
                       Row(
                         children: [
                           Expanded(
@@ -367,6 +447,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     final int? projectFrame = cueProjectFrame(widget.clip.clip, cue.sourceFrame);
     final String project = projectFrame == null ? 'DORMANT' : 'P$projectFrame';
     final String heading = cue.card.heading.trim();
+    final String style = cue.isSideCard ? 'SIDE' : 'FULL';
 
     return Container(
       key: ValueKey<String>('edit-card-cue-row-$index'),
@@ -384,7 +465,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
             children: [
               Expanded(
                 child: Text(
-                  'SOURCE F${cue.sourceFrame}   $project',
+                  '$style   SOURCE F${cue.sourceFrame}   $project',
+                  key: ValueKey<String>('edit-card-cue-style-row-$index'),
                   style: widget.theme.microAccent,
                 ),
               ),
