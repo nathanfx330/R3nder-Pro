@@ -177,7 +177,8 @@ String splitClipWithCardCueOwnership({
       .toSet();
 
   String current = document.splitClip(trackId, clipId, projectFrame);
-  EditSurfaceDocument after = EditSurfaceDocument.parse(current, document.editId);
+  EditSurfaceDocument after =
+      EditSurfaceDocument.parse(current, document.editId);
   final EditSurfaceTrack track = after.track(trackId);
   final List<EditSurfaceClip> created = track.clips
       .where((EditSurfaceClip clip) => !beforeIds.contains(clip.id))
@@ -252,16 +253,18 @@ String _cueMarkup({
   final int green = (argb >> 8) & 0xFF;
   final int blue = argb & 0xFF;
   final String heading = card.heading.trim();
-  final String cardHead = StringBuffer()
-    ..write('[CARD:${card.image.trim()}:${card.holdFrames}:')
-    ..write('$red,$green,$blue')
-    ..write(heading.isEmpty ? ']' : ':$heading]');
+  final String cardHead = (StringBuffer()
+        ..write('[CARD:${card.image.trim()}:${card.holdFrames}:')
+        ..write('$red,$green,$blue')
+        ..write(heading.isEmpty ? ']' : ':$heading]'))
+      .toString();
 
   final StringBuffer out = StringBuffer()
     ..write('$firstIndent[CUE:$sourceFrame]$lineEnding')
     ..write('$cardIndent$cardHead$lineEnding');
 
-  final String normalizedBody = card.body.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  final String normalizedBody =
+      card.body.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   if (normalizedBody.isNotEmpty) {
     final List<String> lines = normalizedBody.split('\n');
     for (final String line in lines) {
