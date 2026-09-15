@@ -1,11 +1,12 @@
 // ./lib/edit_cue_authoring.dart
 //
-// Source-backed authoring operations for clip-local CARD cues.
+// Source-backed authoring operations for clip-local CARD-family cues.
 //
 // CUE is not a hidden project model and it is not a generic structural layer.
 // These helpers rewrite only the selected CLIP's authored source, then reparse
 // the canonical document before returning it. The trigger remains source-frame
-// relative while CARD continues to own its own presentation lifetime.
+// relative while CARD or SIDECARD continues to own its own presentation
+// lifetime.
 
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
@@ -39,7 +40,9 @@ int cardCueSourceFrameAtProjectFrame(
   return clip.clip.sourceFrameAtProjectOffset(projectFrame - clip.atFrame);
 }
 
-/// Adds one CARD cue to [clipId] at the exact selected project-frame sample.
+/// Adds one CARD-family cue to [clipId] at the exact selected project-frame
+/// sample. A [SideCardRequest] emits SIDECARD; an ordinary [CardRequest] emits
+/// CARD. No separate hidden style property is introduced.
 String addCardCueAtProjectFrame({
   required EditSurfaceDocument document,
   required String trackId,
@@ -76,6 +79,9 @@ String addCardCueAtProjectFrame({
 }
 
 /// Rewrites one existing cue in place while keeping its authored trigger frame.
+/// The returned request may also switch the presentation between CARD and
+/// SIDECARD; that change is explicit source text and remains undoable through
+/// the normal complete-source history path.
 String updateCardCue({
   required EditSurfaceDocument document,
   required String trackId,
@@ -129,7 +135,7 @@ String deleteCardCue({
 }
 
 /// Splits a clip using the existing structural split operation, then assigns
-/// every CARD cue to exactly one resulting half.
+/// every CARD-family cue to exactly one resulting half.
 ///
 /// The original split operation necessarily copies the opaque CLIP body to
 /// both halves. That is correct for comments and most future opaque metadata,
@@ -253,8 +259,9 @@ String _cueMarkup({
   final int green = (argb >> 8) & 0xFF;
   final int blue = argb & 0xFF;
   final String heading = card.heading.trim();
+  final String tag = card is SideCardRequest ? 'SIDECARD' : 'CARD';
   final String cardHead = (StringBuffer()
-        ..write('[CARD:${card.image.trim()}:${card.holdFrames}:')
+        ..write('[$tag:${card.image.trim()}:${card.holdFrames}:')
         ..write('$red,$green,$blue')
         ..write(heading.isEmpty ? ']' : ':$heading]'))
       .toString();
@@ -273,7 +280,7 @@ String _cueMarkup({
   }
 
   out
-    ..write('$cardIndent[/CARD]$lineEnding')
+    ..write('$cardIndent[/$tag]$lineEnding')
     ..write('$continuationIndent[/CUE]');
   return out.toString();
 }
@@ -309,11 +316,11 @@ void _validateCard(CardRequest card) {
       'CARD heading cannot contain colon, closing bracket, or newline.',
     );
   }
-  if (card.body.contains('[/CARD]')) {
+  if (card.body.contains('[/CARD]') || card.body.contains('[/SIDECARD]')) {
     throw ArgumentError.value(
       card.body,
       'card.body',
-      'CARD body cannot contain the CARD closing tag.',
+      'CARD body cannot contain a CARD-family closing tag.',
     );
   }
 }
