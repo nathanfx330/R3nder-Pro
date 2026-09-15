@@ -13,9 +13,15 @@
 // on the right. No second decoder, playback clock, duration, z-order language,
 // or arbitrary positioning system is introduced.
 //
+// There are two presentation contexts. Standalone EDIT preview has no outer
+// program desktop, so it may self-stage SIDECARD here. TEXT/STRUCT preview and
+// BAKE already own the real desktop and structural window, so they suppress the
+// client-side SIDECARD and use the public side-card geometry/panel helpers to
+// move the real outer window instead. This prevents a window-inside-window.
+//
 // Direct EDIT cues fill that EDIT's target. Cues authored directly in a MOSAIC
-// pane are clipped to that pane and, for SIDECARD, sample only that pane's
-// corresponding structural pixels. The presentation contributes no audio.
+// pane are clipped to that pane and, for standalone SIDECARD, sample only that
+// pane's corresponding structural pixels. The presentation contributes no audio.
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -92,6 +98,24 @@ List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
       }
       return List<StructuralCardOverlayPlacement>.unmodifiable(result);
   }
+}
+
+/// The active SIDECARD that owns the outer structural presentation shell.
+///
+/// V1 deliberately allows only one shell composition at a time. If authored
+/// cues overlap, later authored order wins, matching the existing CARD paint
+/// rule without inventing z-order controls.
+StructuralCardOverlayPlacement? structuralSideCardPlacement(
+  EditDocumentModel model,
+  StructuralSourceRef root,
+  int projectFrame,
+) {
+  StructuralCardOverlayPlacement? selected;
+  for (final StructuralCardOverlayPlacement placement
+      in structuralCardOverlayPlacements(model, root, projectFrame)) {
+    if (placement.isSideCard && placement.slide > 0.0) selected = placement;
+  }
+  return selected;
 }
 
 /// Workspace-relative image path used by CARD and SIDECARD.
@@ -182,9 +206,9 @@ class CardOverlayImageCache {
 
 /// Final seated video-window geometry for SIDECARD inside [size].
 ///
-/// Public only so deterministic geometry tests can lock the composition without
-/// raster readback. The rect includes title-bar chrome; its client remains the
-/// exact structural image scaled to contain.
+/// Public because both live program preview and BAKE must move the real outer
+/// structural window to exactly this destination. The rect includes title-bar
+/// chrome; its client remains the exact continuously-advancing structural image.
 Rect sideCardSeatedVideoWindowRect(Size size) {
   if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
   final double s = math.min(size.width / 1920.0, size.height / 1080.0);
@@ -223,11 +247,9 @@ Rect sideCardSeatedPanelRect(Size size) {
 
 /// Paints CARD-family presentations over a complete structural surface.
 ///
-/// [structuralImage] is optional for ordinary CARD but required for SIDECARD's
-/// moving video window. Preview supplies its already-decoded structural frame;
-/// BAKE supplies the same raw frame before any cue pixels are added. SIDECARD
-/// therefore redraws existing pixels and never creates a second decoder or time
-/// authority.
+/// [structuralImage] is optional for ordinary CARD but required for standalone
+/// SIDECARD's moving video window. Program STRUCT suppresses SIDECARD here and
+/// stages it around the real outer structural window instead.
 void paintStructuralCardOverlays({
   required Canvas canvas,
   required Size size,
@@ -290,13 +312,142 @@ void paintStructuralCardOverlays({
   }
 }
 
+/// Paints only the right-hand SIDECARD panel into a program render frame.
+///
+/// The caller owns desktop and structural video window pixels. This helper owns
+/// only the existing CARD visual, so Preview and BAKE can stage the real outer
+/// window without duplicating card geometry or typography.
+void paintStructuralSideCardPanel({
+  required Canvas canvas,
+  required Size size,
+  required StructuralCardOverlayPlacement placement,
+  required CardOverlayImageCache images,
+  required String fontFamily,
+}) {
+  if (!placement.isSideCard ||
+      placement.slide <= 0.0 ||
+      size.width <= 0.0 ||
+      size.height <= 0.0) {
+    return;
+  }
+  _paintCardAtSeatedRect(
+    canvas: canvas,
+    engineW: size.width,
+    engineH: size.height,
+    seatedRect: sideCardSeatedPanelRect(size),
+    slide: placement.slide,
+    card: placement.card,
+    image: images.imageFor(placement.card),
+    fontFamily: fontFamily,
+  );
+}
+
+/// Widget wrapper for [paintStructuralSideCardPanel].
+///
+/// Used by StructuralSequencePreview because that widget owns the actual
+/// desktop/window shell. Image loading can repaint the card but never changes
+/// cue timing or structural geometry.
+class StructuralSideCardPanelOverlay extends StatefulWidget {
+  const StructuralSideCardPanelOverlay({
+    super.key,
+    required this.placement,
+    required this.resolveSource,
+    this.fontFamily = 'monospace',
+  });
+
+  final StructuralCardOverlayPlacement placement;
+  final String Function(String source) resolveSource;
+  final String fontFamily;
+
+  @override
+  State<StructuralSideCardPanelOverlay> createState() =>
+      _StructuralSideCardPanelOverlayState();
+}
+
+class _StructuralSideCardPanelOverlayState
+    extends State<StructuralSideCardPanelOverlay> {
+  late CardOverlayImageCache _images;
+
+  @override
+  void initState() {
+    super.initState();
+    _images = CardOverlayImageCache(widget.resolveSource);
+    _ensure();
+  }
+
+  @override
+  void didUpdateWidget(covariant StructuralSideCardPanelOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.resolveSource != widget.resolveSource) {
+      _images.dispose();
+      _images = CardOverlayImageCache(widget.resolveSource);
+    }
+    _ensure();
+  }
+
+  void _ensure() {
+    _images.ensure(<StructuralCardOverlayPlacement>[widget.placement]).then(
+      (bool changed) {
+        if (changed && mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _images.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _StructuralSideCardPanelPainter(
+          placement: widget.placement,
+          images: _images,
+          fontFamily: widget.fontFamily,
+        ),
+      ),
+    );
+  }
+}
+
+class _StructuralSideCardPanelPainter extends CustomPainter {
+  const _StructuralSideCardPanelPainter({
+    required this.placement,
+    required this.images,
+    required this.fontFamily,
+  });
+
+  final StructuralCardOverlayPlacement placement;
+  final CardOverlayImageCache images;
+  final String fontFamily;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    paintStructuralSideCardPanel(
+      canvas: canvas,
+      size: size,
+      placement: placement,
+      images: images,
+      fontFamily: fontFamily,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _StructuralSideCardPanelPainter oldDelegate) =>
+      oldDelegate.placement != placement ||
+      !identical(oldDelegate.images, images) ||
+      oldDelegate.fontFamily != fontFamily;
+}
+
 /// Live overlay widget used by EditVideoPreview.
 ///
 /// It contains no clock. [projectFrame] is supplied by the structural preview
 /// transport, and every build re-evaluates presentation state from that exact
-/// frame. [structuralImage] is the preview's existing decoded frame listenable;
-/// SIDECARD only redraws that image into its video window. Image readiness may
-/// change pixels, but never cue timing.
+/// frame. [renderSideCards] is true for standalone EDIT authoring preview and
+/// false when an outer program STRUCT shell owns SIDECARD geometry.
 class StructuralCardCueOverlay extends StatefulWidget {
   const StructuralCardCueOverlay({
     super.key,
@@ -306,6 +457,7 @@ class StructuralCardCueOverlay extends StatefulWidget {
     required this.resolveSource,
     this.structuralImage,
     this.fontFamily = 'monospace',
+    this.renderSideCards = true,
   });
 
   final String source;
@@ -314,6 +466,7 @@ class StructuralCardCueOverlay extends StatefulWidget {
   final String Function(String source) resolveSource;
   final ValueListenable<ui.Image?>? structuralImage;
   final String fontFamily;
+  final bool renderSideCards;
 
   @override
   State<StructuralCardCueOverlay> createState() =>
@@ -376,10 +529,17 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
       _parsedSourceRef = widget.sourceRef;
     }
 
-    return structuralCardOverlayPlacements(
+    final List<StructuralCardOverlayPlacement> placements =
+        structuralCardOverlayPlacements(
       _model!,
       _root!,
       widget.projectFrame,
+    );
+    if (widget.renderSideCards) return placements;
+    return List<StructuralCardOverlayPlacement>.unmodifiable(
+      placements.where(
+        (StructuralCardOverlayPlacement placement) => !placement.isSideCard,
+      ),
     );
   }
 
@@ -503,9 +663,9 @@ void _paintSideCardComposition({
   final double titleH = math.min(38.0 * s * eased, videoWindow.height);
   final double radius = 6.0 * s * eased;
 
-  // SIDECARD owns a presentation desktop inside its structural target. At the
-  // first visual frame the video still covers this entire plate, so the reveal
-  // is a geometric zoom-out rather than a desktop crossfade.
+  // Standalone EDIT preview has no program desktop/window shell of its own.
+  // Build the presentation shell here only in that context. TEXT/STRUCT passes
+  // renderSideCards=false and stages the real outer window instead.
   canvas.drawRect(
     full,
     Paint()..color = const Color(0xFF1B1D20),
