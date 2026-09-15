@@ -10,6 +10,12 @@
 // composition. Adjacent placements can chain on the desktop, and
 // APPSWITCH:SLIDE can switch directly without returning through the terminal.
 //
+// SIDECARD is also owned by this outer shell while a STRUCT placement is live.
+// The existing structural window itself moves left and the card is painted as a
+// sibling on the desktop. The structural client is explicitly told not to draw
+// its standalone EDIT SIDECARD composition, preventing a window around a
+// window+card composite and keeping one decoder / one structural clock.
+//
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
 // allowed to become visible until EditVideoPreview reports that an actual
@@ -61,6 +67,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'card_overlay.dart';
+import 'edit_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
@@ -126,6 +134,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   static const double _renderAspect = 16.0 / 9.0;
 
   bool _firstFrameReady = false;
+  EditDocumentModel? _cardModel;
+  String? _cardModelSource;
 
   /// Editor live preview reuses this State across adjacent STRUCT placements.
   /// During a seamless source switch, keep the already-painted outgoing client
@@ -153,9 +163,37 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     _handoffOutgoingBottomOverlay = '';
   }
 
+  StructuralCardOverlayPlacement? _activeSideCard(
+    String source,
+    int sourceFrame,
+  ) {
+    try {
+      if (_cardModel == null || _cardModelSource != widget.rawDocument) {
+        _cardModel = EditDocumentModel.parse(widget.rawDocument);
+        _cardModelSource = widget.rawDocument;
+      }
+      final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+      final EditDocumentModel? model = _cardModel;
+      if (root == null ||
+          root.id.isEmpty ||
+          model == null ||
+          !model.containsStructuralSource(root)) {
+        return null;
+      }
+      return structuralSideCardPlacement(model, root, sourceFrame);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.rawDocument != widget.rawDocument) {
+      _cardModel = null;
+      _cardModelSource = null;
+    }
 
     final String oldSource = oldWidget.placement.sourceRef.canonicalSource;
     final String newSource = widget.placement.sourceRef.canonicalSource;
@@ -397,6 +435,26 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
+          // SIDECARD does not replace the structural client. It temporarily
+          // moves this already-live outer window to the left and paints its
+          // CARD as a sibling on the desktop. As the shared CARD slide closes,
+          // Rect.lerp naturally returns the real window to its base placement.
+          final StructuralCardOverlayPlacement? sideCardPlacement =
+              stage == StructuralSequenceStage.showing && _firstFrameReady
+                  ? _activeSideCard(source, sourceFrame)
+                  : null;
+          if (sideCardPlacement != null && structuralWindowPresent) {
+            final Rect localSideWindow =
+                sideCardSeatedVideoWindowRect(renderFrame.size);
+            final Rect sideWindow = localSideWindow.shift(renderFrame.topLeft);
+            final double sideEase = Curves.easeOutCubic.transform(
+              sideCardPlacement.slide.clamp(0.0, 1.0),
+            );
+            structuralRect = Rect.lerp(structuralRect, sideWindow, sideEase)!;
+            desktopOpacity = 1.0;
+            terminalOpacity = 0.0;
+          }
+
           // Fallback ghost only. Production passes the real SceneEngine and
           // therefore never needs to approximate cursor metrics or theme.
           final Size cursorFraction = widget.terminalCursorFraction ??
@@ -509,6 +567,23 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       outgoingTopOverlay: _handoffOutgoingTopOverlay,
                       outgoingBottomOverlay: _handoffOutgoingBottomOverlay,
                     ),
+                  ),
+                ),
+
+              if (sideCardPlacement != null)
+                Positioned.fromRect(
+                  key: const ValueKey<String>(
+                    'structural-sidecard-panel-positioned',
+                  ),
+                  rect: renderFrame,
+                  child: StructuralSideCardPanelOverlay(
+                    key: const ValueKey<String>('structural-sidecard-panel'),
+                    placement: sideCardPlacement,
+                    resolveSource:
+                        widget.resolveSource ?? resolveWorkspaceMediaSource,
+                    fontFamily: liveFont != null && liveFont.isNotEmpty
+                        ? liveFont
+                        : 'monospace',
                   ),
                 ),
 
@@ -824,6 +899,7 @@ class _StructuralWindow extends StatelessWidget {
       theme: theme,
       isPlaying: playing,
       fastPreview: fastPreview,
+      renderSideCardsInClient: false,
       showDiagnosticOverlay: showOverlay,
       diagnosticOverlayText: customText,
       backend: backend,
