@@ -71,239 +71,225 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     final int green = (argb >> 8) & 0xFF;
     final int blue = argb & 0xFF;
 
-    final TextEditingController image = TextEditingController(
-      text: existing?.image ?? (images.isEmpty ? '' : images.first),
-    );
-    final TextEditingController hold = TextEditingController(
-      text: '${existing?.holdFrames ?? 90}',
-    );
-    final TextEditingController rgb = TextEditingController(
-      text: '$red,$green,$blue',
-    );
-    final TextEditingController heading = TextEditingController(
-      text: existing?.heading ?? '',
-    );
-    final TextEditingController body = TextEditingController(
-      text: existing?.body ?? '',
-    );
+    String imageDraft = existing?.image ?? (images.isEmpty ? '' : images.first);
+    String holdDraft = '${existing?.holdFrames ?? 90}';
+    String rgbDraft = '$red,$green,$blue';
+    String headingDraft = existing?.heading ?? '';
+    String bodyDraft = existing?.body ?? '';
 
-    try {
-      return await showDialog<CardRequest>(
-        context: context,
-        builder: (BuildContext dialogContext) {
-          String? errorText;
+    return showDialog<CardRequest>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        String? errorText;
 
-          return StatefulBuilder(
-            builder: (
-              BuildContext context,
-              void Function(VoidCallback fn) setDialogState,
-            ) {
-              void apply() {
-                final String imageValue = image.text.trim();
-                final int? holdFrames = int.tryParse(hold.text.trim());
-                final List<String> channels = rgb.text
-                    .split(',')
-                    .map((String value) => value.trim())
-                    .toList(growable: false);
-                final List<int?> parsed = channels
-                    .map((String value) => int.tryParse(value))
-                    .toList(growable: false);
+        return StatefulBuilder(
+          builder: (
+            BuildContext context,
+            void Function(VoidCallback fn) setDialogState,
+          ) {
+            void apply() {
+              final String imageValue = imageDraft.trim();
+              final int? holdFrames = int.tryParse(holdDraft.trim());
+              final List<String> channels = rgbDraft
+                  .split(',')
+                  .map((String value) => value.trim())
+                  .toList(growable: false);
+              final List<int?> parsed = channels
+                  .map((String value) => int.tryParse(value))
+                  .toList(growable: false);
 
-                String? problem;
-                if (imageValue.isEmpty ||
-                    imageValue.contains(':') ||
-                    imageValue.contains(']') ||
-                    imageValue.contains('\n') ||
-                    imageValue.contains('\r')) {
-                  problem = 'Choose one image path from the workspace images folder.';
-                } else if (holdFrames == null || holdFrames < 0) {
-                  problem = 'Hold must be zero or more frames.';
-                } else if (channels.length != 3 ||
-                    parsed.length != 3 ||
-                    parsed.any((int? value) =>
-                        value == null || value < 0 || value > 255)) {
-                  problem = 'Color must be r,g,b with values from 0 to 255.';
-                } else if (heading.text.contains(':') ||
-                    heading.text.contains(']') ||
-                    heading.text.contains('\n') ||
-                    heading.text.contains('\r')) {
-                  problem = 'Heading cannot contain colon, ] or a newline.';
-                } else if (body.text.contains('[/CARD]')) {
-                  problem = 'Body cannot contain [/CARD].';
-                }
-
-                if (problem != null) {
-                  setDialogState(() => errorText = problem);
-                  return;
-                }
-
-                Navigator.of(dialogContext).pop(
-                  CardRequest(
-                    image: imageValue,
-                    holdFrames: holdFrames!,
-                    panelColor: Color.fromARGB(
-                      255,
-                      parsed[0]!,
-                      parsed[1]!,
-                      parsed[2]!,
-                    ),
-                    heading: heading.text.trim(),
-                    body: body.text,
-                  ),
-                );
+              String? problem;
+              if (imageValue.isEmpty ||
+                  imageValue.contains(':') ||
+                  imageValue.contains(']') ||
+                  imageValue.contains('\n') ||
+                  imageValue.contains('\r')) {
+                problem = 'Choose one image path from the workspace images folder.';
+              } else if (holdFrames == null || holdFrames < 0) {
+                problem = 'Hold must be zero or more frames.';
+              } else if (channels.length != 3 ||
+                  parsed.length != 3 ||
+                  parsed.any((int? value) =>
+                      value == null || value < 0 || value > 255)) {
+                problem = 'Color must be r,g,b with values from 0 to 255.';
+              } else if (headingDraft.contains(':') ||
+                  headingDraft.contains(']') ||
+                  headingDraft.contains('\n') ||
+                  headingDraft.contains('\r')) {
+                problem = 'Heading cannot contain colon, ] or a newline.';
+              } else if (bodyDraft.contains('[/CARD]')) {
+                problem = 'Body cannot contain [/CARD].';
               }
 
-              return AlertDialog(
-                backgroundColor: R3Theme.panel,
-                title: Text(
-                  existing == null
-                      ? 'Add CARD cue · source F$sourceFrame'
-                      : 'Edit CARD cue · source F$sourceFrame',
-                  style: widget.theme.value,
+              if (problem != null) {
+                setDialogState(() => errorText = problem);
+                return;
+              }
+
+              Navigator.of(dialogContext).pop(
+                CardRequest(
+                  image: imageValue,
+                  holdFrames: holdFrames!,
+                  panelColor: Color.fromARGB(
+                    255,
+                    parsed[0]!,
+                    parsed[1]!,
+                    parsed[2]!,
+                  ),
+                  heading: headingDraft.trim(),
+                  body: bodyDraft,
                 ),
-                content: SizedBox(
-                  width: sc(520),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-image-field',
-                                ),
-                                controller: image,
-                                decoration: const InputDecoration(
-                                  labelText: 'Image in workspace images/',
-                                ),
-                                style: widget.theme.value,
-                              ),
-                            ),
-                            SizedBox(width: sc(8)),
-                            PopupMenuButton<String>(
-                              key: const ValueKey<String>(
-                                'edit-card-cue-image-menu',
-                              ),
-                              enabled: images.isNotEmpty,
-                              tooltip: 'Choose workspace image',
-                              color: R3Theme.panelHi,
-                              onSelected: (String value) {
-                                image.text = value;
-                                image.selection = TextSelection.collapsed(
-                                  offset: image.text.length,
-                                );
-                                setDialogState(() => errorText = null);
-                              },
-                              itemBuilder: (_) => images
-                                  .map(
-                                    (String value) => PopupMenuItem<String>(
-                                      value: value,
-                                      child: Text(value),
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: sc(10),
-                                  vertical: sc(11),
-                                ),
-                                decoration: BoxDecoration(
-                                  color: R3Theme.bg,
-                                  border: Border.all(color: R3Theme.hairline),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                                child: const Icon(
-                                  Icons.image_outlined,
-                                  size: 18,
-                                  color: R3Theme.textMid,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: sc(10)),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-hold-field',
-                                ),
-                                controller: hold,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Hold frames',
-                                ),
-                                style: widget.theme.value,
-                              ),
-                            ),
-                            SizedBox(width: sc(10)),
-                            Expanded(
-                              child: TextField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-rgb-field',
-                                ),
-                                controller: rgb,
-                                decoration: const InputDecoration(
-                                  labelText: 'Panel r,g,b',
-                                ),
-                                style: widget.theme.value,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: sc(10)),
-                        TextField(
-                          key: const ValueKey<String>(
-                            'edit-card-cue-heading-field',
-                          ),
-                          controller: heading,
-                          decoration: const InputDecoration(labelText: 'Heading'),
-                          style: widget.theme.value,
-                        ),
-                        SizedBox(height: sc(10)),
-                        TextField(
-                          key: const ValueKey<String>('edit-card-cue-body-field'),
-                          controller: body,
-                          minLines: 3,
-                          maxLines: 7,
-                          decoration: InputDecoration(
-                            labelText: 'Body',
-                            errorText: errorText,
-                            alignLabelWithHint: true,
-                          ),
-                          style: widget.theme.value,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('CANCEL'),
-                  ),
-                  TextButton(
-                    key: const ValueKey<String>('edit-card-cue-apply'),
-                    onPressed: apply,
-                    child: Text(existing == null ? 'ADD CUE' : 'APPLY'),
-                  ),
-                ],
               );
-            },
-          );
-        },
-      );
-    } finally {
-      image.dispose();
-      hold.dispose();
-      rgb.dispose();
-      heading.dispose();
-      body.dispose();
-    }
+            }
+
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text(
+                existing == null
+                    ? 'Add CARD cue · source F$sourceFrame'
+                    : 'Edit CARD cue · source F$sourceFrame',
+                style: widget.theme.value,
+              ),
+              content: SizedBox(
+                width: sc(520),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              key: ValueKey<String>(
+                                'edit-card-cue-image-field:$imageDraft',
+                              ),
+                              initialValue: imageDraft,
+                              decoration: const InputDecoration(
+                                labelText: 'Image in workspace images/',
+                              ),
+                              style: widget.theme.value,
+                              onChanged: (String value) => imageDraft = value,
+                            ),
+                          ),
+                          SizedBox(width: sc(8)),
+                          PopupMenuButton<String>(
+                            key: const ValueKey<String>(
+                              'edit-card-cue-image-menu',
+                            ),
+                            enabled: images.isNotEmpty,
+                            tooltip: 'Choose workspace image',
+                            color: R3Theme.panelHi,
+                            onSelected: (String value) {
+                              setDialogState(() {
+                                imageDraft = value;
+                                errorText = null;
+                              });
+                            },
+                            itemBuilder: (_) => images
+                                .map(
+                                  (String value) => PopupMenuItem<String>(
+                                    value: value,
+                                    child: Text(value),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: sc(10),
+                                vertical: sc(11),
+                              ),
+                              decoration: BoxDecoration(
+                                color: R3Theme.bg,
+                                border: Border.all(color: R3Theme.hairline),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: const Icon(
+                                Icons.image_outlined,
+                                size: 18,
+                                color: R3Theme.textMid,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: sc(10)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-hold-field',
+                              ),
+                              initialValue: holdDraft,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Hold frames',
+                              ),
+                              style: widget.theme.value,
+                              onChanged: (String value) => holdDraft = value,
+                            ),
+                          ),
+                          SizedBox(width: sc(10)),
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-rgb-field',
+                              ),
+                              initialValue: rgbDraft,
+                              decoration: const InputDecoration(
+                                labelText: 'Panel r,g,b',
+                              ),
+                              style: widget.theme.value,
+                              onChanged: (String value) => rgbDraft = value,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: sc(10)),
+                      TextFormField(
+                        key: const ValueKey<String>(
+                          'edit-card-cue-heading-field',
+                        ),
+                        initialValue: headingDraft,
+                        decoration: const InputDecoration(labelText: 'Heading'),
+                        style: widget.theme.value,
+                        onChanged: (String value) => headingDraft = value,
+                      ),
+                      SizedBox(height: sc(10)),
+                      TextFormField(
+                        key: const ValueKey<String>('edit-card-cue-body-field'),
+                        initialValue: bodyDraft,
+                        minLines: 3,
+                        maxLines: 7,
+                        decoration: InputDecoration(
+                          labelText: 'Body',
+                          errorText: errorText,
+                          alignLabelWithHint: true,
+                        ),
+                        style: widget.theme.value,
+                        onChanged: (String value) => bodyDraft = value,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  key: const ValueKey<String>('edit-card-cue-apply'),
+                  onPressed: apply,
+                  child: Text(existing == null ? 'ADD CUE' : 'APPLY'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _add() async {
