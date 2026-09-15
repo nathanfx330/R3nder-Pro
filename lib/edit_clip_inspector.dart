@@ -10,8 +10,11 @@
 
 import 'package:flutter/material.dart';
 
+import 'edit_card_cue_controls.dart';
+import 'edit_cue.dart';
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
+import 'presentation_requests.dart';
 import 'ui_theme.dart';
 
 class EditClipInspector extends StatelessWidget {
@@ -23,6 +26,12 @@ class EditClipInspector extends StatelessWidget {
   final ValueChanged<EditTransition>? onOutgoingTransitionChanged;
   final ValueChanged<ClipAudioGain>? onAudioGainChanged;
   final ValueChanged<bool>? onMutedChanged;
+  final List<EditCardCue> cardCues;
+  final int playheadFrame;
+  final List<String> Function()? cardImageOptions;
+  final ValueChanged<CardRequest>? onAddCardCueAtPlayhead;
+  final EditCardCueChanged? onCardCueChanged;
+  final ValueChanged<int>? onCardCueDeleted;
   final VoidCallback? onDelete;
 
   const EditClipInspector({
@@ -35,6 +44,12 @@ class EditClipInspector extends StatelessWidget {
     this.onOutgoingTransitionChanged,
     this.onAudioGainChanged,
     this.onMutedChanged,
+    this.cardCues = const <EditCardCue>[],
+    this.playheadFrame = 0,
+    this.cardImageOptions,
+    this.onAddCardCueAtPlayhead,
+    this.onCardCueChanged,
+    this.onCardCueDeleted,
     this.onDelete,
   });
 
@@ -149,6 +164,23 @@ class EditClipInspector extends StatelessWidget {
                   theme: theme,
                   onGainChanged: onAudioGainChanged,
                   onMutedChanged: onMutedChanged,
+                ),
+                SizedBox(height: sc(10)),
+                _sectionDivider(),
+                R3MicroLabel('CARD CUES', theme: theme, accent: true),
+                SizedBox(height: sc(7)),
+                EditCardCueControls(
+                  key: ValueKey<String>(
+                    'edit-card-cues:${selected.trackId}:${selected.id}',
+                  ),
+                  clip: selected,
+                  cues: cardCues,
+                  playheadFrame: playheadFrame,
+                  theme: theme,
+                  imageOptions: cardImageOptions,
+                  onAddAtPlayhead: onAddCardCueAtPlayhead,
+                  onChanged: onCardCueChanged,
+                  onDeleted: onCardCueDeleted,
                 ),
                 SizedBox(height: sc(10)),
               ],
