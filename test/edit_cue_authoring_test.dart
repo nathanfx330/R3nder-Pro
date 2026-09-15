@@ -173,7 +173,9 @@ void main() {
     final EditSurfaceTrack track = split.track('V1');
     expect(track.clips, hasLength(2));
 
-    final EditSurfaceClip left = track.clip('shot');
+    final EditSurfaceClip left = track.clips.singleWhere(
+      (EditSurfaceClip clip) => clip.id == 'shot',
+    );
     final EditSurfaceClip right = track.clips.singleWhere(
       (EditSurfaceClip clip) => clip.id != 'shot',
     );
