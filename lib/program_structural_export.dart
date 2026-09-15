@@ -9,12 +9,13 @@
 // exact EDIT/MOSAIC pixels, and composites the same authored desktop/window
 // choreography used by live Preview.
 //
-// CARD-family CUE presentation is composited into the structural client image
-// before that client is placed into the desktop/window choreography. Preview
-// and BAKE therefore use card_overlay.dart for the same explicit-time drawing.
-// SIDECARD receives the same raw decoded structural image that was already
-// selected for this exact source frame and redraws it into its video window;
-// decoder readiness can delay a bake call but cannot move the cue or source.
+// Fullscreen CARD CUE presentation is composited into the structural client
+// image before that client is placed into the desktop/window choreography.
+// SIDECARD is different by design: the raw structural client remains the real
+// client of the real STRUCT window, that outer window moves left, and the card
+// is painted as a sibling on the desktop. Preview and BAKE therefore agree on
+// the presentation hierarchy instead of baking a window+card composite and then
+// wrapping that composite in another structural window.
 //
 // Structural application planning is already baked into each placement:
 // standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
@@ -161,6 +162,36 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
+  StructuralCardOverlayPlacement? _sideCardFor(
+    StructuralSequencePlacement placement,
+    int localFrame,
+    int sourceFrame,
+  ) {
+    if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
+      return null;
+    }
+    final StructuralSourceRef? root =
+        StructuralSourceRef.tryParse(placement.sourceRef.canonicalSource);
+    if (root == null ||
+        root.id.isEmpty ||
+        !_editModel.containsStructuralSource(root)) {
+      return null;
+    }
+    return structuralSideCardPlacement(_editModel, root, sourceFrame);
+  }
+
+  Rect _normalizedSideCardWindowRect() {
+    final Rect pixel = sideCardSeatedVideoWindowRect(
+      Size(width.toDouble(), height.toDouble()),
+    );
+    return Rect.fromLTRB(
+      pixel.left / width,
+      pixel.top / height,
+      pixel.right / width,
+      pixel.bottom / height,
+    );
+  }
+
   /// Returns a complete output frame while STRUCT is active, otherwise null so
   /// SceneExporter can use its original SceneCompositor path unchanged.
   Future<ui.Image?> renderIfActive({
@@ -184,6 +215,11 @@ class ProgramStructuralFrameRenderer {
       outputWidth: width,
       outputHeight: height,
     );
+    final StructuralCardOverlayPlacement? sideCard = _sideCardFor(
+      placement,
+      localFrame,
+      visual.sourceFrame,
+    );
 
     ui.Image? sourceImage;
     String defaultBottomOverlay = '';
@@ -194,6 +230,25 @@ class ProgramStructuralFrameRenderer {
         fontFamily,
       );
       defaultBottomOverlay = _cachedDiagnosticLabel;
+    }
+    if (sideCard != null) {
+      await _cardImages.ensure(<StructuralCardOverlayPlacement>[sideCard]);
+    }
+
+    Rect structuralRect = visual.structuralRect;
+    double desktopOpacity = visual.desktopOpacity;
+    double terminalOpacity = visual.terminalOpacity;
+    if (sideCard != null && visual.structuralWindowPresent) {
+      final double sideEase = Curves.easeOutCubic.transform(
+        sideCard.slide.clamp(0.0, 1.0),
+      );
+      structuralRect = Rect.lerp(
+        structuralRect,
+        _normalizedSideCardWindowRect(),
+        sideEase,
+      )!;
+      desktopOpacity = 1.0;
+      terminalOpacity = 0.0;
     }
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -206,8 +261,8 @@ class ProgramStructuralFrameRenderer {
       scene: scene,
       fontFamily: fontFamily,
       terminalRect: visual.terminalRect,
-      desktopOpacity: visual.desktopOpacity,
-      terminalOpacity: visual.terminalOpacity,
+      desktopOpacity: desktopOpacity,
+      terminalOpacity: terminalOpacity,
       terminalChrome: visual.terminalChrome,
     ).paint(canvas, Size(width.toDouble(), height.toDouble()));
 
@@ -223,9 +278,19 @@ class ProgramStructuralFrameRenderer {
         topOverlay: placement.topOverlay,
         bottomOverlay: placement.bottomOverlay,
         defaultBottomOverlay: defaultBottomOverlay,
-        rect: _pixelRect(visual.structuralRect),
+        rect: _pixelRect(structuralRect),
         sourceImage: sourceImage,
         opacity: visual.structuralOpacity,
+      );
+    }
+
+    if (sideCard != null) {
+      paintStructuralSideCardPanel(
+        canvas: canvas,
+        size: Size(width.toDouble(), height.toDouble()),
+        placement: sideCard,
+        images: _cardImages,
+        fontFamily: fontFamily,
       );
     }
 
@@ -279,7 +344,12 @@ class ProgramStructuralFrameRenderer {
         root.id.isNotEmpty &&
         _editModel.containsStructuralSource(root)) {
       final List<StructuralCardOverlayPlacement> overlays =
-          structuralCardOverlayPlacements(_editModel, root, sourceFrame);
+          structuralCardOverlayPlacements(_editModel, root, sourceFrame)
+              .where(
+                (StructuralCardOverlayPlacement placement) =>
+                    !placement.isSideCard,
+              )
+              .toList(growable: false);
       if (overlays.any((StructuralCardOverlayPlacement p) => p.slide > 0.0)) {
         await _cardImages.ensure(overlays);
         final ui.PictureRecorder recorder = ui.PictureRecorder();
