@@ -12,10 +12,11 @@
 // platform uses the deterministic CPU compositor fallback.
 //
 // CARD-family CUEs are a presentation projection over those same structural
-// pixels. While one is active the preview deliberately leaves the external
-// texture shortcut and evaluates exact project frames. Ordinary CARD paints
-// over them; SIDECARD redraws those already-decoded pixels into its video
-// window. Neither path creates a second decoder or clock.
+// pixels. Ordinary CARD paints over the client pixels. Standalone EDIT preview
+// may also self-stage SIDECARD by redrawing those pixels into a desktop-style
+// video window. Program STRUCT preview sets [renderSideCardsInClient] false so
+// the real outer structural window moves beside the card instead; no nested
+// window is created and no second decoder or clock exists.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -108,6 +109,12 @@ class EditVideoPreview extends StatefulWidget {
   /// cost, never project-time selection or source-frame mapping.
   final bool fastPreview;
 
+  /// Standalone EDIT authoring has no outer program presentation shell and
+  /// therefore renders SIDECARD inside this preview. TEXT/STRUCT has a real
+  /// desktop and structural window around this widget, so it sets this false
+  /// and moves that outer window beside the card instead.
+  final bool renderSideCardsInClient;
+
   /// The small lower-left MLT/project diagnostic is cosmetic presentation
   /// chrome. Structural placement can hide it or replace its text without
   /// affecting decoder state, project time, or center-screen error messages.
@@ -136,6 +143,7 @@ class EditVideoPreview extends StatefulWidget {
     required this.theme,
     this.isPlaying = false,
     this.fastPreview = false,
+    this.renderSideCardsInClient = true,
     this.showDiagnosticOverlay = true,
     this.diagnosticOverlayText,
     this.backend,
@@ -228,6 +236,14 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       _epoch++;
       _scheduleParkedRender();
       return;
+    }
+
+    final bool presentationPolicyChanged =
+        oldWidget.renderSideCardsInClient != widget.renderSideCardsInClient;
+    if (presentationPolicyChanged) {
+      _setNativeTexture(null);
+      _epoch++;
+      _scheduleParkedRender();
     }
 
     if (_playbackFrames == null) {
@@ -347,20 +363,30 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     return compositor;
   }
 
+  bool _overlayNeedsClientPixels(
+    StructuralCardOverlayPlacement placement,
+  ) {
+    if (!placement.isSideCard) return true;
+    return widget.renderSideCardsInClient;
+  }
+
   _NativeTextureTarget? _singleNativeTextureTarget(int projectFrame) {
     final EditDocumentModel? model = _model;
     final StructuralSourceRef? root = StructuralSourceRef.tryParse(widget.sourceRef);
     if (model != null &&
         root != null &&
         root.id.isNotEmpty &&
-        model.containsStructuralSource(root) &&
-        structuralCardOverlayPlacements(model, root, projectFrame).isNotEmpty) {
-      // CARD-family presentation must be evaluated on the same exact project
-      // frame as the picture underneath it. SIDECARD also needs those pixels
-      // in Dart so it can redraw them into its moving video window. The native
-      // texture advances independently after the handle is published, so the
-      // shortcut is intentionally bypassed for the active presentation.
-      return null;
+        model.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacements(model, root, projectFrame);
+      if (overlays.any(_overlayNeedsClientPixels)) {
+        // Fullscreen CARD must be painted against this exact client frame.
+        // Standalone SIDECARD also needs Dart pixels to redraw into its own
+        // video window. Program STRUCT suppresses client-side SIDECARD and may
+        // retain the native texture because the outer widget moves that same
+        // continuously-advancing texture as a whole.
+        return null;
+      }
     }
 
     final EditSurfaceDocument? surface = _surface;
@@ -745,10 +771,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
             ),
           ),
 
-          // CARD-family presentation is painted over the structural client
-          // pixels, not over surrounding STRUCT window/desktop chrome. The
-          // same raw image listenable is supplied to SIDECARD so its smaller
-          // video window contains this exact frame rather than a second decode.
+          // CARD-family presentation is painted over structural client pixels.
+          // Program STRUCT sets renderSideCards=false, leaving SIDECARD to its
+          // outer desktop/window shell while ordinary CARD stays client-local.
           Positioned.fill(
             child: ValueListenableBuilder<_PreviewMetadata>(
               valueListenable: _metadata,
@@ -763,6 +788,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                   projectFrame: metadata.projectFrame,
                   resolveSource: resolver,
                   structuralImage: _image,
+                  renderSideCards: widget.renderSideCardsInClient,
                 );
               },
             ),
