@@ -43,8 +43,10 @@ class EditCardCue {
   /// Authored source frame, in the same coordinate space as CLIP `in`.
   final int sourceFrame;
 
-  /// The existing canonical CARD request. Defaults and body cleanup therefore
-  /// come from the same parser used by TEXT rather than being copied here.
+  /// The existing canonical CARD request. Defaults still come from the same
+  /// parser used by TEXT. CUE then removes only the structural indentation
+  /// introduced by nesting CARD inside CLIP/CUE source so GUI-authored body
+  /// text round-trips as the text the author entered.
   final CardRequest card;
 
   /// Absolute source span of the complete `[CUE]...[/CUE]` block.
@@ -130,6 +132,11 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
           absoluteBase + contentAt,
         );
       }
+      final CardRequest card = _normalizeNestedCardBody(
+        request,
+        source: source,
+        cardStart: contentAt,
+      );
 
       final int closeAt = _skipWhitespace(source, presentation.end);
       if (!source.startsWith(_cueClosing, closeAt)) {
@@ -143,7 +150,7 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
       cues.add(
         EditCardCue(
           sourceFrame: sourceFrame,
-          card: request,
+          card: card,
           startOffset: absoluteBase + cursor,
           endOffset: absoluteBase + end,
           rawSource: source.substring(cursor, end),
@@ -176,6 +183,45 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
   }
 
   return List<EditCardCue>.unmodifiable(cues);
+}
+
+CardRequest _normalizeNestedCardBody(
+  CardRequest request, {
+  required String source,
+  required int cardStart,
+}) {
+  final String cardIndent = _lineIndentAt(source, cardStart);
+  final String bodyIndent = '$cardIndent  ';
+  final List<String> lines = request.body
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .split('\n');
+
+  // The generic CARD parser intentionally knows nothing about surrounding
+  // source indentation. Inside a CUE, the newline before [/CARD] therefore
+  // leaves the CARD line's indent as a final whitespace-only body line.
+  // Remove only that layout line, not a user-authored blank line before it.
+  if (lines.isNotEmpty && lines.last == cardIndent) {
+    lines.removeLast();
+  }
+
+  // Canonical CUE authoring indents body copy one level inside the CARD tag.
+  // Strip exactly that structural prefix from each line. Any additional spaces
+  // typed by the author remain intact, including deliberate indentation and
+  // blank lines inside the body.
+  for (int i = 0; i < lines.length; i++) {
+    if (bodyIndent.isNotEmpty && lines[i].startsWith(bodyIndent)) {
+      lines[i] = lines[i].substring(bodyIndent.length);
+    }
+  }
+
+  return CardRequest(
+    image: request.image,
+    holdFrames: request.holdFrames,
+    panelColor: request.panelColor,
+    heading: request.heading,
+    body: lines.join('\n'),
+  );
 }
 
 /// Returns every CARD cue visible in [edit] at [projectFrame].
@@ -289,4 +335,15 @@ int _skipWhitespace(String source, int from) {
     break;
   }
   return i;
+}
+
+String _lineIndentAt(String source, int offset) {
+  final int start = source.lastIndexOf('\n', offset > 0 ? offset - 1 : 0) + 1;
+  int cursor = start;
+  while (cursor < offset) {
+    final int code = source.codeUnitAt(cursor);
+    if (code != 32 && code != 9) break;
+    cursor++;
+  }
+  return source.substring(start, cursor);
 }
