@@ -13,10 +13,28 @@ const String _editRoot = '''[EDIT:main]
 [/EDIT]
 ''';
 
-List<ScriptNode> _nodes(String structTag) {
-  final ScriptNode root = ScriptNode(
+const String _mosaicRoot = '''[EDIT:child]
+[TRACK:V1]
+[CLIP:base:video/base.mp4:0:0:90:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:nested:EDIT.child:0:0:90:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+List<ScriptNode> _nodes(
+  String root,
+  String structTag, {
+  required int placementLine,
+}) {
+  final ScriptNode definitions = ScriptNode(
     type: 'RAW',
-    rawText: _editRoot,
+    rawText: root,
   )
     ..startLine = -1
     ..endLine = -1;
@@ -25,21 +43,21 @@ List<ScriptNode> _nodes(String structTag) {
     type: 'STRUCT',
     rawText: structTag,
   )
-    ..startLine = 6
-    ..endLine = 6;
+    ..startLine = placementLine
+    ..endLine = placementLine;
 
-  return <ScriptNode>[root, placement];
+  return <ScriptNode>[definitions, placement];
 }
 
 void main() {
-  test('AUDIO STRUCT ribbon span starts at the picture content boundary', () {
+  test('AUDIO EDIT STRUCT ribbon span starts at the picture content boundary', () {
     const String structTag = '[STRUCT:EDIT.main:AUDIO]';
     final String document = '$_editRoot$structTag';
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(document).single;
 
     final List<RibbonBlock> blocks = buildRibbonBlocks(
-      _nodes(structTag),
+      _nodes(_editRoot, structTag, placementLine: 6),
       List<int>.filled(placement.durationFrames, 6),
     );
 
@@ -57,6 +75,29 @@ void main() {
     expect(block.clipAudioFrames, placement.sourceDurationFrames);
   });
 
+  test('AUDIO MOSAIC STRUCT exposes the nested EDIT clip audio ribbon span', () {
+    const String structTag = '[STRUCT:MOSAIC.wall:AUDIO]';
+    final String document = '$_mosaicRoot$structTag';
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(document).single;
+
+    final List<RibbonBlock> blocks = buildRibbonBlocks(
+      _nodes(_mosaicRoot, structTag, placementLine: 12),
+      List<int>.filled(placement.durationFrames, 12),
+    );
+
+    expect(blocks, hasLength(1));
+    final RibbonBlock block = blocks.single;
+    expect(block.type, 'STRUCT');
+    expect(block.hasClipAudio, isTrue);
+    expect(block.clipAudioStartFrame, placement.contentStartFrame);
+    expect(
+      block.clipAudioEndFrameExclusive,
+      placement.contentStartFrame + placement.sourceDurationFrames,
+    );
+    expect(block.clipAudioFrames, 90);
+  });
+
   test('STRUCT without AUDIO does not create an MP4 audio lane span', () {
     const String structTag = '[STRUCT:EDIT.main]';
     final String document = '$_editRoot$structTag';
@@ -64,7 +105,7 @@ void main() {
         parseStructuralSequencePlacements(document).single;
 
     final List<RibbonBlock> blocks = buildRibbonBlocks(
-      _nodes(structTag),
+      _nodes(_editRoot, structTag, placementLine: 6),
       List<int>.filled(placement.durationFrames, 6),
     );
 
