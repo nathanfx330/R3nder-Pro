@@ -9,10 +9,12 @@
 // exact EDIT/MOSAIC pixels, and composites the same authored desktop/window
 // choreography used by live Preview.
 //
-// CARD CUE presentation is composited into the structural client image before
-// that client is placed into the desktop/window choreography. Preview and BAKE
-// therefore use card_overlay.dart for the same explicit-time panel drawing;
-// decoder readiness can delay a bake call but cannot move the CARD or source.
+// CARD-family CUE presentation is composited into the structural client image
+// before that client is placed into the desktop/window choreography. Preview
+// and BAKE therefore use card_overlay.dart for the same explicit-time drawing.
+// SIDECARD receives the same raw decoded structural image that was already
+// selected for this exact source frame and redraws it into its video window;
+// decoder readiness can delay a bake call but cannot move the cue or source.
 //
 // Structural application planning is already baked into each placement:
 // standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
@@ -273,7 +275,9 @@ class ProgramStructuralFrameRenderer {
 
     ui.Image finalImage = decoded;
     final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
-    if (root != null && root.id.isNotEmpty && _editModel.containsStructuralSource(root)) {
+    if (root != null &&
+        root.id.isNotEmpty &&
+        _editModel.containsStructuralSource(root)) {
       final List<StructuralCardOverlayPlacement> overlays =
           structuralCardOverlayPlacements(_editModel, root, sourceFrame);
       if (overlays.any((StructuralCardOverlayPlacement p) => p.slide > 0.0)) {
@@ -289,6 +293,7 @@ class ProgramStructuralFrameRenderer {
           size: Size(width.toDouble(), height.toDouble()),
           placements: overlays,
           images: _cardImages,
+          structuralImage: decoded,
           fontFamily: fontFamily,
         );
         final ui.Picture picture = recorder.endRecording();
