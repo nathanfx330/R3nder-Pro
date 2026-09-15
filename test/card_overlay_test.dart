@@ -83,11 +83,11 @@ void main() {
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(
       recorder,
-      const Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
     );
     paintStructuralCardOverlays(
       canvas: canvas,
-      size: const Size(width.toDouble(), height.toDouble()),
+      size: Size(width.toDouble(), height.toDouble()),
       placements: placements,
       images: images,
       fontFamily: 'monospace',
