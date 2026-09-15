@@ -11,6 +11,12 @@
 // Any structural source, overlap, transition, test backend, or unsupported
 // platform uses the deterministic CPU compositor fallback.
 //
+// CARD CUEs are a presentation projection over those same structural pixels.
+// While a CARD is active the preview deliberately leaves the external-texture
+// shortcut and evaluates exact project frames, so the overlay and underlying
+// video advance from one shared project clock rather than from two unrelated
+// presentation cadences.
+//
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
 // widget picture-only prevents a child rebuild/listener from becoming a second
@@ -24,6 +30,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'card_overlay.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
@@ -38,7 +45,8 @@ bool _isAbsolutePath(String path) {
   return RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path);
 }
 
-/// Resolves an authored CLIP or luma-mask source against the active workspace.
+/// Resolves an authored CLIP, CARD image, or luma-mask source against the
+/// active workspace.
 String resolveWorkspaceMediaSource(String source) {
   final String trimmed = source.trim();
   if (trimmed.isEmpty) {
@@ -152,6 +160,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
   EditSurfaceDocument? _surface;
+  EditDocumentModel? _model;
   String? _layerSource;
   String? _layerStructuralSource;
 
@@ -259,6 +268,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _compositor?.dispose();
     _compositor = null;
     _surface = null;
+    _model = null;
     _layer?.dispose();
     _layer = null;
     _layerSource = null;
@@ -331,12 +341,27 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _layer = layer;
     _compositor = compositor;
     _surface = surface;
+    _model = model;
     _layerSource = widget.source;
     _layerStructuralSource = widget.sourceRef;
     return compositor;
   }
 
   _NativeTextureTarget? _singleNativeTextureTarget(int projectFrame) {
+    final EditDocumentModel? model = _model;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(widget.sourceRef);
+    if (model != null &&
+        root != null &&
+        root.id.isNotEmpty &&
+        model.containsStructuralSource(root) &&
+        structuralCardOverlayPlacements(model, root, projectFrame).isNotEmpty) {
+      // CARD must be evaluated on the same exact project frame as the picture
+      // underneath it. The native texture advances independently after the
+      // handle is published, so it is intentionally bypassed for the CARD's
+      // active lifetime.
+      return null;
+    }
+
     final EditSurfaceDocument? surface = _surface;
     if (surface == null) return null;
 
@@ -682,6 +707,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
 
   @override
   Widget build(BuildContext context) {
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+
     return RepaintBoundary(
       child: Stack(
         fit: StackFit.expand,
@@ -715,6 +743,28 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               },
             ),
           ),
+
+          // CARD presentation is painted over the structural client pixels,
+          // not over the surrounding STRUCT window/desktop chrome. Its frame
+          // comes from the same metadata publication as the decoded picture.
+          Positioned.fill(
+            child: ValueListenableBuilder<_PreviewMetadata>(
+              valueListenable: _metadata,
+              builder: (
+                BuildContext context,
+                _PreviewMetadata metadata,
+                Widget? child,
+              ) {
+                return StructuralCardCueOverlay(
+                  source: widget.source,
+                  sourceRef: widget.sourceRef,
+                  projectFrame: metadata.projectFrame,
+                  resolveSource: resolver,
+                );
+              },
+            ),
+          ),
+
           ValueListenableBuilder<_PreviewMetadata>(
             valueListenable: _metadata,
             builder: (
