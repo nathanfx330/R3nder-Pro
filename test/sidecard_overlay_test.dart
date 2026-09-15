@@ -38,7 +38,7 @@ void main() {
 
   test('direct EDIT SIDECARD resolves as full structural target placement', () {
     final EditDocumentModel model = EditDocumentModel.parse(_source);
-    final StructuralSourceRef root = StructuralSourceRef.parse('EDIT.main');
+    final StructuralSourceRef root = StructuralSourceRef.tryParse('EDIT.main')!;
 
     final List<StructuralCardOverlayPlacement> placements =
         structuralCardOverlayPlacements(model, root, 106);
@@ -54,7 +54,7 @@ void main() {
 
   test('SIDECARD starts from the same CARD slide timing', () {
     final EditDocumentModel model = EditDocumentModel.parse(_source);
-    final StructuralSourceRef root = StructuralSourceRef.parse('EDIT.main');
+    final StructuralSourceRef root = StructuralSourceRef.tryParse('EDIT.main')!;
 
     final StructuralCardOverlayPlacement opening =
         structuralCardOverlayPlacements(model, root, 90).single;
