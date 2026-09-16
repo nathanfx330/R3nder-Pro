@@ -45,17 +45,20 @@ class TimelineLandmarkLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: CustomPaint(
-        painter: TimelineLandmarkPainter(
-          markers: markers,
-          derived: derived,
-          totalFrames: totalFrames,
-          pixelsPerFrame: pixelsPerFrame,
-          theme: theme,
-          dimmed: dimmed,
+    return SizedBox(
+      height: kTimelineLandmarkLayerHeight,
+      width: double.infinity,
+      child: IgnorePointer(
+        child: CustomPaint(
+          painter: TimelineLandmarkPainter(
+            markers: markers,
+            derived: derived,
+            totalFrames: totalFrames,
+            pixelsPerFrame: pixelsPerFrame,
+            theme: theme,
+            dimmed: dimmed,
+          ),
         ),
-        size: Size(double.infinity, kTimelineLandmarkLayerHeight),
       ),
     );
   }
