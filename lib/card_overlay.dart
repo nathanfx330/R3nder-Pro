@@ -1,11 +1,12 @@
 // ./lib/card_overlay.dart
 //
-// Shared explicit-time CARD-family rendering for structural video.
+// Shared explicit-time CARD-family painting for structural video.
 //
-// A CUE does not own presentation duration or mutable playback state. This
-// layer asks edit_cue.dart which presentations are active at one exact
-// structural frame, then paints them over the caller's already-rendered pixels.
-// Live preview and program BAKE both use this same Canvas routine.
+// A CUE does not own presentation duration or mutable playback state. Placement
+// selection and lifetime projection live in card_overlay_state.dart; this file
+// loads presentation images and paints the already-evaluated state. Live preview
+// and program BAKE therefore consume the same placement model without making
+// the painter another presentation engine.
 //
 // CARD is the fullscreen overlay discovered while building the first CUE path.
 // SIDECARD is the original side-by-side composition: the same structural image
@@ -35,95 +36,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'edit_cue.dart';
+import 'card_overlay_state.dart';
 import 'edit_model.dart';
 import 'presentation_requests.dart';
 import 'sidecard_geometry.dart';
 
+export 'card_overlay_state.dart';
 export 'sidecard_geometry.dart';
-
-/// One active CARD-family presentation plus the structural pixel region it owns.
-class StructuralCardOverlayPlacement {
-  const StructuralCardOverlayPlacement({
-    required this.card,
-    required this.slide,
-    required this.normalizedRect,
-  });
-
-  final CardRequest card;
-  final double slide;
-
-  bool get isSideCard => card is SideCardRequest;
-
-  /// Target rectangle in 0..1 coordinates of the structural render surface.
-  /// An EDIT owns the whole surface. A MOSAIC pane owns only its pane.
-  final Rect normalizedRect;
-}
-
-/// CARD-family presentations active at [projectFrame] for one selected
-/// structural root.
-///
-/// Authored order is preserved. Later placements are painted later and
-/// therefore appear on top, matching edit_cue.dart's deterministic rule.
-List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
-  EditDocumentModel model,
-  StructuralSourceRef root,
-  int projectFrame,
-) {
-  switch (root.kind) {
-    case StructuralSourceKind.edit:
-      final List<ActiveEditCardCue> active =
-          activeCardCuesForEdit(model.edit(root.id), projectFrame);
-      return List<StructuralCardOverlayPlacement>.unmodifiable(
-        active.map(
-          (ActiveEditCardCue cue) => StructuralCardOverlayPlacement(
-            card: cue.cue.card,
-            slide: cue.presentationFrame.slide,
-            normalizedRect: const Rect.fromLTWH(0, 0, 1, 1),
-          ),
-        ),
-      );
-
-    case StructuralSourceKind.mosaic:
-      final MosaicSequence mosaic = model.mosaic(root.id);
-      final List<Rect> layout = _mosaicLayout(mosaic.panes.length);
-      final List<StructuralCardOverlayPlacement> result =
-          <StructuralCardOverlayPlacement>[];
-      for (int i = 0; i < mosaic.panes.length; i++) {
-        final MosaicPane pane = mosaic.panes[i];
-        final Rect paneRect = layout[i];
-        for (final ActiveEditCardCue cue
-            in activeCardCuesForPane(pane, projectFrame)) {
-          result.add(
-            StructuralCardOverlayPlacement(
-              card: cue.cue.card,
-              slide: cue.presentationFrame.slide,
-              normalizedRect: paneRect,
-            ),
-          );
-        }
-      }
-      return List<StructuralCardOverlayPlacement>.unmodifiable(result);
-  }
-}
-
-/// The active SIDECARD that owns the outer structural presentation shell.
-///
-/// V1 deliberately allows only one shell composition at a time. If authored
-/// cues overlap, later authored order wins, matching the existing CARD paint
-/// rule without inventing z-order controls.
-StructuralCardOverlayPlacement? structuralSideCardPlacement(
-  EditDocumentModel model,
-  StructuralSourceRef root,
-  int projectFrame,
-) {
-  StructuralCardOverlayPlacement? selected;
-  for (final StructuralCardOverlayPlacement placement
-      in structuralCardOverlayPlacements(model, root, projectFrame)) {
-    if (placement.isSideCard && placement.slide > 0.0) selected = placement;
-  }
-  return selected;
-}
 
 /// Workspace-relative image path used by CARD and SIDECARD.
 ///
@@ -1061,20 +980,4 @@ void _drawImageCover(Canvas canvas, ui.Image image, Rect rect) {
     Paint()..filterQuality = FilterQuality.high,
   );
   canvas.restore();
-}
-
-List<Rect> _mosaicLayout(int count) {
-  if (count <= 0) return const <Rect>[];
-  if (count == 1) return const <Rect>[Rect.fromLTRB(0, 0, 1, 1)];
-  if (count == 2) {
-    return const <Rect>[
-      Rect.fromLTRB(0, 0, 0.56, 1),
-      Rect.fromLTRB(0.56, 0, 1, 1),
-    ];
-  }
-  return const <Rect>[
-    Rect.fromLTRB(0, 0, 0.56, 1),
-    Rect.fromLTRB(0.56, 0, 1, 0.5),
-    Rect.fromLTRB(0.56, 0.5, 1, 1),
-  ];
 }
