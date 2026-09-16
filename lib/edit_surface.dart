@@ -39,8 +39,11 @@ import 'edit_playback_frame.dart';
 import 'edit_source_history.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_preview.dart';
+import 'marker_authoring.dart';
 import 'media_layer.dart';
 import 'presentation_requests.dart';
+import 'timeline_landmark_layer.dart';
+import 'timeline_markers.dart';
 import 'ui_theme.dart';
 
 class EditSurface extends StatefulWidget {
@@ -554,6 +557,32 @@ class _EditSurfaceState extends State<EditSurface> {
     return List<String>.unmodifiable(result);
   }
 
+  void _addMarkerAtPlayhead() {
+    final int frame = _effectiveFrame;
+    final bool changed = _commit((EditSurfaceDocument current) {
+      final EditSurfaceClip? selected = _selected(current);
+      if (selected != null &&
+          frame >= selected.atFrame &&
+          frame < selected.endFrameExclusive) {
+        final String? clipMarked = addClipMarkerAtProjectFrame(
+          source: current.source,
+          editId: widget.editId,
+          trackId: selected.trackId,
+          clipId: selected.id,
+          projectFrame: frame,
+        );
+        if (clipMarked != null) return clipMarked;
+      }
+
+      return addEditMarkerAtProjectFrame(
+        source: current.source,
+        editId: widget.editId,
+        projectFrame: math.max(0, frame),
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
     if (!_timelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
@@ -577,6 +606,13 @@ class _EditSurfaceState extends State<EditSurface> {
     if (command && key == LogicalKeyboardKey.keyY) {
       if (!_history.canRedo) return KeyEventResult.ignored;
       _redoEdit();
+      return KeyEventResult.handled;
+    }
+
+    // Timeline-scoped only. Inspector/text fields own the ordinary M key while
+    // they have focus, so this never steals a typed character from an editor.
+    if (!command && key == LogicalKeyboardKey.keyM) {
+      _addMarkerAtPlayhead();
       return KeyEventResult.handled;
     }
 
@@ -767,6 +803,16 @@ class _EditSurfaceState extends State<EditSurface> {
         ? const <EditDossierCue>[]
         : _dossierCuesFor(selected);
 
+    List<MarkerInstance> timelineMarkers = const <MarkerInstance>[];
+    List<DerivedLandmark> timelineDerived = const <DerivedLandmark>[];
+    try {
+      timelineMarkers = projectEditMarkerInstances(_workingSource, widget.editId);
+      timelineDerived = derivedLandmarksForEdit(_workingSource, widget.editId);
+    } catch (_) {
+      // EDIT remains a repair surface. A malformed MARK must not hide the
+      // underlying clips or prevent the user from fixing source text.
+    }
+
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
         _kRulerHeight + tracks.length * _kTrackHeight;
@@ -868,6 +914,8 @@ class _EditSurfaceState extends State<EditSurface> {
                                                         _buildRuler(
                                                           timelineWidth,
                                                           contentFrames,
+                                                          timelineMarkers,
+                                                          timelineDerived,
                                                         ),
                                                         for (final EditSurfaceTrack track
                                                             in tracks)
@@ -1184,7 +1232,12 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _buildRuler(double width, int frames) {
+  Widget _buildRuler(
+    double width,
+    int frames,
+    List<MarkerInstance> markers,
+    List<DerivedLandmark> derived,
+  ) {
     return GestureDetector(
       key: const ValueKey<String>('edit-timeline-scrub'),
       behavior: HitTestBehavior.opaque,
@@ -1205,13 +1258,32 @@ class _EditSurfaceState extends State<EditSurface> {
       },
       child: SizedBox(
         height: _kRulerHeight,
-        child: CustomPaint(
-          size: Size(width, _kRulerHeight),
-          painter: _EditRulerPainter(
-            pixelsPerFrame: _pixelsPerFrame,
-            frames: frames,
-            theme: widget.theme,
-          ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: CustomPaint(
+                size: Size(width, _kRulerHeight),
+                painter: _EditRulerPainter(
+                  pixelsPerFrame: _pixelsPerFrame,
+                  frames: frames,
+                  theme: widget.theme,
+                ),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: kTimelineLandmarkLayerHeight,
+              child: TimelineLandmarkLayer(
+                markers: markers,
+                derived: derived,
+                totalFrames: frames,
+                pixelsPerFrame: _pixelsPerFrame,
+                theme: widget.theme,
+              ),
+            ),
+          ],
         ),
       ),
     );
