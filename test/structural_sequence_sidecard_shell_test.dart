@@ -195,6 +195,23 @@ void main() {
 
       await _waitForReady(tester, _source, placement, backend);
 
+      // Capture the real STRUCT presentation rectangle one source frame before
+      // the cue. This is deliberately read from the widget rather than copied
+      // from STRUCT's private layout math: SIDECARD owns only the displacement
+      // from whatever rectangle STRUCT actually presents.
+      await tester.pumpWidget(
+        _preview(
+          source: _source,
+          placement: placement,
+          localFrame: placement.contentStartFrame + 89,
+          backend: backend,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final Rect preCueWindow = tester.getRect(
+        find.byKey(const ValueKey<String>('structural-window-positioned')),
+      );
+
       // Cue age eight is exactly slide=0.5 during the 16-frame opening.
       await tester.pumpWidget(
         _preview(
@@ -207,11 +224,10 @@ void main() {
       await tester.pumpAndSettle();
 
       const Rect renderFrame = Rect.fromLTWH(0, 25, 800, 450);
-      const Rect baseWindow = Rect.fromLTWH(56, 74.5, 688, 351);
       final SideCardShellFrame expected = sideCardShellFrameAt(
         size: renderFrame.size,
         origin: renderFrame.topLeft,
-        preCueRect: baseWindow,
+        preCueRect: preCueWindow,
         slide: 0.5,
       );
       final Rect actual = tester.getRect(
