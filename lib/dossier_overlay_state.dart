@@ -4,6 +4,11 @@
 // video. This file owns cue selection and timing projection only. Asset lookup
 // and painting live in dossier_overlay.dart; outer video-window geometry remains
 // owned by sidecard_geometry.dart.
+//
+// DOSSIER's authored GRID / MOSAIC / SIDE_ONLY tokens are unchanged. Inside the
+// structural projection they describe right-hand evidence behavior, not a move
+// into a separate center stage. Legacy center* argument/getter spellings remain
+// accepted so existing callers and SceneEngine parity fixtures keep compiling.
 
 import 'dart:ui';
 
@@ -21,14 +26,24 @@ class StructuralDossierOverlayPlacement {
     required this.dossier,
     required this.localFrame,
     required this.presentationFrame,
-    required this.centerPageCount,
+    int? evidencePageCount,
+    int? centerPageCount,
     required this.normalizedRect,
-  });
+  })  : evidencePageCount = evidencePageCount ?? centerPageCount ?? 0,
+        assert((evidencePageCount ?? centerPageCount ?? 0) >= 0),
+        assert(evidencePageCount == null ||
+            centerPageCount == null ||
+            evidencePageCount == centerPageCount);
 
   final DossierRequest dossier;
   final int localFrame;
   final DossierPresentationFrame presentationFrame;
-  final int centerPageCount;
+
+  /// Asset-backed right-hand evidence page count.
+  final int evidencePageCount;
+
+  /// Historical compatibility alias.
+  int get centerPageCount => evidencePageCount;
 
   /// Region of the structural source that owned the trigger. The outer DOSSIER
   /// shell is still a program-level sibling composition, just like SIDECARD;
@@ -38,13 +53,17 @@ class StructuralDossierOverlayPlacement {
 }
 
 /// Builds the one timing authority used by structural DOSSIER Preview and BAKE.
+/// New callers should use [evidencePageCount]; [centerPageCount] is accepted for
+/// compatibility with the original center-stage vocabulary.
 DossierPresentationTiming structuralDossierTiming(
   DossierRequest request, {
-  required int centerPageCount,
+  int? evidencePageCount,
+  int? centerPageCount,
 }) {
+  final int pages = evidencePageCount ?? centerPageCount ?? 0;
   return DossierPresentationTiming.fromRequest(
     request,
-    centerPageCount: centerPageCount,
+    evidencePageCount: pages,
     cardSlideFrames: kCardSlideFrames,
     windowAnimFrames: kWindowAnimFrames,
     mosaicPanFrames: kAppPanFrames,
@@ -58,50 +77,69 @@ DossierPresentationTiming structuralDossierTiming(
 /// window instead of waiting for STRUCT to end.
 double structuralDossierShellSlide(StructuralDossierOverlayPlacement placement) {
   final DossierPresentationFrame frame = placement.presentationFrame;
-  switch (frame.stage) {
-    case DossierPresentationStage.opening:
+  switch (frame.evidenceStage) {
+    case DossierEvidenceStage.opening:
       return frame.progress;
-    case DossierPresentationStage.cardLead:
-    case DossierPresentationStage.galleryOpening:
-    case DossierPresentationStage.splitShowing:
-    case DossierPresentationStage.centerTransition:
-    case DossierPresentationStage.centerShowing:
-    case DossierPresentationStage.centerPanning:
+    case DossierEvidenceStage.cardLead:
+    case DossierEvidenceStage.evidencePrepare:
+    case DossierEvidenceStage.splitShowing:
+    case DossierEvidenceStage.evidenceTransition:
+    case DossierEvidenceStage.evidenceShowing:
+    case DossierEvidenceStage.evidencePanning:
       return 1.0;
-    case DossierPresentationStage.closing:
+    case DossierEvidenceStage.closing:
       return 1.0 - frame.progress;
   }
 }
 
+int Function(DossierRequest request) _evidencePageResolver({
+  int Function(DossierRequest request)? evidencePageCountFor,
+  int Function(DossierRequest request)? centerPageCountFor,
+}) {
+  final resolver = evidencePageCountFor ?? centerPageCountFor;
+  if (resolver == null) {
+    throw ArgumentError(
+      'DOSSIER placement requires an evidence page-count resolver.',
+    );
+  }
+  return resolver;
+}
+
 /// Resolve one active DOSSIER for the outer structural shell.
 ///
-/// [centerPageCountFor] is intentionally supplied by the asset-backed caller.
+/// [evidencePageCountFor] is intentionally supplied by the asset-backed caller.
 /// CUE parsing cannot know how many files currently exist in an evidence
-/// folder, while a mosaic's exact lifetime does depend on that count. Later
+/// folder, while a mosaic's exact lifetime does depend on that count. The
+/// historical [centerPageCountFor] name remains a compatibility alias. Later
 /// authored active cues win, matching CARD/SIDECARD's deterministic z-order.
 StructuralDossierOverlayPlacement? structuralDossierPlacement(
   EditDocumentModel model,
   StructuralSourceRef root,
   int projectFrame, {
-  required int Function(DossierRequest request) centerPageCountFor,
+  int Function(DossierRequest request)? evidencePageCountFor,
+  int Function(DossierRequest request)? centerPageCountFor,
 }) {
+  final pageCountFor = _evidencePageResolver(
+    evidencePageCountFor: evidencePageCountFor,
+    centerPageCountFor: centerPageCountFor,
+  );
   StructuralDossierOverlayPlacement? selected;
 
   switch (root.kind) {
     case StructuralSourceKind.edit:
       for (final ActiveEditDossierCue active
           in activeDossierCuesForEdit(model.edit(root.id), projectFrame)) {
-        final int pages = centerPageCountFor(active.cue.dossier);
+        final int pages = pageCountFor(active.cue.dossier);
         final DossierPresentationFrame? frame = structuralDossierTiming(
           active.cue.dossier,
-          centerPageCount: pages,
+          evidencePageCount: pages,
         ).frameAt(active.localFrame);
         if (frame == null) continue;
         selected = StructuralDossierOverlayPlacement(
           dossier: active.cue.dossier,
           localFrame: active.localFrame,
           presentationFrame: frame,
-          centerPageCount: pages,
+          evidencePageCount: pages,
           normalizedRect: const Rect.fromLTWH(0, 0, 1, 1),
         );
       }
@@ -113,17 +151,17 @@ StructuralDossierOverlayPlacement? structuralDossierPlacement(
       for (int i = 0; i < mosaic.panes.length; i++) {
         for (final ActiveEditDossierCue active
             in activeDossierCuesForPane(mosaic.panes[i], projectFrame)) {
-          final int pages = centerPageCountFor(active.cue.dossier);
+          final int pages = pageCountFor(active.cue.dossier);
           final DossierPresentationFrame? frame = structuralDossierTiming(
             active.cue.dossier,
-            centerPageCount: pages,
+            evidencePageCount: pages,
           ).frameAt(active.localFrame);
           if (frame == null) continue;
           selected = StructuralDossierOverlayPlacement(
             dossier: active.cue.dossier,
             localFrame: active.localFrame,
             presentationFrame: frame,
-            centerPageCount: pages,
+            evidencePageCount: pages,
             normalizedRect: layout[i],
           );
         }
@@ -142,13 +180,15 @@ StructuralDossierOverlayPlacement? structuralDossierPlacementAtSourceEnd(
   EditDocumentModel model,
   StructuralSourceRef root,
   int sourceDurationFrames, {
-  required int Function(DossierRequest request) centerPageCountFor,
+  int Function(DossierRequest request)? evidencePageCountFor,
+  int Function(DossierRequest request)? centerPageCountFor,
 }) {
   if (sourceDurationFrames <= 0) return null;
   return structuralDossierPlacement(
     model,
     root,
     sourceDurationFrames - 1,
+    evidencePageCountFor: evidencePageCountFor,
     centerPageCountFor: centerPageCountFor,
   );
 }
