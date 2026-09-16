@@ -175,4 +175,58 @@ void main() {
       expect(actualWindow.right, lessThan(renderFrame.right));
     },
   );
+
+  testWidgets(
+    'preview evaluates the shared SIDECARD curve during movement, not only seated',
+    (WidgetTester tester) async {
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(_source).single;
+      final _FakeBackend backend = _FakeBackend();
+
+      await _waitForReady(tester, placement, backend);
+
+      // One frame before the cue gives us the exact pre-cue outer STRUCT rect
+      // chosen by the preview for this placement and host geometry.
+      await tester.pumpWidget(
+        _preview(
+          placement: placement,
+          localFrame: placement.contentStartFrame + 89,
+          backend: backend,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final Rect preCue = tester.getRect(
+        find.byKey(const ValueKey<String>('structural-window-positioned')),
+      );
+
+      // Source frame 98 is cue age 8, exactly halfway through the 16-frame CARD
+      // opening. This catches a BAKE/preview-style snap-to-seated bug that a
+      // final still-frame assertion cannot see.
+      await tester.pumpWidget(
+        _preview(
+          placement: placement,
+          localFrame: placement.contentStartFrame + 98,
+          backend: backend,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const Rect renderFrame = Rect.fromLTWH(0, 25, 800, 450);
+      final SideCardShellFrame expected = sideCardShellFrameAt(
+        size: renderFrame.size,
+        origin: renderFrame.topLeft,
+        preCueRect: preCue,
+        slide: 0.5,
+      );
+      final Rect actual = tester.getRect(
+        find.byKey(const ValueKey<String>('structural-window-positioned')),
+      );
+
+      _expectRect(actual, expected.videoWindowRect);
+      expect(
+        find.byKey(const ValueKey<String>('structural-sidecard-panel')),
+        findsOneWidget,
+      );
+    },
+  );
 }
