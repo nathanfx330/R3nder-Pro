@@ -15,6 +15,8 @@
 // sibling on the desktop. The structural client is explicitly told not to draw
 // its standalone EDIT SIDECARD composition, preventing a window around a
 // window+card composite and keeping one decoder / one structural clock.
+// SIDECARD motion itself is evaluated by sidecard_geometry.dart through the
+// card_overlay.dart public seam, shared exactly with BAKE.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
@@ -437,22 +439,22 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
           // SIDECARD does not replace the structural client. It temporarily
           // moves this already-live outer window to the left and paints its
-          // CARD as a sibling on the desktop. As the shared CARD slide closes,
-          // Rect.lerp naturally returns the real window to its base placement.
+          // CARD as a sibling on the desktop. The shared shell evaluator owns
+          // the motion curve, lerp, and shell opacity policy for Preview/BAKE.
           final StructuralCardOverlayPlacement? sideCardPlacement =
               stage == StructuralSequenceStage.showing && _firstFrameReady
                   ? _activeSideCard(source, sourceFrame)
                   : null;
           if (sideCardPlacement != null && structuralWindowPresent) {
-            final Rect localSideWindow =
-                sideCardSeatedVideoWindowRect(renderFrame.size);
-            final Rect sideWindow = localSideWindow.shift(renderFrame.topLeft);
-            final double sideEase = Curves.easeOutCubic.transform(
-              sideCardPlacement.slide.clamp(0.0, 1.0),
+            final SideCardShellFrame sideShell = sideCardShellFrameAt(
+              size: renderFrame.size,
+              origin: renderFrame.topLeft,
+              preCueRect: structuralRect,
+              slide: sideCardPlacement.slide,
             );
-            structuralRect = Rect.lerp(structuralRect, sideWindow, sideEase)!;
-            desktopOpacity = 1.0;
-            terminalOpacity = 0.0;
+            structuralRect = sideShell.videoWindowRect;
+            desktopOpacity = sideShell.desktopOpacity;
+            terminalOpacity = sideShell.terminalOpacity;
           }
 
           // Fallback ghost only. Production passes the real SceneEngine and
