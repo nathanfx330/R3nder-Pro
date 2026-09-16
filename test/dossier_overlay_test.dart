@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/dossier_overlay.dart';
 import 'package:r3nder/presentation_requests.dart';
+import 'package:r3nder/sidecard_geometry.dart';
 
 DossierRequest _request({
   DossierCenterMode mode = DossierCenterMode.mosaic,
@@ -116,7 +117,10 @@ void main() {
     final StructuralDossierEvidenceLayout hidden =
         structuralDossierEvidenceLayout(size, visibility: 0.0);
     expect(hidden.opacity, 0.0);
-    expect(hidden.panelRect.left, closeTo(seated.left + seated.width * 0.16, 0.001));
+    expect(
+      hidden.panelRect.left,
+      closeTo(seated.left + seated.width * 0.16, 0.001),
+    );
     expect(hidden.panelRect.size, seated.size);
   });
 
