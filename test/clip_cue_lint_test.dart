@@ -38,6 +38,23 @@ void main() {
     expect(ScriptLinter.lint(source), isEmpty);
   });
 
+  test('valid clip-local DOSSIER cue is not a terminal lint finding', () {
+    const String source = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:90]
+        [DOSSIER:evidence:person.png:45:60:12:MOSAIC:24,32,40:JOHN SMITH]
+          Biography text.
+        [/DOSSIER]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    expect(ScriptLinter.lint(source), isEmpty);
+  });
+
   test('unknown terminal-shaped tag is still reported', () {
     final List<LintFinding> findings = ScriptLinter.lint('[NOT_A_TAG:1]');
     expect(findings, hasLength(1));
