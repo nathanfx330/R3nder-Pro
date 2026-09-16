@@ -10,21 +10,13 @@
 // choreography used by live Preview.
 //
 // Fullscreen CARD CUE presentation is composited into the structural client
-// image before that client is placed into the desktop/window choreography.
-// SIDECARD is different by design: the raw structural client remains the real
-// client of the real STRUCT window, that outer window moves left, and the card
-// is painted as a sibling on the desktop. Preview and BAKE use the same
-// sidecard_geometry.dart shell evaluator for the motion curve, moving rectangle,
-// and desktop/terminal opacity policy. If source lifetime truncates an active
-// SIDECARD, the card ends there but the STRUCT close starts from the final
-// displaced shell rectangle instead of snapping back to the pre-cue geometry.
-//
-// Structural application planning is already baked into each placement:
-// standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
-// and windowed/fullscreen geometry all use the same event budget Preview sees.
-// Decode speed may make an export frame take longer to produce. It can never
-// move project time, substitute a neighbouring media frame, shorten a source,
-// or alter the structural transition curve.
+// image before that client is placed into desktop/window choreography.
+// SIDECARD and DOSSIER instead keep the raw structural client inside the one
+// real outer STRUCT window, move that window into the shared left seat, and
+// paint their sibling presentation on the desktop. DOSSIER evolves that sibling
+// from biography card into evidence grid/mosaic while the same video clock keeps
+// advancing. Preview and BAKE share sidecard_geometry.dart shell evaluation and
+// dossier_overlay.dart panel painting.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -34,6 +26,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
+import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
@@ -43,10 +36,6 @@ import 'structural_sequence.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
-/// Windowed STRUCT geometry in normalized output coordinates.
-///
-/// Preview computes this in real render-frame pixels. Bake must do the same
-/// before converting to ScenePainter's normalized 0..1 space.
 Rect structuralProgramTargetRectForOutput({
   required int outputWidth,
   required int outputHeight,
@@ -108,6 +97,7 @@ class ProgramStructuralFrameRenderer {
   final List<StructuralSequencePlacement> _placements;
   final EditDocumentModel _editModel;
   final CardOverlayImageCache _cardImages;
+  final DossierOverlayImageCache _dossierImages;
   final Map<String, StructuralSourceFrameRenderer> _sourceRenderers =
       <String, StructuralSourceFrameRenderer>{};
 
@@ -125,7 +115,8 @@ class ProgramStructuralFrameRenderer {
     required this.resolveSource,
   })  : _placements = parseStructuralSequencePlacements(rawDocument),
         _editModel = EditDocumentModel.parse(rawDocument),
-        _cardImages = CardOverlayImageCache(resolveSource) {
+        _cardImages = CardOverlayImageCache(resolveSource),
+        _dossierImages = DossierOverlayImageCache(resolveSource) {
     if (width <= 0 || height <= 0) {
       throw ArgumentError('Program structural render size must be positive.');
     }
@@ -175,6 +166,47 @@ class ProgramStructuralFrameRenderer {
     return root;
   }
 
+  int _dossierPageCount(request) =>
+      structuralDossierCenterPageCount(request, resolveSource);
+
+  StructuralDossierOverlayPlacement? _dossierAtSourceFrame(
+    StructuralSequencePlacement placement,
+    int sourceFrame,
+  ) {
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralDossierPlacement(
+      _editModel,
+      root,
+      sourceFrame,
+      centerPageCountFor: _dossierPageCount,
+    );
+  }
+
+  StructuralDossierOverlayPlacement? _dossierFor(
+    StructuralSequencePlacement placement,
+    int localFrame,
+    int sourceFrame,
+  ) {
+    if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
+      return null;
+    }
+    return _dossierAtSourceFrame(placement, sourceFrame);
+  }
+
+  StructuralDossierOverlayPlacement? _dossierAtSourceEnd(
+    StructuralSequencePlacement placement,
+  ) {
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralDossierPlacementAtSourceEnd(
+      _editModel,
+      root,
+      placement.sourceDurationFrames,
+      centerPageCountFor: _dossierPageCount,
+    );
+  }
+
   StructuralCardOverlayPlacement? _sideCardAtSourceFrame(
     StructuralSequencePlacement placement,
     int sourceFrame,
@@ -207,8 +239,6 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
-  /// Returns a complete output frame while STRUCT is active, otherwise null so
-  /// SceneExporter can use its original SceneCompositor path unchanged.
   Future<ui.Image?> renderIfActive({
     required SceneEngine scene,
     required String fontFamily,
@@ -224,23 +254,39 @@ class ProgramStructuralFrameRenderer {
 
     final int localFrame = _localFrame(scene, marker);
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
-    final StructuralCardOverlayPlacement? truncatedSideCard =
+    final StructuralDossierOverlayPlacement? truncatedDossier =
         stage == StructuralSequenceStage.closing
+            ? _dossierAtSourceEnd(placement)
+            : null;
+    final StructuralCardOverlayPlacement? truncatedSideCard =
+        truncatedDossier == null && stage == StructuralSequenceStage.closing
             ? _sideCardAtSourceEnd(placement)
             : null;
+    final double? truncatedShellSlide = truncatedDossier != null
+        ? structuralDossierShellSlide(truncatedDossier)
+        : truncatedSideCard?.slide;
+
     final _StructuralProgramVisual visual = _StructuralProgramVisual.evaluate(
       placement: placement,
       localFrame: localFrame,
       scene: scene,
       outputWidth: width,
       outputHeight: height,
-      truncatedSideCardSlide: truncatedSideCard?.slide,
+      truncatedShellSlide: truncatedShellSlide,
     );
-    final StructuralCardOverlayPlacement? sideCard = _sideCardFor(
+
+    final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
       localFrame,
       visual.sourceFrame,
     );
+    final StructuralCardOverlayPlacement? sideCard = dossier == null
+        ? _sideCardFor(
+            placement,
+            localFrame,
+            visual.sourceFrame,
+          )
+        : null;
 
     ui.Image? sourceImage;
     String defaultBottomOverlay = '';
@@ -252,18 +298,25 @@ class ProgramStructuralFrameRenderer {
       );
       defaultBottomOverlay = _cachedDiagnosticLabel;
     }
-    if (sideCard != null) {
+    if (dossier != null) {
+      await _dossierImages.ensure(dossier);
+    } else if (sideCard != null) {
       await _cardImages.ensure(<StructuralCardOverlayPlacement>[sideCard]);
     }
 
     Rect structuralRect = visual.structuralRect;
     double desktopOpacity = visual.desktopOpacity;
     double terminalOpacity = visual.terminalOpacity;
-    if (sideCard != null && visual.structuralWindowPresent) {
+    final double? shellSlide = dossier != null
+        ? structuralDossierShellSlide(dossier)
+        : sideCard?.slide;
+    if (shellSlide != null &&
+        shellSlide > 0.0 &&
+        visual.structuralWindowPresent) {
       final SideCardShellFrame sideShell = sideCardShellFrameAt(
         size: Size(width.toDouble(), height.toDouble()),
         preCueRect: _pixelRect(structuralRect),
-        slide: sideCard.slide,
+        slide: shellSlide,
       );
       structuralRect = _normalizedRect(sideShell.videoWindowRect);
       desktopOpacity = sideShell.desktopOpacity;
@@ -303,7 +356,15 @@ class ProgramStructuralFrameRenderer {
       );
     }
 
-    if (sideCard != null) {
+    if (dossier != null) {
+      paintStructuralDossierPanel(
+        canvas: canvas,
+        size: Size(width.toDouble(), height.toDouble()),
+        placement: dossier,
+        images: _dossierImages,
+        fontFamily: fontFamily,
+      );
+    } else if (sideCard != null) {
       paintStructuralSideCardPanel(
         canvas: canvas,
         size: Size(width.toDouble(), height.toDouble()),
@@ -672,6 +733,7 @@ class ProgramStructuralFrameRenderer {
     _cachedSourceImage = null;
     _cachedDiagnosticLabel = '';
     _cardImages.dispose();
+    _dossierImages.dispose();
     for (final StructuralSourceFrameRenderer renderer
         in _sourceRenderers.values) {
       renderer.dispose();
@@ -707,7 +769,7 @@ class _StructuralProgramVisual {
     required SceneEngine scene,
     required int outputWidth,
     required int outputHeight,
-    double? truncatedSideCardSlide,
+    double? truncatedShellSlide,
   }) {
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
     final double linear = placement.stageProgressAt(localFrame);
@@ -809,7 +871,7 @@ class _StructuralProgramVisual {
         final Rect closingOriginPixels = sideCardClosingOriginRect(
           size: Size(outputWidth.toDouble(), outputHeight.toDouble()),
           preCueRect: presentationPixels,
-          truncatedSlide: truncatedSideCardSlide,
+          truncatedSlide: truncatedShellSlide,
         );
         final Rect closingOrigin = Rect.fromLTRB(
           closingOriginPixels.left / outputWidth,
