@@ -294,6 +294,10 @@ AFTER
 
       const int outputWidth = 320;
       const int outputHeight = 180;
+      final Size outputSize = Size(
+        outputWidth.toDouble(),
+        outputHeight.toDouble(),
+      );
       final Directory root = await Directory.systemTemp
           .createTemp('r3nder_program_sidecard_motion_');
       final Directory images = Directory('${root.path}/images')
@@ -377,10 +381,11 @@ AFTER
         fontFamily: 'monospace',
       );
       expect(image, isNotNull);
-      addTearDown(image!.dispose);
+      final ui.Image rendered = image!;
+      addTearDown(rendered.dispose);
 
       final ByteData? data =
-          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+          await rendered.toByteData(format: ui.ImageByteFormat.rawRgba);
       expect(data, isNotNull);
       final Uint8List rgba = data!.buffer.asUint8List(
         data.offsetInBytes,
@@ -408,7 +413,7 @@ AFTER
         baseNormalized.bottom * outputHeight,
       );
       final SideCardShellFrame expected = sideCardShellFrameAt(
-        size: const Size(outputWidth.toDouble(), outputHeight.toDouble()),
+        size: outputSize,
         preCueRect: basePixels,
         slide: 0.5,
       );
@@ -426,9 +431,7 @@ AFTER
       );
       expect(
         redBounds.left,
-        greaterThan(sideCardSeatedVideoWindowRect(
-          const Size(outputWidth.toDouble(), outputHeight.toDouble()),
-        ).left + 2.0),
+        greaterThan(sideCardSeatedVideoWindowRect(outputSize).left + 2.0),
       );
     },
   );
