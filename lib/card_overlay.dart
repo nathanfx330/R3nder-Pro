@@ -20,6 +20,11 @@
 // client-side SIDECARD and use the public side-card geometry/panel helpers to
 // move the real outer window instead. This prevents a window-inside-window.
 //
+// The standalone desktop/video-window shell is public because DOSSIER authoring
+// preview needs the exact same fake environment. That shell is still only an
+// EDIT convenience; authoritative TEXT/STRUCT composition moves the real outer
+// window instead.
+//
 // SIDECARD geometry and its movement curve live in sidecard_geometry.dart.
 // This painter consumes that evaluated geometry; it does not own a second copy
 // of the shell animation policy.
@@ -483,7 +488,7 @@ class _StructuralCardOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // EditVideoPreview contains its decoded 16:9 structural image inside the
     // widget rather than stretching it. Paint into that same fitted frame.
-    final Rect frame = _fit16x9(size);
+    final Rect frame = structuralOverlayFit16x9(size);
     if (frame.width <= 0.0 || frame.height <= 0.0) return;
 
     canvas.save();
@@ -507,7 +512,10 @@ class _StructuralCardOverlayPainter extends CustomPainter {
       oldDelegate.fontFamily != fontFamily;
 }
 
-Rect _fit16x9(Size size) {
+/// Fits the authored 16:9 structural frame inside an arbitrary preview widget.
+/// CARD, SIDECARD, and DOSSIER standalone authoring overlays use this exact
+/// rect so their fake desktop composition never drifts from decoded pixels.
+Rect structuralOverlayFit16x9(Size size) {
   if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
   const double aspect = 16.0 / 9.0;
   double w = size.width;
@@ -537,24 +545,61 @@ void _paintSideCardComposition({
 }) {
   if (slide <= 0.0 || engineW <= 0.0 || engineH <= 0.0) return;
 
-  final double raw = slide.clamp(0.0, 1.0).toDouble();
   final Size size = Size(engineW, engineH);
+  final double raw = slide.clamp(0.0, 1.0).toDouble();
+  paintStandaloneSidePresentationShell(
+    canvas: canvas,
+    size: size,
+    slide: raw,
+    structuralImage: structuralImage,
+    structuralSourceRect: structuralSourceRect,
+    fontFamily: fontFamily,
+  );
+
+  _paintCardAtSeatedRect(
+    canvas: canvas,
+    engineW: engineW,
+    engineH: engineH,
+    seatedRect: sideCardSeatedPanelRect(size),
+    slide: raw,
+    card: card,
+    image: cardImage,
+    fontFamily: fontFamily,
+  );
+}
+
+/// Paints the fake desktop plus moving structural video window used only by
+/// standalone EDIT authoring preview.
+///
+/// [slide] is the same explicit shell displacement consumed by the real STRUCT
+/// path. SIDECARD and DOSSIER both call this helper, which keeps the convenience
+/// preview visually tied to sidecard_geometry.dart instead of copying shell
+/// interpolation and chrome in two presentation painters.
+SideCardShellFrame paintStandaloneSidePresentationShell({
+  required Canvas canvas,
+  required Size size,
+  required double slide,
+  required ui.Image? structuralImage,
+  Rect? structuralSourceRect,
+  required String fontFamily,
+}) {
+  final double engineW = size.width;
+  final double engineH = size.height;
   final Rect full = Rect.fromLTWH(0, 0, engineW, engineH);
+  final double raw = slide.clamp(0.0, 1.0).toDouble();
   final SideCardShellFrame shell = sideCardShellFrameAt(
     size: size,
     preCueRect: full,
     slide: raw,
   );
+  if (engineW <= 0.0 || engineH <= 0.0 || raw <= 0.0) return shell;
+
   final double eased = shell.motionProgress;
   final Rect videoWindow = shell.videoWindowRect;
-  final Rect seatedCard = sideCardSeatedPanelRect(size);
   final double s = math.min(engineW / 1920.0, engineH / 1080.0);
   final double titleH = math.min(38.0 * s * eased, videoWindow.height);
   final double radius = 6.0 * s * eased;
 
-  // Standalone EDIT preview has no program desktop/window shell of its own.
-  // Build the presentation shell here only in that context. TEXT/STRUCT passes
-  // renderSideCards=false and stages the real outer window instead.
   canvas.drawRect(
     full,
     Paint()..color = const Color(0xFF1B1D20),
@@ -619,16 +664,15 @@ void _paintSideCardComposition({
   canvas.save();
   canvas.clipRRect(window);
   canvas.drawRect(client, Paint()..color = Colors.black);
-  if (structuralImage != null &&
-      structuralSourceRect != null &&
-      client.width > 0.0 &&
-      client.height > 0.0) {
-    _drawImageContainFromSource(
-      canvas,
-      structuralImage,
-      structuralSourceRect,
-      client,
-    );
+  if (structuralImage != null && client.width > 0.0 && client.height > 0.0) {
+    final Rect source = structuralSourceRect ??
+        Rect.fromLTWH(
+          0,
+          0,
+          structuralImage.width.toDouble(),
+          structuralImage.height.toDouble(),
+        );
+    _drawImageContainFromSource(canvas, structuralImage, source, client);
   }
 
   if (header.height > 0.0) {
@@ -643,17 +687,7 @@ void _paintSideCardComposition({
     _drawVideoWindowChrome(canvas, header, s, eased, fontFamily);
   }
   canvas.restore();
-
-  _paintCardAtSeatedRect(
-    canvas: canvas,
-    engineW: engineW,
-    engineH: engineH,
-    seatedRect: seatedCard,
-    slide: raw,
-    card: card,
-    image: cardImage,
-    fontFamily: fontFamily,
-  );
+  return shell;
 }
 
 void _drawTaskbarMark(Canvas canvas, Rect taskbar, double s) {
