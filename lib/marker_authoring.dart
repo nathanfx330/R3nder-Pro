@@ -6,6 +6,11 @@
 // script text and return canonical script text with one marker inserted at an
 // authored ownership boundary. TEXT placement is positional in the document;
 // EDIT placement is sequence-relative; CLIP placement is source-relative.
+//
+// Normal insertion is line-neutral on purpose. compileScript strips MARK before
+// projection and before editor [LINE:n] injection, so adding a zero-time marker
+// should not manufacture a new raw line and thereby invalidate an otherwise
+// reusable warm simulation. A marker is metadata on an existing authored line.
 
 import 'edit_model.dart';
 import 'marker_language.dart';
@@ -14,10 +19,9 @@ import 'script_cst.dart';
 /// Inserts a positional TEXT marker at the program frame represented by
 /// [rawLineAtFrame].
 ///
-/// The marker is written as its own line immediately before the authored line
-/// that owns [programFrame]. This gives the zero-time definition a stable
-/// source position while the next simulation is free to rebuild every derived
-/// frame mapping from source again.
+/// The marker is inserted after the target line's indentation and before its
+/// existing content. Stripping the tag therefore recovers the exact original
+/// line bytes and line count.
 String addTextMarkerAtProgramFrame({
   required String source,
   required List<int> rawLineAtFrame,
@@ -66,21 +70,17 @@ String addTextMarkerAtProgramFrame({
   final List<int> starts = _lineStarts(source);
   if (targetLine >= starts.length) return _appendTopLevelLine(source, tag);
 
-  final int offset = starts[targetLine];
-  final String indent = _lineIndentAt(source, offset);
-  final String newline = _lineEnding(source);
-  return source.replaceRange(
-    offset,
-    offset,
-    '$indent$tag$newline',
-  );
+  final int lineStart = starts[targetLine];
+  final String indent = _lineIndentAt(source, lineStart);
+  final int insertion = lineStart + indent.length;
+  return source.replaceRange(insertion, insertion, tag);
 }
 
 /// Inserts an EDIT-sequence marker at [projectFrame].
 ///
-/// Its source location inside the EDIT is not its timing truth, so it is
-/// appended directly before the root closing tag. The explicit authored frame
-/// remains authoritative through later source rearrangement.
+/// The explicit frame is timing truth, so source order is only ownership. Put
+/// the marker immediately after the EDIT opening tag: it is directly owned by
+/// that EDIT and adds no physical line to the document.
 String addEditMarkerAtProjectFrame({
   required String source,
   required String editId,
@@ -97,20 +97,17 @@ String addEditMarkerAtProjectFrame({
 
   final ScriptCstDocument cst = ScriptCstDocument.parse(source);
   final ScriptCstBlock root = _editRoot(cst, editId);
-  final String newline = _lineEnding(source);
-  final String indent = '${_lineIndentAt(source, root.closeStartOffset)}  ';
-  final String insertion =
-      '$indent${formatMarkerTag(frame: projectFrame, label: label)}$newline'
-      '${_lineIndentAt(source, root.closeStartOffset)}';
-  return cst.insertBeforeClosingTag(root, insertion);
+  final String tag = formatMarkerTag(frame: projectFrame, label: label);
+  return source.replaceRange(root.openEndOffset, root.openEndOffset, tag);
 }
 
 /// Inserts a source-relative marker into [clipId] at the source frame sampled
 /// by [projectFrame].
 ///
 /// Returns null when the selected project frame is outside the selected clip.
-/// This is the authoring-side counterpart of marker/CUE projection: the stored
-/// fact is source time, never the transient project position.
+/// The marker is written directly after the CLIP opening tag, preserving the
+/// document's physical line count while keeping the definition inside CLIP
+/// ownership. The stored fact is source time, never transient project time.
 String? addClipMarkerAtProjectFrame({
   required String source,
   required String editId,
@@ -131,13 +128,12 @@ String? addClipMarkerAtProjectFrame({
 
   final int projectOffset = projectFrame - clip.atFrame;
   final int sourceFrame = clip.sourceFrameAtProjectOffset(projectOffset);
-  final String newline = _lineEnding(source);
-  final String closingIndent = _lineIndentAt(source, clip.block.closeStartOffset);
-  final String childIndent = '$closingIndent  ';
-  final String insertion =
-      '$childIndent${formatMarkerTag(frame: sourceFrame, label: label)}$newline'
-      '$closingIndent';
-  return model.cst.insertBeforeClosingTag(clip.block, insertion);
+  final String tag = formatMarkerTag(frame: sourceFrame, label: label);
+  return source.replaceRange(
+    clip.block.openEndOffset,
+    clip.block.openEndOffset,
+    tag,
+  );
 }
 
 ScriptCstBlock _editRoot(ScriptCstDocument cst, String editId) {
@@ -166,13 +162,12 @@ List<int> _lineStarts(String source) {
   return starts;
 }
 
-String _lineIndentAt(String source, int offset) {
-  final int start = source.lastIndexOf('\n', offset > 0 ? offset - 1 : 0) + 1;
-  int cursor = start;
-  while (cursor < source.length && cursor < offset) {
+String _lineIndentAt(String source, int lineStart) {
+  int cursor = lineStart;
+  while (cursor < source.length) {
     final int code = source.codeUnitAt(cursor);
     if (code != 0x20 && code != 0x09) break;
     cursor++;
   }
-  return source.substring(start, cursor);
+  return source.substring(lineStart, cursor);
 }
