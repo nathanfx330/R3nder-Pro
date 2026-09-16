@@ -13,6 +13,8 @@ import 'edit_model.dart';
 import 'presentation_requests.dart';
 import 'scene_engine.dart';
 
+export 'dossier_presentation.dart';
+
 /// One DOSSIER presentation active at an exact structural source frame.
 class StructuralDossierOverlayPlacement {
   const StructuralDossierOverlayPlacement({
