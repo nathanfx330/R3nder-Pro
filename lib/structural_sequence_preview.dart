@@ -18,10 +18,12 @@
 // one structural clock. DOSSIER reuses that same shell seat while its right-hand
 // content evolves from biography card into evidence grid/mosaic.
 //
-// Shell motion is evaluated by sidecard_geometry.dart for Preview and BAKE. If
-// source lifetime truncates an active SIDECARD or DOSSIER, the presentation is
-// clipped at the source boundary but the STRUCT close begins from the final
-// displaced video-window rectangle, so the shell never snaps back for one frame.
+// The base STRUCT shell stage choreography is evaluated by
+// structural_shell_geometry.dart for Preview and BAKE. SIDECARD/DOSSIER
+// displacement remains evaluated by sidecard_geometry.dart. If source lifetime
+// truncates an active SIDECARD or DOSSIER, the presentation is clipped at the
+// source boundary but the STRUCT close begins from the final displaced
+// video-window rectangle, so the shell never snaps back for one frame.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
@@ -83,6 +85,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
 class StructuralSequencePreview extends StatefulWidget {
@@ -331,7 +334,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final String source = placement.sourceRef.canonicalSource;
     final StructuralSequenceStage stage = placement.stageAt(widget.localFrame);
     final double linear = placement.stageProgressAt(widget.localFrame);
-    final double eased = Curves.easeInOutCubic.transform(linear);
     final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
@@ -376,9 +378,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             null => terminalParkRect,
           };
 
-          final Rect emergenceRect =
-              _structuralEmergenceRect(terminalParkRect);
-
           final StructuralDossierOverlayPlacement? truncatedDossier =
               stage == StructuralSequenceStage.closing && _firstFrameReady
                   ? _dossierAtSourceEnd(
@@ -399,107 +398,34 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               ? structuralDossierShellSlide(truncatedDossier)
               : truncatedSideCard?.slide;
 
-          Rect terminalRect = terminalParkRect;
-          Rect structuralRect = presentationRect;
-          double desktopOpacity = 1.0;
-          double terminalOpacity = 0.0;
-          double terminalChrome = 1.0;
-          double structuralOpacity = 0.0;
-          bool structuralWindowPresent = false;
+          final Rect closingOrigin = sideCardClosingOriginRect(
+            size: renderFrame.size,
+            origin: renderFrame.topLeft,
+            preCueRect: presentationRect,
+            truncatedSlide: truncatedShellSlide,
+          );
+          final StructuralShellFrame baseShell = structuralShellFrameAt(
+            stage: stage,
+            linearProgress: linear,
+            fullTerminalRect: fullTerminal,
+            terminalParkRect: terminalParkRect,
+            presentationRect: presentationRect,
+            previousPresentationRect: previousPresentationRect,
+            closingOriginRect: closingOrigin,
+            seamlessFromPrevious: placement.seamlessFromPrevious,
+            chainedFromPrevious: placement.chainedFromPrevious,
+            chainedToNext: placement.chainedToNext,
+            contentReady: _firstFrameReady,
+          );
 
-          switch (stage) {
-            case StructuralSequenceStage.zoomOut:
-              terminalRect =
-                  Rect.lerp(fullTerminal, terminalParkRect, eased)!;
-              structuralRect = emergenceRect;
-              desktopOpacity = eased;
-              terminalOpacity = 1.0;
-              terminalChrome = eased;
-              structuralOpacity = 0.0;
-              structuralWindowPresent = true;
-              break;
-
-            case StructuralSequenceStage.opening:
-              final double handoffLinear = _firstFrameReady ? linear : 0.0;
-              final double handoffEased =
-                  Curves.easeInOutCubic.transform(handoffLinear);
-              terminalRect = terminalParkRect;
-              desktopOpacity = 1.0;
-              terminalChrome = 1.0;
-              structuralWindowPresent = true;
-
-              if (placement.seamlessFromPrevious) {
-                structuralRect = Rect.lerp(
-                  previousPresentationRect,
-                  presentationRect,
-                  handoffEased,
-                )!;
-                terminalOpacity = 0.0;
-                structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
-              } else {
-                structuralRect = Rect.lerp(
-                  emergenceRect,
-                  presentationRect,
-                  handoffEased,
-                )!;
-                terminalOpacity = placement.chainedFromPrevious
-                    ? 0.0
-                    : 1.0 - handoffEased;
-                structuralOpacity = _firstFrameReady
-                    ? Curves.easeOutCubic.transform(
-                        (handoffLinear * 2.2).clamp(0.0, 1.0),
-                      )
-                    : 0.0;
-              }
-              break;
-
-            case StructuralSequenceStage.showing:
-              terminalRect = terminalParkRect;
-              structuralRect = _firstFrameReady
-                  ? presentationRect
-                  : (placement.seamlessFromPrevious
-                      ? previousPresentationRect
-                      : emergenceRect);
-              desktopOpacity = 1.0;
-              terminalOpacity =
-                  (!_firstFrameReady && !placement.chainedFromPrevious)
-                      ? 1.0
-                      : 0.0;
-              terminalChrome = 1.0;
-              structuralOpacity = _firstFrameReady ? 1.0 : 0.0;
-              structuralWindowPresent = true;
-              break;
-
-            case StructuralSequenceStage.closing:
-              terminalRect = terminalParkRect;
-              final Rect closingOrigin = sideCardClosingOriginRect(
-                size: renderFrame.size,
-                origin: renderFrame.topLeft,
-                preCueRect: presentationRect,
-                truncatedSlide: truncatedShellSlide,
-              );
-              structuralRect =
-                  Rect.lerp(closingOrigin, emergenceRect, eased)!;
-              desktopOpacity = 1.0;
-              terminalOpacity = placement.chainedToNext ? 0.0 : eased;
-              terminalChrome = 1.0;
-              structuralOpacity = Curves.easeInCubic.transform(
-                ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
-              );
-              structuralWindowPresent = true;
-              break;
-
-            case StructuralSequenceStage.zoomIn:
-              terminalRect =
-                  Rect.lerp(terminalParkRect, fullTerminal, eased)!;
-              structuralRect = presentationRect;
-              desktopOpacity = 1.0 - eased;
-              terminalOpacity = 1.0;
-              terminalChrome = 1.0 - eased;
-              structuralOpacity = 0.0;
-              structuralWindowPresent = false;
-              break;
-          }
+          Rect terminalRect = baseShell.terminalRect;
+          Rect structuralRect = baseShell.structuralRect;
+          double desktopOpacity = baseShell.desktopOpacity;
+          double terminalOpacity = baseShell.terminalOpacity;
+          final double terminalChrome = baseShell.terminalChrome;
+          final double structuralOpacity = baseShell.structuralOpacity;
+          final bool structuralWindowPresent =
+              baseShell.structuralWindowPresent;
 
           // DOSSIER owns the shell when it overlaps SIDECARD: it is the richer
           // presentation and must not have a second card trying to move the
@@ -582,9 +508,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     ),
                     rect: terminalRect,
                     child: Opacity(
-                      key: const ValueKey<String>(
-                        'structural-terminal-opacity',
-                      ),
+                      key: const ValueKey<String>('structural-terminal-opacity'),
                       opacity: terminalOpacity.clamp(0.0, 1.0),
                       child: _TerminalGhost(
                         key: const ValueKey<String>(
@@ -754,15 +678,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
       windowW,
       windowH,
     );
-  }
-
-  static Rect _structuralEmergenceRect(Rect target) {
-    const double scale = 0.84;
-    final double w = target.width * scale;
-    final double h = target.height * scale;
-    final double x = target.center.dx - w / 2.0;
-    final double y = target.center.dy - h / 2.0 + target.height * 0.055;
-    return Rect.fromLTWH(x, y, w, h);
   }
 }
 
@@ -969,6 +884,7 @@ class _StructuralWindow extends StatelessWidget {
       isPlaying: playing,
       fastPreview: fastPreview,
       renderSideCardsInClient: false,
+      renderDossiersInClient: false,
       showDiagnosticOverlay: showOverlay,
       diagnosticOverlayText: customText,
       backend: backend,
