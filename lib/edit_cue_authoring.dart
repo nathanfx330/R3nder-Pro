@@ -1,12 +1,11 @@
 // ./lib/edit_cue_authoring.dart
 //
-// Source-backed authoring operations for clip-local CARD-family cues.
+// Source-backed authoring operations for clip-local presentation cues.
 //
 // CUE is not a hidden project model and it is not a generic structural layer.
 // These helpers rewrite only the selected CLIP's authored source, then reparse
 // the canonical document before returning it. The trigger remains source-frame
-// relative while CARD or SIDECARD continues to own its own presentation
-// lifetime.
+// relative while CARD, SIDECARD, or DOSSIER owns its own presentation lifetime.
 
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
@@ -26,7 +25,7 @@ class EditCueAuthoringException implements Exception {
 /// The project frame must be inside the clip. This is intentionally the same
 /// integer source walk used by playback, so a GUI command such as "add cue at
 /// playhead" never invents a second timing conversion.
-int cardCueSourceFrameAtProjectFrame(
+int cueSourceFrameAtProjectFrame(
   EditSurfaceClip clip,
   int projectFrame,
 ) {
@@ -34,11 +33,18 @@ int cardCueSourceFrameAtProjectFrame(
     throw ArgumentError.value(
       projectFrame,
       'projectFrame',
-      'CARD cue playhead must be inside the selected CLIP.',
+      'CUE playhead must be inside the selected CLIP.',
     );
   }
   return clip.clip.sourceFrameAtProjectOffset(projectFrame - clip.atFrame);
 }
+
+/// Back-compatible CARD-named entry point retained for existing callers/tests.
+int cardCueSourceFrameAtProjectFrame(
+  EditSurfaceClip clip,
+  int projectFrame,
+) =>
+    cueSourceFrameAtProjectFrame(clip, projectFrame);
 
 /// Adds one CARD-family cue to [clipId] at the exact selected project-frame
 /// sample. A [SideCardRequest] emits SIDECARD; an ordinary [CardRequest] emits
@@ -51,22 +57,21 @@ String addCardCueAtProjectFrame({
   required CardRequest card,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
-  final int sourceFrame =
-      cardCueSourceFrameAtProjectFrame(selected, projectFrame);
+  final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
   _validateCard(card);
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
   final String clipIndent = _lineIndentAt(source, selected.clip.block.startOffset);
   final String cueIndent = '$clipIndent  ';
-  final String cardIndent = '$cueIndent  ';
-  final String cue = _cueMarkup(
+  final String presentationIndent = '$cueIndent  ';
+  final String cue = _cardCueMarkup(
     sourceFrame: sourceFrame,
     card: card,
     lineEnding: lineEnding,
     firstIndent: cueIndent,
     continuationIndent: cueIndent,
-    cardIndent: cardIndent,
+    presentationIndent: presentationIndent,
   );
 
   final String insertion = '$cue$lineEnding$clipIndent';
@@ -78,10 +83,43 @@ String addCardCueAtProjectFrame({
   return next;
 }
 
-/// Rewrites one existing cue in place while keeping its authored trigger frame.
-/// The returned request may also switch the presentation between CARD and
-/// SIDECARD; that change is explicit source text and remains undoable through
-/// the normal complete-source history path.
+/// Adds one DOSSIER cue at the selected playhead sample.
+String addDossierCueAtProjectFrame({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int projectFrame,
+  required DossierRequest dossier,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
+  _validateDossier(dossier);
+
+  final String source = document.source;
+  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+  final String clipIndent = _lineIndentAt(source, selected.clip.block.startOffset);
+  final String cueIndent = '$clipIndent  ';
+  final String presentationIndent = '$cueIndent  ';
+  final String cue = _dossierCueMarkup(
+    sourceFrame: sourceFrame,
+    dossier: dossier,
+    lineEnding: lineEnding,
+    firstIndent: cueIndent,
+    continuationIndent: cueIndent,
+    presentationIndent: presentationIndent,
+  );
+
+  final String insertion = '$cue$lineEnding$clipIndent';
+  final String next = document.model.cst.insertBeforeClosingTag(
+    selected.clip.block,
+    insertion,
+  );
+  _validateResult(next, document.editId, trackId, clipId);
+  return next;
+}
+
+/// Rewrites one existing CARD/SIDECARD cue in place while keeping its authored
+/// trigger frame. The returned request may switch CARD <-> SIDECARD explicitly.
 String updateCardCue({
   required EditSurfaceDocument document,
   required String trackId,
@@ -91,19 +129,19 @@ String updateCardCue({
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final List<EditCardCue> cues = parseClipCardCues(selected.clip);
-  final EditCardCue cue = _cueAt(cues, cueIndex);
+  final EditCardCue cue = _cardCueAt(cues, cueIndex);
   _validateCard(card);
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
   final String cueIndent = _lineIndentAt(source, cue.startOffset);
-  final String replacement = _cueMarkup(
+  final String replacement = _cardCueMarkup(
     sourceFrame: cue.sourceFrame,
     card: card,
     lineEnding: lineEnding,
     firstIndent: '',
     continuationIndent: cueIndent,
-    cardIndent: '$cueIndent  ',
+    presentationIndent: '$cueIndent  ',
   );
 
   final String next = source.replaceRange(
@@ -115,7 +153,41 @@ String updateCardCue({
   return next;
 }
 
-/// Removes exactly one complete authored CUE block and nothing else.
+/// Rewrites one existing DOSSIER cue in place while preserving its trigger.
+String updateDossierCue({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int cueIndex,
+  required DossierRequest dossier,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final List<EditDossierCue> cues = parseClipDossierCues(selected.clip);
+  final EditDossierCue cue = _dossierCueAt(cues, cueIndex);
+  _validateDossier(dossier);
+
+  final String source = document.source;
+  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+  final String cueIndent = _lineIndentAt(source, cue.startOffset);
+  final String replacement = _dossierCueMarkup(
+    sourceFrame: cue.sourceFrame,
+    dossier: dossier,
+    lineEnding: lineEnding,
+    firstIndent: '',
+    continuationIndent: cueIndent,
+    presentationIndent: '$cueIndent  ',
+  );
+
+  final String next = source.replaceRange(
+    cue.startOffset,
+    cue.endOffset,
+    replacement,
+  );
+  _validateResult(next, document.editId, trackId, clipId);
+  return next;
+}
+
+/// Removes exactly one complete authored CARD/SIDECARD CUE block.
 String deleteCardCue({
   required EditSurfaceDocument document,
   required String trackId,
@@ -124,7 +196,26 @@ String deleteCardCue({
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final List<EditCardCue> cues = parseClipCardCues(selected.clip);
-  final EditCardCue cue = _cueAt(cues, cueIndex);
+  final EditCardCue cue = _cardCueAt(cues, cueIndex);
+  final String next = document.source.replaceRange(
+    cue.startOffset,
+    cue.endOffset,
+    '',
+  );
+  EditSurfaceDocument.parse(next, document.editId);
+  return next;
+}
+
+/// Removes exactly one complete authored DOSSIER CUE block.
+String deleteDossierCue({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int cueIndex,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final List<EditDossierCue> cues = parseClipDossierCues(selected.clip);
+  final EditDossierCue cue = _dossierCueAt(cues, cueIndex);
   final String next = document.source.replaceRange(
     cue.startOffset,
     cue.endOffset,
@@ -135,7 +226,7 @@ String deleteCardCue({
 }
 
 /// Splits a clip using the existing structural split operation, then assigns
-/// every CARD-family cue to exactly one resulting half.
+/// every presentation CUE to exactly one resulting half.
 ///
 /// The original split operation necessarily copies the opaque CLIP body to
 /// both halves. That is correct for comments and most future opaque metadata,
@@ -143,6 +234,9 @@ String deleteCardCue({
 /// trigger is before the split stays on the left; one whose trigger lands on
 /// the split frame or later goes right. Dormant cues outside the current source
 /// window are assigned by source coordinate so they also remain singular.
+///
+/// Historical name retained because EditSurface and existing tests already call
+/// it. It now owns CARD, SIDECARD, and DOSSIER rather than only CARD-family cues.
 String splitClipWithCardCueOwnership({
   required EditSurfaceDocument document,
   required String trackId,
@@ -150,8 +244,9 @@ String splitClipWithCardCueOwnership({
   required int projectFrame,
 }) {
   final EditSurfaceClip original = document.clip(trackId, clipId);
-  final List<EditCardCue> cues = parseClipCardCues(original.clip);
-  if (cues.isEmpty) {
+  final List<EditCardCue> cardCues = parseClipCardCues(original.clip);
+  final List<EditDossierCue> dossierCues = parseClipDossierCues(original.clip);
+  if (cardCues.isEmpty && dossierCues.isEmpty) {
     return document.splitClip(trackId, clipId, projectFrame);
   }
 
@@ -166,11 +261,20 @@ String splitClipWithCardCueOwnership({
 
   final int splitOffset = projectFrame - original.atFrame;
   final int rightIn = original.clip.sourceFrameAtProjectOffset(splitOffset);
-  final List<bool> keepLeft = <bool>[
-    for (final EditCardCue cue in cues)
+  final List<bool> cardKeepLeft = <bool>[
+    for (final EditCardCue cue in cardCues)
       _cueBelongsLeft(
         original,
-        cue,
+        cue.sourceFrame,
+        projectFrame: projectFrame,
+        rightIn: rightIn,
+      ),
+  ];
+  final List<bool> dossierKeepLeft = <bool>[
+    for (final EditDossierCue cue in dossierCues)
+      _cueBelongsLeft(
+        original,
+        cue.sourceFrame,
         projectFrame: projectFrame,
         rightIn: rightIn,
       ),
@@ -183,8 +287,7 @@ String splitClipWithCardCueOwnership({
       .toSet();
 
   String current = document.splitClip(trackId, clipId, projectFrame);
-  EditSurfaceDocument after =
-      EditSurfaceDocument.parse(current, document.editId);
+  EditSurfaceDocument after = EditSurfaceDocument.parse(current, document.editId);
   final EditSurfaceTrack track = after.track(trackId);
   final List<EditSurfaceClip> created = track.clips
       .where((EditSurfaceClip clip) => !beforeIds.contains(clip.id))
@@ -196,24 +299,25 @@ String splitClipWithCardCueOwnership({
   }
   final String rightId = created.single.id;
 
-  // Delete from highest authored index downward so lower indexes do not shift.
-  for (int i = cues.length - 1; i >= 0; i--) {
+  // Family indexes are independent. Delete highest index downward so earlier
+  // same-family indexes remain stable as source shrinks.
+  for (int i = dossierCues.length - 1; i >= 0; i--) {
     after = EditSurfaceDocument.parse(current, document.editId);
-    if (keepLeft[i]) {
-      current = deleteCardCue(
-        document: after,
-        trackId: trackId,
-        clipId: rightId,
-        cueIndex: i,
-      );
-    } else {
-      current = deleteCardCue(
-        document: after,
-        trackId: trackId,
-        clipId: clipId,
-        cueIndex: i,
-      );
-    }
+    current = deleteDossierCue(
+      document: after,
+      trackId: trackId,
+      clipId: dossierKeepLeft[i] ? rightId : clipId,
+      cueIndex: i,
+    );
+  }
+  for (int i = cardCues.length - 1; i >= 0; i--) {
+    after = EditSurfaceDocument.parse(current, document.editId);
+    current = deleteCardCue(
+      document: after,
+      trackId: trackId,
+      clipId: cardKeepLeft[i] ? rightId : clipId,
+      cueIndex: i,
+    );
   }
 
   EditSurfaceDocument.parse(current, document.editId);
@@ -222,30 +326,132 @@ String splitClipWithCardCueOwnership({
 
 bool _cueBelongsLeft(
   EditSurfaceClip original,
-  EditCardCue cue, {
+  int sourceFrame, {
   required int projectFrame,
   required int rightIn,
 }) {
-  final int? trigger = cueProjectFrame(original.clip, cue.sourceFrame);
+  final int? trigger = cueProjectFrame(original.clip, sourceFrame);
   if (trigger != null) return trigger < projectFrame;
-  return cue.sourceFrame < rightIn;
+  return sourceFrame < rightIn;
 }
 
-EditCardCue _cueAt(List<EditCardCue> cues, int cueIndex) {
+EditCardCue _cardCueAt(List<EditCardCue> cues, int cueIndex) {
   if (cueIndex < 0 || cueIndex >= cues.length) {
     throw RangeError.index(cueIndex, cues, 'cueIndex');
   }
   return cues[cueIndex];
 }
 
-String _cueMarkup({
+EditDossierCue _dossierCueAt(List<EditDossierCue> cues, int cueIndex) {
+  if (cueIndex < 0 || cueIndex >= cues.length) {
+    throw RangeError.index(cueIndex, cues, 'cueIndex');
+  }
+  return cues[cueIndex];
+}
+
+String _cardCueMarkup({
   required int sourceFrame,
   required CardRequest card,
   required String lineEnding,
   required String firstIndent,
   required String continuationIndent,
-  required String cardIndent,
+  required String presentationIndent,
 }) {
+  _validateSourceFrame(sourceFrame);
+
+  final String rgb = _rgb(card.panelColor);
+  final String heading = card.heading.trim();
+  final String tag = card is SideCardRequest ? 'SIDECARD' : 'CARD';
+  final String head = (StringBuffer()
+        ..write('[$tag:${card.image.trim()}:${card.holdFrames}:$rgb')
+        ..write(heading.isEmpty ? ']' : ':$heading]'))
+      .toString();
+
+  return _wrappedCueMarkup(
+    sourceFrame: sourceFrame,
+    openTag: head,
+    closeTag: '[/$tag]',
+    body: card.body,
+    lineEnding: lineEnding,
+    firstIndent: firstIndent,
+    continuationIndent: continuationIndent,
+    presentationIndent: presentationIndent,
+  );
+}
+
+String _dossierCueMarkup({
+  required int sourceFrame,
+  required DossierRequest dossier,
+  required String lineEnding,
+  required String firstIndent,
+  required String continuationIndent,
+  required String presentationIndent,
+}) {
+  _validateSourceFrame(sourceFrame);
+
+  final String rgb = _rgb(dossier.panelColor);
+  final String heading = dossier.heading.trim();
+  final String mode = switch (dossier.centerMode) {
+    DossierCenterMode.grid => 'GRID',
+    DossierCenterMode.mosaic => 'MOSAIC',
+    DossierCenterMode.sideOnly => 'SIDE_ONLY',
+  };
+  final String head = (StringBuffer()
+        ..write('[DOSSIER:${dossier.folder.trim()}:${dossier.image.trim()}:')
+        ..write('${dossier.holdSplit}:${dossier.holdFull}:')
+        ..write('${dossier.cardLead}:$mode:$rgb')
+        ..write(heading.isEmpty ? ']' : ':$heading]'))
+      .toString();
+
+  return _wrappedCueMarkup(
+    sourceFrame: sourceFrame,
+    openTag: head,
+    closeTag: '[/DOSSIER]',
+    body: dossier.body,
+    lineEnding: lineEnding,
+    firstIndent: firstIndent,
+    continuationIndent: continuationIndent,
+    presentationIndent: presentationIndent,
+  );
+}
+
+String _wrappedCueMarkup({
+  required int sourceFrame,
+  required String openTag,
+  required String closeTag,
+  required String body,
+  required String lineEnding,
+  required String firstIndent,
+  required String continuationIndent,
+  required String presentationIndent,
+}) {
+  final StringBuffer out = StringBuffer()
+    ..write('$firstIndent[CUE:$sourceFrame]$lineEnding')
+    ..write('$presentationIndent$openTag$lineEnding');
+
+  final String normalizedBody =
+      body.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  if (normalizedBody.isNotEmpty) {
+    for (final String line in normalizedBody.split('\n')) {
+      out.write('$presentationIndent  $line$lineEnding');
+    }
+  }
+
+  out
+    ..write('$presentationIndent$closeTag$lineEnding')
+    ..write('$continuationIndent[/CUE]');
+  return out.toString();
+}
+
+String _rgb(Color color) {
+  final int argb = color.toARGB32();
+  final int red = (argb >> 16) & 0xFF;
+  final int green = (argb >> 8) & 0xFF;
+  final int blue = argb & 0xFF;
+  return '$red,$green,$blue';
+}
+
+void _validateSourceFrame(int sourceFrame) {
   if (sourceFrame < 0) {
     throw ArgumentError.value(
       sourceFrame,
@@ -253,51 +459,10 @@ String _cueMarkup({
       'CUE source frame must be non-negative.',
     );
   }
-
-  final int argb = card.panelColor.toARGB32();
-  final int red = (argb >> 16) & 0xFF;
-  final int green = (argb >> 8) & 0xFF;
-  final int blue = argb & 0xFF;
-  final String heading = card.heading.trim();
-  final String tag = card is SideCardRequest ? 'SIDECARD' : 'CARD';
-  final String cardHead = (StringBuffer()
-        ..write('[$tag:${card.image.trim()}:${card.holdFrames}:')
-        ..write('$red,$green,$blue')
-        ..write(heading.isEmpty ? ']' : ':$heading]'))
-      .toString();
-
-  final StringBuffer out = StringBuffer()
-    ..write('$firstIndent[CUE:$sourceFrame]$lineEnding')
-    ..write('$cardIndent$cardHead$lineEnding');
-
-  final String normalizedBody =
-      card.body.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-  if (normalizedBody.isNotEmpty) {
-    final List<String> lines = normalizedBody.split('\n');
-    for (final String line in lines) {
-      out.write('$cardIndent  $line$lineEnding');
-    }
-  }
-
-  out
-    ..write('$cardIndent[/$tag]$lineEnding')
-    ..write('$continuationIndent[/CUE]');
-  return out.toString();
 }
 
 void _validateCard(CardRequest card) {
-  final String image = card.image.trim();
-  if (image.isEmpty ||
-      image.contains(':') ||
-      image.contains(']') ||
-      image.contains('\n') ||
-      image.contains('\r')) {
-    throw ArgumentError.value(
-      card.image,
-      'card.image',
-      'CARD image must be one workspace-relative path without colon or newline.',
-    );
-  }
+  _validatePath(card.image, 'card.image', 'CARD image');
   if (card.holdFrames < 0) {
     throw ArgumentError.value(
       card.holdFrames,
@@ -305,22 +470,60 @@ void _validateCard(CardRequest card) {
       'CARD hold must be non-negative.',
     );
   }
-  final String heading = card.heading;
-  if (heading.contains(':') ||
-      heading.contains(']') ||
-      heading.contains('\n') ||
-      heading.contains('\r')) {
-    throw ArgumentError.value(
-      card.heading,
-      'card.heading',
-      'CARD heading cannot contain colon, closing bracket, or newline.',
-    );
-  }
+  _validateHeading(card.heading, 'card.heading', 'CARD heading');
   if (card.body.contains('[/CARD]') || card.body.contains('[/SIDECARD]')) {
     throw ArgumentError.value(
       card.body,
       'card.body',
       'CARD body cannot contain a CARD-family closing tag.',
+    );
+  }
+}
+
+void _validateDossier(DossierRequest dossier) {
+  _validatePath(dossier.folder, 'dossier.folder', 'DOSSIER folder');
+  _validatePath(dossier.image, 'dossier.image', 'DOSSIER image');
+  if (dossier.holdSplit < 0 ||
+      dossier.holdFull < 0 ||
+      dossier.cardLead < 0) {
+    throw ArgumentError(
+      'DOSSIER split hold, full hold, and card lead must be non-negative.',
+    );
+  }
+  _validateHeading(dossier.heading, 'dossier.heading', 'DOSSIER heading');
+  if (dossier.body.contains('[/DOSSIER]')) {
+    throw ArgumentError.value(
+      dossier.body,
+      'dossier.body',
+      'DOSSIER body cannot contain a DOSSIER closing tag.',
+    );
+  }
+}
+
+void _validatePath(String raw, String name, String label) {
+  final String value = raw.trim();
+  if (value.isEmpty ||
+      value.contains(':') ||
+      value.contains(']') ||
+      value.contains('\n') ||
+      value.contains('\r')) {
+    throw ArgumentError.value(
+      raw,
+      name,
+      '$label must be one workspace-relative path without colon or newline.',
+    );
+  }
+}
+
+void _validateHeading(String heading, String name, String label) {
+  if (heading.contains(':') ||
+      heading.contains(']') ||
+      heading.contains('\n') ||
+      heading.contains('\r')) {
+    throw ArgumentError.value(
+      heading,
+      name,
+      '$label cannot contain colon, closing bracket, or newline.',
     );
   }
 }
@@ -332,7 +535,9 @@ void _validateResult(
   String clipId,
 ) {
   final EditSurfaceDocument parsed = EditSurfaceDocument.parse(source, editId);
-  parseClipCardCues(parsed.clip(trackId, clipId).clip);
+  final clip = parsed.clip(trackId, clipId).clip;
+  parseClipCardCues(clip);
+  parseClipDossierCues(clip);
 }
 
 String _lineIndentAt(String source, int offset) {
