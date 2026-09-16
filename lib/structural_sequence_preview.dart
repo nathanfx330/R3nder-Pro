@@ -16,7 +16,10 @@
 // its standalone EDIT SIDECARD composition, preventing a window around a
 // window+card composite and keeping one decoder / one structural clock.
 // SIDECARD motion itself is evaluated by sidecard_geometry.dart through the
-// card_overlay.dart public seam, shared exactly with BAKE.
+// card_overlay.dart public seam, shared exactly with BAKE. If the source ends
+// while SIDECARD is still active, the card is clipped at the source boundary
+// but the STRUCT close begins from the final displaced video-window rectangle,
+// so the shell never snaps back for one frame.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
@@ -188,6 +191,33 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     }
   }
 
+  StructuralCardOverlayPlacement? _sideCardAtSourceEnd(
+    String source,
+    int sourceDurationFrames,
+  ) {
+    try {
+      if (_cardModel == null || _cardModelSource != widget.rawDocument) {
+        _cardModel = EditDocumentModel.parse(widget.rawDocument);
+        _cardModelSource = widget.rawDocument;
+      }
+      final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+      final EditDocumentModel? model = _cardModel;
+      if (root == null ||
+          root.id.isEmpty ||
+          model == null ||
+          !model.containsStructuralSource(root)) {
+        return null;
+      }
+      return structuralSideCardPlacementAtSourceEnd(
+        model,
+        root,
+        sourceDurationFrames,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -321,6 +351,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final Rect emergenceRect =
               _structuralEmergenceRect(terminalParkRect);
 
+          final StructuralCardOverlayPlacement? truncatedSideCard =
+              stage == StructuralSequenceStage.closing && _firstFrameReady
+                  ? _sideCardAtSourceEnd(
+                      source,
+                      placement.sourceDurationFrames,
+                    )
+                  : null;
+
           Rect terminalRect = terminalParkRect;
           Rect structuralRect = presentationRect;
           double desktopOpacity = 1.0;
@@ -406,13 +444,19 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.closing:
-              // Normal adjacency closes the structural app to the desktop but
-              // leaves the terminal hidden so the next app can open directly.
-              // A standalone close brings the parked terminal back underneath
-              // the receding structural window before zoom-in takes over.
+              // A presentation is clipped by source lifetime, but shell
+              // geometry is continuous. If SIDECARD was still active on the
+              // last source frame, close from that exact displaced rectangle
+              // rather than snapping back to presentationRect first.
               terminalRect = terminalParkRect;
+              final Rect closingOrigin = sideCardClosingOriginRect(
+                size: renderFrame.size,
+                origin: renderFrame.topLeft,
+                preCueRect: presentationRect,
+                truncatedSlide: truncatedSideCard?.slide,
+              );
               structuralRect =
-                  Rect.lerp(presentationRect, emergenceRect, eased)!;
+                  Rect.lerp(closingOrigin, emergenceRect, eased)!;
               desktopOpacity = 1.0;
               terminalOpacity = placement.chainedToNext ? 0.0 : eased;
               terminalChrome = 1.0;
