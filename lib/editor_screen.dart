@@ -23,9 +23,12 @@ import 'editor_tag_menu.dart'; // Added import for the tag menu
 import 'script_lint.dart';
 import 'edit_media_import.dart';
 import 'edit_workspace.dart';
+import 'marker_authoring.dart';
 import 'structural_sequence.dart';
 import 'structural_sequence_preview.dart';
 import 'text_structural_audio_preview.dart';
+import 'timeline_landmark_layer.dart';
+import 'timeline_markers.dart';
 
 /// Wraps ScenePainter for the editor preview. ScenePainter already always
 /// repaints, but the editor keeps its own delegate so preview-specific
@@ -199,6 +202,15 @@ class _EditorScreenState extends State<EditorScreen> {
   /// F11 would be one way: into full frame, and no key would come back out.
   final FocusNode _previewFocusNode = FocusNode();
 
+  /// Keyboard owner for the TEXT timeline/ribbon.
+  ///
+  /// M is a timeline command, not a text-editing command. The ribbon and
+  /// scrubber explicitly request this focus when touched; the TextField keeps
+  /// ordinary M keystrokes while it owns focus.
+  final FocusNode _textTimelineFocusNode = FocusNode(
+    debugLabel: 'text-timeline-focus',
+  );
+
   Timer? _debounce;
   Timer? _playTimer;
 
@@ -223,6 +235,12 @@ class _EditorScreenState extends State<EditorScreen> {
   bool _isDirty = false;
   bool _isSimulating = false;
   String? _saveFlash; // Transient "Saved" / error message
+
+  /// MARK insertion is source mutation whose compiled engine projection is
+  /// identical. Guard the synchronous controller listener so a zero-time
+  /// timeline annotation does not stop playback or rebuild a simulation that
+  /// cannot have changed.
+  bool _zeroTimeMarkerEdit = false;
 
   // --- Editor view state ---
   bool _isNodeMode = false;
@@ -458,6 +476,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _tagSearchFocusNode.dispose();
     _editorFocusNode.dispose();
     _previewFocusNode.dispose();
+    _textTimelineFocusNode.dispose();
     _scrollController.dispose();
     _textController.removeListener(_onControllerChanged);
     _textController.dispose();
@@ -882,7 +901,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
     final String head = '[PAUSE:$before]';
     final String tail = '[PAUSE:$after]';
-    final String replacement = '$head\n\n$tail';
+    final String replacement = '$head\n$tail';
 
     final int tagStart = offset + m.start;
     final int tagEnd = offset + m.end;
@@ -1270,6 +1289,105 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
+  ProgramTimelineLandmarks _programLandmarks() {
+    if (_rawLineAtFrame.isEmpty) {
+      return const ProgramTimelineLandmarks(
+        markers: <MarkerInstance>[],
+        derived: <DerivedLandmark>[],
+      );
+    }
+    try {
+      return projectProgramTimelineLandmarks(
+        rawDocument: _textController.text,
+        rawLineAtFrame: _rawLineAtFrame,
+      );
+    } catch (_) {
+      // TEXT is a repair surface. A malformed marker must not hide the pacing
+      // ribbon or make the editor unusable while its source is being fixed.
+      return const ProgramTimelineLandmarks(
+        markers: <MarkerInstance>[],
+        derived: <DerivedLandmark>[],
+      );
+    }
+  }
+
+  TextSelection _shiftSelectionAfterInsertion(
+    TextSelection selection,
+    String before,
+    String after,
+  ) {
+    if (!selection.isValid || after.length <= before.length) return selection;
+
+    int insertion = 0;
+    final int shared = math.min(before.length, after.length);
+    while (insertion < shared &&
+        before.codeUnitAt(insertion) == after.codeUnitAt(insertion)) {
+      insertion++;
+    }
+    final int delta = after.length - before.length;
+
+    int shifted(int value) => value >= insertion ? value + delta : value;
+    return TextSelection(
+      baseOffset: shifted(selection.baseOffset),
+      extentOffset: shifted(selection.extentOffset),
+      affinity: selection.affinity,
+      isDirectional: selection.isDirectional,
+    );
+  }
+
+  void _addTextMarkerAtPlayhead() {
+    if (_isSimulating || _rawLineAtFrame.isEmpty) {
+      _toast('Still simulating');
+      return;
+    }
+
+    final String before = _textController.text;
+    final String next = addTextMarkerAtProgramFrame(
+      source: before,
+      rawLineAtFrame: _rawLineAtFrame,
+      programFrame: _currentFrame,
+    );
+    if (next == before) return;
+
+    final TextSelection selection = _shiftSelectionAfterInsertion(
+      _textController.selection,
+      before,
+      next,
+    );
+
+    // The helper is line-neutral and compileScript strips MARK before engine
+    // setup. Keep the running simulation exactly where it is and only mutate
+    // canonical source + transient UI. The controller listener is synchronous,
+    // so this guard covers the whole change notification.
+    _zeroTimeMarkerEdit = true;
+    try {
+      _textController.value = TextEditingValue(
+        text: next,
+        selection: selection,
+      );
+    } finally {
+      _zeroTimeMarkerEdit = false;
+    }
+
+    _refreshDiagnostics(next);
+    if (mounted) setState(() {});
+    _textTimelineFocusNode.requestFocus();
+  }
+
+  KeyEventResult _handleTextTimelineKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_textTimelineFocusNode.hasPrimaryFocus || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    final bool command = keyboard.isControlPressed || keyboard.isMetaPressed;
+    if (!command && event.logicalKey == LogicalKeyboardKey.keyM) {
+      _addTextMarkerAtPlayhead();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   void _onControllerChanged() {
     final String text = _textController.text;
 
@@ -1277,6 +1395,13 @@ class _EditorScreenState extends State<EditorScreen> {
       _lastText = text;
       _isDirty = true;
       _saveFlash = null;
+
+      if (_zeroTimeMarkerEdit) {
+        _lastCursorLine =
+            _lineOfOffset(text, _textController.selection.baseOffset);
+        return;
+      }
+
       _stopPlayback(invalidateStructuralAudio: true);
       _debounce?.cancel();
       _debounce = Timer(_debounceDelay, () {
@@ -1401,6 +1526,12 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget build(BuildContext context) {
     final t = _t;
     final String fileName = widget.templatePath.split(Platform.pathSeparator).last;
+    final ProgramTimelineLandmarks textLandmarks = _isTextMode
+        ? _programLandmarks()
+        : const ProgramTimelineLandmarks(
+            markers: <MarkerInstance>[],
+            derived: <DerivedLandmark>[],
+          );
 
     return Focus(
       autofocus: true,
@@ -1627,21 +1758,43 @@ class _EditorScreenState extends State<EditorScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  ScriptRibbon(
-                    blocks: _ribbonBlocks,
-                    currentFrame: _currentFrame,
-                    totalFrames: _totalFrames,
-                    theme: t,
-                    selectedNodeIndex: _ribbonSelectedNodeIndex,
-                    bedFrames: widget.bedTargetFrames,
-                    musicFrames: widget.musicFrames,
-                    musicLoops: widget.musicLoop,
-                    simulating: _isSimulating || _totalFrames <= 0,
-                    onSeek: (f) {
-                      _stopPlayback();
-                      _seek(f);
-                    },
-                    onOpenNode: _openNodeFromRibbon,
+                  Focus(
+                    focusNode: _textTimelineFocusNode,
+                    onKeyEvent: _handleTextTimelineKeyEvent,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TimelineLandmarkLayer(
+                          markers: textLandmarks.markers,
+                          derived: textLandmarks.derived,
+                          totalFrames: _totalFrames,
+                          theme: t,
+                          dimmed: _isSimulating || _totalFrames <= 0,
+                          onSeek: (int frame) {
+                            _textTimelineFocusNode.requestFocus();
+                            _stopPlayback();
+                            _seek(frame);
+                          },
+                        ),
+                        ScriptRibbon(
+                          blocks: _ribbonBlocks,
+                          currentFrame: _currentFrame,
+                          totalFrames: _totalFrames,
+                          theme: t,
+                          selectedNodeIndex: _ribbonSelectedNodeIndex,
+                          bedFrames: widget.bedTargetFrames,
+                          musicFrames: widget.musicFrames,
+                          musicLoops: widget.musicLoop,
+                          simulating: _isSimulating || _totalFrames <= 0,
+                          onSeek: (f) {
+                            _textTimelineFocusNode.requestFocus();
+                            _stopPlayback();
+                            _seek(f);
+                          },
+                          onOpenNode: _openNodeFromRibbon,
+                        ),
+                      ],
+                    ),
                   ),
                   SizedBox(height: sc(8)),
                   Row(
@@ -2114,10 +2267,14 @@ class _EditorScreenState extends State<EditorScreen> {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: (d) {
+          _textTimelineFocusNode.requestFocus();
           _stopPlayback();
           seekFromDx(d.localPosition.dx);
         },
-        onHorizontalDragStart: (_) => _stopPlayback(),
+        onHorizontalDragStart: (_) {
+          _textTimelineFocusNode.requestFocus();
+          _stopPlayback();
+        },
         onHorizontalDragUpdate: (d) => seekFromDx(d.localPosition.dx),
         child: SizedBox(
           height: sc(24),
