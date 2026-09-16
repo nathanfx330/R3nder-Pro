@@ -14,9 +14,9 @@
 // CARD-family and DOSSIER CUEs are presentation projections over those same
 // structural pixels. Ordinary CARD paints over the client pixels. Standalone
 // EDIT preview may self-stage SIDECARD or DOSSIER by redrawing those pixels into
-// a desktop-style video window. Program STRUCT preview disables those client
-// shell projections so the real outer structural window moves instead; no
-// nested window, second decoder, or second clock is introduced.
+// a desktop-style video window. Program STRUCT preview uses [structuralSource]
+// and therefore leaves DOSSIER to the real outer structural window; no nested
+// window, second decoder, or second clock is introduced.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -117,8 +117,9 @@ class EditVideoPreview extends StatefulWidget {
   /// and moves that outer window beside the card instead.
   final bool renderSideCardsInClient;
 
-  /// Same standalone-authoring policy for DOSSIER. When false, only the outer
-  /// STRUCT shell may move the structural window and paint DOSSIER beside it.
+  /// Same standalone-authoring policy for DOSSIER. It is only honored for the
+  /// direct [editId] path; a [structuralSource] is already inside an outer STRUCT
+  /// shell and must never manufacture a nested DOSSIER desktop.
   final bool renderDossiersInClient;
 
   /// The small lower-left MLT/project diagnostic is cosmetic presentation
@@ -204,8 +205,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         projectFrame: widget.currentFrame,
         moving: widget.isPlaying || widget.fastPreview,
         nativeTexture: false,
-        // No frame has been evaluated yet. A newly mounted preview must not
-        // claim that picture is absent before the compositor has answered.
         status: '',
       ),
     );
@@ -392,7 +391,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   }
 
   bool _dossierNeedsClientPixels(int projectFrame) {
-    if (!widget.renderDossiersInClient) return false;
+    if (!widget.renderDossiersInClient || widget.editId == null) return false;
     final EditDocumentModel? model = _model;
     final StructuralSourceRef? root = StructuralSourceRef.tryParse(widget.sourceRef);
     if (model == null ||
@@ -424,18 +423,9 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       final List<StructuralCardOverlayPlacement> overlays =
           structuralCardOverlayPlacements(model, root, projectFrame);
       if (overlays.any(_overlayNeedsClientPixels)) {
-        // Fullscreen CARD must be painted against this exact client frame.
-        // Standalone SIDECARD also needs Dart pixels to redraw into its own
-        // video window. Program STRUCT suppresses client-side SIDECARD and may
-        // retain the native texture because the outer widget moves that same
-        // continuously-advancing texture as a whole.
         return null;
       }
       if (_dossierNeedsClientPixels(projectFrame)) {
-        // Standalone DOSSIER redraws the same structural pixels inside its fake
-        // authoring desktop shell. Keep those exact Dart pixels resident while
-        // it is active rather than presenting an external texture the painter
-        // cannot sample.
         return null;
       }
     }
@@ -483,9 +473,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     final _PreviewMetadata current = _metadata.value;
     final MediaFrame? currentFrame = current.frame;
 
-    // Do not rebuild the diagnostic overlay every playback frame. Once the
-    // monitor has entered TEXTURE mode for this clip, the external texture can
-    // advance independently at native presentation cadence.
     if (current.nativeTexture &&
         current.status.isEmpty &&
         currentFrame?.trackId == target.trackId &&
@@ -601,12 +588,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       return;
     }
 
-    // Only a moving plain leaf EDIT clip may bypass Dart pixels. A texture
-    // request returns a registered texture handle immediately; it does not prove
-    // that the requested client frame has actually decoded into that texture.
-    // Parked STRUCT entry work therefore goes through the exact compositor once
-    // before the fast path is allowed to take over. That makes
-    // onFirstFrameReady mean resident pixels rather than "texture exists".
     final _NativeTextureTarget? textureTarget =
         moving ? _singleNativeTextureTarget(projectFrame) : null;
     final MediaLayer? layer = _layer;
@@ -620,8 +601,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
           height: decodeSize.height.round(),
         );
       } catch (_) {
-        // A texture presentation failure does not make the source offline.
-        // Fall back to the same CPU compositor used by structural sources.
         textureId = null;
       }
 
@@ -721,11 +700,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
       ),
     );
 
-    // An authored EDIT gap is already honestly presentable before RGBA image
-    // conversion finishes: the preview painter's stable base is opaque black,
-    // and the compositor has confirmed that no active clip is pending/offline.
-    // Report readiness now so STRUCT opening can release without waiting on a
-    // needless black-image conversion round trip.
     if (top == null &&
         result.contributors.isEmpty &&
         result.mediaFrames.isEmpty) {
@@ -821,10 +795,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               },
             ),
           ),
-
-          // CARD-family presentation is painted over structural client pixels.
-          // Program STRUCT sets renderSideCards=false, leaving SIDECARD to its
-          // outer desktop/window shell while ordinary CARD stays client-local.
           Positioned.fill(
             child: ValueListenableBuilder<_PreviewMetadata>(
               valueListenable: _metadata,
@@ -844,8 +814,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               },
             ),
           ),
-
-          if (widget.renderDossiersInClient)
+          if (widget.renderDossiersInClient && widget.editId != null)
             Positioned.fill(
               child: ValueListenableBuilder<_PreviewMetadata>(
                 valueListenable: _metadata,
@@ -864,7 +833,6 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
                 },
               ),
             ),
-
           ValueListenableBuilder<_PreviewMetadata>(
             valueListenable: _metadata,
             builder: (
