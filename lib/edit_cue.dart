@@ -9,12 +9,14 @@
 // moves, trims, slips, and exact rational speed changes without introducing a
 // second project clock.
 //
-// Structural CUEs currently accept CARD and SIDECARD. CARD is the fullscreen
+// Structural CUEs accept CARD, SIDECARD, and DOSSIER. CARD is the fullscreen
 // overlay discovered while building the first CUE path. SIDECARD is the
 // original side-by-side idea: the same structural video keeps advancing while
 // it moves into a desktop-style video window and the card sits beside it.
-// Neither form is part of the structural CST. ScriptCstDocument continues to
-// own the CLIP span byte-for-byte while this file gives the inner source just
+// DOSSIER keeps that continuously-playing structural video alive while the
+// right-hand presentation evolves from biography card into evidence imagery.
+// None of these forms becomes structural CST state. ScriptCstDocument continues
+// to own the CLIP span byte-for-byte while this file gives the inner source just
 // enough meaning for deterministic presentation.
 
 import 'package:flutter/material.dart';
@@ -65,30 +67,39 @@ class EditCardCue {
     required this.rawSource,
   });
 
-  /// Authored source frame, in the same coordinate space as CLIP `in`.
   final int sourceFrame;
-
-  /// The canonical card content. Runtime type selects fullscreen CARD versus
-  /// windowed-video SIDECARD without inventing another hidden property model.
   final CardRequest card;
 
   bool get isSideCard => card is SideCardRequest;
 
-  /// Absolute source span of the complete `[CUE]...[/CUE]` block.
   final int startOffset;
   final int endOffset;
+  final String rawSource;
+}
 
-  /// Complete authored CUE source, preserved exactly.
+/// One DOSSIER presentation triggered from a source-relative frame in a CLIP.
+///
+/// Unlike CARD, DOSSIER lifetime depends on its center-stage branch and, for a
+/// mosaic, on the number of resolved evidence pages. This object therefore
+/// stores authored facts and trigger position only. The structural DOSSIER
+/// evaluator resolves exact lifetime once the folder/page count is known.
+class EditDossierCue {
+  const EditDossierCue({
+    required this.sourceFrame,
+    required this.dossier,
+    required this.startOffset,
+    required this.endOffset,
+    required this.rawSource,
+  });
+
+  final int sourceFrame;
+  final DossierRequest dossier;
+  final int startOffset;
+  final int endOffset;
   final String rawSource;
 }
 
 /// One CARD-family cue that is actually visible at a specific structural frame.
-///
-/// The trigger belongs to the source-relative CLIP body, but after it fires the
-/// presentation is evaluated from structural time and is allowed to continue
-/// across a later cut. The containing EDIT/PANE, not the anchor CLIP, clips its
-/// lifetime. This keeps the trigger attached to content without making the
-/// owning clip a second presentation-duration authority.
 class ActiveEditCardCue {
   const ActiveEditCardCue({
     required this.clip,
@@ -101,14 +112,43 @@ class ActiveEditCardCue {
   final EditClip clip;
   final EditCardCue cue;
   final int triggerProjectFrame;
-
-  /// Frame age inside the CARD presentation, zero on the trigger frame.
   final int localFrame;
-
-  /// Pure CARD visual state for [localFrame]. CARD and SIDECARD intentionally
-  /// share this lifetime: opening, authored hold, and closing are identical;
-  /// only their pixel choreography differs.
   final CardPresentationFrame presentationFrame;
+}
+
+/// One triggered DOSSIER cue at a specific structural frame.
+///
+/// Triggered does not necessarily mean still visible. The caller that knows the
+/// resolved evidence page count evaluates [localFrame] through
+/// DossierPresentationTiming and drops it once that explicit lifetime ends.
+class ActiveEditDossierCue {
+  const ActiveEditDossierCue({
+    required this.clip,
+    required this.cue,
+    required this.triggerProjectFrame,
+    required this.localFrame,
+  });
+
+  final EditClip clip;
+  final EditDossierCue cue;
+  final int triggerProjectFrame;
+  final int localFrame;
+}
+
+class _ParsedEditCue {
+  const _ParsedEditCue({
+    required this.sourceFrame,
+    required this.presentation,
+    required this.startOffset,
+    required this.endOffset,
+    required this.rawSource,
+  });
+
+  final int sourceFrame;
+  final PresentationRequest presentation;
+  final int startOffset;
+  final int endOffset;
+  final String rawSource;
 }
 
 final RegExp _cueOpening = RegExp(r'\[CUE:(\d+)\]');
@@ -122,17 +162,50 @@ final RegExp _sideCardTag = RegExp(
 );
 const String _cueClosing = '[/CUE]';
 
-/// Parses every CARD-family cue owned by [clip].
-///
-/// Other CLIP body source is left uninterpreted. In particular, transition
-/// directives and future body constructs remain somebody else's grammar. The
-/// scan skips complete terminal tags before looking inside them, so text such
-/// as `[CUE:900]` appearing inside an ordinary CARD body cannot accidentally
-/// become structural timing.
+/// Parses every CARD-family cue owned by [clip]. DOSSIER CUEs are valid source
+/// but are returned by [parseClipDossierCues] instead of being misreported as a
+/// malformed CARD cue.
 List<EditCardCue> parseClipCardCues(EditClip clip) {
+  final List<EditCardCue> out = <EditCardCue>[];
+  for (final _ParsedEditCue cue in _parseClipPresentationCues(clip)) {
+    final PresentationRequest presentation = cue.presentation;
+    if (presentation is! CardRequest) continue;
+    out.add(
+      EditCardCue(
+        sourceFrame: cue.sourceFrame,
+        card: presentation,
+        startOffset: cue.startOffset,
+        endOffset: cue.endOffset,
+        rawSource: cue.rawSource,
+      ),
+    );
+  }
+  return List<EditCardCue>.unmodifiable(out);
+}
+
+/// Parses every DOSSIER cue owned by [clip].
+List<EditDossierCue> parseClipDossierCues(EditClip clip) {
+  final List<EditDossierCue> out = <EditDossierCue>[];
+  for (final _ParsedEditCue cue in _parseClipPresentationCues(clip)) {
+    final PresentationRequest presentation = cue.presentation;
+    if (presentation is! DossierRequest) continue;
+    out.add(
+      EditDossierCue(
+        sourceFrame: cue.sourceFrame,
+        dossier: presentation,
+        startOffset: cue.startOffset,
+        endOffset: cue.endOffset,
+        rawSource: cue.rawSource,
+      ),
+    );
+  }
+  return List<EditDossierCue>.unmodifiable(out);
+}
+
+List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
   final String source = clip.block.innerSource;
   final int absoluteBase = clip.block.openEndOffset;
-  final List<EditCardCue> cues = <EditCardCue>[];
+  final List<_ParsedEditCue> cues = <_ParsedEditCue>[];
 
   int cursor = 0;
   while (cursor < source.length) {
@@ -149,7 +222,7 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
       final int sourceFrame = int.parse(opening.group(1)!);
       final int contentAt = _skipWhitespace(source, opening.end);
 
-      CardRequest? request;
+      PresentationRequest? request;
       int? presentationEnd;
 
       final RegExpMatch? terminalPresentation =
@@ -157,7 +230,7 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
       if (terminalPresentation != null) {
         final PresentationRequest? parsed =
             presentationRequestFromMatch(terminalPresentation);
-        if (parsed is CardRequest) {
+        if (parsed is CardRequest || parsed is DossierRequest) {
           request = parsed;
           presentationEnd = terminalPresentation.end;
         }
@@ -178,30 +251,30 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
 
       if (request == null || presentationEnd == null) {
         throw EditCueFormatException(
-          'CUE must contain exactly one CARD or SIDECARD presentation.',
+          'CUE must contain exactly one CARD, SIDECARD, or DOSSIER presentation.',
           absoluteBase + contentAt,
         );
       }
 
-      final CardRequest card = _normalizeNestedCardBody(
+      final PresentationRequest normalized = _normalizeNestedPresentationBody(
         request,
         source: source,
-        cardStart: contentAt,
+        presentationStart: contentAt,
       );
 
       final int closeAt = _skipWhitespace(source, presentationEnd);
       if (!source.startsWith(_cueClosing, closeAt)) {
         throw EditCueFormatException(
-          'CUE must close immediately after its CARD or SIDECARD, apart from whitespace.',
+          'CUE must close immediately after its presentation, apart from whitespace.',
           absoluteBase + closeAt,
         );
       }
 
       final int end = closeAt + _cueClosing.length;
       cues.add(
-        EditCardCue(
+        _ParsedEditCue(
           sourceFrame: sourceFrame,
-          card: card,
+          presentation: normalized,
           startOffset: absoluteBase + cursor,
           endOffset: absoluteBase + end,
           rawSource: source.substring(cursor, end),
@@ -233,7 +306,7 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
     cursor++;
   }
 
-  return List<EditCardCue>.unmodifiable(cues);
+  return List<_ParsedEditCue>.unmodifiable(cues);
 }
 
 SideCardRequest _sideCardRequestFromMatch(RegExpMatch match) {
@@ -280,62 +353,80 @@ String _cleanPresentationBody(String raw) {
   return value;
 }
 
-CardRequest _normalizeNestedCardBody(
-  CardRequest request, {
+PresentationRequest _normalizeNestedPresentationBody(
+  PresentationRequest request, {
   required String source,
-  required int cardStart,
+  required int presentationStart,
 }) {
-  final String cardIndent = _lineIndentAt(source, cardStart);
-  final String bodyIndent = '$cardIndent  ';
-  final List<String> lines = request.body
+  if (request is CardRequest) {
+    final String body = _normalizeNestedBody(
+      request.body,
+      source: source,
+      presentationStart: presentationStart,
+    );
+    if (request is SideCardRequest) {
+      return SideCardRequest(
+        image: request.image,
+        holdFrames: request.holdFrames,
+        panelColor: request.panelColor,
+        heading: request.heading,
+        body: body,
+      );
+    }
+    return CardRequest(
+      image: request.image,
+      holdFrames: request.holdFrames,
+      panelColor: request.panelColor,
+      heading: request.heading,
+      body: body,
+    );
+  }
+
+  if (request is DossierRequest) {
+    return DossierRequest(
+      folder: request.folder,
+      image: request.image,
+      holdSplit: request.holdSplit,
+      holdFull: request.holdFull,
+      centerMode: request.centerMode,
+      cardLead: request.cardLead,
+      panelColor: request.panelColor,
+      heading: request.heading,
+      body: _normalizeNestedBody(
+        request.body,
+        source: source,
+        presentationStart: presentationStart,
+      ),
+    );
+  }
+
+  return request;
+}
+
+String _normalizeNestedBody(
+  String body, {
+  required String source,
+  required int presentationStart,
+}) {
+  final String presentationIndent = _lineIndentAt(source, presentationStart);
+  final String bodyIndent = '$presentationIndent  ';
+  final List<String> lines = body
       .replaceAll('\r\n', '\n')
       .replaceAll('\r', '\n')
       .split('\n');
 
-  // The generic CARD parser intentionally knows nothing about surrounding
-  // source indentation. Inside a CUE, the newline before the closing tag
-  // therefore leaves the CARD line's indent as a final whitespace-only body
-  // line. Remove only that layout line, not a user-authored blank line before
-  // it.
-  if (lines.isNotEmpty && lines.last == cardIndent) {
+  if (lines.isNotEmpty && lines.last == presentationIndent) {
     lines.removeLast();
   }
 
-  // Canonical CUE authoring indents body copy one level inside the presentation
-  // tag. Strip exactly that structural prefix from each line. Any additional
-  // spaces typed by the author remain intact, including deliberate indentation
-  // and blank lines inside the body.
   for (int i = 0; i < lines.length; i++) {
     if (bodyIndent.isNotEmpty && lines[i].startsWith(bodyIndent)) {
       lines[i] = lines[i].substring(bodyIndent.length);
     }
   }
-
-  if (request is SideCardRequest) {
-    return SideCardRequest(
-      image: request.image,
-      holdFrames: request.holdFrames,
-      panelColor: request.panelColor,
-      heading: request.heading,
-      body: lines.join('\n'),
-    );
-  }
-
-  return CardRequest(
-    image: request.image,
-    holdFrames: request.holdFrames,
-    panelColor: request.panelColor,
-    heading: request.heading,
-    body: lines.join('\n'),
-  );
+  return lines.join('\n');
 }
 
-/// Returns every CARD-family cue visible in [edit] at [projectFrame].
-///
-/// Authored order is the deterministic stacking rule: tracks are visited in
-/// source order, clips in source order, cues in body order. A later active cue
-/// therefore follows an earlier one in the returned list and may be painted on
-/// top without inventing a z-order language.
 List<ActiveEditCardCue> activeCardCuesForEdit(
   EditSequence edit,
   int projectFrame,
@@ -343,18 +434,12 @@ List<ActiveEditCardCue> activeCardCuesForEdit(
   if (projectFrame < 0 || projectFrame >= edit.projectFrameCount) {
     return const <ActiveEditCardCue>[];
   }
-
   return _activeCardCues(
     edit.tracks.expand((EditTrack track) => track.clips),
     projectFrame,
   );
 }
 
-/// Returns every CARD-family cue visible in one MOSAIC pane at [projectFrame].
-///
-/// The pane is the presentation lifetime boundary. A cue may survive the cut
-/// from its anchor clip into the next clip in the same pane, but it cannot leak
-/// beyond the pane's authored frame count or into another pane.
 List<ActiveEditCardCue> activeCardCuesForPane(
   MosaicPane pane,
   int projectFrame,
@@ -362,7 +447,6 @@ List<ActiveEditCardCue> activeCardCuesForPane(
   if (projectFrame < 0 || projectFrame >= pane.projectFrameCount) {
     return const <ActiveEditCardCue>[];
   }
-
   return _activeCardCues(pane.clips, projectFrame);
 }
 
@@ -398,19 +482,57 @@ List<ActiveEditCardCue> _activeCardCues(
   return List<ActiveEditCardCue>.unmodifiable(active);
 }
 
+/// Returns every DOSSIER cue whose source-relative trigger has fired by
+/// [projectFrame]. Exact visible lifetime is resolved later with the evidence
+/// page count, because that count belongs to the asset-backed presentation.
+List<ActiveEditDossierCue> activeDossierCuesForEdit(
+  EditSequence edit,
+  int projectFrame,
+) {
+  if (projectFrame < 0 || projectFrame >= edit.projectFrameCount) {
+    return const <ActiveEditDossierCue>[];
+  }
+  return _activeDossierCues(
+    edit.tracks.expand((EditTrack track) => track.clips),
+    projectFrame,
+  );
+}
+
+List<ActiveEditDossierCue> activeDossierCuesForPane(
+  MosaicPane pane,
+  int projectFrame,
+) {
+  if (projectFrame < 0 || projectFrame >= pane.projectFrameCount) {
+    return const <ActiveEditDossierCue>[];
+  }
+  return _activeDossierCues(pane.clips, projectFrame);
+}
+
+List<ActiveEditDossierCue> _activeDossierCues(
+  Iterable<EditClip> clips,
+  int projectFrame,
+) {
+  final List<ActiveEditDossierCue> active = <ActiveEditDossierCue>[];
+  for (final EditClip clip in clips) {
+    for (final EditDossierCue cue in parseClipDossierCues(clip)) {
+      final int? trigger = cueProjectFrame(clip, cue.sourceFrame);
+      if (trigger == null || projectFrame < trigger) continue;
+      active.add(
+        ActiveEditDossierCue(
+          clip: clip,
+          cue: cue,
+          triggerProjectFrame: trigger,
+          localFrame: projectFrame - trigger,
+        ),
+      );
+    }
+  }
+  return List<ActiveEditDossierCue>.unmodifiable(active);
+}
+
 /// Returns the project-frame offset inside [clip] where [cueSourceFrame]
 /// becomes active, or null when that source point is outside the clip's
 /// current visible source window.
-///
-/// This is the exact inverse of the CLIP's rational source walk in the sense
-/// a trigger needs: the earliest project frame whose continuous source
-/// position has reached or passed the authored source frame. Integer ceil is
-/// used directly; no double enters the mapping.
-///
-/// At speeds above 1 some integer source frames are skipped by sampling. A cue
-/// on one of those frames fires on the first project frame after the crossing,
-/// rather than disappearing merely because no decoded frame has that exact
-/// integer index.
 int? cueProjectOffset(EditClip clip, int cueSourceFrame) {
   final int sourceDelta = cueSourceFrame - clip.inFrame;
   if (sourceDelta < 0) return null;
@@ -424,7 +546,6 @@ int? cueProjectOffset(EditClip clip, int cueSourceFrame) {
   return projectOffset;
 }
 
-/// Absolute EDIT/MOSAIC-local project frame for a source-relative cue.
 int? cueProjectFrame(EditClip clip, int cueSourceFrame) {
   final int? offset = cueProjectOffset(clip, cueSourceFrame);
   return offset == null ? null : clip.atFrame + offset;
