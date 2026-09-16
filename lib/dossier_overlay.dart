@@ -2,21 +2,27 @@
 //
 // Shared structural DOSSIER asset loading and right-hand panel painting.
 //
-// The outer video window remains owned by STRUCT and sidecard_geometry.dart.
-// This file paints only DOSSIER's sibling presentation: biography card first,
-// then the evidence grid/mosaic. Preview and BAKE call the same painter and the
-// same pure DossierPresentationTiming-backed placement state.
+// The authoritative outer video window remains owned by STRUCT and
+// sidecard_geometry.dart. TEXT/STRUCT preview and BAKE paint only DOSSIER's
+// sibling presentation here: biography card first, then evidence grid/mosaic.
+//
+// Standalone EDIT authoring has no outer program desktop. For that one context
+// this file can stage the same fake desktop/video-window shell used by SIDECARD,
+// then paint the exact same DOSSIER panel on top. It is an authoring projection,
+// not another decoder, clock, or structural geometry authority.
 
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
 import 'dossier_overlay_state.dart';
 import 'edit_cue.dart';
+import 'edit_model.dart';
 import 'folder_order.dart';
 import 'presentation_requests.dart';
 
@@ -274,6 +280,41 @@ void paintStructuralDossierPanel({
     visibility: visual.evidenceVisibility,
     pageIndex: visual.centerPageIndex,
     pagePan: visual.pagePan,
+    fontFamily: fontFamily,
+  );
+}
+
+/// Standalone EDIT authoring composition for DOSSIER.
+///
+/// The real program path never calls this. It moves the actual STRUCT window
+/// and calls [paintStructuralDossierPanel] as a sibling. EDIT has no such shell,
+/// so it draws the same convenience desktop/video window that SIDECARD uses,
+/// then reuses the exact DOSSIER panel painter.
+void paintStandaloneStructuralDossierComposition({
+  required Canvas canvas,
+  required Size size,
+  required StructuralDossierOverlayPlacement placement,
+  required DossierOverlayImageCache images,
+  required ui.Image? structuralImage,
+  required String fontFamily,
+}) {
+  if (size.width <= 0.0 || size.height <= 0.0) return;
+  final StructuralDossierPanelFrame visual =
+      structuralDossierPanelFrame(placement);
+  if (visual.shellSlide <= 0.0) return;
+
+  paintStandaloneSidePresentationShell(
+    canvas: canvas,
+    size: size,
+    slide: visual.shellSlide,
+    structuralImage: structuralImage,
+    fontFamily: fontFamily,
+  );
+  paintStructuralDossierPanel(
+    canvas: canvas,
+    size: size,
+    placement: placement,
+    images: images,
     fontFamily: fontFamily,
   );
 }
@@ -599,5 +640,182 @@ class _StructuralDossierPanelPainter extends CustomPainter {
   bool shouldRepaint(covariant _StructuralDossierPanelPainter oldDelegate) =>
       oldDelegate.placement != placement ||
       !identical(oldDelegate.images, images) ||
+      oldDelegate.fontFamily != fontFamily;
+}
+
+/// Live standalone authoring overlay used by EditVideoPreview.
+///
+/// It contains no clock and owns no source pixels. [projectFrame] comes from
+/// EditVideoPreview's existing transport; [structuralImage] is the exact image
+/// that preview already decoded. The widget only projects a clip-local DOSSIER
+/// request into the fake authoring desktop shell.
+class StructuralDossierCueOverlay extends StatefulWidget {
+  const StructuralDossierCueOverlay({
+    super.key,
+    required this.source,
+    required this.sourceRef,
+    required this.projectFrame,
+    required this.resolveSource,
+    this.structuralImage,
+    this.fontFamily = 'monospace',
+  });
+
+  final String source;
+  final String sourceRef;
+  final int projectFrame;
+  final String Function(String source) resolveSource;
+  final ValueListenable<ui.Image?>? structuralImage;
+  final String fontFamily;
+
+  @override
+  State<StructuralDossierCueOverlay> createState() =>
+      _StructuralDossierCueOverlayState();
+}
+
+class _StructuralDossierCueOverlayState
+    extends State<StructuralDossierCueOverlay> {
+  late DossierOverlayImageCache _images;
+  EditDocumentModel? _model;
+  StructuralSourceRef? _root;
+  String? _parsedSource;
+  String? _parsedSourceRef;
+
+  @override
+  void initState() {
+    super.initState();
+    _images = DossierOverlayImageCache(widget.resolveSource);
+  }
+
+  @override
+  void didUpdateWidget(covariant StructuralDossierCueOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.resolveSource != widget.resolveSource) {
+      _images.dispose();
+      _images = DossierOverlayImageCache(widget.resolveSource);
+    }
+    if (oldWidget.source != widget.source ||
+        oldWidget.sourceRef != widget.sourceRef ||
+        oldWidget.resolveSource != widget.resolveSource) {
+      _model = null;
+      _root = null;
+      _parsedSource = null;
+      _parsedSourceRef = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _images.dispose();
+    super.dispose();
+  }
+
+  StructuralDossierOverlayPlacement? _placement() {
+    try {
+      if (_model == null ||
+          _root == null ||
+          _parsedSource != widget.source ||
+          _parsedSourceRef != widget.sourceRef) {
+        final EditDocumentModel model = EditDocumentModel.parse(widget.source);
+        final StructuralSourceRef? root =
+            StructuralSourceRef.tryParse(widget.sourceRef);
+        if (root == null ||
+            root.id.isEmpty ||
+            !model.containsStructuralSource(root)) {
+          _model = null;
+          _root = null;
+          return null;
+        }
+        _model = model;
+        _root = root;
+        _parsedSource = widget.source;
+        _parsedSourceRef = widget.sourceRef;
+      }
+
+      return structuralDossierPlacement(
+        _model!,
+        _root!,
+        widget.projectFrame,
+        centerPageCountFor: (DossierRequest request) =>
+            structuralDossierCenterPageCount(request, widget.resolveSource),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _ensureImages(StructuralDossierOverlayPlacement placement) {
+    _images.ensure(placement).then((bool changed) {
+      if (changed && mounted) setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final StructuralDossierOverlayPlacement? placement = _placement();
+    if (placement == null || structuralDossierShellSlide(placement) <= 0.0) {
+      return const SizedBox.expand();
+    }
+    _ensureImages(placement);
+
+    Widget painted(ui.Image? structuralImage) {
+      return IgnorePointer(
+        child: CustomPaint(
+          key: const ValueKey<String>('edit-dossier-cue-overlay-paint'),
+          painter: _StructuralDossierCuePainter(
+            placement: placement,
+            images: _images,
+            structuralImage: structuralImage,
+            fontFamily: widget.fontFamily,
+          ),
+        ),
+      );
+    }
+
+    final ValueListenable<ui.Image?>? structural = widget.structuralImage;
+    if (structural == null) return painted(null);
+    return ValueListenableBuilder<ui.Image?>(
+      valueListenable: structural,
+      builder: (BuildContext context, ui.Image? image, Widget? child) {
+        return painted(image);
+      },
+    );
+  }
+}
+
+class _StructuralDossierCuePainter extends CustomPainter {
+  const _StructuralDossierCuePainter({
+    required this.placement,
+    required this.images,
+    required this.structuralImage,
+    required this.fontFamily,
+  });
+
+  final StructuralDossierOverlayPlacement placement;
+  final DossierOverlayImageCache images;
+  final ui.Image? structuralImage;
+  final String fontFamily;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect frame = structuralOverlayFit16x9(size);
+    if (frame.width <= 0.0 || frame.height <= 0.0) return;
+    canvas.save();
+    canvas.translate(frame.left, frame.top);
+    paintStandaloneStructuralDossierComposition(
+      canvas: canvas,
+      size: frame.size,
+      placement: placement,
+      images: images,
+      structuralImage: structuralImage,
+      fontFamily: fontFamily,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _StructuralDossierCuePainter oldDelegate) =>
+      oldDelegate.placement != placement ||
+      !identical(oldDelegate.images, images) ||
+      !identical(oldDelegate.structuralImage, structuralImage) ||
       oldDelegate.fontFamily != fontFamily;
 }
