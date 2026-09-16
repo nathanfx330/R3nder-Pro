@@ -619,7 +619,7 @@ String _centerModeName(DossierCenterMode mode) {
   }
 }
 
-// Valid 1x1 PNG. The gallery payload only needs to decode; no pixel assertion
-// belongs in a timing-parity test.
+// Strictly valid 1x1 RGBA PNG. Flutter's codec validates PNG chunk CRCs, so
+// the fixture must use bytes that are valid under the same decoder as setup().
 const String _onePixelPng =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=';
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==';
