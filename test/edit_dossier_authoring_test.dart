@@ -175,9 +175,12 @@ void main() {
       projectFrame: 150,
     );
     final EditSurfaceDocument result = EditSurfaceDocument.parse(split, 'main');
-    final List<EditSurfaceClip> clips = result.track('V1').clips
-      ..sort((EditSurfaceClip a, EditSurfaceClip b) =>
-          a.atFrame.compareTo(b.atFrame));
+    final List<EditSurfaceClip> clips =
+        result.track('V1').clips.toList(growable: false)
+          ..sort(
+            (EditSurfaceClip a, EditSurfaceClip b) =>
+                a.atFrame.compareTo(b.atFrame),
+          );
 
     expect(clips, hasLength(2));
     final EditSurfaceClip left = clips[0];
