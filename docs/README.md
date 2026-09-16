@@ -230,6 +230,10 @@ Two of the hardest structural milestones: executable adjacency, seamless applica
 
 Player chrome, DEFAULT/CUSTOM/NONE, `[frame]`, missing custom overlays in final BAKE, runtime placement-index alignment, source export versus final BAKE, `RENDERNAME`, monotonic versions, and no-overwrite output.
 
+## `CARD_SIDECARD_DOSSIER_JOURNEY.md`
+
+The post M24 presentation journey: source relative CUE ownership, fullscreen CARD, the SIDECARD nesting mistake and real sibling correction, one continuously playing decoder, source end continuity, DOSSIER timing and authoring, shared Preview/BAKE shell geometry, evidence semantics, and the progression from 22 to 26 to 31 focused passing tests before manual acceptance in motion.
+
 ## `EDIT_PLAYBACK_PERFORMANCE.md`
 
 Measured EDIT playback performance and separation of native decode timing from Flutter UI repaint cost.
