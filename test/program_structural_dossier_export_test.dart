@@ -70,7 +70,10 @@ Rect? _solidRedBounds(Uint8List rgba, int width, int height) {
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       final int i = (y * width + x) * 4;
-      if (rgba[i] < 240 || rgba[i + 1] > 20 || rgba[i + 2] > 20 || rgba[i + 3] < 240) {
+      if (rgba[i] < 240 ||
+          rgba[i + 1] > 20 ||
+          rgba[i + 2] > 20 ||
+          rgba[i + 3] < 240) {
         continue;
       }
       minX = x < minX ? x : minX;
@@ -89,7 +92,8 @@ Rect? _solidRedBounds(Uint8List rgba, int width, int height) {
 }
 
 Future<Uint8List> _rgba(ui.Image image) async {
-  final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  final ByteData? data =
+      await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   expect(data, isNotNull);
   return data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
@@ -104,8 +108,13 @@ Future<SceneEngine> _sceneFor(
     templateText: compiled.engineText,
     fontColor: Colors.green,
     bgColor: Colors.black,
-    width: 320,
-    height: 180,
+    // ProgramStructuralFrameRenderer deliberately scales native chrome from
+    // the logical SceneEngine canvas into the requested BAKE output. Keep the
+    // engine at the normal 1080p logical canvas while this focused test renders
+    // a tiny 320x180 image. Setting both to 320x180 would make the title bar
+    // remain 38 output pixels tall and invalidate the shared SIDECARD geometry.
+    width: 1920,
+    height: 1080,
     scale: 1,
     fontPath: 'monospace',
     fontSize: 12,
@@ -149,7 +158,8 @@ Future<ui.Image> _renderAtSourceFrame({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('BAKE keeps live structural video seated left during DOSSIER evidence', () async {
+  test('BAKE keeps live structural video seated left during DOSSIER evidence',
+      () async {
     const String source = '''[SPEED:MAX]BEFORE
 [EDIT:main]
 [TRACK:V1]
@@ -172,7 +182,8 @@ AFTER
     Directory('${root.path}/sprites').createSync(recursive: true);
     final _RecordingBackend backend = _RecordingBackend();
     final SceneEngine scene = await _sceneFor(source, root);
-    final ProgramStructuralFrameRenderer renderer = ProgramStructuralFrameRenderer(
+    final ProgramStructuralFrameRenderer renderer =
+        ProgramStructuralFrameRenderer(
       rawDocument: source,
       width: 320,
       height: 180,
@@ -207,7 +218,8 @@ AFTER
     expect(backend.requests, contains(128));
   });
 
-  test('BAKE preserves truncated DOSSIER shell into first STRUCT closing frame', () async {
+  test('BAKE preserves truncated DOSSIER shell into first STRUCT closing frame',
+      () async {
     const String source = '''[SPEED:MAX]BEFORE
 [EDIT:main]
 [TRACK:V1]
@@ -230,7 +242,8 @@ AFTER
     Directory('${root.path}/sprites').createSync(recursive: true);
     final _RecordingBackend backend = _RecordingBackend();
     final SceneEngine scene = await _sceneFor(source, root);
-    final ProgramStructuralFrameRenderer renderer = ProgramStructuralFrameRenderer(
+    final ProgramStructuralFrameRenderer renderer =
+        ProgramStructuralFrameRenderer(
       rawDocument: source,
       width: 320,
       height: 180,
@@ -253,7 +266,8 @@ AFTER
       placement: placement,
       sourceFrame: 11,
     );
-    final Rect? showingRed = _solidRedBounds(await _rgba(lastShowing), 320, 180);
+    final Rect? showingRed =
+        _solidRedBounds(await _rgba(lastShowing), 320, 180);
     lastShowing.dispose();
     expect(showingRed, isNotNull);
 
