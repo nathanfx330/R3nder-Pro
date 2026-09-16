@@ -15,7 +15,9 @@
 // client of the real STRUCT window, that outer window moves left, and the card
 // is painted as a sibling on the desktop. Preview and BAKE use the same
 // sidecard_geometry.dart shell evaluator for the motion curve, moving rectangle,
-// and desktop/terminal opacity policy.
+// and desktop/terminal opacity policy. If source lifetime truncates an active
+// SIDECARD, the card ends there but the STRUCT close starts from the final
+// displaced shell rectangle instead of snapping back to the pre-cue geometry.
 //
 // Structural application planning is already baked into each placement:
 // standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
@@ -162,6 +164,26 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
+  StructuralSourceRef? _rootFor(StructuralSequencePlacement placement) {
+    final StructuralSourceRef? root =
+        StructuralSourceRef.tryParse(placement.sourceRef.canonicalSource);
+    if (root == null ||
+        root.id.isEmpty ||
+        !_editModel.containsStructuralSource(root)) {
+      return null;
+    }
+    return root;
+  }
+
+  StructuralCardOverlayPlacement? _sideCardAtSourceFrame(
+    StructuralSequencePlacement placement,
+    int sourceFrame,
+  ) {
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralSideCardPlacement(_editModel, root, sourceFrame);
+  }
+
   StructuralCardOverlayPlacement? _sideCardFor(
     StructuralSequencePlacement placement,
     int localFrame,
@@ -170,14 +192,19 @@ class ProgramStructuralFrameRenderer {
     if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
       return null;
     }
-    final StructuralSourceRef? root =
-        StructuralSourceRef.tryParse(placement.sourceRef.canonicalSource);
-    if (root == null ||
-        root.id.isEmpty ||
-        !_editModel.containsStructuralSource(root)) {
-      return null;
-    }
-    return structuralSideCardPlacement(_editModel, root, sourceFrame);
+    return _sideCardAtSourceFrame(placement, sourceFrame);
+  }
+
+  StructuralCardOverlayPlacement? _sideCardAtSourceEnd(
+    StructuralSequencePlacement placement,
+  ) {
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralSideCardPlacementAtSourceEnd(
+      _editModel,
+      root,
+      placement.sourceDurationFrames,
+    );
   }
 
   /// Returns a complete output frame while STRUCT is active, otherwise null so
@@ -196,12 +223,18 @@ class ProgramStructuralFrameRenderer {
     if (placement == null) return null;
 
     final int localFrame = _localFrame(scene, marker);
+    final StructuralSequenceStage stage = placement.stageAt(localFrame);
+    final StructuralCardOverlayPlacement? truncatedSideCard =
+        stage == StructuralSequenceStage.closing
+            ? _sideCardAtSourceEnd(placement)
+            : null;
     final _StructuralProgramVisual visual = _StructuralProgramVisual.evaluate(
       placement: placement,
       localFrame: localFrame,
       scene: scene,
       outputWidth: width,
       outputHeight: height,
+      truncatedSideCardSlide: truncatedSideCard?.slide,
     );
     final StructuralCardOverlayPlacement? sideCard = _sideCardFor(
       placement,
@@ -674,6 +707,7 @@ class _StructuralProgramVisual {
     required SceneEngine scene,
     required int outputWidth,
     required int outputHeight,
+    double? truncatedSideCardSlide,
   }) {
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
     final double linear = placement.stageProgressAt(localFrame);
@@ -766,7 +800,24 @@ class _StructuralProgramVisual {
 
       case StructuralSequenceStage.closing:
         terminalRect = terminalParkRect;
-        structuralRect = Rect.lerp(presentationRect, emergenceRect, eased)!;
+        final Rect presentationPixels = Rect.fromLTRB(
+          presentationRect.left * outputWidth,
+          presentationRect.top * outputHeight,
+          presentationRect.right * outputWidth,
+          presentationRect.bottom * outputHeight,
+        );
+        final Rect closingOriginPixels = sideCardClosingOriginRect(
+          size: Size(outputWidth.toDouble(), outputHeight.toDouble()),
+          preCueRect: presentationPixels,
+          truncatedSlide: truncatedSideCardSlide,
+        );
+        final Rect closingOrigin = Rect.fromLTRB(
+          closingOriginPixels.left / outputWidth,
+          closingOriginPixels.top / outputHeight,
+          closingOriginPixels.right / outputWidth,
+          closingOriginPixels.bottom / outputHeight,
+        );
+        structuralRect = Rect.lerp(closingOrigin, emergenceRect, eased)!;
         desktopOpacity = 1.0;
         terminalOpacity = placement.chainedToNext ? 0.0 : eased;
         terminalChrome = 1.0;
