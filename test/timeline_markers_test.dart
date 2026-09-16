@@ -8,16 +8,16 @@ import 'package:r3nder/timeline_markers.dart';
 
 void main() {
   group('MARK language', () {
-    const String source = r'''[MARK:"Top: [alpha]"]
+    const String source = '''[MARK:"Top: [alpha]"]
 [EDIT:cut]
-  [MARK:4:"Edit \"beat\""]
+  [MARK:4:"Edit \\"beat\\""]
   [TRACK:V1]
     [CLIP:c1:clip.mp4:10:20:20:2]
       [MARK:24:"Quote: the good part [alt]"]
     [/CLIP]
   [/TRACK]
 [/EDIT]
-'''.replaceAll(r'\"Top', '"Top').replaceAll(r'[MARK:4:\"', '[MARK:4:"').replaceAll(r'beat\\\"\"]', 'beat\\\""]').replaceAll(r'[MARK:24:\"', '[MARK:24:"').replaceAll(r'[alt]\"]', '[alt]"]');
+''';
 
     test('scope is determined by structural ownership', () {
       final List<MarkerDefinition> markers = parseMarkerDefinitions(source);
