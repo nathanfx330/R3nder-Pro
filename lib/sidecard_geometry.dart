@@ -100,6 +100,29 @@ Rect sideCardVideoWindowRectAt({
   )!;
 }
 
+/// Returns the exact outer-window geometry at a source truncation boundary.
+///
+/// The presentation itself is clipped by EDIT/PANE lifetime. If it is still
+/// active on the final source frame, STRUCT must begin its own closing motion
+/// from that last displaced rectangle rather than snapping back to [preCueRect]
+/// for one frame. A null/non-positive [truncatedSlide] means no SIDECARD owned
+/// the boundary and therefore returns [preCueRect] unchanged.
+Rect sideCardClosingOriginRect({
+  required Size size,
+  required Rect preCueRect,
+  required double? truncatedSlide,
+  Offset origin = Offset.zero,
+}) {
+  final double? slide = truncatedSlide;
+  if (slide == null || slide <= 0.0) return preCueRect;
+  return sideCardVideoWindowRectAt(
+    size: size,
+    preCueRect: preCueRect,
+    slide: slide,
+    origin: origin,
+  );
+}
+
 /// Evaluates all shell-owned SIDECARD state from the same explicit slide.
 ///
 /// While SIDECARD is active, the real desktop must be visible and the terminal
