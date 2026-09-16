@@ -3,10 +3,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/marker_authoring.dart';
 import 'package:r3nder/marker_language.dart';
+import 'package:r3nder/script_pipeline.dart';
 
 void main() {
   group('MARK authoring', () {
-    test('TEXT M inserts a positional marker before the owning raw line', () {
+    test('TEXT M inserts inline without changing engine or raw line count', () {
       const String source = 'alpha\nbeta\ngamma\n';
       final String next = addTextMarkerAtProgramFrame(
         source: source,
@@ -15,14 +16,20 @@ void main() {
         label: 'beat',
       );
 
-      expect(next, 'alpha\n[MARK:"beat"]\nbeta\ngamma\n');
+      expect(next, 'alpha\n[MARK:"beat"]beta\ngamma\n');
+      expect(next.split('\n').length, source.split('\n').length);
+      expect(
+        compileScript(next, lineMarkers: true).engineText,
+        compileScript(source, lineMarkers: true).engineText,
+      );
+
       final MarkerDefinition marker = parseMarkerDefinitions(next).single;
       expect(marker.scope, MarkerScope.text);
       expect(marker.localFrame, isNull);
       expect(marker.label, 'beat');
     });
 
-    test('EDIT M writes an explicit sequence-relative definition', () {
+    test('EDIT M writes explicit frame without adding a physical line', () {
       const String source = '''[EDIT:cut]
   [TRACK:V1]
     [CLIP:c1:clip.mp4:0:0:20:1]
@@ -39,13 +46,18 @@ void main() {
       );
       final MarkerDefinition marker = parseMarkerDefinitions(next).single;
 
+      expect(next.split('\n').length, source.split('\n').length);
+      expect(
+        compileScript(next, lineMarkers: true).engineText,
+        compileScript(source, lineMarkers: true).engineText,
+      );
       expect(marker.scope, MarkerScope.edit);
       expect(marker.localFrame, 12);
       expect(marker.rootId, 'cut');
       expect(marker.label, 'turn');
     });
 
-    test('selected CLIP M stores the sampled source frame, not project frame', () {
+    test('selected CLIP M stores sampled source frame without adding a line', () {
       const String source = '''[EDIT:cut]
   [TRACK:V1]
     [CLIP:c1:clip.mp4:10:20:20:2]
@@ -64,6 +76,11 @@ void main() {
       )!;
       final MarkerDefinition marker = parseMarkerDefinitions(next).single;
 
+      expect(next.split('\n').length, source.split('\n').length);
+      expect(
+        compileScript(next, lineMarkers: true).engineText,
+        compileScript(source, lineMarkers: true).engineText,
+      );
       expect(marker.scope, MarkerScope.clip);
       expect(marker.localFrame, 28);
       expect(marker.rootId, 'cut');
@@ -92,7 +109,7 @@ void main() {
       );
     });
 
-    test('TEXT insertion preserves CRLF documents', () {
+    test('TEXT inline insertion preserves CRLF documents', () {
       const String source = 'alpha\r\nbeta\r\n';
       final String next = addTextMarkerAtProgramFrame(
         source: source,
@@ -100,7 +117,7 @@ void main() {
         programFrame: 1,
       );
 
-      expect(next, 'alpha\r\n[MARK:""]\r\nbeta\r\n');
+      expect(next, 'alpha\r\n[MARK:""]beta\r\n');
       expect(next.replaceAll('\r\n', '').contains('\n'), isFalse);
     });
   });
