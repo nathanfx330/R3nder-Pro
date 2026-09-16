@@ -15,8 +15,9 @@
 // real outer STRUCT window, move that window into the shared left seat, and
 // paint their sibling presentation on the desktop. DOSSIER evolves that sibling
 // from biography card into evidence grid/mosaic while the same video clock keeps
-// advancing. Preview and BAKE share sidecard_geometry.dart shell evaluation and
-// dossier_overlay.dart panel painting.
+// advancing. Preview and BAKE share structural_shell_geometry.dart for base
+// shell choreography, sidecard_geometry.dart for presentation displacement,
+// and dossier_overlay.dart for DOSSIER panel painting.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -33,6 +34,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_shell_geometry.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
@@ -773,7 +775,6 @@ class _StructuralProgramVisual {
   }) {
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
     final double linear = placement.stageProgressAt(localFrame);
-    final double eased = Curves.easeInOutCubic.transform(linear);
     final int sourceFrame = placement.sourceFrameAt(localFrame);
 
     final double engineWidth =
@@ -802,125 +803,48 @@ class _StructuralProgramVisual {
       outputHeight: outputHeight,
       titleHeight: titleHeight,
     );
-    final Rect emergenceRect = _emergenceRect(terminalParkRect);
 
-    Rect terminalRect = terminalParkRect;
-    Rect structuralRect = presentationRect;
-    double desktopOpacity = 1.0;
-    double terminalOpacity = 0.0;
-    double terminalChrome = 1.0;
-    double structuralOpacity = 0.0;
-    bool structuralWindowPresent = false;
+    final Rect presentationPixels = Rect.fromLTRB(
+      presentationRect.left * outputWidth,
+      presentationRect.top * outputHeight,
+      presentationRect.right * outputWidth,
+      presentationRect.bottom * outputHeight,
+    );
+    final Rect closingOriginPixels = sideCardClosingOriginRect(
+      size: Size(outputWidth.toDouble(), outputHeight.toDouble()),
+      preCueRect: presentationPixels,
+      truncatedSlide: truncatedShellSlide,
+    );
+    final Rect closingOrigin = Rect.fromLTRB(
+      closingOriginPixels.left / outputWidth,
+      closingOriginPixels.top / outputHeight,
+      closingOriginPixels.right / outputWidth,
+      closingOriginPixels.bottom / outputHeight,
+    );
 
-    switch (stage) {
-      case StructuralSequenceStage.zoomOut:
-        terminalRect = Rect.lerp(fullTerminal, terminalParkRect, eased)!;
-        structuralRect = emergenceRect;
-        desktopOpacity = eased;
-        terminalOpacity = 1.0;
-        terminalChrome = eased;
-        structuralOpacity = 0.0;
-        structuralWindowPresent = true;
-        break;
-
-      case StructuralSequenceStage.opening:
-        terminalRect = terminalParkRect;
-        desktopOpacity = 1.0;
-        terminalChrome = 1.0;
-        structuralWindowPresent = true;
-
-        if (placement.seamlessFromPrevious) {
-          structuralRect = Rect.lerp(
-            previousPresentationRect,
-            presentationRect,
-            eased,
-          )!;
-          terminalOpacity = 0.0;
-          structuralOpacity = 1.0;
-        } else {
-          structuralRect = Rect.lerp(
-            emergenceRect,
-            presentationRect,
-            eased,
-          )!;
-          terminalOpacity = placement.chainedFromPrevious ? 0.0 : 1.0 - eased;
-          structuralOpacity = Curves.easeOutCubic.transform(
-            (linear * 2.2).clamp(0.0, 1.0),
-          );
-        }
-        break;
-
-      case StructuralSequenceStage.showing:
-        terminalRect = terminalParkRect;
-        structuralRect = presentationRect;
-        desktopOpacity = 1.0;
-        terminalOpacity = 0.0;
-        terminalChrome = 1.0;
-        structuralOpacity = 1.0;
-        structuralWindowPresent = true;
-        break;
-
-      case StructuralSequenceStage.closing:
-        terminalRect = terminalParkRect;
-        final Rect presentationPixels = Rect.fromLTRB(
-          presentationRect.left * outputWidth,
-          presentationRect.top * outputHeight,
-          presentationRect.right * outputWidth,
-          presentationRect.bottom * outputHeight,
-        );
-        final Rect closingOriginPixels = sideCardClosingOriginRect(
-          size: Size(outputWidth.toDouble(), outputHeight.toDouble()),
-          preCueRect: presentationPixels,
-          truncatedSlide: truncatedShellSlide,
-        );
-        final Rect closingOrigin = Rect.fromLTRB(
-          closingOriginPixels.left / outputWidth,
-          closingOriginPixels.top / outputHeight,
-          closingOriginPixels.right / outputWidth,
-          closingOriginPixels.bottom / outputHeight,
-        );
-        structuralRect = Rect.lerp(closingOrigin, emergenceRect, eased)!;
-        desktopOpacity = 1.0;
-        terminalOpacity = placement.chainedToNext ? 0.0 : eased;
-        terminalChrome = 1.0;
-        structuralOpacity = Curves.easeInCubic.transform(
-          ((1.0 - linear) * 2.2).clamp(0.0, 1.0),
-        );
-        structuralWindowPresent = true;
-        break;
-
-      case StructuralSequenceStage.zoomIn:
-        terminalRect = Rect.lerp(terminalParkRect, fullTerminal, eased)!;
-        structuralRect = presentationRect;
-        desktopOpacity = 1.0 - eased;
-        terminalOpacity = 1.0;
-        terminalChrome = 1.0 - eased;
-        structuralOpacity = 0.0;
-        structuralWindowPresent = false;
-        break;
-    }
+    final StructuralShellFrame shell = structuralShellFrameAt(
+      stage: stage,
+      linearProgress: linear,
+      fullTerminalRect: fullTerminal,
+      terminalParkRect: terminalParkRect,
+      presentationRect: presentationRect,
+      previousPresentationRect: previousPresentationRect,
+      closingOriginRect: closingOrigin,
+      seamlessFromPrevious: placement.seamlessFromPrevious,
+      chainedFromPrevious: placement.chainedFromPrevious,
+      chainedToNext: placement.chainedToNext,
+      contentReady: true,
+    );
 
     return _StructuralProgramVisual(
       sourceFrame: sourceFrame,
-      terminalRect: terminalRect,
-      structuralRect: structuralRect,
-      desktopOpacity: desktopOpacity,
-      terminalOpacity: terminalOpacity,
-      terminalChrome: terminalChrome,
-      structuralOpacity: structuralOpacity,
-      structuralWindowPresent: structuralWindowPresent,
-    );
-  }
-
-  static Rect _emergenceRect(Rect target) {
-    const double scale = 0.84;
-    final double w = target.width * scale;
-    final double h = target.height * scale;
-    return Rect.fromLTWH(
-      target.center.dx - w / 2.0,
-      target.center.dy - h / 2.0 + target.height * 0.055,
-      w,
-      h,
+      terminalRect: shell.terminalRect,
+      structuralRect: shell.structuralRect,
+      desktopOpacity: shell.desktopOpacity,
+      terminalOpacity: shell.terminalOpacity,
+      terminalChrome: shell.terminalChrome,
+      structuralOpacity: shell.structuralOpacity,
+      structuralWindowPresent: shell.structuralWindowPresent,
     );
   }
 }
