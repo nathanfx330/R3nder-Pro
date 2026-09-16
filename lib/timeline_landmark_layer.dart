@@ -33,6 +33,11 @@ class TimelineLandmarkLayer extends StatelessWidget {
   final R3Theme theme;
   final bool dimmed;
 
+  /// Optional direct seek owner. TEXT uses this because the landmark strip is
+  /// physically above ScriptRibbon's own GestureDetector. EDIT leaves it null
+  /// because the strip sits inside the ruler's existing seek detector.
+  final ValueChanged<int>? onSeek;
+
   const TimelineLandmarkLayer({
     super.key,
     required this.markers,
@@ -41,15 +46,24 @@ class TimelineLandmarkLayer extends StatelessWidget {
     required this.theme,
     this.pixelsPerFrame,
     this.dimmed = false,
+    this.onSeek,
   });
+
+  int _frameAt(double dx, double width) {
+    if (totalFrames <= 0 || width <= 0) return 0;
+    final double? absolute = pixelsPerFrame;
+    final int frame = absolute != null && absolute > 0
+        ? (dx / absolute).round()
+        : ((dx / width).clamp(0.0, 1.0) * totalFrames).round();
+    return frame.clamp(0, totalFrames);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: kTimelineLandmarkLayerHeight,
-      width: double.infinity,
-      child: IgnorePointer(
-        child: CustomPaint(
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width = constraints.maxWidth;
+        final Widget paint = CustomPaint(
           painter: TimelineLandmarkPainter(
             markers: markers,
             derived: derived,
@@ -58,8 +72,23 @@ class TimelineLandmarkLayer extends StatelessWidget {
             theme: theme,
             dimmed: dimmed,
           ),
-        ),
-      ),
+        );
+
+        return SizedBox(
+          height: kTimelineLandmarkLayerHeight,
+          width: double.infinity,
+          child: onSeek == null
+              ? IgnorePointer(child: paint)
+              : GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (TapDownDetails details) =>
+                      onSeek!(_frameAt(details.localPosition.dx, width)),
+                  onHorizontalDragUpdate: (DragUpdateDetails details) =>
+                      onSeek!(_frameAt(details.localPosition.dx, width)),
+                  child: paint,
+                ),
+        );
+      },
     );
   }
 }
