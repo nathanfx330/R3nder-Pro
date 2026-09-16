@@ -150,6 +150,97 @@ StructuralDossierPanelFrame structuralDossierPanelFrame(
   );
 }
 
+/// Geometry used by the evidence presentation after the biography card exits.
+///
+/// Keeping header/content/footer rects pure makes the visual hierarchy testable
+/// without screenshot goldens and guarantees EDIT, STRUCT preview, and BAKE all
+/// consume the same panel proportions.
+class StructuralDossierEvidenceLayout {
+  const StructuralDossierEvidenceLayout({
+    required this.panelRect,
+    required this.headerRect,
+    required this.contentRect,
+    required this.footerRect,
+    required this.opacity,
+  });
+
+  final Rect panelRect;
+  final Rect headerRect;
+  final Rect contentRect;
+  final Rect footerRect;
+  final double opacity;
+}
+
+StructuralDossierEvidenceLayout structuralDossierEvidenceLayout(
+  Size size, {
+  required double visibility,
+}) {
+  final Rect seated = sideCardSeatedPanelRect(size);
+  if (seated.width <= 0.0 || seated.height <= 0.0) {
+    return const StructuralDossierEvidenceLayout(
+      panelRect: Rect.zero,
+      headerRect: Rect.zero,
+      contentRect: Rect.zero,
+      footerRect: Rect.zero,
+      opacity: 0.0,
+    );
+  }
+
+  final double raw = visibility.clamp(0.0, 1.0).toDouble();
+  final double t = Curves.easeOutCubic.transform(raw);
+  final double x = seated.left + seated.width * 0.16 * (1.0 - t);
+  final Rect panel = Rect.fromLTWH(x, seated.top, seated.width, seated.height);
+  final double pad = panel.width * 0.048;
+  final double headerH = math.max(48.0, panel.height * 0.125);
+  final double footerH = math.max(28.0, panel.height * 0.070);
+  final Rect header = Rect.fromLTWH(
+    panel.left,
+    panel.top,
+    panel.width,
+    math.min(headerH, panel.height),
+  );
+  final Rect footer = Rect.fromLTWH(
+    panel.left,
+    math.max(header.bottom, panel.bottom - footerH),
+    panel.width,
+    math.min(footerH, math.max(0.0, panel.bottom - header.bottom)),
+  );
+  final Rect content = Rect.fromLTRB(
+    panel.left + pad,
+    header.bottom + pad,
+    panel.right - pad,
+    math.max(header.bottom + pad, footer.top - pad),
+  );
+
+  return StructuralDossierEvidenceLayout(
+    panelRect: panel,
+    headerRect: header,
+    contentRect: content,
+    footerRect: footer,
+    opacity: t,
+  );
+}
+
+String structuralDossierEvidenceStatus({
+  required DossierRequest request,
+  required int evidenceCount,
+  required int centerPageCount,
+  required int pageIndex,
+}) {
+  final String files = '$evidenceCount ${evidenceCount == 1 ? 'FILE' : 'FILES'}';
+  switch (request.centerMode) {
+    case DossierCenterMode.grid:
+      return 'GRID   $files';
+    case DossierCenterMode.sideOnly:
+      return 'SIDE ONLY   $files';
+    case DossierCenterMode.mosaic:
+      final int pages = math.max(1, centerPageCount);
+      final int current = pageIndex.clamp(0, pages - 1) + 1;
+      return 'MOSAIC   PAGE ${current.toString().padLeft(2, '0')} / '
+          '${pages.toString().padLeft(2, '0')}   $files';
+  }
+}
+
 StructuralCardOverlayPlacement _dossierCardPlacement(
   StructuralDossierOverlayPlacement placement,
   double slide,
@@ -329,93 +420,128 @@ void _paintEvidencePanel({
   required double pagePan,
   required String fontFamily,
 }) {
-  final Rect seated = sideCardSeatedPanelRect(size);
-  if (seated.width <= 0.0 || seated.height <= 0.0) return;
+  final StructuralDossierEvidenceLayout layout = structuralDossierEvidenceLayout(
+    size,
+    visibility: visibility,
+  );
+  final Rect panel = layout.panelRect;
+  if (panel.width <= 0.0 || panel.height <= 0.0) return;
 
-  final double t = Curves.easeOutCubic.transform(visibility.clamp(0.0, 1.0));
-  final double x = seated.left + seated.width * 0.16 * (1.0 - t);
-  final Rect panel = Rect.fromLTWH(x, seated.top, seated.width, seated.height);
+  final double t = layout.opacity;
+  final Color authoredAccent = placement.dossier.panelColor;
+  final Color accent = Color.lerp(
+        authoredAccent,
+        authoredAccent.computeLuminance() < 0.30 ? Colors.white : Colors.black,
+        0.28,
+      ) ??
+      authoredAccent;
+  final double scale = math.min(size.width / 1920.0, size.height / 1080.0);
 
   canvas.saveLayer(
-    panel.inflate(20),
+    panel.inflate(26 * scale),
     Paint()..color = Colors.white.withValues(alpha: t),
   );
-  final RRect rr = RRect.fromRectAndRadius(panel, const Radius.circular(10));
-  canvas.drawRRect(rr, Paint()..color = const Color(0xFF17191D));
+
+  final RRect rr = RRect.fromRectAndRadius(
+    panel,
+    Radius.circular(math.max(7.0, 11.0 * scale)),
+  );
+  canvas.drawRRect(
+    rr.shift(Offset(0, 10.0 * scale)),
+    Paint()
+      ..color = const Color(0x70000000)
+      ..maskFilter = MaskFilter.blur(
+        BlurStyle.normal,
+        math.max(6.0, 18.0 * scale),
+      ),
+  );
+  canvas.drawRRect(rr, Paint()..color = const Color(0xFF15171B));
   canvas.drawRRect(
     rr,
     Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
+      ..strokeWidth = math.max(0.75, scale)
       ..color = const Color(0xFF555A61),
   );
+
   canvas.save();
   canvas.clipRRect(rr);
-
-  final double pad = panel.width * 0.055;
-  final double titleH = math.max(34.0, panel.height * 0.095);
-  final Rect titleRect = Rect.fromLTWH(
-    panel.left,
-    panel.top,
-    panel.width,
-    titleH,
+  canvas.drawRect(layout.headerRect, Paint()..color = const Color(0xFF22252A));
+  canvas.drawRect(
+    Rect.fromLTWH(
+      layout.headerRect.left,
+      layout.headerRect.top,
+      math.max(3.0 * scale, 2.0),
+      layout.headerRect.height,
+    ),
+    Paint()..color = accent,
   );
-  canvas.drawRect(titleRect, Paint()..color = const Color(0xFF23262B));
+  canvas.drawLine(
+    layout.headerRect.bottomLeft,
+    layout.headerRect.bottomRight,
+    Paint()
+      ..strokeWidth = math.max(0.5, scale)
+      ..color = const Color(0xFF3B3F45),
+  );
 
-  final TextPainter title = TextPainter(
+  final double headerPad = panel.width * 0.055;
+  final double dossierLabelSize = math.max(9.0, layout.headerRect.height * 0.17);
+  final TextPainter dossierLabel = TextPainter(
     text: TextSpan(
-      text: placement.dossier.heading.isEmpty
-          ? 'EVIDENCE'
-          : 'EVIDENCE  ·  ${placement.dossier.heading}',
+      text: 'DOSSIER  /  EVIDENCE',
       style: TextStyle(
         fontFamily: fontFamily,
-        color: const Color(0xFFE3E5E8),
-        fontSize: math.max(11.0, titleH * 0.30),
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.8,
+        color: accent,
+        fontSize: dossierLabelSize,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.25 * scale,
       ),
     ),
     maxLines: 1,
-    ellipsis: '…',
     textDirection: TextDirection.ltr,
-  )..layout(maxWidth: math.max(0.0, titleRect.width - pad * 2));
-  title.paint(
+  )..layout(maxWidth: math.max(0.0, layout.headerRect.width - headerPad * 2));
+  dossierLabel.paint(
     canvas,
     Offset(
-      titleRect.left + pad,
-      titleRect.top + (titleRect.height - title.height) / 2.0,
+      layout.headerRect.left + headerPad,
+      layout.headerRect.top + layout.headerRect.height * 0.18,
     ),
   );
 
-  final Rect content = Rect.fromLTRB(
-    panel.left + pad,
-    titleRect.bottom + pad,
-    panel.right - pad,
-    panel.bottom - pad,
-  );
-
-  if (evidence.isEmpty) {
-    final TextPainter empty = TextPainter(
+  final String headingText = placement.dossier.heading.trim().isEmpty
+      ? placement.dossier.folder.trim()
+      : placement.dossier.heading.trim();
+  if (headingText.isNotEmpty) {
+    final TextPainter heading = TextPainter(
       text: TextSpan(
-        text: 'NO EVIDENCE IMAGES',
+        text: headingText,
         style: TextStyle(
           fontFamily: fontFamily,
-          color: const Color(0xFF8F949B),
-          fontSize: math.max(10.0, content.height * 0.035),
-          letterSpacing: 1.1,
+          color: const Color(0xFFE7E9EC),
+          fontSize: math.max(12.0, layout.headerRect.height * 0.29),
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.35 * scale,
         ),
       ),
+      maxLines: 1,
+      ellipsis: '…',
       textDirection: TextDirection.ltr,
-    )..layout(maxWidth: content.width);
-    empty.paint(
+    )..layout(maxWidth: math.max(0.0, layout.headerRect.width - headerPad * 2));
+    heading.paint(
       canvas,
       Offset(
-        content.center.dx - empty.width / 2.0,
-        content.center.dy - empty.height / 2.0,
+        layout.headerRect.left + headerPad,
+        layout.headerRect.bottom - heading.height - layout.headerRect.height * 0.16,
       ),
     );
+  }
+
+  final Rect content = layout.contentRect;
+  if (evidence.isEmpty) {
+    _paintEmptyEvidence(canvas, content, fontFamily, accent);
   } else if (placement.dossier.centerMode == DossierCenterMode.mosaic) {
-    final int outgoing = pageIndex.clamp(0, math.max(0, placement.centerPageCount - 1));
+    final int outgoing =
+        pageIndex.clamp(0, math.max(0, placement.centerPageCount - 1));
     if (pagePan > 0.0 && outgoing + 1 < placement.centerPageCount) {
       final double pan = Curves.easeInOutCubic.transform(pagePan);
       _paintMosaicPage(
@@ -423,25 +549,187 @@ void _paintEvidencePanel({
         content.shift(Offset(-content.width * pan, 0)),
         evidence,
         outgoing,
+        fontFamily: fontFamily,
+        accent: accent,
       );
       _paintMosaicPage(
         canvas,
         content.shift(Offset(content.width * (1.0 - pan), 0)),
         evidence,
         outgoing + 1,
+        fontFamily: fontFamily,
+        accent: accent,
       );
     } else {
-      _paintMosaicPage(canvas, content, evidence, outgoing);
+      _paintMosaicPage(
+        canvas,
+        content,
+        evidence,
+        outgoing,
+        fontFamily: fontFamily,
+        accent: accent,
+      );
     }
   } else {
-    _paintGrid(canvas, content, evidence);
+    _paintGrid(
+      canvas,
+      content,
+      evidence,
+      fontFamily: fontFamily,
+      accent: accent,
+    );
   }
+
+  _paintEvidenceFooter(
+    canvas: canvas,
+    rect: layout.footerRect,
+    placement: placement,
+    evidenceCount: evidence.length,
+    pageIndex: pageIndex,
+    fontFamily: fontFamily,
+    accent: accent,
+  );
 
   canvas.restore();
   canvas.restore();
 }
 
-void _paintGrid(Canvas canvas, Rect rect, List<ui.Image> images) {
+void _paintEmptyEvidence(
+  Canvas canvas,
+  Rect content,
+  String fontFamily,
+  Color accent,
+) {
+  final double mark = math.min(content.width, content.height) * 0.12;
+  final Rect markRect = Rect.fromCenter(
+    center: Offset(content.center.dx, content.center.dy - mark * 0.55),
+    width: mark,
+    height: mark * 0.78,
+  );
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(markRect, const Radius.circular(4)),
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(1.0, mark * 0.06)
+      ..color = accent.withValues(alpha: 0.65),
+  );
+  canvas.drawLine(
+    Offset(markRect.left + markRect.width * 0.20, markRect.bottom - markRect.height * 0.22),
+    Offset(markRect.left + markRect.width * 0.44, markRect.top + markRect.height * 0.52),
+    Paint()
+      ..strokeWidth = math.max(1.0, mark * 0.05)
+      ..color = accent.withValues(alpha: 0.65),
+  );
+  canvas.drawLine(
+    Offset(markRect.left + markRect.width * 0.44, markRect.top + markRect.height * 0.52),
+    Offset(markRect.right - markRect.width * 0.17, markRect.bottom - markRect.height * 0.24),
+    Paint()
+      ..strokeWidth = math.max(1.0, mark * 0.05)
+      ..color = accent.withValues(alpha: 0.65),
+  );
+
+  final TextPainter empty = TextPainter(
+    text: TextSpan(
+      text: 'NO EVIDENCE IMAGES',
+      style: TextStyle(
+        fontFamily: fontFamily,
+        color: const Color(0xFF8F949B),
+        fontSize: math.max(10.0, content.height * 0.035),
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.05,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: content.width);
+  empty.paint(
+    canvas,
+    Offset(
+      content.center.dx - empty.width / 2.0,
+      content.center.dy + mark * 0.20,
+    ),
+  );
+}
+
+void _paintEvidenceFooter({
+  required Canvas canvas,
+  required Rect rect,
+  required StructuralDossierOverlayPlacement placement,
+  required int evidenceCount,
+  required int pageIndex,
+  required String fontFamily,
+  required Color accent,
+}) {
+  if (rect.width <= 0.0 || rect.height <= 0.0) return;
+  canvas.drawRect(rect, Paint()..color = const Color(0xFF101216));
+  canvas.drawLine(
+    rect.topLeft,
+    rect.topRight,
+    Paint()
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFF34383E),
+  );
+
+  final double pad = rect.width * 0.055;
+  final String status = structuralDossierEvidenceStatus(
+    request: placement.dossier,
+    evidenceCount: evidenceCount,
+    centerPageCount: placement.centerPageCount,
+    pageIndex: pageIndex,
+  );
+  final TextPainter left = TextPainter(
+    text: TextSpan(
+      text: status,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        color: const Color(0xFFA7ABB1),
+        fontSize: math.max(8.5, rect.height * 0.34),
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.8,
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: math.max(0.0, rect.width * 0.68));
+  left.paint(
+    canvas,
+    Offset(rect.left + pad, rect.top + (rect.height - left.height) / 2.0),
+  );
+
+  final String folder = placement.dossier.folder.trim();
+  if (folder.isEmpty) return;
+  final String leaf = folder.replaceAll('\\', '/').split('/').last.toUpperCase();
+  final TextPainter right = TextPainter(
+    text: TextSpan(
+      text: leaf,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        color: accent.withValues(alpha: 0.82),
+        fontSize: math.max(8.0, rect.height * 0.31),
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.9,
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: math.max(0.0, rect.width * 0.25));
+  right.paint(
+    canvas,
+    Offset(
+      rect.right - pad - right.width,
+      rect.top + (rect.height - right.height) / 2.0,
+    ),
+  );
+}
+
+void _paintGrid(
+  Canvas canvas,
+  Rect rect,
+  List<ui.Image> images, {
+  required String fontFamily,
+  required Color accent,
+}) {
   final int count = math.min(images.length, 9);
   if (count <= 0) return;
   final int cols = count <= 2 ? count : (count <= 4 ? 2 : 3);
@@ -459,7 +747,14 @@ void _paintGrid(Canvas canvas, Rect rect, List<ui.Image> images) {
       cellW,
       cellH,
     );
-    _paintImageTile(canvas, images[i], cell);
+    _paintImageTile(
+      canvas,
+      images[i],
+      cell,
+      evidenceIndex: i,
+      fontFamily: fontFamily,
+      accent: accent,
+    );
   }
 }
 
@@ -467,8 +762,10 @@ void _paintMosaicPage(
   Canvas canvas,
   Rect rect,
   List<ui.Image> images,
-  int pageIndex,
-) {
+  int pageIndex, {
+  required String fontFamily,
+  required Color accent,
+}) {
   final int start = pageIndex * kStructuralDossierImagesPerMosaicPage;
   if (start >= images.length) return;
   final int count = math.min(
@@ -485,7 +782,14 @@ void _paintMosaicPage(
       rect.left + n.right * rect.width,
       rect.top + n.bottom * rect.height,
     ).deflate(gap / 2.0);
-    _paintImageTile(canvas, images[start + i], cell);
+    _paintImageTile(
+      canvas,
+      images[start + i],
+      cell,
+      evidenceIndex: start + i,
+      fontFamily: fontFamily,
+      accent: accent,
+    );
   }
 }
 
@@ -515,14 +819,32 @@ List<Rect> _mosaicCells(int count, int pageIndex) {
   return rects;
 }
 
-void _paintImageTile(Canvas canvas, ui.Image image, Rect rect) {
+void _paintImageTile(
+  Canvas canvas,
+  ui.Image image,
+  Rect rect, {
+  required int evidenceIndex,
+  required String fontFamily,
+  required Color accent,
+}) {
   if (rect.width <= 0.0 || rect.height <= 0.0) return;
-  canvas.drawRRect(
-    RRect.fromRectAndRadius(rect, const Radius.circular(6)),
-    Paint()..color = const Color(0xFF090A0C),
+  final Radius radius = Radius.circular(
+    math.max(3.0, math.min(rect.width, rect.height) * 0.025),
   );
+  final RRect rr = RRect.fromRectAndRadius(rect, radius);
+
+  canvas.drawRRect(
+    rr.shift(Offset(0, math.max(2.0, rect.height * 0.018))),
+    Paint()
+      ..color = const Color(0x66000000)
+      ..maskFilter = MaskFilter.blur(
+        BlurStyle.normal,
+        math.max(3.0, math.min(rect.width, rect.height) * 0.025),
+      ),
+  );
+  canvas.drawRRect(rr, Paint()..color = const Color(0xFF090A0C));
   canvas.save();
-  canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(6)));
+  canvas.clipRRect(rr);
   final double srcW = image.width.toDouble();
   final double srcH = image.height.toDouble();
   final double scale = math.max(rect.width / srcW, rect.height / srcH);
@@ -540,9 +862,52 @@ void _paintImageTile(Canvas canvas, ui.Image image, Rect rect) {
     dst,
     Paint()..filterQuality = FilterQuality.low,
   );
-  canvas.restore();
+
+  final double badgePad = math.max(4.0, rect.width * 0.035);
+  final String indexText = (evidenceIndex + 1).toString().padLeft(2, '0');
+  final TextPainter badge = TextPainter(
+    text: TextSpan(
+      text: indexText,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        color: Colors.white,
+        fontSize: math.max(8.0, math.min(rect.width, rect.height) * 0.070),
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.55,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final Rect badgeRect = Rect.fromLTWH(
+    rect.left + badgePad,
+    rect.top + badgePad,
+    badge.width + badgePad * 1.5,
+    badge.height + badgePad * 0.8,
+  );
   canvas.drawRRect(
-    RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+    RRect.fromRectAndRadius(badgeRect, const Radius.circular(3)),
+    Paint()..color = const Color(0xB0000000),
+  );
+  canvas.drawRect(
+    Rect.fromLTWH(
+      badgeRect.left,
+      badgeRect.top,
+      math.max(2.0, badgePad * 0.32),
+      badgeRect.height,
+    ),
+    Paint()..color = accent,
+  );
+  badge.paint(
+    canvas,
+    Offset(
+      badgeRect.left + badgePad * 0.72,
+      badgeRect.top + (badgeRect.height - badge.height) / 2.0,
+    ),
+  );
+  canvas.restore();
+
+  canvas.drawRRect(
+    rr,
     Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0
