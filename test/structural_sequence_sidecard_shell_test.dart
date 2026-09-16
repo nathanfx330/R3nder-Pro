@@ -54,9 +54,24 @@ const String _source = '''[EDIT:main]
 [STRUCT:EDIT.main]
 ''';
 
+const String _truncatedSource = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:12:1]
+      [CUE:8]
+        [SIDECARD:person.png:45:24,32,40:JOHN SMITH]
+          Biography text.
+        [/SIDECARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[STRUCT:EDIT.main]
+''';
+
 String _resolve(String source) => '/workspace/$source';
 
 Widget _preview({
+  required String source,
   required StructuralSequencePlacement placement,
   required int localFrame,
   required MediaDecoderBackend backend,
@@ -68,7 +83,7 @@ Widget _preview({
         width: 800,
         height: 500,
         child: StructuralSequencePreview(
-          rawDocument: _source,
+          rawDocument: source,
           placement: placement,
           localFrame: localFrame,
           isPlaying: false,
@@ -84,11 +99,13 @@ Widget _preview({
 
 Future<void> _waitForReady(
   WidgetTester tester,
+  String source,
   StructuralSequencePlacement placement,
   MediaDecoderBackend backend,
 ) async {
   await tester.pumpWidget(
     _preview(
+      source: source,
       placement: placement,
       localFrame: 5,
       backend: backend,
@@ -124,12 +141,13 @@ void main() {
           parseStructuralSequencePlacements(_source).single;
       final _FakeBackend backend = _FakeBackend();
 
-      await _waitForReady(tester, placement, backend);
+      await _waitForReady(tester, _source, placement, backend);
 
       // Source frame 106 is cue age 16: the shared CARD opening has completed
       // and SIDECARD is fully seated.
       await tester.pumpWidget(
         _preview(
+          source: _source,
           placement: placement,
           localFrame: placement.contentStartFrame + 106,
           backend: backend,
@@ -146,17 +164,11 @@ void main() {
         findsOneWidget,
       );
 
-      // The structural client must not draw the standalone EDIT composition.
-      // Its outer shell owns the window move and sibling card.
       final EditVideoPreview client = tester.widget<EditVideoPreview>(
         find.byType(EditVideoPreview).first,
       );
       expect(client.renderSideCardsInClient, isFalse);
 
-      // The Align above deliberately pins an 800x500 preview at global (0,0).
-      // StructuralSequencePreview therefore fits its 16:9 program frame to
-      // 800x450 with 25px letterbox bars, independent of the test runner's
-      // default 800x600 RenderView.
       const Rect renderFrame = Rect.fromLTWH(0, 25, 800, 450);
       final Rect expectedWindow = sideCardSeatedVideoWindowRect(
         renderFrame.size,
@@ -166,8 +178,6 @@ void main() {
       );
       _expectRect(actualWindow, expectedWindow);
 
-      // Sanity check the expected geometry really leaves a separate right-hand
-      // lane for the card rather than enclosing both in one app window.
       final Rect expectedCard = sideCardSeatedPanelRect(
         renderFrame.size,
       ).shift(renderFrame.topLeft);
@@ -177,33 +187,18 @@ void main() {
   );
 
   testWidgets(
-    'preview evaluates the shared SIDECARD curve during movement, not only seated',
+    'SIDECARD preview uses shared halfway shell motion',
     (WidgetTester tester) async {
       final StructuralSequencePlacement placement =
           parseStructuralSequencePlacements(_source).single;
       final _FakeBackend backend = _FakeBackend();
 
-      await _waitForReady(tester, placement, backend);
+      await _waitForReady(tester, _source, placement, backend);
 
-      // One frame before the cue gives us the exact pre-cue outer STRUCT rect
-      // chosen by the preview for this placement and host geometry.
+      // Cue age eight is exactly slide=0.5 during the 16-frame opening.
       await tester.pumpWidget(
         _preview(
-          placement: placement,
-          localFrame: placement.contentStartFrame + 89,
-          backend: backend,
-        ),
-      );
-      await tester.pumpAndSettle();
-      final Rect preCue = tester.getRect(
-        find.byKey(const ValueKey<String>('structural-window-positioned')),
-      );
-
-      // Source frame 98 is cue age 8, exactly halfway through the 16-frame CARD
-      // opening. This catches a BAKE/preview-style snap-to-seated bug that a
-      // final still-frame assertion cannot see.
-      await tester.pumpWidget(
-        _preview(
+          source: _source,
           placement: placement,
           localFrame: placement.contentStartFrame + 98,
           backend: backend,
@@ -212,21 +207,69 @@ void main() {
       await tester.pumpAndSettle();
 
       const Rect renderFrame = Rect.fromLTWH(0, 25, 800, 450);
+      const Rect baseWindow = Rect.fromLTWH(56, 74.5, 688, 351);
       final SideCardShellFrame expected = sideCardShellFrameAt(
         size: renderFrame.size,
         origin: renderFrame.topLeft,
-        preCueRect: preCue,
+        preCueRect: baseWindow,
         slide: 0.5,
       );
       final Rect actual = tester.getRect(
         find.byKey(const ValueKey<String>('structural-window-positioned')),
       );
-
       _expectRect(actual, expected.videoWindowRect);
+    },
+  );
+
+  testWidgets(
+    'EDIT end clips SIDECARD card but STRUCT close starts without shell snap',
+    (WidgetTester tester) async {
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(_truncatedSource).single;
+      final _FakeBackend backend = _FakeBackend();
+
+      await _waitForReady(tester, _truncatedSource, placement, backend);
+
+      final int lastShowing = placement.contentStartFrame + 11;
+      await tester.pumpWidget(
+        _preview(
+          source: _truncatedSource,
+          placement: placement,
+          localFrame: lastShowing,
+          backend: backend,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(placement.stageAt(lastShowing), StructuralSequenceStage.showing);
       expect(
         find.byKey(const ValueKey<String>('structural-sidecard-panel')),
         findsOneWidget,
       );
+      final Rect finalShowingRect = tester.getRect(
+        find.byKey(const ValueKey<String>('structural-window-positioned')),
+      );
+
+      final int firstClosing = placement.closingStartFrame;
+      await tester.pumpWidget(
+        _preview(
+          source: _truncatedSource,
+          placement: placement,
+          localFrame: firstClosing,
+          backend: backend,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(placement.stageAt(firstClosing), StructuralSequenceStage.closing);
+      expect(
+        find.byKey(const ValueKey<String>('structural-sidecard-panel')),
+        findsNothing,
+      );
+      final Rect firstClosingRect = tester.getRect(
+        find.byKey(const ValueKey<String>('structural-window-positioned')),
+      );
+      _expectRect(firstClosingRect, finalShowingRect);
     },
   );
 }
