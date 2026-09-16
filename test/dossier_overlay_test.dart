@@ -96,6 +96,60 @@ void main() {
     expect(last.evidenceVisibility, 0.0);
   });
 
+  test('evidence layout keeps header content and footer inside side panel', () {
+    const Size size = Size(1920, 1080);
+    final Rect seated = sideCardSeatedPanelRect(size);
+    final StructuralDossierEvidenceLayout open =
+        structuralDossierEvidenceLayout(size, visibility: 1.0);
+
+    expect(open.panelRect, seated);
+    expect(open.opacity, 1.0);
+    expect(open.headerRect.top, seated.top);
+    expect(open.headerRect.left, seated.left);
+    expect(open.headerRect.right, seated.right);
+    expect(open.footerRect.bottom, seated.bottom);
+    expect(open.contentRect.top, greaterThan(open.headerRect.bottom));
+    expect(open.contentRect.bottom, lessThan(open.footerRect.top));
+    expect(open.contentRect.left, greaterThan(seated.left));
+    expect(open.contentRect.right, lessThan(seated.right));
+
+    final StructuralDossierEvidenceLayout hidden =
+        structuralDossierEvidenceLayout(size, visibility: 0.0);
+    expect(hidden.opacity, 0.0);
+    expect(hidden.panelRect.left, closeTo(seated.left + seated.width * 0.16, 0.001));
+    expect(hidden.panelRect.size, seated.size);
+  });
+
+  test('evidence footer status exposes mode page and actual file count', () {
+    expect(
+      structuralDossierEvidenceStatus(
+        request: _request(mode: DossierCenterMode.grid),
+        evidenceCount: 7,
+        centerPageCount: 1,
+        pageIndex: 0,
+      ),
+      'GRID   7 FILES',
+    );
+    expect(
+      structuralDossierEvidenceStatus(
+        request: _request(mode: DossierCenterMode.mosaic),
+        evidenceCount: 7,
+        centerPageCount: 3,
+        pageIndex: 1,
+      ),
+      'MOSAIC   PAGE 02 / 03   7 FILES',
+    );
+    expect(
+      structuralDossierEvidenceStatus(
+        request: _request(mode: DossierCenterMode.mosaic),
+        evidenceCount: 1,
+        centerPageCount: 1,
+        pageIndex: 20,
+      ),
+      'MOSAIC   PAGE 01 / 01   1 FILE',
+    );
+  });
+
   test('MOSAIC page count follows ordered evidence folder size', () async {
     final Directory root =
         await Directory.systemTemp.createTemp('r3nder_dossier_overlay_');
