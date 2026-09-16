@@ -11,12 +11,12 @@
 // Any structural source, overlap, transition, test backend, or unsupported
 // platform uses the deterministic CPU compositor fallback.
 //
-// CARD-family CUEs are a presentation projection over those same structural
-// pixels. Ordinary CARD paints over the client pixels. Standalone EDIT preview
-// may also self-stage SIDECARD by redrawing those pixels into a desktop-style
-// video window. Program STRUCT preview sets [renderSideCardsInClient] false so
-// the real outer structural window moves beside the card instead; no nested
-// window is created and no second decoder or clock exists.
+// CARD-family and DOSSIER CUEs are presentation projections over those same
+// structural pixels. Ordinary CARD paints over the client pixels. Standalone
+// EDIT preview may self-stage SIDECARD or DOSSIER by redrawing those pixels into
+// a desktop-style video window. Program STRUCT preview disables those client
+// shell projections so the real outer structural window moves instead; no
+// nested window, second decoder, or second clock is introduced.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -32,11 +32,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
+import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_surface_model.dart';
 import 'edit_video_compositor.dart';
 import 'media_layer.dart';
+import 'presentation_requests.dart';
 import 'project_clock.dart';
 import 'session_store.dart';
 import 'ui_theme.dart';
@@ -115,6 +117,10 @@ class EditVideoPreview extends StatefulWidget {
   /// and moves that outer window beside the card instead.
   final bool renderSideCardsInClient;
 
+  /// Same standalone-authoring policy for DOSSIER. When false, only the outer
+  /// STRUCT shell may move the structural window and paint DOSSIER beside it.
+  final bool renderDossiersInClient;
+
   /// The small lower-left MLT/project diagnostic is cosmetic presentation
   /// chrome. Structural placement can hide it or replace its text without
   /// affecting decoder state, project time, or center-screen error messages.
@@ -144,6 +150,7 @@ class EditVideoPreview extends StatefulWidget {
     this.isPlaying = false,
     this.fastPreview = false,
     this.renderSideCardsInClient = true,
+    this.renderDossiersInClient = true,
     this.showDiagnosticOverlay = true,
     this.diagnosticOverlayText,
     this.backend,
@@ -171,6 +178,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
   EditDocumentModel? _model;
   String? _layerSource;
   String? _layerStructuralSource;
+  final Map<String, int> _dossierPageCounts = <String, int>{};
 
   late final ValueNotifier<ui.Image?> _image;
   late final ValueNotifier<int?> _nativeTextureId;
@@ -239,7 +247,8 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     }
 
     final bool presentationPolicyChanged =
-        oldWidget.renderSideCardsInClient != widget.renderSideCardsInClient;
+        oldWidget.renderSideCardsInClient != widget.renderSideCardsInClient ||
+            oldWidget.renderDossiersInClient != widget.renderDossiersInClient;
     if (presentationPolicyChanged) {
       _setNativeTexture(null);
       _epoch++;
@@ -285,6 +294,7 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     _compositor = null;
     _surface = null;
     _model = null;
+    _dossierPageCounts.clear();
     _layer?.dispose();
     _layer = null;
     _layerSource = null;
@@ -370,6 +380,40 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
     return widget.renderSideCardsInClient;
   }
 
+  int _dossierCenterPageCount(DossierRequest request) {
+    final String key = '${request.centerMode.index}:${request.folder}';
+    return _dossierPageCounts.putIfAbsent(
+      key,
+      () => structuralDossierCenterPageCount(
+        request,
+        widget.resolveSource ?? resolveWorkspaceMediaSource,
+      ),
+    );
+  }
+
+  bool _dossierNeedsClientPixels(int projectFrame) {
+    if (!widget.renderDossiersInClient) return false;
+    final EditDocumentModel? model = _model;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(widget.sourceRef);
+    if (model == null ||
+        root == null ||
+        root.id.isEmpty ||
+        !model.containsStructuralSource(root)) {
+      return false;
+    }
+    try {
+      return structuralDossierPlacement(
+            model,
+            root,
+            projectFrame,
+            centerPageCountFor: _dossierCenterPageCount,
+          ) !=
+          null;
+    } catch (_) {
+      return false;
+    }
+  }
+
   _NativeTextureTarget? _singleNativeTextureTarget(int projectFrame) {
     final EditDocumentModel? model = _model;
     final StructuralSourceRef? root = StructuralSourceRef.tryParse(widget.sourceRef);
@@ -385,6 +429,13 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         // video window. Program STRUCT suppresses client-side SIDECARD and may
         // retain the native texture because the outer widget moves that same
         // continuously-advancing texture as a whole.
+        return null;
+      }
+      if (_dossierNeedsClientPixels(projectFrame)) {
+        // Standalone DOSSIER redraws the same structural pixels inside its fake
+        // authoring desktop shell. Keep those exact Dart pixels resident while
+        // it is active rather than presenting an external texture the painter
+        // cannot sample.
         return null;
       }
     }
@@ -793,6 +844,26 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
               },
             ),
           ),
+
+          if (widget.renderDossiersInClient)
+            Positioned.fill(
+              child: ValueListenableBuilder<_PreviewMetadata>(
+                valueListenable: _metadata,
+                builder: (
+                  BuildContext context,
+                  _PreviewMetadata metadata,
+                  Widget? child,
+                ) {
+                  return StructuralDossierCueOverlay(
+                    source: widget.source,
+                    sourceRef: widget.sourceRef,
+                    projectFrame: metadata.projectFrame,
+                    resolveSource: resolver,
+                    structuralImage: _image,
+                  );
+                },
+              ),
+            ),
 
           ValueListenableBuilder<_PreviewMetadata>(
             valueListenable: _metadata,
