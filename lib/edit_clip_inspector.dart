@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import 'edit_card_cue_controls.dart';
 import 'edit_cue.dart';
+import 'edit_dossier_cue_controls.dart';
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
 import 'presentation_requests.dart';
@@ -27,11 +28,17 @@ class EditClipInspector extends StatelessWidget {
   final ValueChanged<ClipAudioGain>? onAudioGainChanged;
   final ValueChanged<bool>? onMutedChanged;
   final List<EditCardCue> cardCues;
+  final List<EditDossierCue> dossierCues;
   final int playheadFrame;
   final List<String> Function()? cardImageOptions;
+  final List<String> Function()? dossierFolderOptions;
+  final List<String> Function()? dossierImageOptions;
   final ValueChanged<CardRequest>? onAddCardCueAtPlayhead;
   final EditCardCueChanged? onCardCueChanged;
   final ValueChanged<int>? onCardCueDeleted;
+  final ValueChanged<DossierRequest>? onAddDossierCueAtPlayhead;
+  final EditDossierCueChanged? onDossierCueChanged;
+  final ValueChanged<int>? onDossierCueDeleted;
   final VoidCallback? onDelete;
 
   const EditClipInspector({
@@ -45,11 +52,17 @@ class EditClipInspector extends StatelessWidget {
     this.onAudioGainChanged,
     this.onMutedChanged,
     this.cardCues = const <EditCardCue>[],
+    this.dossierCues = const <EditDossierCue>[],
     this.playheadFrame = 0,
     this.cardImageOptions,
+    this.dossierFolderOptions,
+    this.dossierImageOptions,
     this.onAddCardCueAtPlayhead,
     this.onCardCueChanged,
     this.onCardCueDeleted,
+    this.onAddDossierCueAtPlayhead,
+    this.onDossierCueChanged,
+    this.onDossierCueDeleted,
     this.onDelete,
   });
 
@@ -181,6 +194,24 @@ class EditClipInspector extends StatelessWidget {
                   onAddAtPlayhead: onAddCardCueAtPlayhead,
                   onChanged: onCardCueChanged,
                   onDeleted: onCardCueDeleted,
+                ),
+                SizedBox(height: sc(10)),
+                _sectionDivider(),
+                R3MicroLabel('DOSSIER CUES', theme: theme, accent: true),
+                SizedBox(height: sc(7)),
+                EditDossierCueControls(
+                  key: ValueKey<String>(
+                    'edit-dossier-cues:${selected.trackId}:${selected.id}',
+                  ),
+                  clip: selected,
+                  cues: dossierCues,
+                  playheadFrame: playheadFrame,
+                  theme: theme,
+                  folderOptions: dossierFolderOptions,
+                  imageOptions: dossierImageOptions,
+                  onAddAtPlayhead: onAddDossierCueAtPlayhead,
+                  onChanged: onDossierCueChanged,
+                  onDeleted: onDossierCueDeleted,
                 ),
                 SizedBox(height: sc(10)),
               ],
