@@ -412,6 +412,14 @@ class _EditSurfaceState extends State<EditSurface> {
     }
   }
 
+  List<EditDossierCue> _dossierCuesFor(EditSurfaceClip selected) {
+    try {
+      return parseClipDossierCues(selected.clip);
+    } catch (_) {
+      return const <EditDossierCue>[];
+    }
+  }
+
   void _addSelectedCardCue(EditSurfaceClip selected, CardRequest card) {
     final int frame = _effectiveFrame;
     final bool changed = _commit((EditSurfaceDocument current) {
@@ -455,6 +463,52 @@ class _EditSurfaceState extends State<EditSurface> {
     if (changed && mounted) _timelineFocusNode.requestFocus();
   }
 
+  void _addSelectedDossierCue(
+    EditSurfaceClip selected,
+    DossierRequest dossier,
+  ) {
+    final int frame = _effectiveFrame;
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return addDossierCueAtProjectFrame(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        projectFrame: frame,
+        dossier: dossier,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _updateSelectedDossierCue(
+    EditSurfaceClip selected,
+    int cueIndex,
+    DossierRequest dossier,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return updateDossierCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+        dossier: dossier,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _deleteSelectedDossierCue(EditSurfaceClip selected, int cueIndex) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return deleteDossierCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
   List<String> _cardImageOptions() {
     try {
       final String Function(String source) resolver =
@@ -488,6 +542,16 @@ class _EditSurfaceState extends State<EditSurface> {
     } catch (_) {
       return const <String>[];
     }
+  }
+
+  List<String> _dossierFolderOptions() {
+    final Set<String> folders = <String>{};
+    for (final String image in _cardImageOptions()) {
+      final int slash = image.lastIndexOf('/');
+      if (slash > 0) folders.add(image.substring(0, slash));
+    }
+    final List<String> result = folders.toList()..sort();
+    return List<String>.unmodifiable(result);
   }
 
   KeyEventResult _handleTimelineKeyEvent(FocusNode node, KeyEvent event) {
@@ -699,6 +763,9 @@ class _EditSurfaceState extends State<EditSurface> {
     final List<EditCardCue> selectedCardCues = selected == null
         ? const <EditCardCue>[]
         : _cardCuesFor(selected);
+    final List<EditDossierCue> selectedDossierCues = selected == null
+        ? const <EditDossierCue>[]
+        : _dossierCuesFor(selected);
 
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
@@ -852,8 +919,13 @@ class _EditSurfaceState extends State<EditSurface> {
                       ? null
                       : (bool muted) => _setSelectedMuted(selected, muted),
                   cardCues: selectedCardCues,
+                  dossierCues: selectedDossierCues,
                   playheadFrame: _effectiveFrame,
                   cardImageOptions: selected == null ? null : _cardImageOptions,
+                  dossierFolderOptions:
+                      selected == null ? null : _dossierFolderOptions,
+                  dossierImageOptions:
+                      selected == null ? null : _cardImageOptions,
                   onAddCardCueAtPlayhead: selected == null || widget.isPlaying
                       ? null
                       : (CardRequest card) =>
@@ -866,6 +938,23 @@ class _EditSurfaceState extends State<EditSurface> {
                       ? null
                       : (int cueIndex) =>
                           _deleteSelectedCardCue(selected, cueIndex),
+                  onAddDossierCueAtPlayhead:
+                      selected == null || widget.isPlaying
+                          ? null
+                          : (DossierRequest dossier) =>
+                              _addSelectedDossierCue(selected, dossier),
+                  onDossierCueChanged: selected == null
+                      ? null
+                      : (int cueIndex, DossierRequest dossier) =>
+                          _updateSelectedDossierCue(
+                            selected,
+                            cueIndex,
+                            dossier,
+                          ),
+                  onDossierCueDeleted: selected == null
+                      ? null
+                      : (int cueIndex) =>
+                          _deleteSelectedDossierCue(selected, cueIndex),
                   onDelete:
                       selected == null ? null : () => _deleteSelected(document),
                 ),
