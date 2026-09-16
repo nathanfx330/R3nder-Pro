@@ -13,9 +13,9 @@
 // image before that client is placed into the desktop/window choreography.
 // SIDECARD is different by design: the raw structural client remains the real
 // client of the real STRUCT window, that outer window moves left, and the card
-// is painted as a sibling on the desktop. Preview and BAKE therefore agree on
-// the presentation hierarchy instead of baking a window+card composite and then
-// wrapping that composite in another structural window.
+// is painted as a sibling on the desktop. Preview and BAKE use the same
+// sidecard_geometry.dart shell evaluator for the motion curve, moving rectangle,
+// and desktop/terminal opacity policy.
 //
 // Structural application planning is already baked into each placement:
 // standalone terminal entry/exit, ordinary desktop chaining, APPSWITCH:SLIDE,
@@ -180,18 +180,6 @@ class ProgramStructuralFrameRenderer {
     return structuralSideCardPlacement(_editModel, root, sourceFrame);
   }
 
-  Rect _normalizedSideCardWindowRect() {
-    final Rect pixel = sideCardSeatedVideoWindowRect(
-      Size(width.toDouble(), height.toDouble()),
-    );
-    return Rect.fromLTRB(
-      pixel.left / width,
-      pixel.top / height,
-      pixel.right / width,
-      pixel.bottom / height,
-    );
-  }
-
   /// Returns a complete output frame while STRUCT is active, otherwise null so
   /// SceneExporter can use its original SceneCompositor path unchanged.
   Future<ui.Image?> renderIfActive({
@@ -239,16 +227,14 @@ class ProgramStructuralFrameRenderer {
     double desktopOpacity = visual.desktopOpacity;
     double terminalOpacity = visual.terminalOpacity;
     if (sideCard != null && visual.structuralWindowPresent) {
-      final double sideEase = Curves.easeOutCubic.transform(
-        sideCard.slide.clamp(0.0, 1.0),
+      final SideCardShellFrame sideShell = sideCardShellFrameAt(
+        size: Size(width.toDouble(), height.toDouble()),
+        preCueRect: _pixelRect(structuralRect),
+        slide: sideCard.slide,
       );
-      structuralRect = Rect.lerp(
-        structuralRect,
-        _normalizedSideCardWindowRect(),
-        sideEase,
-      )!;
-      desktopOpacity = 1.0;
-      terminalOpacity = 0.0;
+      structuralRect = _normalizedRect(sideShell.videoWindowRect);
+      desktopOpacity = sideShell.desktopOpacity;
+      terminalOpacity = sideShell.terminalOpacity;
     }
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -307,6 +293,13 @@ class ProgramStructuralFrameRenderer {
         normalized.top * height,
         normalized.right * width,
         normalized.bottom * height,
+      );
+
+  Rect _normalizedRect(Rect pixel) => Rect.fromLTRB(
+        pixel.left / width,
+        pixel.top / height,
+        pixel.right / width,
+        pixel.bottom / height,
       );
 
   Future<ui.Image> _imageForSourceFrame(
