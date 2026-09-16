@@ -17,7 +17,7 @@ void main() {
     [/CLIP]
   [/TRACK]
 [/EDIT]
-''';
+'''.replaceAll(r'\"Top', '"Top').replaceAll(r'[MARK:4:\"', '[MARK:4:"').replaceAll(r'beat\\\"\"]', 'beat\\\""]').replaceAll(r'[MARK:24:\"', '[MARK:24:"').replaceAll(r'[alt]\"]', '[alt]"]');
 
     test('scope is determined by structural ownership', () {
       final List<MarkerDefinition> markers = parseMarkerDefinitions(source);
