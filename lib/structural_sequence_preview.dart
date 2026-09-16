@@ -10,16 +10,18 @@
 // composition. Adjacent placements can chain on the desktop, and
 // APPSWITCH:SLIDE can switch directly without returning through the terminal.
 //
-// SIDECARD is also owned by this outer shell while a STRUCT placement is live.
-// The existing structural window itself moves left and the card is painted as a
-// sibling on the desktop. The structural client is explicitly told not to draw
-// its standalone EDIT SIDECARD composition, preventing a window around a
-// window+card composite and keeping one decoder / one structural clock.
-// SIDECARD motion itself is evaluated by sidecard_geometry.dart through the
-// card_overlay.dart public seam, shared exactly with BAKE. If the source ends
-// while SIDECARD is still active, the card is clipped at the source boundary
-// but the STRUCT close begins from the final displaced video-window rectangle,
-// so the shell never snaps back for one frame.
+// SIDECARD and DOSSIER are owned by this outer shell while a STRUCT placement
+// is live. The existing structural window itself moves left and the sibling
+// presentation is painted separately on the desktop. The structural client is
+// explicitly told not to draw its standalone EDIT SIDECARD composition,
+// preventing a window around a window+panel composite and keeping one decoder /
+// one structural clock. DOSSIER reuses that same shell seat while its right-hand
+// content evolves from biography card into evidence grid/mosaic.
+//
+// Shell motion is evaluated by sidecard_geometry.dart for Preview and BAKE. If
+// source lifetime truncates an active SIDECARD or DOSSIER, the presentation is
+// clipped at the source boundary but the STRUCT close begins from the final
+// displaced video-window rectangle, so the shell never snaps back for one frame.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
@@ -73,6 +75,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
+import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
@@ -142,11 +145,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   EditDocumentModel? _cardModel;
   String? _cardModelSource;
 
-  /// Editor live preview reuses this State across adjacent STRUCT placements.
-  /// During a seamless source switch, keep the already-painted outgoing client
-  /// above the incoming client until the incoming one resolves. These values
-  /// are snapshots of A's last authored frame and chrome, not a second time
-  /// source.
   String? _handoffOutgoingSource;
   String? _handoffOutgoingRawDocument;
   int _handoffOutgoingSourceFrame = 0;
@@ -168,23 +166,38 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     _handoffOutgoingBottomOverlay = '';
   }
 
-  StructuralCardOverlayPlacement? _activeSideCard(
-    String source,
-    int sourceFrame,
-  ) {
+  EditDocumentModel? _modelForDocument() {
     try {
       if (_cardModel == null || _cardModelSource != widget.rawDocument) {
         _cardModel = EditDocumentModel.parse(widget.rawDocument);
         _cardModelSource = widget.rawDocument;
       }
-      final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
-      final EditDocumentModel? model = _cardModel;
-      if (root == null ||
-          root.id.isEmpty ||
-          model == null ||
-          !model.containsStructuralSource(root)) {
-        return null;
-      }
+      return _cardModel;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  StructuralSourceRef? _rootForSource(String source) {
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    final EditDocumentModel? model = _modelForDocument();
+    if (root == null ||
+        root.id.isEmpty ||
+        model == null ||
+        !model.containsStructuralSource(root)) {
+      return null;
+    }
+    return root;
+  }
+
+  StructuralCardOverlayPlacement? _activeSideCard(
+    String source,
+    int sourceFrame,
+  ) {
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
       return structuralSideCardPlacement(model, root, sourceFrame);
     } catch (_) {
       return null;
@@ -196,22 +209,55 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     int sourceDurationFrames,
   ) {
     try {
-      if (_cardModel == null || _cardModelSource != widget.rawDocument) {
-        _cardModel = EditDocumentModel.parse(widget.rawDocument);
-        _cardModelSource = widget.rawDocument;
-      }
-      final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
-      final EditDocumentModel? model = _cardModel;
-      if (root == null ||
-          root.id.isEmpty ||
-          model == null ||
-          !model.containsStructuralSource(root)) {
-        return null;
-      }
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
       return structuralSideCardPlacementAtSourceEnd(
         model,
         root,
         sourceDurationFrames,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  StructuralDossierOverlayPlacement? _activeDossier(
+    String source,
+    int sourceFrame,
+  ) {
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
+      final resolver = widget.resolveSource ?? resolveWorkspaceMediaSource;
+      return structuralDossierPlacement(
+        model,
+        root,
+        sourceFrame,
+        centerPageCountFor: (request) =>
+            structuralDossierCenterPageCount(request, resolver),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  StructuralDossierOverlayPlacement? _dossierAtSourceEnd(
+    String source,
+    int sourceDurationFrames,
+  ) {
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
+      final resolver = widget.resolveSource ?? resolveWorkspaceMediaSource;
+      return structuralDossierPlacementAtSourceEnd(
+        model,
+        root,
+        sourceDurationFrames,
+        centerPageCountFor: (request) =>
+            structuralDossierCenterPageCount(request, resolver),
       );
     } catch (_) {
       return null;
@@ -242,11 +288,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
         _firstFrameReady;
 
     if (seamlessSourceHandoff) {
-      // The presentation shell is already resident. Do not turn it transparent
-      // merely because the client composition changed. Snapshot A's exact last
-      // evaluated source frame and its authored chrome, then keep its keyed
-      // preview as the visual cover while B resolves underneath at current
-      // project time.
       _handoffOutgoingSource = oldSource;
       _handoffOutgoingRawDocument = oldWidget.rawDocument;
       _handoffOutgoingSourceFrame =
@@ -271,9 +312,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     if (!mounted) return;
 
     if (_handoffOutgoingSource != null) {
-      // This callback now belongs to incoming B. The shell never went away;
-      // releasing A swaps client pixels and placement chrome together inside
-      // that already-live shell.
       setState(() {
         _clearHandoffCover();
         _firstFrameReady = true;
@@ -314,9 +352,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final bool useNativeTerminal =
               liveScene != null && liveFont != null && liveFont.isNotEmpty;
 
-          // ScenePainter expresses chrome in logical engine pixels and then
-          // applies the engine-to-widget fit. Reuse that exact conversion for
-          // the foreground structural window.
           final double chromeScale = useNativeTerminal
               ? _nativeChromeScale(renderFrame, liveScene!)
               : 1.0;
@@ -324,9 +359,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               _StructuralWindow.titleHeight * chromeScale;
 
           final Rect fullTerminal = renderFrame;
-
-          // The terminal always parks as the normal desktop terminal window.
-          // FULL is a property of the structural app, not of the terminal.
           final Rect terminalParkRect = _structuralTargetRect(
             renderFrame,
             titleHeight: titleHeight,
@@ -344,20 +376,28 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             null => terminalParkRect,
           };
 
-          // Normal open/close originates from the desktop window plane even
-          // when the destination is FULL. That lets a fullscreen structural
-          // source read as an application window growing into the frame rather
-          // than a full-frame image materialising from nowhere.
           final Rect emergenceRect =
               _structuralEmergenceRect(terminalParkRect);
 
-          final StructuralCardOverlayPlacement? truncatedSideCard =
+          final StructuralDossierOverlayPlacement? truncatedDossier =
               stage == StructuralSequenceStage.closing && _firstFrameReady
+                  ? _dossierAtSourceEnd(
+                      source,
+                      placement.sourceDurationFrames,
+                    )
+                  : null;
+          final StructuralCardOverlayPlacement? truncatedSideCard =
+              truncatedDossier == null &&
+                      stage == StructuralSequenceStage.closing &&
+                      _firstFrameReady
                   ? _sideCardAtSourceEnd(
                       source,
                       placement.sourceDurationFrames,
                     )
                   : null;
+          final double? truncatedShellSlide = truncatedDossier != null
+              ? structuralDossierShellSlide(truncatedDossier)
+              : truncatedSideCard?.slide;
 
           Rect terminalRect = terminalParkRect;
           Rect structuralRect = presentationRect;
@@ -369,9 +409,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
           switch (stage) {
             case StructuralSequenceStage.zoomOut:
-              // Only a chain root owns this stage. Pull the real terminal back
-              // to its parked desktop geometry while frame zero predecodes in
-              // an invisible structural subtree.
               terminalRect =
                   Rect.lerp(fullTerminal, terminalParkRect, eased)!;
               structuralRect = emergenceRect;
@@ -383,13 +420,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.opening:
-              // Two different things can own an opening stage:
-              //
-              // 1. ordinary desktop open: emerge from the desktop plane;
-              // 2. seamless mode change: morph the already-live shell from the
-              //    previous window/fullscreen geometry into this one.
-              //
-              // Same-mode APPSWITCH:SLIDE has no opening stage at all.
               final double handoffLinear = _firstFrameReady ? linear : 0.0;
               final double handoffEased =
                   Curves.easeInOutCubic.transform(handoffLinear);
@@ -431,9 +461,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       ? previousPresentationRect
                       : emergenceRect);
               desktopOpacity = 1.0;
-              // A chained structural app must never resurrect the terminal
-              // merely because its decoder is late. A genuinely late chain
-              // degrades to desktop, never to a false terminal flash.
               terminalOpacity =
                   (!_firstFrameReady && !placement.chainedFromPrevious)
                       ? 1.0
@@ -444,16 +471,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.closing:
-              // A presentation is clipped by source lifetime, but shell
-              // geometry is continuous. If SIDECARD was still active on the
-              // last source frame, close from that exact displaced rectangle
-              // rather than snapping back to presentationRect first.
               terminalRect = terminalParkRect;
               final Rect closingOrigin = sideCardClosingOriginRect(
                 size: renderFrame.size,
                 origin: renderFrame.topLeft,
                 preCueRect: presentationRect,
-                truncatedSlide: truncatedSideCard?.slide,
+                truncatedSlide: truncatedShellSlide,
               );
               structuralRect =
                   Rect.lerp(closingOrigin, emergenceRect, eased)!;
@@ -467,9 +490,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
 
             case StructuralSequenceStage.zoomIn:
-              // Only a chain tail owns this stage. The structural app is gone;
-              // the parked terminal expands through the same fitted program
-              // frame and its chrome collapses continuously to fullscreen.
               terminalRect =
                   Rect.lerp(terminalParkRect, fullTerminal, eased)!;
               structuralRect = presentationRect;
@@ -481,28 +501,38 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               break;
           }
 
-          // SIDECARD does not replace the structural client. It temporarily
-          // moves this already-live outer window to the left and paints its
-          // CARD as a sibling on the desktop. The shared shell evaluator owns
-          // the motion curve, lerp, and shell opacity policy for Preview/BAKE.
-          final StructuralCardOverlayPlacement? sideCardPlacement =
+          // DOSSIER owns the shell when it overlaps SIDECARD: it is the richer
+          // presentation and must not have a second card trying to move the
+          // same real window. Later authored DOSSIER selection remains handled
+          // inside dossier_overlay_state.dart.
+          final StructuralDossierOverlayPlacement? dossierPlacement =
               stage == StructuralSequenceStage.showing && _firstFrameReady
+                  ? _activeDossier(source, sourceFrame)
+                  : null;
+          final StructuralCardOverlayPlacement? sideCardPlacement =
+              dossierPlacement == null &&
+                      stage == StructuralSequenceStage.showing &&
+                      _firstFrameReady
                   ? _activeSideCard(source, sourceFrame)
                   : null;
-          if (sideCardPlacement != null && structuralWindowPresent) {
+
+          final double? shellSlide = dossierPlacement != null
+              ? structuralDossierShellSlide(dossierPlacement)
+              : sideCardPlacement?.slide;
+          if (shellSlide != null &&
+              shellSlide > 0.0 &&
+              structuralWindowPresent) {
             final SideCardShellFrame sideShell = sideCardShellFrameAt(
               size: renderFrame.size,
               origin: renderFrame.topLeft,
               preCueRect: structuralRect,
-              slide: sideCardPlacement.slide,
+              slide: shellSlide,
             );
             structuralRect = sideShell.videoWindowRect;
             desktopOpacity = sideShell.desktopOpacity;
             terminalOpacity = sideShell.terminalOpacity;
           }
 
-          // Fallback ghost only. Production passes the real SceneEngine and
-          // therefore never needs to approximate cursor metrics or theme.
           final Size cursorFraction = widget.terminalCursorFraction ??
               _TerminalGhost.fallbackCursorFraction;
           final double terminalScale = fullTerminal.width > 0.0
@@ -588,10 +618,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       isPlaying: widget.isPlaying &&
                           stage == StructuralSequenceStage.showing &&
                           _firstFrameReady,
-                      // Program PREVIEW has a parent-level preload/cover owner;
-                      // TEXT does not. Only self-owned moving previews must park
-                      // until one exact frame is resident, otherwise a rapid
-                      // TEXT rebuild can supersede every nonblocking request.
                       fastPreview: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       showVideo: stage == StructuralSequenceStage.zoomOut ||
@@ -616,7 +642,23 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   ),
                 ),
 
-              if (sideCardPlacement != null)
+              if (dossierPlacement != null)
+                Positioned.fromRect(
+                  key: const ValueKey<String>(
+                    'structural-dossier-panel-positioned',
+                  ),
+                  rect: renderFrame,
+                  child: StructuralDossierPanelOverlay(
+                    key: const ValueKey<String>('structural-dossier-panel'),
+                    placement: dossierPlacement,
+                    resolveSource:
+                        widget.resolveSource ?? resolveWorkspaceMediaSource,
+                    fontFamily: liveFont != null && liveFont.isNotEmpty
+                        ? liveFont
+                        : 'monospace',
+                  ),
+                )
+              else if (sideCardPlacement != null)
                 Positioned.fromRect(
                   key: const ValueKey<String>(
                     'structural-sidecard-panel-positioned',
@@ -649,19 +691,12 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// Native chrome is specified in logical engine pixels. This converts one
-  /// logical style pixel into widget pixels using the exact ScenePainter fit.
-  /// 1080p uses terminal.scale=1; 4K uses terminal.scale=2, so both produce
-  /// the same apparent chrome size at the same preview dimensions.
   static double _nativeChromeScale(Rect renderFrame, SceneEngine scene) {
     final double engineWidth = scene.width;
     if (engineWidth <= 0.0 || renderFrame.width <= 0.0) return 1.0;
     return scene.terminal.scale * renderFrame.width / engineWidth;
   }
 
-  /// Maps a widget-space rectangle onto the fitted engine frame as 0..1
-  /// coordinates. SceneStructuralTerminalPainter converts this back into the
-  /// live SceneEngine's logical pixels before invoking the native renderer.
   static Rect _rectFraction(Rect rect, Rect frame) {
     if (frame.width <= 0.0 || frame.height <= 0.0) return Rect.zero;
     return Rect.fromLTRB(
@@ -672,9 +707,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// Fits the 16:9 engine canvas into the editor preview without stretching.
-  /// The surrounding space remains the outer black ColoredBox, exactly like
-  /// ScenePainter's preview letterbox.
   static Rect _fittedRenderFrame(double width, double height) {
     if (width <= 0.0 || height <= 0.0) {
       return Rect.fromLTWH(
@@ -700,8 +732,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// Final windowed presentation rectangle inside the fitted render frame. The
-  /// client area itself is 16:9, and [titleHeight] is added above it.
   static Rect _structuralTargetRect(
     Rect frame, {
     double titleHeight = _StructuralWindow.titleHeight,
@@ -726,9 +756,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  /// The foreground window's rear-plane geometry. It is deliberately not a
-  /// second destination. It lives inside the normal desktop window rectangle
-  /// and is only the perspective cue for "coming forth".
   static Rect _structuralEmergenceRect(Rect target) {
     const double scale = 0.84;
     final double w = target.width * scale;
@@ -875,10 +902,6 @@ class _StructuralWindow extends StatelessWidget {
   final String Function(String source)? resolveSource;
   final VoidCallback onFirstFrameReady;
 
-  /// Optional outgoing client retained only during an editor-style seamless
-  /// source update. The window/chrome are the current shell; the outgoing
-  /// picture and its informational chrome remain the visible cover until B is
-  /// presentable, then all of them swap together.
   final String? outgoingSource;
   final String? outgoingRawDocument;
   final int outgoingSourceFrame;
@@ -1057,8 +1080,6 @@ class _StructuralWindow extends StatelessWidget {
                     ? Stack(
                         fit: StackFit.expand,
                         children: [
-                          // Incoming/current client is always mounted first so
-                          // it can resolve at current project time underneath.
                           _videoPreview(
                             previewSource: source,
                             previewDocument: rawDocument,
@@ -1069,9 +1090,6 @@ class _StructuralWindow extends StatelessWidget {
                             onReady: onFirstFrameReady,
                           ),
                           if (showingCover)
-                            // The exact outgoing keyed child already existed in
-                            // this Stack on the previous frame. Keeping the same
-                            // key preserves its decoder State while it covers B.
                             _videoPreview(
                               previewSource: coverSource,
                               previewDocument: coverDocument,
