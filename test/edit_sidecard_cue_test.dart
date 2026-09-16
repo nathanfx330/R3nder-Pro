@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/card_overlay.dart';
 import 'package:r3nder/edit_cue.dart';
 import 'package:r3nder/edit_model.dart';
 
@@ -65,6 +66,22 @@ void main() {
     expect(last.single.localFrame, 76);
 
     expect(activeCardCuesForEdit(edit, 167), isEmpty);
+  });
+
+  test('outer-shell selector keeps the final closing frame alive', () {
+    final EditDocumentModel model = EditDocumentModel.parse(_source);
+    const StructuralSourceRef root = StructuralSourceRef(
+      StructuralSourceKind.edit,
+      'main',
+    );
+
+    final StructuralCardOverlayPlacement? last =
+        structuralSideCardPlacement(model, root, 166);
+    expect(last, isNotNull);
+    expect(last!.isSideCard, isTrue);
+    expect(last.slide, closeTo(1 / 16, 0.000001));
+
+    expect(structuralSideCardPlacement(model, root, 167), isNull);
   });
 
   test('SIDECARD source-relative trigger follows exact rational clip speed', () {
