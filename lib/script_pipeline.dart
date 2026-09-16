@@ -1,5 +1,6 @@
 // ./lib/script_pipeline.dart
 
+import 'marker_language.dart';
 import 'parser.dart';
 import 'script_cst.dart';
 import 'structural_sequence.dart';
@@ -103,6 +104,11 @@ class CompiledScript {
 /// root becomes one parser-stripped internal comment instead. Structural
 /// definitions therefore consume no terminal layout and no program time.
 ///
+/// MARK is another authored-only construct, but unlike a structural root it is
+/// zero-time navigation metadata. Preview/Bake remove a marker-only line
+/// completely. Editor line-map compilation removes the tag while retaining its
+/// newline, so [LINE:n] still refers to the author's raw document coordinates.
+///
 /// A standalone `[STRUCT:EDIT.foo]` or `[STRUCT:MOSAIC.bar]` is different:
 /// that is a main-sequence placement. After the source definitions are removed,
 /// the projection derives its timing from the referenced source. Editor
@@ -200,6 +206,14 @@ String _engineProjectionSource(
       );
     }
   }
+
+  // MARK is never handed to TerminalEngine. In the editor path retain newline
+  // coordinates for raw-line identity; in runtime projection collapse a
+  // marker-only line completely so it cannot become cursor movement or time.
+  projected = stripMarkersForEngine(
+    projected,
+    preserveLineCoordinates: !runtimeMarkers,
+  );
 
   return projectStructuralSequencePlacements(
     rawDocument: rawText,
