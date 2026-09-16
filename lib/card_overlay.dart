@@ -19,6 +19,10 @@
 // client-side SIDECARD and use the public side-card geometry/panel helpers to
 // move the real outer window instead. This prevents a window-inside-window.
 //
+// SIDECARD geometry and its movement curve live in sidecard_geometry.dart.
+// This painter consumes that evaluated geometry; it does not own a second copy
+// of the shell animation policy.
+//
 // Direct EDIT cues fill that EDIT's target. Cues authored directly in a MOSAIC
 // pane are clipped to that pane and, for standalone SIDECARD, sample only that
 // pane's corresponding structural pixels. The presentation contributes no audio.
@@ -34,6 +38,9 @@ import 'package:flutter/material.dart';
 import 'edit_cue.dart';
 import 'edit_model.dart';
 import 'presentation_requests.dart';
+import 'sidecard_geometry.dart';
+
+export 'sidecard_geometry.dart';
 
 /// One active CARD-family presentation plus the structural pixel region it owns.
 class StructuralCardOverlayPlacement {
@@ -202,47 +209,6 @@ class CardOverlayImageCache {
     _failed.clear();
     _loading.clear();
   }
-}
-
-/// Final seated video-window geometry for SIDECARD inside [size].
-///
-/// Public because both live program preview and BAKE must move the real outer
-/// structural window to exactly this destination. The rect includes title-bar
-/// chrome; its client remains the exact continuously-advancing structural image.
-Rect sideCardSeatedVideoWindowRect(Size size) {
-  if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
-  final double s = math.min(size.width / 1920.0, size.height / 1080.0);
-  final double margin = size.width * 0.035;
-  final double gap = size.width * 0.024;
-  final double cardW = size.width * 0.30;
-  final double windowW = math.max(
-    1.0,
-    size.width - margin * 2.0 - gap - cardW,
-  );
-  final double titleH = 38.0 * s;
-  final double desiredClientH = windowW * 9.0 / 16.0;
-  final double maxWindowH = size.height * 0.76;
-  final double windowH = math.min(maxWindowH, desiredClientH + titleH);
-  return Rect.fromLTWH(
-    margin,
-    (size.height - windowH) / 2.0,
-    windowW,
-    windowH,
-  );
-}
-
-/// Final seated card geometry for SIDECARD inside [size].
-Rect sideCardSeatedPanelRect(Size size) {
-  if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
-  final Rect video = sideCardSeatedVideoWindowRect(size);
-  final double gap = size.width * 0.024;
-  final double cardW = size.width * 0.30;
-  return Rect.fromLTWH(
-    video.right + gap,
-    video.top,
-    cardW,
-    video.height,
-  );
 }
 
 /// Paints CARD-family presentations over a complete structural surface.
@@ -652,13 +618,17 @@ void _paintSideCardComposition({
 }) {
   if (slide <= 0.0 || engineW <= 0.0 || engineH <= 0.0) return;
 
-  final double raw = slide.clamp(0.0, 1.0);
-  final double eased = Curves.easeOutCubic.transform(raw);
+  final double raw = slide.clamp(0.0, 1.0).toDouble();
   final Size size = Size(engineW, engineH);
-  final Rect seatedVideo = sideCardSeatedVideoWindowRect(size);
-  final Rect seatedCard = sideCardSeatedPanelRect(size);
   final Rect full = Rect.fromLTWH(0, 0, engineW, engineH);
-  final Rect videoWindow = Rect.lerp(full, seatedVideo, eased)!;
+  final SideCardShellFrame shell = sideCardShellFrameAt(
+    size: size,
+    preCueRect: full,
+    slide: raw,
+  );
+  final double eased = shell.motionProgress;
+  final Rect videoWindow = shell.videoWindowRect;
+  final Rect seatedCard = sideCardSeatedPanelRect(size);
   final double s = math.min(engineW / 1920.0, engineH / 1080.0);
   final double titleH = math.min(38.0 * s * eased, videoWindow.height);
   final double radius = 6.0 * s * eased;
@@ -908,7 +878,7 @@ void _paintCardAtSeatedRect({
   const double cardBodySize = 20.0;
 
   final double s = math.min(engineW / 1920.0, engineH / 1080.0);
-  final double rawProgress = slide.clamp(0.0, 1.0);
+  final double rawProgress = slide.clamp(0.0, 1.0).toDouble();
   final double e = Curves.easeOutCubic.transform(rawProgress);
   final double left = engineW + (seatedRect.left - engineW) * e;
   final Rect cardRect = Rect.fromLTWH(
