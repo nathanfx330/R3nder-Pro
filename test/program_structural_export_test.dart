@@ -400,8 +400,12 @@ AFTER
         baseNormalized.right * outputWidth,
         baseNormalized.bottom * outputHeight,
       );
+      final Size outputSize = Size(
+        outputWidth.toDouble(),
+        outputHeight.toDouble(),
+      );
       final SideCardShellFrame expected = sideCardShellFrameAt(
-        size: const Size(outputWidth.toDouble(), outputHeight.toDouble()),
+        size: outputSize,
         preCueRect: basePixels,
         slide: 0.5,
       );
@@ -416,9 +420,9 @@ AFTER
       );
       expect(
         redBounds.left,
-        greaterThan(sideCardSeatedVideoWindowRect(
-          const Size(outputWidth.toDouble(), outputHeight.toDouble()),
-        ).left + 2.0),
+        greaterThan(
+          sideCardSeatedVideoWindowRect(outputSize).left + 2.0,
+        ),
       );
     },
   );
