@@ -294,10 +294,6 @@ AFTER
 
       const int outputWidth = 320;
       const int outputHeight = 180;
-      final Size outputSize = Size(
-        outputWidth.toDouble(),
-        outputHeight.toDouble(),
-      );
       final Directory root = await Directory.systemTemp
           .createTemp('r3nder_program_sidecard_motion_');
       final Directory images = Directory('${root.path}/images')
@@ -326,10 +322,6 @@ AFTER
           parseStructuralSequencePlacements(source).single;
       final CompiledScript compiled = compileScript(source, lineMarkers: false);
 
-      // Keep the SceneEngine at authored 1920x1080 while rendering a 320x180
-      // bake frame. That gives structural chrome the same output scale used by
-      // the SIDECARD geometry helper instead of making a low-resolution test
-      // scene carry a 38px title bar.
       await scene.setup(
         templateText: compiled.engineText,
         fontColor: Colors.green,
@@ -367,9 +359,6 @@ AFTER
       }
       expect(targetProjectFrame, isNotNull);
 
-      // The cue starts at source frame zero. At source frame eight, its
-      // 16-frame opening has slide=0.5. Keep the scene evaluated at that exact
-      // project frame and ask the real program renderer for the bake pixels.
       scene.evaluate(
         ProjectTime(
           frame: targetProjectFrame!,
@@ -381,11 +370,10 @@ AFTER
         fontFamily: 'monospace',
       );
       expect(image, isNotNull);
-      final ui.Image rendered = image!;
-      addTearDown(rendered.dispose);
+      addTearDown(image!.dispose);
 
       final ByteData? data =
-          await rendered.toByteData(format: ui.ImageByteFormat.rawRgba);
+          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
       expect(data, isNotNull);
       final Uint8List rgba = data!.buffer.asUint8List(
         data.offsetInBytes,
@@ -413,14 +401,11 @@ AFTER
         baseNormalized.bottom * outputHeight,
       );
       final SideCardShellFrame expected = sideCardShellFrameAt(
-        size: outputSize,
+        size: const Size(outputWidth.toDouble(), outputHeight.toDouble()),
         preCueRect: basePixels,
         slide: 0.5,
       );
 
-      // Solid red is the structural client, so its horizontal bounds track the
-      // real moving outer window. A snap straight to the seated rect differs by
-      // several pixels even at this deliberately small render size.
       expect(
         redBounds!.left,
         closeTo(expected.videoWindowRect.left, 2.0),
@@ -431,8 +416,135 @@ AFTER
       );
       expect(
         redBounds.left,
-        greaterThan(sideCardSeatedVideoWindowRect(outputSize).left + 2.0),
+        greaterThan(sideCardSeatedVideoWindowRect(
+          const Size(outputWidth.toDouble(), outputHeight.toDouble()),
+        ).left + 2.0),
       );
+    },
+  );
+
+  test(
+    'BAKE starts STRUCT close from truncated SIDECARD shell without snap',
+    () async {
+      const String source = '''[SPEED:MAX]BEFORE
+[EDIT:main]
+[TRACK:V1]
+[CLIP:leaf:leaf.mp4:0:0:12:1]
+[CUE:8]
+[SIDECARD:missing.png:45:24,32,40:JOHN SMITH]
+Biography text.
+[/SIDECARD]
+[/CUE]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.main]
+AFTER
+''';
+
+      const int outputWidth = 320;
+      const int outputHeight = 180;
+      final Directory root = await Directory.systemTemp
+          .createTemp('r3nder_program_sidecard_truncate_');
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final SceneEngine scene = SceneEngine();
+      final _RecordingBackend backend = _RecordingBackend();
+      final ProgramStructuralFrameRenderer renderer =
+          ProgramStructuralFrameRenderer(
+        rawDocument: source,
+        width: outputWidth,
+        height: outputHeight,
+        backend: backend,
+        resolveSource: (String value) => value,
+      );
+
+      addTearDown(() {
+        renderer.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final CompiledScript compiled = compileScript(source, lineMarkers: false);
+      await scene.setup(
+        templateText: compiled.engineText,
+        fontColor: Colors.green,
+        bgColor: Colors.black,
+        width: 1920,
+        height: 1080,
+        scale: 1,
+        fontPath: 'monospace',
+        fontSize: 12,
+        lineSpacing: 16,
+        tracking: 0,
+        marginTop: 10,
+        marginSide: 10,
+        imagesDir: images.path,
+        spritesDir: sprites.path,
+        paneLifeConfig: compiled.paneLife,
+        captionConfig: compiled.caption,
+        appSwitchConfig: compiled.appSwitch,
+      );
+
+      int? lastShowingProjectFrame;
+      int? firstClosingProjectFrame;
+      for (int projectFrame = 0; projectFrame < 500; projectFrame++) {
+        scene.evaluate(
+          ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+        );
+        final StructuralRuntimeMarker? marker =
+            parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+        if (marker == null) continue;
+        final int localFrame = _runtimeLocalFrame(scene, marker);
+        final StructuralSequenceStage stage = placement.stageAt(localFrame);
+        if (stage == StructuralSequenceStage.showing &&
+            placement.sourceFrameAt(localFrame) == 11) {
+          lastShowingProjectFrame = projectFrame;
+        }
+        if (stage == StructuralSequenceStage.closing &&
+            placement.stageFrameAt(localFrame) == 0) {
+          firstClosingProjectFrame = projectFrame;
+          break;
+        }
+      }
+
+      expect(lastShowingProjectFrame, isNotNull);
+      expect(firstClosingProjectFrame, isNotNull);
+
+      Future<Rect> redBoundsAt(int projectFrame) async {
+        scene.evaluate(
+          ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+        );
+        final ui.Image? image = await renderer.renderIfActive(
+          scene: scene,
+          fontFamily: 'monospace',
+        );
+        expect(image, isNotNull);
+        final ByteData? data =
+            await image!.toByteData(format: ui.ImageByteFormat.rawRgba);
+        image.dispose();
+        expect(data, isNotNull);
+        final Uint8List rgba = data!.buffer.asUint8List(
+          data.offsetInBytes,
+          data.lengthInBytes,
+        );
+        final Rect? bounds = _solidRedBounds(rgba, outputWidth, outputHeight);
+        expect(bounds, isNotNull);
+        return bounds!;
+      }
+
+      final Rect finalShowing = await redBoundsAt(lastShowingProjectFrame!);
+      final Rect firstClosing = await redBoundsAt(firstClosingProjectFrame!);
+
+      expect(firstClosing.left, closeTo(finalShowing.left, 1.0));
+      expect(firstClosing.right, closeTo(finalShowing.right, 1.0));
+      expect(firstClosing.top, closeTo(finalShowing.top, 1.0));
+      expect(firstClosing.bottom, closeTo(finalShowing.bottom, 1.0));
     },
   );
 }
