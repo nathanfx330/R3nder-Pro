@@ -7,6 +7,8 @@
 // the canonical document before returning it. The trigger remains source-frame
 // relative while CARD, SIDECARD, or DOSSIER owns its own presentation lifetime.
 
+import 'package:flutter/material.dart';
+
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
 import 'presentation_requests.dart';
