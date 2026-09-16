@@ -70,10 +70,7 @@ void main() {
 
   test('outer-shell selector keeps the final closing frame alive', () {
     final EditDocumentModel model = EditDocumentModel.parse(_source);
-    const StructuralSourceRef root = StructuralSourceRef(
-      StructuralSourceKind.edit,
-      'main',
-    );
+    final StructuralSourceRef root = StructuralSourceRef.tryParse('EDIT.main')!;
 
     final StructuralCardOverlayPlacement? last =
         structuralSideCardPlacement(model, root, 166);
