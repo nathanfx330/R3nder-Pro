@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'diag.dart';
 import 'script_nodes.dart';
 import 'structural_sequence.dart';
-import 'timeline_markers.dart';
 import 'ui_theme.dart';
 
 /// Dumps the block list to r3nder_trace.log after every simulation.
@@ -42,14 +41,6 @@ const bool kProfileRibbon = true;
 // wrong, and a time axis is the wrong place for things that take no
 // time. They leave no gap, because they occupy no time to leave a gap
 // in.
-//
-// MARKERS ARE NOT BLOCKS. Authored MARKs and derived CUE / clip-boundary
-// landmarks are represented below by the RibbonLandmark subtype only so the
-// existing simulation bundle can carry them without adding a second parallel
-// list through every warm-up caller. The painter always removes them from the
-// proportional block pass and draws them in a separate zero-width tick layer
-// above the bands. They therefore never steal width or pretend to consume
-// program time.
 // =====================================================================
 
 /// One node's run on the time axis.
@@ -105,36 +96,6 @@ class RibbonBlock {
       : 0;
 }
 
-enum RibbonLandmarkStyle {
-  authored,
-  derived,
-}
-
-/// One zero-time tick projected onto the ribbon.
-///
-/// This deliberately subclasses RibbonBlock only as a transport compatibility
-/// seam for EditorSimResult/EditorWarmup. It is never treated as a pacing
-/// block, cannot be opened as a node, and cannot serialize back into source.
-/// Authored identity lives in MarkerDefinition; derived landmarks have no
-/// definition at all.
-class RibbonLandmark extends RibbonBlock {
-  final RibbonLandmarkStyle style;
-  final String label;
-
-  const RibbonLandmark({
-    required int frame,
-    required this.style,
-    required this.label,
-  }) : super(
-          nodeIndex: -1,
-          type: 'LANDMARK',
-          startFrame: frame,
-          endFrame: frame,
-        );
-
-  int get frame => startFrame;
-}
-
 /// Broad families, used for colour. Four bands rather than one hue per tag,
 /// because at three pixels wide a thirty-colour palette is noise: you would
 /// be able to see that the blocks differ without being able to tell how.
@@ -144,12 +105,6 @@ enum _Band { text, hold, pause, window, media }
 /// you edit, and every pixel here comes out of the viewer above it.
 final double _kLaneH = sc(7);
 final double _kLaneGap = sc(3);
-
-/// Zero-time landmarks live above the proportional script lane. Reserving the
-/// layer even when empty prevents the ribbon from changing height when the
-/// author drops the first marker.
-final double _kLandmarkH = sc(6);
-final double _kLandmarkGap = sc(2);
 
 /// Invisible padding above and below the lanes, so the strip is comfortable
 /// to grab without being thick to look at. Skinny is a visual choice; a
@@ -344,20 +299,16 @@ List<RibbonBlock> buildRibbonBlocks(
     }
   }
 
-  // Reassembling untouched nodes is lossless; dirty nodes emit their current
-  // markup. This is the raw authored document that both the STRUCT placement
-  // diagnostics and the marker projection must read. In particular, MARKs are
-  // stripped from engineText, so deriving ticks from anything engine-owned
-  // would make them disappear by design.
-  final String rawDocument =
-      nodes.map((ScriptNode node) => node.toMarkup()).join();
-
   // STRUCT clip audio gets its own diagnostic lane. Derive it from the exact
   // placement parser rather than from node parameters alone, because adjacency
   // can change a placement's entry budget and therefore its content start.
+  // Reassembling untouched nodes is lossless; dirty nodes emit their current
+  // markup, so the placement view describes the same document the ribbon does.
   final Map<int, StructuralSequencePlacement> audioPlacementAtLine =
       <int, StructuralSequencePlacement>{};
   try {
+    final String rawDocument =
+        nodes.map((ScriptNode node) => node.toMarkup()).join();
     for (final StructuralSequencePlacement placement
         in parseStructuralSequencePlacements(rawDocument)) {
       if (placement.resolves && placement.clipAudio) {
@@ -370,7 +321,7 @@ List<RibbonBlock> buildRibbonBlocks(
     // diagnostic cannot be derived yet.
   }
 
-  final List<RibbonBlock> out = <RibbonBlock>[];
+  final List<RibbonBlock> out = [];
   int runNode = -2;
   int runStart = 0;
 
@@ -425,67 +376,14 @@ List<RibbonBlock> buildRibbonBlocks(
   }
   closeRun(limit);
 
-  // ZERO-TIME LANDMARK PASS. This is deliberately additive to the pacing
-  // blocks above. Authored MARKs get one treatment; CUE/IN/OUT truth derived
-  // from EDIT gets another. We do not spend four colours distinguishing CUE,
-  // IN, and OUT at seven-pixel scale: they are all derived geometry and the
-  // label/model retains the detailed kind for richer UI later.
-  try {
-    final ProgramTimelineLandmarks landmarks = projectProgramTimelineLandmarks(
-      rawDocument: rawDocument,
-      rawLineAtFrame: rawLineAtFrame,
-    );
-    for (final MarkerInstance marker in landmarks.markers) {
-      out.add(
-        RibbonLandmark(
-          frame: marker.frame.clamp(0, rawLineAtFrame.length),
-          style: RibbonLandmarkStyle.authored,
-          label: marker.label,
-        ),
-      );
-    }
-    for (final DerivedLandmark landmark in landmarks.derived) {
-      out.add(
-        RibbonLandmark(
-          frame: landmark.frame.clamp(0, rawLineAtFrame.length),
-          style: RibbonLandmarkStyle.derived,
-          label: landmark.label,
-        ),
-      );
-    }
-  } catch (_) {
-    // A malformed MARK or structural source is reported through its own
-    // authoring/parser surface. The pacing strip remains usable while the
-    // document is being repaired.
-  }
-
   if (kProfileRibbon) {
-    final Map<String, int> byType = <String, int>{};
-    int authoredMarks = 0;
-    int derivedMarks = 0;
-    for (final RibbonBlock b in out) {
-      if (b is RibbonLandmark) {
-        if (b.style == RibbonLandmarkStyle.authored) {
-          authoredMarks++;
-        } else {
-          derivedMarks++;
-        }
-        continue;
-      }
+    final Map<String, int> byType = {};
+    for (final b in out) {
       byType[b.type] = (byType[b.type] ?? 0) + b.frames;
     }
-    diag('ribbon', '${out.where((RibbonBlock b) => b is! RibbonLandmark).length} '
-        'blocks over $limit frames; frames by type: $byType; '
-        'landmarks authored=$authoredMarks derived=$derivedMarks');
+    diag('ribbon', '${out.length} blocks over $limit frames; '
+        'frames by type: $byType');
     for (final b in out) {
-      if (b is RibbonLandmark) {
-        diag(
-          'ribbon',
-          '  ${b.style == RibbonLandmarkStyle.authored ? 'MARK' : 'DERIVED'} '
-          '@${b.frame} ${b.label}',
-        );
-        continue;
-      }
       diag('ribbon',
           '  ${b.type.padRight(10)} ${b.startFrame}..${b.endFrame} '
           '(${b.frames}f) node ${b.nodeIndex}');
@@ -507,7 +405,7 @@ List<RibbonBlock> buildRibbonBlocks(
     }
   }
 
-  return List<RibbonBlock>.unmodifiable(out);
+  return out;
 }
 
 // ---------------------------------------------------------------------
@@ -587,7 +485,6 @@ class ScriptRibbon extends StatelessWidget {
   RibbonBlock? _blockAt(double dx, double width) {
     final int f = _frameAt(dx, width);
     for (final b in blocks) {
-      if (b is RibbonLandmark) continue;
       if (f >= b.startFrame && f < b.endFrame) return b;
     }
     return null;
@@ -595,25 +492,20 @@ class ScriptRibbon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Landmark layer + up to four time-consuming lanes, deliberately thin.
-    // This is an orientation strip, not an NLE: chunky tracks would claim
-    // vertical space the viewer and script need, to say something a few
-    // pixels already say.
+    // Up to four lanes, deliberately thin. This is an orientation strip,
+    // not an NLE: chunky tracks would claim vertical space the viewer and
+    // script need, to say something a few pixels already say.
     //
     // The STRUCT clip-audio lane is the diagnostic bottom lane. Its blocks
     // are absolute authored program spans, so an MP4 that becomes audible
     // before its lane reaches the playhead is a transport bug, while a lane
     // that itself sits early is a placement-geometry bug.
-    final bool hasClipAudio = blocks.any(
-      (RibbonBlock b) => b is! RibbonLandmark && b.hasClipAudio,
-    );
+    final bool hasClipAudio = blocks.any((RibbonBlock b) => b.hasClipAudio);
     final int audioLanes =
         (bedFrames > 0 ? 1 : 0) +
         (musicFrames > 0 ? 1 : 0) +
         (hasClipAudio ? 1 : 0);
-    final double laneStackH =
-        _kLaneH * (1 + audioLanes) + _kLaneGap * audioLanes;
-    final double h = _kLandmarkH + _kLandmarkGap + laneStackH;
+    final double h = _kLaneH * (1 + audioLanes) + _kLaneGap * audioLanes;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -701,27 +593,24 @@ class _RibbonPainter extends CustomPainter {
 
     if (size.width <= 0) return;
 
-    final double scriptY = _kLandmarkH + _kLandmarkGap;
     final bool hasBed = bedFrames > 0;
     final bool hasMusic = musicFrames > 0;
-    final bool hasClipAudio = blocks.any(
-      (RibbonBlock b) => b is! RibbonLandmark && b.hasClipAudio,
-    );
+    final bool hasClipAudio = blocks.any((RibbonBlock b) => b.hasClipAudio);
 
     // Lane origins, computed on one shared axis. Optional lanes pack upward
     // without leaving holes, and STRUCT clip audio always sits below the two
     // workspace beds when they exist.
     int audioSlot = 0;
     final double? bedY = hasBed
-        ? scriptY + _kLaneH + _kLaneGap +
+        ? _kLaneH + _kLaneGap +
             (audioSlot++ * (_kLaneH + _kLaneGap))
         : null;
     final double? musicY = hasMusic
-        ? scriptY + _kLaneH + _kLaneGap +
+        ? _kLaneH + _kLaneGap +
             (audioSlot++ * (_kLaneH + _kLaneGap))
         : null;
     final double? clipAudioY = hasClipAudio
-        ? scriptY + _kLaneH + _kLaneGap +
+        ? _kLaneH + _kLaneGap +
             (audioSlot++ * (_kLaneH + _kLaneGap))
         : null;
 
@@ -735,10 +624,7 @@ class _RibbonPainter extends CustomPainter {
     // way from empty to full.
     if (totalFrames <= 0) {
       final Paint guide = Paint()..color = R3Theme.hairline;
-      canvas.drawRect(
-        Rect.fromLTWH(0, scriptY, size.width, _kLaneH),
-        guide,
-      );
+      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, _kLaneH), guide);
       if (bedY != null) {
         canvas.drawRect(
             Rect.fromLTWH(0, bedY, size.width, _kLaneH), guide);
@@ -762,8 +648,6 @@ class _RibbonPainter extends CustomPainter {
 
     // --- Script lane -------------------------------------------------
     for (final b in blocks) {
-      if (b is RibbonLandmark) continue;
-
       final double x = b.startFrame * perFrame;
       final double w = b.frames * perFrame;
 
@@ -784,11 +668,15 @@ class _RibbonPainter extends CustomPainter {
       // identity, so it has to be expressed as a change in intensity
       // rather than as a change in hue, or the two carry the same channel
       // and the louder one wins.
+      //
+      // Lerping toward the band's own light end keeps a selected pause
+      // unmistakably red, a selected window unmistakably phosphor, and the
+      // selection unmistakable in both.
       final Color band = _colorFor(_bandFor(b.type), theme);
       final Color base = isSelected ? _brighten(band) : band;
 
       canvas.drawRect(
-        Rect.fromLTWH(x, scriptY, drawW, _kLaneH),
+        Rect.fromLTWH(x, 0, drawW, _kLaneH),
         Paint()..color = dimmed ? base.withValues(alpha: 0.35) : base,
       );
 
@@ -796,48 +684,8 @@ class _RibbonPainter extends CustomPainter {
       // to have an interior left over.
       if (drawW > 2.0) {
         canvas.drawRect(
-          Rect.fromLTWH(x + drawW - 1, scriptY, 1, _kLaneH),
+          Rect.fromLTWH(x + drawW - 1, 0, 1, _kLaneH),
           Paint()..color = R3Theme.bg.withValues(alpha: dimmed ? 0.2 : 0.6),
-        );
-      }
-    }
-
-    // --- Landmark layer ---------------------------------------------
-    // Two visual treatments only. Authored MARKs are bright with a cap;
-    // derived CUE/IN/OUT landmarks are shorter neutral hairlines. The detailed
-    // kind remains in the model/label, but spending three more colours at this
-    // scale would turn useful structure into noise.
-    for (final RibbonBlock item in blocks) {
-      if (item is! RibbonLandmark) continue;
-      final double x = (item.frame * perFrame).clamp(0.0, size.width - 1);
-
-      if (item.style == RibbonLandmarkStyle.authored) {
-        final Color color = dimmed
-            ? theme.accent.withValues(alpha: 0.35)
-            : theme.accent;
-        final Paint paint = Paint()..color = color;
-        canvas.drawRect(
-          Rect.fromLTWH(x, 0, sc(1.5), _kLandmarkH),
-          paint,
-        );
-        final Path cap = Path()
-          ..moveTo(x - sc(2.5), 0)
-          ..lineTo(x + sc(4.0), 0)
-          ..lineTo(x + sc(0.75), sc(3.0))
-          ..close();
-        canvas.drawPath(cap, paint);
-      } else {
-        final Color color = dimmed
-            ? R3Theme.textDim.withValues(alpha: 0.22)
-            : R3Theme.textDim.withValues(alpha: 0.72);
-        canvas.drawRect(
-          Rect.fromLTWH(
-            x,
-            _kLandmarkH * 0.38,
-            1,
-            _kLandmarkH * 0.62,
-          ),
-          Paint()..color = color,
         );
       }
     }
@@ -929,7 +777,7 @@ class _RibbonPainter extends CustomPainter {
     // whether scheduling and audible playback agree on WHERE the source lives.
     if (clipAudioY != null) {
       for (final RibbonBlock b in blocks) {
-        if (b is RibbonLandmark || !b.hasClipAudio) continue;
+        if (!b.hasClipAudio) continue;
         final int start = b.clipAudioStartFrame!.clamp(0, totalFrames);
         final int end = b.clipAudioEndFrameExclusive!.clamp(0, totalFrames);
         if (end <= start) continue;
