@@ -82,6 +82,36 @@ void main() {
     expect(finalClosing.videoWindowRect.width, lessThan(preCue.width));
   });
 
+  test('source truncation preserves the final displaced closing origin', () {
+    const Size size = Size(1920, 1080);
+    const Rect preCue = Rect.fromLTWH(0, 0, 1920, 1080);
+    const double truncatedSlide = 3 / 16;
+
+    final Rect expected = sideCardVideoWindowRectAt(
+      size: size,
+      preCueRect: preCue,
+      slide: truncatedSlide,
+    );
+    final Rect origin = sideCardClosingOriginRect(
+      size: size,
+      preCueRect: preCue,
+      truncatedSlide: truncatedSlide,
+    );
+
+    _expectRect(origin, expected);
+    expect(origin.left, greaterThan(preCue.left));
+    expect(origin.width, lessThan(preCue.width));
+
+    _expectRect(
+      sideCardClosingOriginRect(
+        size: size,
+        preCueRect: preCue,
+        truncatedSlide: null,
+      ),
+      preCue,
+    );
+  });
+
   test('preview-origin offset is part of the same geometry authority', () {
     const Size size = Size(800, 450);
     const Offset origin = Offset(0, 25);
