@@ -1,28 +1,21 @@
 // ./lib/edit_cue.dart
 //
-// Clip-local presentation triggers for structural EDIT time.
+// Clip-local source-relative triggers for structural EDIT time.
 //
-// A CUE is deliberately smaller than a presentation. It owns only the source
-// frame at which an already-authored presentation event begins. The contained
-// presentation owns its own deterministic lifetime and appearance. Keeping the
-// trigger in source coordinates makes it follow the clip's content through
-// moves, trims, slips, and exact rational speed changes without introducing a
-// second project clock.
+// A CUE owns only the source frame at which one authored event begins. Content
+// presentations (CARD, SIDECARD, DOSSIER) own their own deterministic lifetime
+// and pixels. MAXIMIZE is deliberately different: it paints no content and is
+// represented as a shell cue whose geometry is owned later by STRUCT.
 //
-// Structural CUEs accept CARD, SIDECARD, and DOSSIER. CARD is the fullscreen
-// overlay discovered while building the first CUE path. SIDECARD is the
-// original side-by-side idea: the same structural video keeps advancing while
-// it moves into a desktop-style video window and the card sits beside it.
-// DOSSIER keeps that continuously-playing structural video alive while the
-// right-hand presentation evolves from biography card into evidence imagery.
-// None of these forms becomes structural CST state. ScriptCstDocument continues
-// to own the CLIP span byte-for-byte while this file gives the inner source just
-// enough meaning for deterministic presentation.
+// Keeping every trigger in source coordinates makes it follow the clip's
+// content through moves, trims, slips, and exact rational speed changes without
+// introducing a second project clock.
 
 import 'package:flutter/material.dart';
 
 import 'card_presentation.dart';
 import 'edit_model.dart';
+import 'maximize_presentation.dart';
 import 'parser.dart' show tagRegex;
 import 'presentation_requests.dart';
 
@@ -79,10 +72,9 @@ class EditCardCue {
 
 /// One DOSSIER presentation triggered from a source-relative frame in a CLIP.
 ///
-/// Unlike CARD, DOSSIER lifetime depends on its center-stage branch and, for a
+/// Unlike CARD, DOSSIER lifetime depends on its evidence branch and, for a
 /// mosaic, on the number of resolved evidence pages. This object therefore
-/// stores authored facts and trigger position only. The structural DOSSIER
-/// evaluator resolves exact lifetime once the folder/page count is known.
+/// stores authored facts and trigger position only.
 class EditDossierCue {
   const EditDossierCue({
     required this.sourceFrame,
@@ -94,6 +86,26 @@ class EditDossierCue {
 
   final int sourceFrame;
   final DossierRequest dossier;
+  final int startOffset;
+  final int endOffset;
+  final String rawSource;
+}
+
+/// One shell-only MAXIMIZE event.
+///
+/// MAXIMIZE intentionally does not extend PresentationRequest. It contributes no
+/// pixels and owns no layout; its authored fact is only the fullscreen hold.
+class EditMaximizeCue {
+  const EditMaximizeCue({
+    required this.sourceFrame,
+    required this.holdFrames,
+    required this.startOffset,
+    required this.endOffset,
+    required this.rawSource,
+  });
+
+  final int sourceFrame;
+  final int holdFrames;
   final int startOffset;
   final int endOffset;
   final String rawSource;
@@ -119,8 +131,8 @@ class ActiveEditCardCue {
 /// One triggered DOSSIER cue at a specific structural frame.
 ///
 /// Triggered does not necessarily mean still visible. The caller that knows the
-/// resolved evidence page count evaluates [localFrame] through
-/// DossierPresentationTiming and drops it once that explicit lifetime ends.
+/// resolved evidence page count evaluates [localFrame] through its DOSSIER
+/// timing and drops it once that explicit lifetime ends.
 class ActiveEditDossierCue {
   const ActiveEditDossierCue({
     required this.clip,
@@ -135,17 +147,41 @@ class ActiveEditDossierCue {
   final int localFrame;
 }
 
+/// One active shell-only MAXIMIZE cue at an EDIT project frame.
+class ActiveEditMaximizeCue {
+  const ActiveEditMaximizeCue({
+    required this.clip,
+    required this.cue,
+    required this.triggerProjectFrame,
+    required this.localFrame,
+    required this.presentationFrame,
+  });
+
+  final EditClip clip;
+  final EditMaximizeCue cue;
+  final int triggerProjectFrame;
+  final int localFrame;
+  final MaximizePresentationFrame presentationFrame;
+}
+
 class _ParsedEditCue {
   const _ParsedEditCue({
     required this.sourceFrame,
     required this.presentation,
+    required this.maximizeHoldFrames,
     required this.startOffset,
     required this.endOffset,
     required this.rawSource,
   });
 
   final int sourceFrame;
-  final PresentationRequest presentation;
+
+  /// Content-producing payload. Null for shell-only MAXIMIZE.
+  final PresentationRequest? presentation;
+
+  /// Shell-only payload. Null for content presentations.
+  final int? maximizeHoldFrames;
+
   final int startOffset;
   final int endOffset;
   final String rawSource;
@@ -153,6 +189,7 @@ class _ParsedEditCue {
 
 final RegExp _cueOpening = RegExp(r'\[CUE:(\d+)\]');
 final RegExp _comment = RegExp(r'\[#.*?\]\n?', dotAll: true);
+final RegExp _maximizeTag = RegExp(r'\[MAXIMIZE:(\d+)\]');
 final RegExp _sideCardTag = RegExp(
   r'\[SIDECARD:([a-zA-Z0-9_\-\./]+)'
   r'(?::(\d+))?'
@@ -162,13 +199,12 @@ final RegExp _sideCardTag = RegExp(
 );
 const String _cueClosing = '[/CUE]';
 
-/// Parses every CARD-family cue owned by [clip]. DOSSIER CUEs are valid source
-/// but are returned by [parseClipDossierCues] instead of being misreported as a
-/// malformed CARD cue.
+/// Parses every CARD-family cue owned by [clip]. Other valid CUE payloads are
+/// skipped rather than misreported as malformed CARD source.
 List<EditCardCue> parseClipCardCues(EditClip clip) {
   final List<EditCardCue> out = <EditCardCue>[];
-  for (final _ParsedEditCue cue in _parseClipPresentationCues(clip)) {
-    final PresentationRequest presentation = cue.presentation;
+  for (final _ParsedEditCue cue in _parseClipCues(clip)) {
+    final PresentationRequest? presentation = cue.presentation;
     if (presentation is! CardRequest) continue;
     out.add(
       EditCardCue(
@@ -186,8 +222,8 @@ List<EditCardCue> parseClipCardCues(EditClip clip) {
 /// Parses every DOSSIER cue owned by [clip].
 List<EditDossierCue> parseClipDossierCues(EditClip clip) {
   final List<EditDossierCue> out = <EditDossierCue>[];
-  for (final _ParsedEditCue cue in _parseClipPresentationCues(clip)) {
-    final PresentationRequest presentation = cue.presentation;
+  for (final _ParsedEditCue cue in _parseClipCues(clip)) {
+    final PresentationRequest? presentation = cue.presentation;
     if (presentation is! DossierRequest) continue;
     out.add(
       EditDossierCue(
@@ -202,7 +238,26 @@ List<EditDossierCue> parseClipDossierCues(EditClip clip) {
   return List<EditDossierCue>.unmodifiable(out);
 }
 
-List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
+/// Parses every shell-only MAXIMIZE cue owned by [clip].
+List<EditMaximizeCue> parseClipMaximizeCues(EditClip clip) {
+  final List<EditMaximizeCue> out = <EditMaximizeCue>[];
+  for (final _ParsedEditCue cue in _parseClipCues(clip)) {
+    final int? holdFrames = cue.maximizeHoldFrames;
+    if (holdFrames == null) continue;
+    out.add(
+      EditMaximizeCue(
+        sourceFrame: cue.sourceFrame,
+        holdFrames: holdFrames,
+        startOffset: cue.startOffset,
+        endOffset: cue.endOffset,
+        rawSource: cue.rawSource,
+      ),
+    );
+  }
+  return List<EditMaximizeCue>.unmodifiable(out);
+}
+
+List<_ParsedEditCue> _parseClipCues(EditClip clip) {
   final String source = clip.block.innerSource;
   final int absoluteBase = clip.block.openEndOffset;
   final List<_ParsedEditCue> cues = <_ParsedEditCue>[];
@@ -223,7 +278,8 @@ List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
       final int contentAt = _skipWhitespace(source, opening.end);
 
       PresentationRequest? request;
-      int? presentationEnd;
+      int? maximizeHoldFrames;
+      int? payloadEnd;
 
       final RegExpMatch? terminalPresentation =
           tagRegex.matchAsPrefix(source, contentAt) as RegExpMatch?;
@@ -232,7 +288,7 @@ List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
             presentationRequestFromMatch(terminalPresentation);
         if (parsed is CardRequest || parsed is DossierRequest) {
           request = parsed;
-          presentationEnd = terminalPresentation.end;
+          payloadEnd = terminalPresentation.end;
         }
       }
 
@@ -246,26 +302,42 @@ List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
           );
         }
         request = _sideCardRequestFromMatch(side);
-        presentationEnd = side.end;
+        payloadEnd = side.end;
       }
 
-      if (request == null || presentationEnd == null) {
+      if (request == null && source.startsWith('[MAXIMIZE:', contentAt)) {
+        final RegExpMatch? maximize =
+            _maximizeTag.matchAsPrefix(source, contentAt) as RegExpMatch?;
+        if (maximize == null) {
+          throw EditCueFormatException(
+            'MAXIMIZE requires one non-negative integer hold frame count.',
+            absoluteBase + contentAt,
+          );
+        }
+        maximizeHoldFrames = int.parse(maximize.group(1)!);
+        payloadEnd = maximize.end;
+      }
+
+      if (payloadEnd == null ||
+          (request == null && maximizeHoldFrames == null)) {
         throw EditCueFormatException(
-          'CUE must contain exactly one CARD, SIDECARD, or DOSSIER presentation.',
+          'CUE must contain exactly one CARD, SIDECARD, DOSSIER, or MAXIMIZE payload.',
           absoluteBase + contentAt,
         );
       }
 
-      final PresentationRequest normalized = _normalizeNestedPresentationBody(
-        request,
-        source: source,
-        presentationStart: contentAt,
-      );
+      final PresentationRequest? normalized = request == null
+          ? null
+          : _normalizeNestedPresentationBody(
+              request,
+              source: source,
+              presentationStart: contentAt,
+            );
 
-      final int closeAt = _skipWhitespace(source, presentationEnd);
+      final int closeAt = _skipWhitespace(source, payloadEnd);
       if (!source.startsWith(_cueClosing, closeAt)) {
         throw EditCueFormatException(
-          'CUE must close immediately after its presentation, apart from whitespace.',
+          'CUE must close immediately after its payload, apart from whitespace.',
           absoluteBase + closeAt,
         );
       }
@@ -275,6 +347,7 @@ List<_ParsedEditCue> _parseClipPresentationCues(EditClip clip) {
         _ParsedEditCue(
           sourceFrame: sourceFrame,
           presentation: normalized,
+          maximizeHoldFrames: maximizeHoldFrames,
           startOffset: absoluteBase + cursor,
           endOffset: absoluteBase + end,
           rawSource: source.substring(cursor, end),
@@ -528,6 +601,45 @@ List<ActiveEditDossierCue> _activeDossierCues(
     }
   }
   return List<ActiveEditDossierCue>.unmodifiable(active);
+}
+
+/// Shell-only MAXIMIZE cues are meaningful for an EDIT root. They deliberately
+/// have no MosaicPane variant in v1 because a pane-local cue must not seize the
+/// geometry of the whole outer MOSAIC window.
+List<ActiveEditMaximizeCue> activeMaximizeCuesForEdit(
+  EditSequence edit,
+  int projectFrame,
+) {
+  if (projectFrame < 0 || projectFrame >= edit.projectFrameCount) {
+    return const <ActiveEditMaximizeCue>[];
+  }
+
+  final List<ActiveEditMaximizeCue> active = <ActiveEditMaximizeCue>[];
+  for (final EditClip clip
+      in edit.tracks.expand((EditTrack track) => track.clips)) {
+    for (final EditMaximizeCue cue in parseClipMaximizeCues(clip)) {
+      final int? trigger = cueProjectFrame(clip, cue.sourceFrame);
+      if (trigger == null || projectFrame < trigger) continue;
+
+      final int localFrame = projectFrame - trigger;
+      final MaximizePresentationFrame? presentationFrame =
+          MaximizePresentationTiming(
+        holdFrames: cue.holdFrames,
+      ).frameAt(localFrame);
+      if (presentationFrame == null) continue;
+
+      active.add(
+        ActiveEditMaximizeCue(
+          clip: clip,
+          cue: cue,
+          triggerProjectFrame: trigger,
+          localFrame: localFrame,
+          presentationFrame: presentationFrame,
+        ),
+      );
+    }
+  }
+  return List<ActiveEditMaximizeCue>.unmodifiable(active);
 }
 
 /// Returns the project-frame offset inside [clip] where [cueSourceFrame]
