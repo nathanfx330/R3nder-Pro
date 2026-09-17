@@ -8,17 +8,21 @@ import 'package:flutter/material.dart';
 
 import 'asset_manager.dart';
 import 'desktop_open.dart';
+import 'edit_media_import.dart';
 import 'editor_tag_menu.dart';
 import 'config_keys.dart';
 import 'folder_order.dart';
 import 'motion.dart';
 import 'folder_captions.dart';
 import 'presentation_requests.dart';
+import 'project_media_bin.dart';
+import 'project_media_bin_view.dart';
 import 'node_asset_preview.dart';
 import 'ui_theme.dart';
 import 'node_assets.dart';
 import 'script_nodes.dart';
 import 'structural_chrome_controls.dart';
+import 'text_media_attachment.dart';
 
 export 'node_assets.dart';
 export 'script_nodes.dart';
@@ -103,6 +107,13 @@ class EditorNodeWorkspace extends StatefulWidget {
   /// font" only, which is also the default.
   final List<String> availableFonts;
 
+  /// Test seams for the project video browser and timing conformer. Production
+  /// derives the workspace root from imagesDir and uses the shared media-bin
+  /// projection, thumbnail cache, and MLT conform path.
+  final ProjectMediaBinScanner? scanProjectMedia;
+  final ProjectMediaThumbnailLoader? loadProjectMediaThumbnail;
+  final ImportedEditVideo Function(String resolvedPath)? conformProjectMedia;
+
   /// Called whenever a node is edited so the parent can update its buffer
   /// and mark the document as dirty.
   final ValueChanged<String> onTextChanged;
@@ -145,6 +156,9 @@ class EditorNodeWorkspace extends StatefulWidget {
     required this.imagesDir,
     required this.spritesDir,
     this.availableFonts = const <String>[],
+    this.scanProjectMedia,
+    this.loadProjectMediaThumbnail,
+    this.conformProjectMedia,
     required this.onTextChanged,
     this.onAssetsChanged,
     this.initialSelectedNodeIndex,
@@ -1014,6 +1028,64 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     _lastAutoScrolledIdx = -1;
     setState(() {});
     widget.onTextChanged(_compose());
+  }
+
+  String get _projectWorkspaceRoot =>
+      Directory(widget.imagesDir).parent.absolute.path;
+
+  void _attachProjectMediaToTextNode(
+    ScriptNode node,
+    ProjectMediaItem item,
+  ) {
+    if (node.type != 'TEXT' || !item.isUsable) return;
+    if (_nodeIndexById(node.id) < 0) return;
+
+    final String source = _compose();
+    assignNodeSourceSpans(_nodes);
+
+    try {
+      final ImportedEditVideo media =
+          (widget.conformProjectMedia ?? conformWorkspaceMedia)(
+        item.resolvedPath,
+      );
+      final TextMediaAttachmentResult result = attachProjectMediaToText(
+        source: source,
+        textStartOffset: node.startOffset,
+        textEndOffset: node.endOffset,
+        media: media,
+      );
+
+      final List<ScriptNode> nextNodes = parseScriptToNodes(result.document);
+      assignNodeSourceSpans(nextNodes);
+      ScriptNode? attached;
+      for (final ScriptNode candidate in nextNodes) {
+        if (candidate.type == 'STRUCT' &&
+            candidate.startOffset == result.structuralStartOffset &&
+            candidate.param('source') == result.structuralSource) {
+          attached = candidate;
+          break;
+        }
+      }
+      if (attached == null) {
+        throw StateError('Attached STRUCT node could not be selected.');
+      }
+
+      _disposeControllers();
+      setState(() {
+        _nodes = nextNodes;
+        _selectedId = attached!.id;
+        _pinned = null;
+        _showRecyclePanel = false;
+        _lastAutoScrolledIdx = -1;
+        _recomputeLines();
+      });
+      widget.onTextChanged(result.document);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('ATTACH MEDIA FAILED — $error')));
+    }
   }
 
   // -------------------------------------------------------------------
@@ -2737,6 +2809,19 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         f.add(_fArea(node, 'Typing text', 'body', node.body,
             (v) => node.body = v,
             minLines: 6));
+        f.add(_hint('ATTACH MEDIA creates a one-clip EDIT and places it here '
+            'through STRUCT. The video stays reusable and its presentation '
+            'settings remain on the created STRUCT node.'));
+        f.add(_wrap(ProjectMediaBinPanel(
+          key: ValueKey<String>('text-project-media-bin-${node.id}'),
+          theme: widget.theme,
+          projectClockRunning: false,
+          workspaceRootResolver: () => _projectWorkspaceRoot,
+          scanMedia: widget.scanProjectMedia,
+          thumbnailLoader: widget.loadProjectMediaThumbnail,
+          onItemPressed: (ProjectMediaItem item) =>
+              _attachProjectMediaToTextNode(node, item),
+        )));
         if (node.prefix.isNotEmpty || node.suffix.isNotEmpty) {
           f.add(_hint('Surrounding blank lines are held outside this field, '
               'so the typed layout stays exactly as written.'));
