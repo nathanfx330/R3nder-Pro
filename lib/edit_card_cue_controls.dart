@@ -407,13 +407,21 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-heading-field',
                         ),
                         initialValue: headingDraft,
-                        decoration: const InputDecoration(labelText: 'Heading'),
+                        decoration: const InputDecoration(labelText: 'Heading / name'),
                         style: widget.theme.value,
                         onChanged: (String value) => headingDraft = value,
                       ),
                       SizedBox(height: sc(14)),
                       Text('PANEL CONTENT', style: widget.theme.microAccent),
-                      SizedBox(height: sc(7)),
+                      SizedBox(height: sc(4)),
+                      Text(
+                        'Documentary example: subtitle = Investigative Reporter. '
+                        'Metadata = ORGANIZATION | Example News, one item per line. '
+                        'Body = the plain biography paragraph shown below the facts.',
+                        key: const ValueKey<String>('edit-card-cue-panel-help'),
+                        style: widget.theme.fine.copyWith(color: R3Theme.textDim),
+                      ),
+                      SizedBox(height: sc(8)),
                       Row(
                         children: [
                           Expanded(
@@ -480,7 +488,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                       ),
                                       initialValue: fontDraft,
                                       decoration: const InputDecoration(
-                                        labelText: 'Font family (blank = project)',
+                                        labelText: 'Font family',
+                                        hintText: 'Blank = project font',
                                       ),
                                       style: widget.theme.value,
                                       onChanged: (String value) => fontDraft = value,
@@ -538,7 +547,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-subtitle-field',
                         ),
                         initialValue: subtitleDraft,
-                        decoration: const InputDecoration(labelText: 'Subtitle / role'),
+                        decoration: const InputDecoration(
+                          labelText: 'Subtitle / role',
+                          hintText: 'Investigative Reporter',
+                          helperText: 'Short line directly beneath the heading.',
+                        ),
                         style: widget.theme.value,
                         onChanged: (String value) => subtitleDraft = value,
                       ),
@@ -551,7 +564,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         minLines: 2,
                         maxLines: 5,
                         decoration: const InputDecoration(
-                          labelText: 'Metadata · one LABEL | VALUE per line',
+                          labelText: 'Metadata',
+                          hintText: 'ORGANIZATION | Example News\nLOCATION | Washington, DC',
+                          helperText: 'Format: LABEL | VALUE. One fact per line.',
                           alignLabelWithHint: true,
                         ),
                         style: widget.theme.value,
@@ -564,7 +579,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         minLines: 3,
                         maxLines: 7,
                         decoration: InputDecoration(
-                          labelText: 'Body',
+                          labelText: 'Biography / body copy',
+                          hintText:
+                              'This is a biography card running over the video. '
+                              'Add one to three sentences about the person or subject.',
+                          helperText:
+                              'Plain text only. The preset, font, subtitle and metadata above create the PANEL format.',
                           errorText: errorText,
                           alignLabelWithHint: true,
                         ),
