@@ -7,10 +7,11 @@
 // falsify the time axis. This painter is deliberately a separate pass above
 // the bands.
 //
-// There are only two visual treatments. Authored MARK definitions are strong;
-// every derived landmark shares the quieter treatment. CUE/IN/OUT remain
-// semantically distinct in the model, but at ribbon density four separate
-// glyph languages would be noise rather than information.
+// Authored MARK definitions keep the strongest treatment. Derived landmarks
+// retain their own timing semantics visually: CUE is amber, clip IN is green,
+// and clip OUT is red. IN and OUT also receive opposite sub-pixel offsets so
+// an outgoing clip boundary and the next clip's incoming boundary can both be
+// seen when they occupy the same exact frame.
 
 import 'package:flutter/material.dart';
 
@@ -117,6 +118,77 @@ class TimelineLandmarkPainter extends CustomPainter {
     return frame * (size.width / totalFrames);
   }
 
+  Color _derivedColor(DerivedLandmarkKind kind) {
+    final Color base;
+    switch (kind) {
+      case DerivedLandmarkKind.cue:
+        base = R3Theme.warn;
+        break;
+      case DerivedLandmarkKind.clipIn:
+        base = R3Theme.okGreen;
+        break;
+      case DerivedLandmarkKind.clipOut:
+        base = R3Theme.danger;
+        break;
+    }
+    return dimmed ? base.withValues(alpha: 0.30) : base.withValues(alpha: 0.82);
+  }
+
+  double _derivedOffset(DerivedLandmarkKind kind) {
+    switch (kind) {
+      case DerivedLandmarkKind.cue:
+        return 0.0;
+      case DerivedLandmarkKind.clipIn:
+        return sc(0.8);
+      case DerivedLandmarkKind.clipOut:
+        return -sc(0.8);
+    }
+  }
+
+  double _derivedTop(DerivedLandmarkKind kind, double height) {
+    switch (kind) {
+      case DerivedLandmarkKind.cue:
+        return height * 0.18;
+      case DerivedLandmarkKind.clipIn:
+      case DerivedLandmarkKind.clipOut:
+        return height * 0.42;
+    }
+  }
+
+  void _paintDerived(Canvas canvas, Size size, DerivedLandmark landmark) {
+    if (landmark.frame < 0 || landmark.frame > totalFrames) return;
+
+    final double rawX =
+        _xForFrame(landmark.frame, size) + _derivedOffset(landmark.kind);
+    final double x = rawX.clamp(0.0, size.width - 1.0);
+    final Color color = _derivedColor(landmark.kind);
+    final Paint paint = Paint()
+      ..color = color
+      ..strokeWidth = landmark.kind == DerivedLandmarkKind.cue ? sc(1.4) : sc(1);
+
+    canvas.drawLine(
+      Offset(x, _derivedTop(landmark.kind, size.height)),
+      Offset(x, size.height),
+      paint,
+    );
+
+    // The tiny boundary cap makes adjacent OUT/IN points readable even when
+    // their lines are only a couple of physical pixels apart.
+    if (landmark.kind == DerivedLandmarkKind.clipIn) {
+      canvas.drawLine(
+        Offset(x, size.height * 0.42),
+        Offset((x + sc(2.2)).clamp(0.0, size.width - 1.0), size.height * 0.42),
+        paint,
+      );
+    } else if (landmark.kind == DerivedLandmarkKind.clipOut) {
+      canvas.drawLine(
+        Offset(x, size.height * 0.42),
+        Offset((x - sc(2.2)).clamp(0.0, size.width - 1.0), size.height * 0.42),
+        paint,
+      );
+    }
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0 || totalFrames < 0) return;
@@ -124,26 +196,12 @@ class TimelineLandmarkPainter extends CustomPainter {
     final Color authoredColor = dimmed
         ? theme.accent.withValues(alpha: 0.35)
         : theme.accent;
-    final Color derivedColor = dimmed
-        ? R3Theme.textDim.withValues(alpha: 0.28)
-        : R3Theme.textDim.withValues(alpha: 0.78);
 
     // Derived truth first. Authored intent is painted last so a MARK and CUE
     // on the same frame still read as an authored marker rather than one fat
     // ambiguous line.
-    final Paint derivedPaint = Paint()
-      ..color = derivedColor
-      ..strokeWidth = sc(1);
-    final double derivedTop = size.height * 0.42;
     for (final DerivedLandmark landmark in derived) {
-      if (landmark.frame < 0 || landmark.frame > totalFrames) continue;
-      final double x = _xForFrame(landmark.frame, size)
-          .clamp(0.0, size.width - 1.0);
-      canvas.drawLine(
-        Offset(x, derivedTop),
-        Offset(x, size.height),
-        derivedPaint,
-      );
+      _paintDerived(canvas, size, landmark);
     }
 
     final Paint authoredPaint = Paint()
