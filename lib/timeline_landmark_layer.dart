@@ -2,13 +2,13 @@
 //
 // Shared zero-width landmark paint layer for TEXT and EDIT timelines.
 //
-// The coloured ribbon/clip bands describe intervals. MARK, CUE, presentation
-// OUT, clip IN, and clip OUT describe instants, so forcing them into
-// minimum-width blocks would falsify the time axis. This painter is
+// The coloured ribbon/clip bands describe intervals. MARK, presentation IN,
+// presentation OUT, clip IN, and clip OUT describe instants, so forcing them
+// into minimum-width blocks would falsify the time axis. This painter is
 // deliberately a separate pass above the bands.
 //
 // Authored MARK definitions keep the strongest treatment. Derived landmarks
-// retain their own timing semantics visually: CUE/presentation IN is amber,
+// retain their own timing semantics visually: presentation IN is amber,
 // CARD/SIDECARD presentation OUT is purple, clip IN is green, and clip OUT is
 // red. Clip IN and OUT receive opposite sub-pixel offsets so an outgoing clip
 // boundary and the next clip's incoming boundary can both be seen when they
@@ -122,7 +122,7 @@ class TimelineLandmarkPainter extends CustomPainter {
   Color _derivedColor(DerivedLandmarkKind kind) {
     final Color base;
     switch (kind) {
-      case DerivedLandmarkKind.cue:
+      case DerivedLandmarkKind.presentationIn:
         base = R3Theme.warn;
         break;
       case DerivedLandmarkKind.presentationOut:
@@ -140,7 +140,7 @@ class TimelineLandmarkPainter extends CustomPainter {
 
   double _derivedOffset(DerivedLandmarkKind kind) {
     switch (kind) {
-      case DerivedLandmarkKind.cue:
+      case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
         return 0.0;
       case DerivedLandmarkKind.clipIn:
@@ -152,7 +152,7 @@ class TimelineLandmarkPainter extends CustomPainter {
 
   double _derivedTop(DerivedLandmarkKind kind, double height) {
     switch (kind) {
-      case DerivedLandmarkKind.cue:
+      case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
         return height * 0.18;
       case DerivedLandmarkKind.clipIn:
@@ -163,7 +163,7 @@ class TimelineLandmarkPainter extends CustomPainter {
 
   double _strokeWidth(DerivedLandmarkKind kind) {
     switch (kind) {
-      case DerivedLandmarkKind.cue:
+      case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
         return sc(1.4);
       case DerivedLandmarkKind.clipIn:
@@ -194,7 +194,7 @@ class TimelineLandmarkPainter extends CustomPainter {
     // shape without turning the eight-pixel landmark lane into another track.
     // CARD/SIDECARD uses the upper tier. Clip boundaries use the lower tier.
     switch (landmark.kind) {
-      case DerivedLandmarkKind.cue:
+      case DerivedLandmarkKind.presentationIn:
         canvas.drawLine(
           Offset(x, top),
           Offset((x + sc(2.4)).clamp(0.0, size.width - 1.0), top),
@@ -233,9 +233,9 @@ class TimelineLandmarkPainter extends CustomPainter {
         ? theme.accent.withValues(alpha: 0.35)
         : theme.accent;
 
-    // Derived truth first. Authored intent is painted last so a MARK and CUE
-    // on the same frame still read as an authored marker rather than one fat
-    // ambiguous line.
+    // Derived truth first. Authored intent is painted last so a MARK and
+    // presentation IN on the same frame still read as an authored marker
+    // rather than one fat ambiguous line.
     for (final DerivedLandmark landmark in derived) {
       _paintDerived(canvas, size, landmark);
     }
