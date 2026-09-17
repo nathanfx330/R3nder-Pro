@@ -14,6 +14,7 @@ void main() {
         [CARD:person.png:90:24,32,40:JOHN SMITH]
           [PANEL]
           PRESET: DOCUMENTARY
+          FONT: IBM Plex Sans
           SUBTITLE: Investigative Reporter
           META: ORGANIZATION | Example News
           META: LOCATION | Washington, DC
@@ -38,6 +39,7 @@ void main() {
     expect(content.structured, isTrue);
     expect(content.preset, PresentationPanelPreset.documentary);
     expect(content.heading, 'JOHN SMITH');
+    expect(content.fontFamily, 'IBM Plex Sans');
     expect(content.subtitle, 'Investigative Reporter');
     expect(content.metadata, hasLength(2));
     expect(content.metadata.first.label, 'ORGANIZATION');
@@ -45,7 +47,7 @@ void main() {
     expect(content.body, 'Reported on the case for six years.');
   });
 
-  test('SIDECARD uses the same documentary content contract', () {
+  test('SIDECARD uses the same documentary content and font contract', () {
     const String source = '''[EDIT:cut]
   [TRACK:V1]
     [CLIP:a:a.mp4:0:0:120:1]
@@ -53,6 +55,7 @@ void main() {
         [SIDECARD:person.png:90:24,32,40:JOHN SMITH]
           [PANEL]
           PRESET: DOCUMENTARY
+          FONT: DejaVu Serif
           SUBTITLE: Investigative Reporter
           META: FILE | A-104
           [/PANEL]
@@ -74,6 +77,7 @@ void main() {
 
     expect(cue.isSideCard, isTrue);
     expect(content.preset, PresentationPanelPreset.documentary);
+    expect(content.fontFamily, 'DejaVu Serif');
     expect(content.metadata.single.value, 'A-104');
     expect(content.body, 'Biography.');
   });
