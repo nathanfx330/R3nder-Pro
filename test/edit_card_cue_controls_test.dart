@@ -30,6 +30,23 @@ const String _sourceWithCue = '''[EDIT:main]
 [/EDIT]
 ''';
 
+const String _sourceWithDocumentaryDefaultKicker = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:40]
+        [CARD:old.png:30:30,30,38:OLD]
+          [PANEL]
+          PRESET: DOCUMENTARY
+          SUBTITLE: Reporter
+          [/PANEL]
+          Biography.
+        [/CARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
 const String _sourceWithFuturePanelKey = '''[EDIT:main]
   [TRACK:V1]
     [CLIP:shot:video/shot.mp4:0:0:300:1]
@@ -234,6 +251,88 @@ void main() {
       ],
     );
     expect(parsed.body, 'Biography text.');
+  });
+
+  testWidgets('default documentary top label is visible but stays implicit',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithDocumentaryDefaultKicker,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+    CardRequest? changedCard;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) => changedCard = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    final Finder kicker =
+        find.byKey(const ValueKey<String>('edit-card-cue-kicker-field'));
+    await tester.ensureVisible(kicker);
+    final EditableText editable = tester.widget<EditableText>(
+      find.descendant(of: kicker, matching: find.byType(EditableText)),
+    );
+    expect(editable.controller.text, 'PROFILE / DOCUMENTARY');
+
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changedCard, isNotNull);
+    expect(changedCard!.body, isNot(contains('KICKER:')));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(parsed.kicker, isEmpty);
+    expect(
+      presentationPanelDefaultKicker(parsed.preset),
+      'PROFILE / DOCUMENTARY',
+    );
+  });
+
+  testWidgets('top photo label can be replaced from the GUI',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithDocumentaryDefaultKicker,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+    CardRequest? changedCard;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) => changedCard = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    final Finder kicker =
+        find.byKey(const ValueKey<String>('edit-card-cue-kicker-field'));
+    await tester.ensureVisible(kicker);
+    await tester.enterText(kicker, 'INTERVIEW SUBJECT');
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
+    await tester.pumpAndSettle();
+
+    expect(changedCard, isNotNull);
+    expect(changedCard!.body, contains('KICKER: INTERVIEW SUBJECT'));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(parsed.kicker, 'INTERVIEW SUBJECT');
   });
 
   testWidgets('GUI preserves unknown PANEL directives on edit',
