@@ -15,6 +15,7 @@ void main() {
     expect(content.structured, isFalse);
     expect(content.preset, PresentationPanelPreset.simple);
     expect(content.heading, 'ALICE');
+    expect(content.kicker, isEmpty);
     expect(content.fontFamily, isEmpty);
     expect(content.subtitle, isEmpty);
     expect(content.metadata, isEmpty);
@@ -22,9 +23,10 @@ void main() {
     expect(content.issues, isEmpty);
   });
 
-  test('documentary block parses font subtitle metadata and biography', () {
+  test('documentary block parses kicker font subtitle metadata and biography', () {
     const String body = '''[PANEL]
 PRESET: DOCUMENTARY
+KICKER: ARCHIVE / INTERVIEW
 FONT: IBM Plex Sans
 SUBTITLE: Investigative Reporter
 META: ORGANIZATION | Example News
@@ -42,6 +44,7 @@ Reported on the case for six years.''';
     expect(content.hasErrors, isFalse);
     expect(content.preset, PresentationPanelPreset.documentary);
     expect(content.heading, 'ALICE MORGAN');
+    expect(content.kicker, 'ARCHIVE / INTERVIEW');
     expect(content.fontFamily, 'IBM Plex Sans');
     expect(content.subtitle, 'Investigative Reporter');
     expect(
@@ -102,6 +105,7 @@ Biography.''';
 
     final String rewritten = formatPresentationPanelBody(
       preset: parsed.preset,
+      kicker: parsed.kicker,
       fontFamily: parsed.fontFamily,
       subtitle: parsed.subtitle,
       metadata: parsed.metadata,
@@ -176,6 +180,25 @@ PRESET: DOCUMENTARRY
     );
   });
 
+  test('a kicker alone intentionally promotes SIMPLE to structured PANEL', () {
+    final String body = formatPresentationPanelBody(
+      preset: PresentationPanelPreset.simple,
+      kicker: 'ARCHIVE / INTERVIEW',
+      subtitle: '',
+      metadata: const <PresentationPanelMetadata>[],
+      body: 'Biography.',
+    );
+
+    expect(body, contains('PRESET: SIMPLE'));
+    expect(body, contains('KICKER: ARCHIVE / INTERVIEW'));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: body,
+    );
+    expect(parsed.kicker, 'ARCHIVE / INTERVIEW');
+    expect(parsed.body, 'Biography.');
+  });
+
   test('a font alone intentionally promotes SIMPLE to structured PANEL', () {
     final String body = formatPresentationPanelBody(
       preset: PresentationPanelPreset.simple,
@@ -196,9 +219,10 @@ PRESET: DOCUMENTARRY
     expect(parsed.body, 'Biography.');
   });
 
-  test('canonical writer round trips DOSSIER structured content and font', () {
+  test('canonical writer round trips DOSSIER structured content font and kicker', () {
     final String body = formatPresentationPanelBody(
       preset: PresentationPanelPreset.dossier,
+      kicker: 'CASE FILE / 17A',
       fontFamily: 'DejaVu Sans',
       subtitle: 'Case Officer',
       metadata: const <PresentationPanelMetadata>[
@@ -215,6 +239,7 @@ PRESET: DOCUMENTARRY
 
     expect(parsed.structured, isTrue);
     expect(parsed.preset, PresentationPanelPreset.dossier);
+    expect(parsed.kicker, 'CASE FILE / 17A');
     expect(parsed.fontFamily, 'DejaVu Sans');
     expect(parsed.subtitle, 'Case Officer');
     expect(parsed.metadata, hasLength(2));
