@@ -1,0 +1,37 @@
+name: Phase 7 minimal timeline ergonomics test
+
+on:
+  push:
+    branches:
+      - phase7-timeline-minimal
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+      - name: Apply minimal Phase 7 integration
+        run: python3 tool/phase7_apply.py
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Run Phase 7 regression set
+        run: |
+          flutter test             test/timeline_snap_test.dart             test/project_media_bin_view_test.dart             test/edit_surface_test.dart             test/edit_workspace_media_drag_test.dart             test/edit_surface_model_test.dart
+      - name: Persist tested Phase 7 changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add             lib/timeline_snap.dart             lib/project_media_bin_view.dart             lib/edit_surface.dart             test/timeline_snap_test.dart             test/project_media_bin_view_test.dart             test/edit_surface_test.dart             test/edit_workspace_media_drag_test.dart
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Improve media bin and timeline dragging'
+          git push origin HEAD:phase7-timeline-minimal
