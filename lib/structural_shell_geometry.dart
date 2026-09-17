@@ -42,6 +42,42 @@ class StructuralShellFrame {
   final bool structuralWindowPresent;
 }
 
+/// Geometry-only result of applying a MAXIMIZE shell amount to an already
+/// evaluated structural window.
+///
+/// [windowChrome] is 1 for the ordinary desktop window and 0 at fullscreen.
+/// Callers deliberately suppress this transform when the STRUCT placement is
+/// authored FULL so a geometrically redundant MAXIMIZE cannot fade its chrome
+/// as a side effect.
+class StructuralMaximizeGeometryFrame {
+  const StructuralMaximizeGeometryFrame({
+    required this.structuralRect,
+    required this.windowChrome,
+  });
+
+  final Rect structuralRect;
+  final double windowChrome;
+}
+
+/// Applies MAXIMIZE after base STRUCT shell geometry (and, when allowed by the
+/// caller, after any shell displacement).
+///
+/// Works in any coordinate space. Preview passes program pixels and BAKE passes
+/// normalized output coordinates, so both paths consume exactly one easing and
+/// rectangle interpolation policy.
+StructuralMaximizeGeometryFrame structuralMaximizeGeometryFrameAt({
+  required Rect baseRect,
+  required Rect fullRect,
+  required double amount,
+}) {
+  final double linear = amount.clamp(0.0, 1.0).toDouble();
+  final double eased = Curves.easeInOutCubic.transform(linear);
+  return StructuralMaximizeGeometryFrame(
+    structuralRect: Rect.lerp(baseRect, fullRect, eased)!,
+    windowChrome: 1.0 - eased,
+  );
+}
+
 /// Shared emergence rectangle used before/after the seated structural window.
 ///
 /// Works in any coordinate space. Preview passes fitted-program pixels; BAKE
@@ -61,9 +97,9 @@ Rect structuralShellEmergenceRect(Rect target) {
 /// Evaluates the complete terminal/desktop/structural-window shell.
 ///
 /// All rectangles must use the same coordinate space. [closingOriginRect] is
-/// supplied by the caller because SIDECARD/DOSSIER source-truncation geometry
-/// is presentation-specific; once that origin is known, the STRUCT close itself
-/// is common.
+/// supplied by the caller because source-truncation geometry can be owned by a
+/// shell presentation such as SIDECARD, DOSSIER, or MAXIMIZE; once that origin
+/// is known, the STRUCT close itself is common.
 ///
 /// [contentReady] is the one deliberate Preview/BAKE difference. Live Preview
 /// can hold opening/showing visibility until decoded client pixels are resident;
