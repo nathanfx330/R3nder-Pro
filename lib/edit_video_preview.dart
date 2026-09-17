@@ -14,9 +14,13 @@
 // CARD-family and DOSSIER CUEs are presentation projections over those same
 // structural pixels. Ordinary CARD paints over the client pixels. Standalone
 // EDIT preview may self-stage SIDECARD or DOSSIER by redrawing those pixels into
-// a desktop-style video window. Program STRUCT preview uses [structuralSource]
-// and therefore leaves DOSSIER to the real outer structural window; no nested
-// window, second decoder, or second clock is introduced.
+// a desktop-style video window. An EDIT that owns MAXIMIZE cues also keeps a
+// stable fake window shell before and after the cue so the authoring preview has
+// a visible geometry to return to. That shell requires CPU client pixels, so the
+// direct EDIT preview deliberately bypasses the external-texture fast path while
+// such cues exist. Program STRUCT preview uses [structuralSource] and leaves all
+// outer shell movement to the real STRUCT window; no nested window, second
+// decoder, or second clock is introduced.
 //
 // Audio deliberately does not live here. EditWorkspace owns authoring transport
 // and source-audio audition; program Preview owns the program mix. Keeping this
@@ -420,6 +424,16 @@ class _EditVideoPreviewState extends State<EditVideoPreview> {
         root != null &&
         root.id.isNotEmpty &&
         model.containsStructuralSource(root)) {
+      // Standalone EDIT MAXIMIZE redraws the decoded client into a stable fake
+      // desktop/window shell. A Texture cannot be sampled by that painter, so
+      // keep this authoring context on the deterministic CPU frame path. The
+      // real TEXT/STRUCT shell sets renderSideCardsInClient=false and retains
+      // its normal decoder behavior.
+      if (widget.renderSideCardsInClient &&
+          structuralSourceHasMaximizeCues(model, root)) {
+        return null;
+      }
+
       final List<StructuralCardOverlayPlacement> overlays =
           structuralCardOverlayPlacements(model, root, projectFrame);
       if (overlays.any(_overlayNeedsClientPixels)) {
