@@ -23,7 +23,9 @@ jobs:
           cache: true
 
       - name: Apply Phase 0 source changes
-        run: python3 tool/phase0_apply.py
+        run: |
+          python3 tool/phase0_apply.py
+          python3 tool/phase0_test_adjust.py
 
       - name: Format changed Dart files
         run: |
@@ -42,14 +44,18 @@ jobs:
       - name: Resolve Flutter packages
         run: flutter pub get
 
-      - name: Run targeted Phase 0 tests
+      - name: Run core Phase 0 tests
         run: |
           flutter test \
             test/edit_media_import_test.dart \
             test/edit_clip_creation_test.dart \
             test/edit_media_placement_test.dart \
-            test/edit_surface_model_test.dart \
-            test/edit_workspace_test.dart
+            test/edit_surface_model_test.dart
+
+      - name: Run Add Video append regression
+        run: >-
+          flutter test test/edit_workspace_test.dart
+          --plain-name "ADD VIDEO appends when playhead is inside existing V1 clip"
 
       - name: Confirm retired writer has no references
         run: |
@@ -60,7 +66,11 @@ jobs:
 
       - name: Commit implementation and remove temporary harness
         run: |
-          git rm -f .github/workflows/phase0-audit.yml .github/workflows/phase0-apply.yml tool/phase0_apply.py
+          git rm -f \
+            .github/workflows/phase0-audit.yml \
+            .github/workflows/phase0-apply.yml \
+            tool/phase0_apply.py \
+            tool/phase0_test_adjust.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add lib test docs
