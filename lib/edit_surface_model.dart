@@ -130,57 +130,6 @@ class EditSurfaceTrack {
   String get id => track.id;
 }
 
-String createEditWithClip({
-  required String source,
-  required String editId,
-  required String trackId,
-  required String clipId,
-  required String mediaSource,
-  required int atFrame,
-  required int durationFrames,
-}) {
-  _validateInsertedClip(
-    editId: editId,
-    trackId: trackId,
-    clipId: clipId,
-    mediaSource: mediaSource,
-    atFrame: atFrame,
-    durationFrames: durationFrames,
-  );
-
-  final EditDocumentModel existing = EditDocumentModel.parse(source);
-  if (existing.edits.isNotEmpty) {
-    throw StateError('createEditWithClip requires a document with no EDIT blocks.');
-  }
-
-  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
-  final StringBuffer out = StringBuffer(source);
-  if (source.isNotEmpty &&
-      !source.endsWith('\n') &&
-      !source.endsWith('\r')) {
-    out.write(lineEnding);
-  }
-
-  out
-    ..write('[EDIT:$editId]$lineEnding')
-    ..write('  [TRACK:$trackId]$lineEnding')
-    ..write('    ${_clipOpeningTagStatic(
-      id: clipId,
-      source: mediaSource,
-      atFrame: atFrame,
-      inFrame: 0,
-      durationFrames: durationFrames,
-      speed: ExactClipSpeed(1),
-    )}$lineEnding')
-    ..write('    [/CLIP]$lineEnding')
-    ..write('  [/TRACK]$lineEnding')
-    ..write('[/EDIT]$lineEnding');
-
-  final String next = out.toString();
-  EditSurfaceDocument.parse(next, editId);
-  return next;
-}
-
 class EditSurfaceDocument {
   static final RegExp _incomingTransitionLine = RegExp(
     r'^[ \t]*\[#EDIT_TRANSITION:(CROSSFADE:\d+|LUMA:[^:\r\n\]]+:\d+)\][ \t]*(\r?\n)?',
@@ -308,6 +257,8 @@ class EditSurfaceDocument {
     required String mediaSource,
     required int atFrame,
     required int durationFrames,
+    int inFrame = 0,
+    ExactClipSpeed speed = ExactClipSpeed.unity,
   }) {
     _validateInsertedClip(
       editId: editId,
@@ -315,6 +266,7 @@ class EditSurfaceDocument {
       clipId: clipId,
       mediaSource: mediaSource,
       atFrame: atFrame,
+      inFrame: inFrame,
       durationFrames: durationFrames,
     );
 
@@ -322,9 +274,9 @@ class EditSurfaceDocument {
       id: clipId,
       source: mediaSource,
       atFrame: atFrame,
-      inFrame: 0,
+      inFrame: inFrame,
       durationFrames: durationFrames,
-      speed: ExactClipSpeed(1),
+      speed: speed,
     );
     final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
     final EditSurfaceTrack? existingTrack = trackOrNull(trackId);
@@ -783,6 +735,7 @@ void _validateInsertedClip({
   required String clipId,
   required String mediaSource,
   required int atFrame,
+  required int inFrame,
   required int durationFrames,
 }) {
   for (final MapEntry<String, String> entry in <String, String>{
@@ -812,6 +765,9 @@ void _validateInsertedClip({
   }
   if (atFrame < 0) {
     throw ArgumentError.value(atFrame, 'atFrame', 'Must be non-negative.');
+  }
+  if (inFrame < 0) {
+    throw ArgumentError.value(inFrame, 'inFrame', 'Must be non-negative.');
   }
   if (durationFrames <= 0) {
     throw ArgumentError.value(

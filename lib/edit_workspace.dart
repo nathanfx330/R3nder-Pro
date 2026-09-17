@@ -35,6 +35,7 @@ import 'package:flutter/scheduler.dart';
 import 'audio_bed.dart';
 import 'edit_linter.dart';
 import 'edit_media_import.dart';
+import 'edit_media_placement.dart';
 import 'edit_model.dart';
 import 'edit_playback_clock.dart';
 import 'edit_playback_frame.dart';
@@ -876,54 +877,45 @@ class _EditWorkspaceState extends State<EditWorkspace>
       final ImportedEditVideo imported =
           (widget.importVideo ?? importVideoToWorkspace)(picked);
       final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
-      final ExactClipSpeed importedSpeed = ExactClipSpeed(
-        imported.speedNumerator,
-        imported.speedDenominator,
-      );
 
-      late String next;
-      late String targetEditId;
-      late String targetClipId;
-
+      late final String targetEditId;
       if (model.edits.isEmpty) {
         targetEditId = 'main';
-        targetClipId = imported.clipBaseId;
-        next = createEditWithClip(
-          source: _workingSource,
-          editId: targetEditId,
-          trackId: trackId,
-          clipId: targetClipId,
-          mediaSource: imported.authoredSource,
-          atFrame: _displayFrame,
-          durationFrames: imported.durationFrames,
-        );
       } else {
         final StructuralSourceRef? selected = _selectedRefFor(model);
         targetEditId = selected?.kind == StructuralSourceKind.edit
             ? selected!.id
             : model.edits.first.id;
-        final EditSurfaceDocument document =
-            EditSurfaceDocument.parse(_workingSource, targetEditId);
-        targetClipId = document.nextClipId(trackId, imported.clipBaseId);
-        next = document.addClip(
-          trackId: trackId,
-          clipId: targetClipId,
-          mediaSource: imported.authoredSource,
-          atFrame: _displayFrame,
-          durationFrames: imported.durationFrames,
-        );
       }
 
-      if (importedSpeed != ExactClipSpeed(1)) {
-        next = EditSurfaceDocument.parse(next, targetEditId).setSpeed(
-          trackId,
-          targetClipId,
-          importedSpeed,
-        );
+      // ADD VIDEO is an append gesture. It has no spatial coordinate of its
+      // own, so V1 no longer borrows the transport playhead as hidden input.
+      // ADD OVERLAY retains its established playhead behavior on V2.
+      int atFrame = _displayFrame;
+      if (trackId == 'V1') {
+        final bool targetExists =
+            model.edits.any((EditSequence edit) => edit.id == targetEditId);
+        atFrame = targetExists
+            ? appendFrameForTrack(
+                EditSurfaceDocument.parse(_workingSource, targetEditId),
+                trackId,
+              )
+            : 0;
       }
+
+      final MediaPlacementResult placed = placeMediaInEdit(
+        source: _workingSource,
+        media: imported,
+        editId: targetEditId,
+        trackId: trackId,
+        atFrame: atFrame,
+      );
 
       if (!mounted) return;
-      _applySourceChange(next, selectSource: 'EDIT.$targetEditId');
+      _applySourceChange(
+        placed.document,
+        selectSource: 'EDIT.${placed.editId}',
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = '$error');
@@ -934,28 +926,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
   void _newEdit(EditDocumentModel model) {
     if (_exporting || _startingPlayback) return;
-    final Set<String> ids = model.edits.map((EditSequence edit) => edit.id).toSet();
-    String id = 'edit';
-    int suffix = 2;
-    while (ids.contains(id)) {
-      id = 'edit_$suffix';
-      suffix++;
-    }
+    final String id = uniqueEditId(model, 'edit');
 
-    final String newline = _workingSource.contains('\r\n') ? '\r\n' : '\n';
-    final StringBuffer out = StringBuffer(_workingSource);
-    if (_workingSource.isNotEmpty &&
-        !_workingSource.endsWith('\n') &&
-        !_workingSource.endsWith('\r')) {
-      out.write(newline);
+    try {
+      final String next = appendEmptyEdit(source: _workingSource, editId: id);
+      _applySourceChange(next, selectSource: 'EDIT.$id');
+    } catch (error) {
+      setState(() => _error = '$error');
     }
-    out
-      ..write('[EDIT:$id]$newline')
-      ..write('[/EDIT]$newline');
-
-    final String next = out.toString();
-    EditDocumentModel.parse(next);
-    _applySourceChange(next, selectSource: 'EDIT.$id');
   }
 
   void _newMosaic(EditDocumentModel model) {
