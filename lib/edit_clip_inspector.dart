@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'edit_card_cue_controls.dart';
 import 'edit_cue.dart';
 import 'edit_dossier_cue_controls.dart';
+import 'edit_maximize_cue_controls.dart';
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
 import 'presentation_requests.dart';
@@ -29,6 +30,7 @@ class EditClipInspector extends StatelessWidget {
   final ValueChanged<bool>? onMutedChanged;
   final List<EditCardCue> cardCues;
   final List<EditDossierCue> dossierCues;
+  final List<EditMaximizeCue> maximizeCues;
   final int playheadFrame;
   final List<String> Function()? cardImageOptions;
   final List<String> Function()? dossierFolderOptions;
@@ -39,6 +41,9 @@ class EditClipInspector extends StatelessWidget {
   final ValueChanged<DossierRequest>? onAddDossierCueAtPlayhead;
   final EditDossierCueChanged? onDossierCueChanged;
   final ValueChanged<int>? onDossierCueDeleted;
+  final ValueChanged<int>? onAddMaximizeCueAtPlayhead;
+  final EditMaximizeCueChanged? onMaximizeCueChanged;
+  final ValueChanged<int>? onMaximizeCueDeleted;
   final VoidCallback? onDelete;
 
   const EditClipInspector({
@@ -53,6 +58,7 @@ class EditClipInspector extends StatelessWidget {
     this.onMutedChanged,
     this.cardCues = const <EditCardCue>[],
     this.dossierCues = const <EditDossierCue>[],
+    this.maximizeCues = const <EditMaximizeCue>[],
     this.playheadFrame = 0,
     this.cardImageOptions,
     this.dossierFolderOptions,
@@ -63,6 +69,9 @@ class EditClipInspector extends StatelessWidget {
     this.onAddDossierCueAtPlayhead,
     this.onDossierCueChanged,
     this.onDossierCueDeleted,
+    this.onAddMaximizeCueAtPlayhead,
+    this.onMaximizeCueChanged,
+    this.onMaximizeCueDeleted,
     this.onDelete,
   });
 
@@ -212,6 +221,22 @@ class EditClipInspector extends StatelessWidget {
                   onAddAtPlayhead: onAddDossierCueAtPlayhead,
                   onChanged: onDossierCueChanged,
                   onDeleted: onDossierCueDeleted,
+                ),
+                SizedBox(height: sc(10)),
+                _sectionDivider(),
+                R3MicroLabel('MAXIMIZE CUES', theme: theme, accent: true),
+                SizedBox(height: sc(7)),
+                EditMaximizeCueControls(
+                  key: ValueKey<String>(
+                    'edit-maximize-cues:${selected.trackId}:${selected.id}',
+                  ),
+                  clip: selected,
+                  cues: maximizeCues,
+                  playheadFrame: playheadFrame,
+                  theme: theme,
+                  onAddAtPlayhead: onAddMaximizeCueAtPlayhead,
+                  onChanged: onMaximizeCueChanged,
+                  onDeleted: onMaximizeCueDeleted,
                 ),
                 SizedBox(height: sc(10)),
               ],
