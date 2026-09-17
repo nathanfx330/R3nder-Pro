@@ -415,9 +415,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Text('PANEL CONTENT', style: widget.theme.microAccent),
                       SizedBox(height: sc(4)),
                       Text(
-                        'Documentary example: subtitle = Investigative Reporter. '
-                        'Metadata = ORGANIZATION | Example News, one item per line. '
-                        'Body = the plain biography paragraph shown below the facts.',
+                        'The card reads top to bottom: name → role → fact rows → biography. '
+                        'Fact rows are short LABEL | VALUE items. The biography is normal prose beneath them.',
                         key: const ValueKey<String>('edit-card-cue-panel-help'),
                         style: widget.theme.fine.copyWith(color: R3Theme.textDim),
                       ),
@@ -564,27 +563,35 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         minLines: 2,
                         maxLines: 5,
                         decoration: const InputDecoration(
-                          labelText: 'Metadata',
+                          labelText: 'Fact rows / metadata',
                           hintText: 'ORGANIZATION | Example News\nLOCATION | Washington, DC',
-                          helperText: 'Format: LABEL | VALUE. One fact per line.',
+                          helperText:
+                              'Short facts shown ABOVE the biography. Use LABEL | VALUE, one fact per line.',
                           alignLabelWithHint: true,
                         ),
                         style: widget.theme.value,
                         onChanged: (String value) => metadataDraft = value,
                       ),
-                      SizedBox(height: sc(10)),
+                      SizedBox(height: sc(14)),
+                      Text('BIOGRAPHY', style: widget.theme.microAccent),
+                      SizedBox(height: sc(4)),
+                      Text(
+                        'This is the paragraph that appears below the fact rows. Write ordinary sentences here, not another metadata tag.',
+                        key: const ValueKey<String>('edit-card-cue-biography-help'),
+                        style: widget.theme.fine.copyWith(color: R3Theme.textDim),
+                      ),
+                      SizedBox(height: sc(7)),
                       TextFormField(
                         key: const ValueKey<String>('edit-card-cue-body-field'),
                         initialValue: bodyDraft,
                         minLines: 3,
                         maxLines: 7,
                         decoration: InputDecoration(
-                          labelText: 'Biography / body copy',
+                          labelText: 'Biography paragraph (optional)',
                           hintText:
-                              'This is a biography card running over the video. '
-                              'Add one to three sentences about the person or subject.',
+                              'John Smith joined Example News in 2018. His reporting focused on the people and organizations behind the story.',
                           helperText:
-                              'Plain text only. The preset, font, subtitle and metadata above create the PANEL format.',
+                              'Normal prose shown BELOW metadata. Do not use LABEL | VALUE here.',
                           errorText: errorText,
                           alignLabelWithHint: true,
                         ),
