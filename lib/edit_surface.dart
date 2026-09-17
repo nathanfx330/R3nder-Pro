@@ -154,8 +154,6 @@ class _EditSurfaceState extends State<EditSurface> {
       _history.clear();
     } else if (widget.source != oldWidget.source &&
         widget.source != _workingSource) {
-      // An outside source replacement is a new authoring branch. Keeping old
-      // EDIT snapshots would let undo replay stale source over the new branch.
       _workingSource = widget.source;
       _error = null;
       _history.clear();
@@ -423,6 +421,14 @@ class _EditSurfaceState extends State<EditSurface> {
     }
   }
 
+  List<EditMaximizeCue> _maximizeCuesFor(EditSurfaceClip selected) {
+    try {
+      return parseClipMaximizeCues(selected.clip);
+    } catch (_) {
+      return const <EditMaximizeCue>[];
+    }
+  }
+
   void _addSelectedCardCue(EditSurfaceClip selected, CardRequest card) {
     final int frame = _effectiveFrame;
     final bool changed = _commit((EditSurfaceDocument current) {
@@ -503,6 +509,49 @@ class _EditSurfaceState extends State<EditSurface> {
   void _deleteSelectedDossierCue(EditSurfaceClip selected, int cueIndex) {
     final bool changed = _commit((EditSurfaceDocument current) {
       return deleteDossierCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _addSelectedMaximizeCue(EditSurfaceClip selected, int holdFrames) {
+    final int frame = _effectiveFrame;
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return addMaximizeCueAtProjectFrame(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        projectFrame: frame,
+        holdFrames: holdFrames,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _updateSelectedMaximizeCue(
+    EditSurfaceClip selected,
+    int cueIndex,
+    int holdFrames,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return updateMaximizeCue(
+        document: current,
+        trackId: selected.trackId,
+        clipId: selected.id,
+        cueIndex: cueIndex,
+        holdFrames: holdFrames,
+      );
+    });
+    if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  void _deleteSelectedMaximizeCue(EditSurfaceClip selected, int cueIndex) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return deleteMaximizeCue(
         document: current,
         trackId: selected.trackId,
         clipId: selected.id,
@@ -609,8 +658,6 @@ class _EditSurfaceState extends State<EditSurface> {
       return KeyEventResult.handled;
     }
 
-    // Timeline-scoped only. Inspector/text fields own the ordinary M key while
-    // they have focus, so this never steals a typed character from an editor.
     if (!command && key == LogicalKeyboardKey.keyM) {
       _addMarkerAtPlayhead();
       return KeyEventResult.handled;
@@ -802,16 +849,16 @@ class _EditSurfaceState extends State<EditSurface> {
     final List<EditDossierCue> selectedDossierCues = selected == null
         ? const <EditDossierCue>[]
         : _dossierCuesFor(selected);
+    final List<EditMaximizeCue> selectedMaximizeCues = selected == null
+        ? const <EditMaximizeCue>[]
+        : _maximizeCuesFor(selected);
 
     List<MarkerInstance> timelineMarkers = const <MarkerInstance>[];
     List<DerivedLandmark> timelineDerived = const <DerivedLandmark>[];
     try {
       timelineMarkers = projectEditMarkerInstances(_workingSource, widget.editId);
       timelineDerived = derivedLandmarksForEdit(_workingSource, widget.editId);
-    } catch (_) {
-      // EDIT remains a repair surface. A malformed MARK must not hide the
-      // underlying clips or prevent the user from fixing source text.
-    }
+    } catch (_) {}
 
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
@@ -968,6 +1015,7 @@ class _EditSurfaceState extends State<EditSurface> {
                       : (bool muted) => _setSelectedMuted(selected, muted),
                   cardCues: selectedCardCues,
                   dossierCues: selectedDossierCues,
+                  maximizeCues: selectedMaximizeCues,
                   playheadFrame: _effectiveFrame,
                   cardImageOptions: selected == null ? null : _cardImageOptions,
                   dossierFolderOptions:
@@ -1003,6 +1051,23 @@ class _EditSurfaceState extends State<EditSurface> {
                       ? null
                       : (int cueIndex) =>
                           _deleteSelectedDossierCue(selected, cueIndex),
+                  onAddMaximizeCueAtPlayhead:
+                      selected == null || widget.isPlaying
+                          ? null
+                          : (int holdFrames) =>
+                              _addSelectedMaximizeCue(selected, holdFrames),
+                  onMaximizeCueChanged: selected == null
+                      ? null
+                      : (int cueIndex, int holdFrames) =>
+                          _updateSelectedMaximizeCue(
+                            selected,
+                            cueIndex,
+                            holdFrames,
+                          ),
+                  onMaximizeCueDeleted: selected == null
+                      ? null
+                      : (int cueIndex) =>
+                          _deleteSelectedMaximizeCue(selected, cueIndex),
                   onDelete:
                       selected == null ? null : () => _deleteSelected(document),
                 ),
