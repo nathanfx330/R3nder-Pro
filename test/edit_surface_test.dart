@@ -71,6 +71,44 @@ void main() {
     );
   });
 
+  testWidgets('moving a clip snaps to the playhead and shows a guide', (
+    WidgetTester tester,
+  ) async {
+    String? changed;
+    await tester.pumpWidget(
+      _host(
+        currentFrame: 25,
+        onSourceChanged: (String value) => changed = value,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder intro = find.text('intro');
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(intro),
+    );
+    await gesture.moveBy(const Offset(28, 0));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-snap-guide-V1')),
+      findsOneWidget,
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(changed, isNotNull);
+    expect(
+      changed,
+      contains('[CLIP:intro:video/intro.mp4:25:20:40:1]'),
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-snap-guide-V1')),
+      findsNothing,
+    );
+  });
+
   testWidgets('split button writes two real CLIP blocks at playhead',
       (WidgetTester tester) async {
     String? changed;

@@ -9,6 +9,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_media_import.dart' show resolveActiveWorkspaceRoot;
@@ -64,6 +65,7 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
   ProjectMediaThumbnailLoader? _thumbnailLoader;
   String? _scanError;
   late bool _expanded;
+  final ScrollController _horizontal = ScrollController();
 
   @override
   void initState() {
@@ -81,6 +83,12 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
         widget.thumbnailLoader != oldWidget.thumbnailLoader) {
       _reload();
     }
+  }
+
+  @override
+  void dispose() {
+    _horizontal.dispose();
+    super.dispose();
   }
 
   void _reload() {
@@ -198,10 +206,33 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
     final ProjectMediaThumbnailLoader? loader = _thumbnailLoader;
     return SizedBox(
       height: sc(128),
-      child: ListView.separated(
-        key: const ValueKey<String>('project-media-bin-list'),
-        padding: EdgeInsets.fromLTRB(sc(10), 0, sc(10), sc(9)),
-        scrollDirection: Axis.horizontal,
+      child: Scrollbar(
+        controller: _horizontal,
+        thumbVisibility: true,
+        interactive: true,
+        child: Listener(
+          onPointerSignal: (event) {
+            if (event is! PointerScrollEvent || !_horizontal.hasClients) {
+              return;
+            }
+            final double delta = event.scrollDelta.dx.abs() >
+                    event.scrollDelta.dy.abs()
+                ? event.scrollDelta.dx
+                : event.scrollDelta.dy;
+            final ScrollPosition position = _horizontal.position;
+            final double target = (position.pixels + delta).clamp(
+              position.minScrollExtent,
+              position.maxScrollExtent,
+            );
+            if ((target - position.pixels).abs() > 0.5) {
+              _horizontal.jumpTo(target);
+            }
+          },
+          child: ListView.separated(
+            controller: _horizontal,
+            key: const ValueKey<String>('project-media-bin-list'),
+            padding: EdgeInsets.fromLTRB(sc(10), 0, sc(10), sc(9)),
+            scrollDirection: Axis.horizontal,
         itemCount: _items.length + offlineSources.length,
         separatorBuilder: (_, __) => SizedBox(width: sc(8)),
         itemBuilder: (BuildContext context, int index) {
@@ -235,6 +266,8 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
                 : () => widget.onItemPressed!(item),
           );
         },
+          ),
+        ),
       ),
     );
   }

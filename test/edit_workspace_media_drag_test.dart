@@ -99,6 +99,10 @@ void main() {
     await tester.pump();
     await gesture.moveTo(Offset(targetRect.left + 120, targetRect.center.dy));
     await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('edit-media-drop-preview-V1')),
+      findsOneWidget,
+    );
     await gesture.up();
     await tester.pumpAndSettle();
 
