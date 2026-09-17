@@ -12,18 +12,16 @@
 //
 // SIDECARD and DOSSIER are owned by this outer shell while a STRUCT placement
 // is live. The existing structural window itself moves left and the sibling
-// presentation is painted separately on the desktop. The structural client is
-// explicitly told not to draw its standalone EDIT SIDECARD composition,
-// preventing a window around a window+panel composite and keeping one decoder /
-// one structural clock. DOSSIER reuses that same shell seat while its right-hand
-// content evolves from biography card into evidence grid/mosaic.
+// presentation is painted separately on the desktop. MAXIMIZE is different: it
+// paints nothing and transforms that same already-live structural window toward
+// the full program frame. No second decoder or playback clock is introduced.
 //
 // The base STRUCT shell stage choreography is evaluated by
 // structural_shell_geometry.dart for Preview and BAKE. SIDECARD/DOSSIER
-// displacement remains evaluated by sidecard_geometry.dart. If source lifetime
-// truncates an active SIDECARD or DOSSIER, the presentation is clipped at the
-// source boundary but the STRUCT close begins from the final displaced
-// video-window rectangle, so the shell never snaps back for one frame.
+// displacement remains evaluated by sidecard_geometry.dart. MAXIMIZE geometry
+// is also shared through structural_shell_geometry.dart and is applied after
+// the base shell. If source lifetime truncates any shell movement, STRUCT closes
+// from the exact final shell rectangle so the window never snaps back first.
 //
 // Frame zero is predecoded while the terminal is still resizing. The structural
 // window already exists at opacity zero during a normal entry, but it is not
@@ -80,6 +78,7 @@ import 'card_overlay.dart';
 import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'edit_video_preview.dart';
+import 'maximize_shell_state.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
@@ -267,6 +266,38 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     }
   }
 
+  StructuralMaximizePlacement? _activeMaximize(
+    String source,
+    int sourceFrame,
+  ) {
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
+      return structuralMaximizePlacement(model, root, sourceFrame);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  StructuralMaximizePlacement? _maximizeAtSourceEnd(
+    String source,
+    int sourceDurationFrames,
+  ) {
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = _rootForSource(source);
+      if (model == null || root == null) return null;
+      return structuralMaximizePlacementAtSourceEnd(
+        model,
+        root,
+        sourceDurationFrames,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   void didUpdateWidget(covariant StructuralSequencePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -378,17 +409,16 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             null => terminalParkRect,
           };
 
+          final bool closing = stage == StructuralSequenceStage.closing;
           final StructuralDossierOverlayPlacement? truncatedDossier =
-              stage == StructuralSequenceStage.closing && _firstFrameReady
+              closing && _firstFrameReady
                   ? _dossierAtSourceEnd(
                       source,
                       placement.sourceDurationFrames,
                     )
                   : null;
           final StructuralCardOverlayPlacement? truncatedSideCard =
-              truncatedDossier == null &&
-                      stage == StructuralSequenceStage.closing &&
-                      _firstFrameReady
+              truncatedDossier == null && closing && _firstFrameReady
                   ? _sideCardAtSourceEnd(
                       source,
                       placement.sourceDurationFrames,
@@ -398,12 +428,38 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               ? structuralDossierShellSlide(truncatedDossier)
               : truncatedSideCard?.slide;
 
-          final Rect closingOrigin = sideCardClosingOriginRect(
+          // Content-bearing shell presentations own the shell over MAXIMIZE.
+          // A placement authored FULL also suppresses MAXIMIZE completely: it
+          // is already geometrically fullscreen and must not lose chrome as a
+          // side effect of a redundant cue.
+          final StructuralMaximizePlacement? truncatedMaximize =
+              truncatedDossier == null &&
+                      truncatedSideCard == null &&
+                      !placement.fullscreen &&
+                      closing &&
+                      _firstFrameReady
+                  ? _maximizeAtSourceEnd(
+                      source,
+                      placement.sourceDurationFrames,
+                    )
+                  : null;
+
+          Rect closingOrigin = sideCardClosingOriginRect(
             size: renderFrame.size,
             origin: renderFrame.topLeft,
             preCueRect: presentationRect,
             truncatedSlide: truncatedShellSlide,
           );
+          StructuralMaximizeGeometryFrame? truncatedMaxGeometry;
+          if (truncatedMaximize != null) {
+            truncatedMaxGeometry = structuralMaximizeGeometryFrameAt(
+              baseRect: presentationRect,
+              fullRect: renderFrame,
+              amount: truncatedMaximize.amount,
+            );
+            closingOrigin = truncatedMaxGeometry.structuralRect;
+          }
+
           final StructuralShellFrame baseShell = structuralShellFrameAt(
             stage: stage,
             linearProgress: linear,
@@ -426,11 +482,26 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final double structuralOpacity = baseShell.structuralOpacity;
           final bool structuralWindowPresent =
               baseShell.structuralWindowPresent;
+          double structuralChrome = 1.0;
 
-          // DOSSIER owns the shell when it overlaps SIDECARD: it is the richer
-          // presentation and must not have a second card trying to move the
-          // same real window. Later authored DOSSIER selection remains handled
-          // inside dossier_overlay_state.dart.
+          // If source lifetime truncated MAXIMIZE, the STRUCT close starts from
+          // its exact final rectangle and restores ordinary window chrome while
+          // moving toward the common emergence rect. No fullscreen -> seated
+          // snap is introduced at the source boundary.
+          if (closing && truncatedMaxGeometry != null) {
+            final double eased = Curves.easeInOutCubic.transform(
+              linear.clamp(0.0, 1.0).toDouble(),
+            );
+            structuralChrome = ui.lerpDouble(
+              truncatedMaxGeometry.windowChrome,
+              1.0,
+              eased,
+            )!;
+          }
+
+          // MAXIMIZE is load-bearingly stage-gated here. A source-frame-zero
+          // cue cannot become active during STRUCT opening because source-local
+          // shell cues are evaluated only while the source is showing.
           final StructuralDossierOverlayPlacement? dossierPlacement =
               stage == StructuralSequenceStage.showing && _firstFrameReady
                   ? _activeDossier(source, sourceFrame)
@@ -440,6 +511,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       stage == StructuralSequenceStage.showing &&
                       _firstFrameReady
                   ? _activeSideCard(source, sourceFrame)
+                  : null;
+          final StructuralMaximizePlacement? maximizePlacement =
+              dossierPlacement == null &&
+                      sideCardPlacement == null &&
+                      !placement.fullscreen &&
+                      stage == StructuralSequenceStage.showing &&
+                      _firstFrameReady
+                  ? _activeMaximize(source, sourceFrame)
                   : null;
 
           final double? shellSlide = dossierPlacement != null
@@ -457,6 +536,17 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             structuralRect = sideShell.videoWindowRect;
             desktopOpacity = sideShell.desktopOpacity;
             terminalOpacity = sideShell.terminalOpacity;
+          }
+
+          if (maximizePlacement != null && structuralWindowPresent) {
+            final StructuralMaximizeGeometryFrame maximizeGeometry =
+                structuralMaximizeGeometryFrameAt(
+              baseRect: structuralRect,
+              fullRect: renderFrame,
+              amount: maximizePlacement.amount,
+            );
+            structuralRect = maximizeGeometry.structuralRect;
+            structuralChrome = maximizeGeometry.windowChrome;
           }
 
           final Size cursorFraction = widget.terminalCursorFraction ??
@@ -550,6 +640,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                           stage == StructuralSequenceStage.closing,
                       theme: widget.theme,
                       chromeScale: chromeScale,
+                      windowChrome: structuralChrome,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
@@ -813,6 +904,10 @@ class _StructuralWindow extends StatelessWidget {
   final bool showVideo;
   final R3Theme theme;
   final double chromeScale;
+
+  /// 1 = ordinary desktop window chrome, 0 = bare fullscreen client.
+  final double windowChrome;
+
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback onFirstFrameReady;
@@ -841,6 +936,7 @@ class _StructuralWindow extends StatelessWidget {
     required this.showVideo,
     required this.theme,
     required this.chromeScale,
+    required this.windowChrome,
     required this.backend,
     required this.resolveSource,
     required this.onFirstFrameReady,
@@ -896,7 +992,10 @@ class _StructuralWindow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final double s = chromeScale > 0.0 ? chromeScale : 1.0;
-    final double barH = titleHeight * s;
+    final double c = windowChrome.clamp(0.0, 1.0).toDouble();
+    final double barH = titleHeight * s * c;
+    final double outerRadius = 5.0 * s * c;
+    final double innerRadius = 4.0 * s * c;
     final String? coverSource = outgoingSource;
     final String? coverDocument = outgoingRawDocument;
     final bool showingCover = coverSource != null && coverDocument != null;
@@ -933,62 +1032,77 @@ class _StructuralWindow extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF171717),
-        borderRadius: BorderRadius.circular(5 * s),
-        border: Border.all(
-          color: const Color(0xFF3B3938),
-          width: math.max(0.5, s),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0x8A000000),
-            blurRadius: 30 * s,
-            spreadRadius: 2 * s,
-            offset: Offset(0, 16 * s),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(outerRadius),
+        border: c > 0.001
+            ? Border.all(
+                color: const Color(0xFF3B3938).withValues(alpha: c),
+                width: math.max(0.5, s) * c,
+              )
+            : null,
+        boxShadow: c > 0.001
+            ? [
+                BoxShadow(
+                  color: const Color(0x8A000000).withValues(alpha: c),
+                  blurRadius: 30 * s * c,
+                  spreadRadius: 2 * s * c,
+                  offset: Offset(0, 16 * s * c),
+                ),
+              ]
+            : const [],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(4 * s),
+        borderRadius: BorderRadius.circular(innerRadius),
         child: Column(
           children: [
-            Container(
-              height: barH,
-              padding: EdgeInsets.symmetric(horizontal: 14 * s),
-              decoration: BoxDecoration(
-                color: const Color(0xFF222222),
-                border: Border(
-                  bottom: BorderSide(
-                    color: const Color(0xFF383838),
-                    width: math.max(0.5, s),
+            if (barH > 0.01)
+              ClipRect(
+                child: SizedBox(
+                  height: barH,
+                  child: Opacity(
+                    opacity: c,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 14 * s * c),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF222222),
+                        border: Border(
+                          bottom: BorderSide(
+                            color: const Color(0xFF383838),
+                            width: math.max(0.5, s) * c,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              visibleTitle,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.value.copyWith(
+                                color: const Color(0xFFC7C3C0),
+                                fontSize: 12 * s,
+                              ),
+                            ),
+                          ),
+                          if (topText != null)
+                            Text(
+                              topText,
+                              key: const ValueKey<String>(
+                                'structural-top-overlay',
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.micro.copyWith(
+                                color: const Color(0xFF8E8884),
+                                fontSize: (theme.micro.fontSize ?? 10.5) * s,
+                                letterSpacing:
+                                    (theme.micro.letterSpacing ?? 0.0) * s,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      visibleTitle,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.value.copyWith(
-                        color: const Color(0xFFC7C3C0),
-                        fontSize: 12 * s,
-                      ),
-                    ),
-                  ),
-                  if (topText != null)
-                    Text(
-                      topText,
-                      key: const ValueKey<String>('structural-top-overlay'),
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.micro.copyWith(
-                        color: const Color(0xFF8E8884),
-                        fontSize: (theme.micro.fontSize ?? 10.5) * s,
-                        letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
-                      ),
-                    ),
-                ],
-              ),
-            ),
             Expanded(
               child: ColoredBox(
                 color: Colors.black,
