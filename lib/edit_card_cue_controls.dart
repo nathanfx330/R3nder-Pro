@@ -93,6 +93,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String rgbDraft = '$red,$green,$blue';
     String headingDraft = existing?.heading ?? '';
     PresentationPanelPreset presetDraft = panel.preset;
+    String kickerDraft = panel.kicker;
     String fontDraft = panel.fontFamily;
     String subtitleDraft = panel.subtitle;
     String metadataDraft = panel.metadata
@@ -164,6 +165,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   headingDraft.contains('\n') ||
                   headingDraft.contains('\r')) {
                 problem = 'Heading cannot contain colon, ] or a newline.';
+              } else if (kickerDraft.contains('\n') ||
+                  kickerDraft.contains('\r')) {
+                problem = 'Top label must stay on one line.';
               } else if (fontDraft.contains('\n') || fontDraft.contains('\r')) {
                 problem = 'Font family must stay on one line.';
               } else if (subtitleDraft.contains('\n') ||
@@ -186,6 +190,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
 
               final String authoredBody = formatPresentationPanelBody(
                 preset: presetDraft,
+                kicker: kickerDraft,
                 fontFamily: fontDraft,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
@@ -236,6 +241,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 ),
               );
             }
+
+            final String kickerHint =
+                presetDraft == PresentationPanelPreset.dossier
+                    ? 'DOSSIER / SUBJECT FILE'
+                    : 'PROFILE / DOCUMENTARY';
 
             return AlertDialog(
               backgroundColor: R3Theme.panel,
@@ -419,7 +429,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Text('PANEL CONTENT', style: widget.theme.microAccent),
                       SizedBox(height: sc(4)),
                       Text(
-                        'The card reads top to bottom: name → role → fact rows → biography. '
+                        'The card reads top to bottom: top label → name → role → fact rows → biography. '
                         'Fact rows are short LABEL | VALUE items. The biography is normal prose beneath them.',
                         key: const ValueKey<String>('edit-card-cue-panel-help'),
                         style: widget.theme.fine.copyWith(color: R3Theme.textDim),
@@ -563,6 +573,22 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             ),
                           ),
                         ],
+                      ),
+                      SizedBox(height: sc(10)),
+                      TextFormField(
+                        key: const ValueKey<String>(
+                          'edit-card-cue-kicker-field',
+                        ),
+                        initialValue: kickerDraft,
+                        enabled: !panel.hasErrors,
+                        decoration: InputDecoration(
+                          labelText: 'Top photo label',
+                          hintText: kickerHint,
+                          helperText:
+                              'Small label over the portrait. Blank uses the preset default shown here.',
+                        ),
+                        style: widget.theme.value,
+                        onChanged: (String value) => kickerDraft = value,
                       ),
                       SizedBox(height: sc(10)),
                       TextFormField(
