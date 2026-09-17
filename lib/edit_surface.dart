@@ -42,9 +42,16 @@ import 'edit_video_preview.dart';
 import 'marker_authoring.dart';
 import 'media_layer.dart';
 import 'presentation_requests.dart';
+import 'project_media_bin.dart';
 import 'timeline_landmark_layer.dart';
 import 'timeline_markers.dart';
 import 'ui_theme.dart';
+
+typedef EditProjectMediaDrop = void Function(
+  ProjectMediaItem item,
+  String trackId,
+  int atFrame,
+);
 
 class EditSurface extends StatefulWidget {
   final String source;
@@ -61,6 +68,7 @@ class EditSurface extends StatefulWidget {
   final R3Theme theme;
   final ValueChanged<String> onSourceChanged;
   final ValueChanged<int> onSeek;
+  final EditProjectMediaDrop? onProjectMediaDrop;
 
   /// Optional decoder seams forwarded to EditVideoPreview. Production leaves
   /// both null so the preview owns its native MLT backend and workspace source
@@ -76,6 +84,7 @@ class EditSurface extends StatefulWidget {
     required this.theme,
     required this.onSourceChanged,
     required this.onSeek,
+    this.onProjectMediaDrop,
     this.isPlaying = false,
     this.voiceFrames = 0,
     this.musicFrames = 0,
@@ -842,6 +851,7 @@ class _EditSurfaceState extends State<EditSurface> {
     if (document == null) return _buildErrorOnly();
 
     final List<EditSurfaceTrack> tracks = _visibleTracks(document);
+    final List<String> trackIds = _timelineTrackIds(tracks);
     final EditSurfaceClip? selected = _selected(document);
     final List<EditCardCue> selectedCardCues = selected == null
         ? const <EditCardCue>[]
@@ -862,7 +872,7 @@ class _EditSurfaceState extends State<EditSurface> {
 
     final int contentFrames = document.projectFrameCount;
     final double timelineContentHeight =
-        _kRulerHeight + tracks.length * _kTrackHeight;
+        _kRulerHeight + trackIds.length * _kTrackHeight;
 
     return Focus(
       focusNode: _timelineFocusNode,
@@ -941,7 +951,7 @@ class _EditSurfaceState extends State<EditSurface> {
                                     children: [
                                       SizedBox(
                                         width: _kLabelWidth,
-                                        child: _buildLabels(tracks),
+                                        child: _buildLabels(trackIds),
                                       ),
                                       Expanded(
                                         child: Scrollbar(
@@ -964,9 +974,12 @@ class _EditSurfaceState extends State<EditSurface> {
                                                           timelineMarkers,
                                                           timelineDerived,
                                                         ),
-                                                        for (final EditSurfaceTrack track
-                                                            in tracks)
-                                                          _buildTrackLane(track),
+                                                        for (final String trackId
+                                                            in trackIds)
+                                                          _buildTrackLane(
+                                                            trackId,
+                                                            document.trackOrNull(trackId),
+                                                          ),
                                                       ],
                                                     ),
                                                   ),
@@ -1101,6 +1114,16 @@ class _EditSurfaceState extends State<EditSurface> {
     }
     if (preferred.isNotEmpty) return preferred;
     return document.tracks.take(2).toList(growable: false);
+  }
+
+  List<String> _timelineTrackIds(List<EditSurfaceTrack> tracks) {
+    final List<String> ids =
+        tracks.map((EditSurfaceTrack track) => track.id).toList(growable: false);
+    if (widget.onProjectMediaDrop == null) return ids;
+
+    final bool hasStandard = ids.contains('V1') || ids.contains('V2');
+    if (ids.isEmpty || hasStandard) return const <String>['V2', 'V1'];
+    return ids;
   }
 
   Widget _buildToolbar(
@@ -1274,7 +1297,7 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _buildLabels(List<EditSurfaceTrack> tracks) {
+  Widget _buildLabels(List<String> trackIds) {
     return Container(
       color: R3Theme.panel,
       child: Column(
@@ -1283,14 +1306,14 @@ class _EditSurfaceState extends State<EditSurface> {
             height: _kRulerHeight,
             child: Center(child: Text('TRACK', style: widget.theme.micro)),
           ),
-          for (final EditSurfaceTrack track in tracks)
+          for (final String trackId in trackIds)
             Container(
               height: _kTrackHeight,
               alignment: Alignment.center,
               decoration: const BoxDecoration(
                 border: Border(top: BorderSide(color: R3Theme.hairline)),
               ),
-              child: Text(track.id, style: widget.theme.value),
+              child: Text(trackId, style: widget.theme.value),
             ),
         ],
       ),
@@ -1354,8 +1377,8 @@ class _EditSurfaceState extends State<EditSurface> {
     );
   }
 
-  Widget _buildTrackLane(EditSurfaceTrack track) {
-    return Container(
+  Widget _buildTrackLane(String trackId, EditSurfaceTrack? track) {
+    final Widget lane = Container(
       height: _kTrackHeight,
       decoration: const BoxDecoration(
         color: R3Theme.bg,
@@ -1364,41 +1387,82 @@ class _EditSurfaceState extends State<EditSurface> {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          for (final EditSurfaceClip clip in track.clips)
+          for (final EditSurfaceClip clip
+              in track?.clips ?? const <EditSurfaceClip>[])
             Positioned(
               left: clip.atFrame * _pixelsPerFrame,
               top: sc(7),
               child: _EditableClipBlock(
                 key: ValueKey(
-                  '${track.id}:${clip.id}:${clip.atFrame}:'
+                  '$trackId:${clip.id}:${clip.atFrame}:'
                   '${clip.inFrame}:${clip.durationFrames}:${clip.speed}:'
                   '${clip.transition}:${clip.outgoingTransition}',
                 ),
                 clip: clip,
                 pixelsPerFrame: _pixelsPerFrame,
-                selected: _selectedTrackId == track.id &&
+                selected: _selectedTrackId == trackId &&
                     _selectedClipId == clip.id,
                 theme: widget.theme,
                 onSelect: () => _select(clip),
                 onMove: (int atFrame) {
                   _commit((EditSurfaceDocument current) {
-                    return current.moveClip(track.id, clip.id, atFrame);
+                    return current.moveClip(trackId, clip.id, atFrame);
                   });
                 },
                 onTrimStart: (int atFrame) {
                   _commit((EditSurfaceDocument current) {
-                    return current.trimStart(track.id, clip.id, atFrame);
+                    return current.trimStart(trackId, clip.id, atFrame);
                   });
                 },
                 onTrimEnd: (int endFrame) {
                   _commit((EditSurfaceDocument current) {
-                    return current.trimEnd(track.id, clip.id, endFrame);
+                    return current.trimEnd(trackId, clip.id, endFrame);
                   });
                 },
               ),
             ),
         ],
       ),
+    );
+
+    final EditProjectMediaDrop? onDrop = widget.onProjectMediaDrop;
+    if (onDrop == null) return lane;
+
+    final GlobalKey laneKey = GlobalKey();
+    return DragTarget<ProjectMediaItem>(
+      key: ValueKey<String>('edit-media-drop-$trackId'),
+      hitTestBehavior: HitTestBehavior.opaque,
+      onWillAcceptWithDetails: (DragTargetDetails<ProjectMediaItem> details) {
+        return !widget.isPlaying && details.data.isUsable;
+      },
+      onAcceptWithDetails: (DragTargetDetails<ProjectMediaItem> details) {
+        if (widget.isPlaying || !details.data.isUsable) return;
+        final BuildContext? laneContext = laneKey.currentContext;
+        final RenderObject? renderObject = laneContext?.findRenderObject();
+        if (renderObject is! RenderBox) return;
+        final double dx = renderObject.globalToLocal(details.offset).dx;
+        final int atFrame = math.max(0, (dx / _pixelsPerFrame).floor());
+        onDrop(details.data, trackId, atFrame);
+      },
+      builder: (
+        BuildContext context,
+        List<ProjectMediaItem?> candidateData,
+        List<dynamic> rejectedData,
+      ) {
+        final bool active = candidateData.any(
+          (ProjectMediaItem? item) => item?.isUsable ?? false,
+        );
+        return Container(
+          key: laneKey,
+          foregroundDecoration: active
+              ? BoxDecoration(
+                  border: Border.all(color: widget.theme.accentDim),
+                  color: widget.theme.accentFaint,
+                )
+              : null,
+          child: lane,
+        );
+      },
     );
   }
 }

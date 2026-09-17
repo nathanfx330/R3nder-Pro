@@ -51,6 +51,7 @@ import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
+import 'project_media_bin.dart';
 import 'project_media_bin_view.dart';
 import 'session_store.dart';
 import 'structural_sequence.dart';
@@ -59,6 +60,9 @@ import 'ui_theme.dart';
 
 typedef EditVideoPicker = Future<String?> Function();
 typedef EditVideoImporter = ImportedEditVideo Function(String pickedPath);
+typedef EditWorkspaceMediaConformer = ImportedEditVideo Function(
+  String resolvedPath,
+);
 typedef EditWorkspaceRootResolver = String Function();
 typedef EditAudioPlayerResolver = AudioBedPlayer? Function();
 typedef EditPlaybackDeviceResolver = Future<PlaybackDevice> Function(
@@ -171,6 +175,9 @@ class EditWorkspace extends StatefulWidget {
   /// used to discover the actual output backend/device for normal source audio.
   final EditVideoPicker? pickVideo;
   final EditVideoImporter? importVideo;
+  final EditWorkspaceMediaConformer? conformProjectMedia;
+  final ProjectMediaBinScanner? scanProjectMedia;
+  final ProjectMediaThumbnailLoader? loadProjectMediaThumbnail;
   final EditPlaybackClockFactory? playbackClockFactory;
   final EditWorkspaceRootResolver? workspaceRootResolver;
   final EditAudioPlayerResolver? audioPlayerResolver;
@@ -194,6 +201,9 @@ class EditWorkspace extends StatefulWidget {
     this.inheritWorkspaceAudio = false,
     this.pickVideo,
     this.importVideo,
+    this.conformProjectMedia,
+    this.scanProjectMedia,
+    this.loadProjectMediaThumbnail,
     this.playbackClockFactory,
     this.workspaceRootResolver,
     this.audioPlayerResolver,
@@ -927,6 +937,37 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
+  void _placeProjectMedia(
+    String editId,
+    ProjectMediaItem item,
+    String trackId,
+    int atFrame,
+  ) {
+    if (_importing || _playing || _startingPlayback || _exporting) return;
+    if (!item.isUsable) {
+      setState(() => _error = 'Media filename cannot be authored into CLIP grammar.');
+      return;
+    }
+
+    try {
+      final ImportedEditVideo media =
+          (widget.conformProjectMedia ?? conformWorkspaceMedia)(item.resolvedPath);
+      final MediaPlacementResult placed = placeMediaInEdit(
+        source: _workingSource,
+        media: media,
+        editId: editId,
+        trackId: trackId,
+        atFrame: atFrame,
+      );
+      _applySourceChange(
+        placed.document,
+        selectSource: 'EDIT.${placed.editId}',
+      );
+    } catch (error) {
+      setState(() => _error = '$error');
+    }
+  }
+
   void _newEdit(EditDocumentModel model) {
     if (_exporting || _startingPlayback) return;
     final String id = uniqueEditId(model, 'edit');
@@ -1339,6 +1380,13 @@ class _EditWorkspaceState extends State<EditWorkspace>
               projectClockRunning: _playing || _startingPlayback,
               refreshToken: _mediaBinRefreshToken,
               workspaceRootResolver: widget.workspaceRootResolver,
+              scanMedia: widget.scanProjectMedia,
+              thumbnailLoader: widget.loadProjectMediaThumbnail,
+              enableDrag: edit != null &&
+                  !_importing &&
+                  !_playing &&
+                  !_startingPlayback &&
+                  !_exporting,
             ),
           if (_error != null)
             Container(
@@ -1381,6 +1429,22 @@ class _EditWorkspaceState extends State<EditWorkspace>
                                 theme: widget.theme,
                                 onSourceChanged: _applySourceChange,
                                 onSeek: _seekFromSurface,
+                                onProjectMediaDrop: _importing ||
+                                        _playing ||
+                                        _startingPlayback ||
+                                        _exporting
+                                    ? null
+                                    : (
+                                        ProjectMediaItem item,
+                                        String trackId,
+                                        int atFrame,
+                                      ) =>
+                                        _placeProjectMedia(
+                                          edit.id,
+                                          item,
+                                          trackId,
+                                          atFrame,
+                                        ),
                                 backend: widget.backend,
                                 resolveSource: widget.resolveSource,
                               )

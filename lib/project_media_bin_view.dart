@@ -30,6 +30,7 @@ class ProjectMediaBinPanel extends StatefulWidget {
   final bool projectClockRunning;
   final int refreshToken;
   final bool initiallyExpanded;
+  final bool enableDrag;
   final String Function()? workspaceRootResolver;
   final ProjectMediaBinScanner? scanMedia;
   final ProjectMediaThumbnailLoader? thumbnailLoader;
@@ -41,6 +42,7 @@ class ProjectMediaBinPanel extends StatefulWidget {
     required this.projectClockRunning,
     this.refreshToken = 0,
     this.initiallyExpanded = false,
+    this.enableDrag = false,
     this.workspaceRootResolver,
     this.scanMedia,
     this.thumbnailLoader,
@@ -189,6 +191,7 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
             theme: widget.theme,
             projectClockRunning: widget.projectClockRunning,
             thumbnailLoader: loader,
+            enableDrag: widget.enableDrag,
             onPressed: widget.onItemPressed == null
                 ? null
                 : () => widget.onItemPressed!(item),
@@ -227,6 +230,7 @@ class _ProjectMediaTile extends StatefulWidget {
   final R3Theme theme;
   final bool projectClockRunning;
   final ProjectMediaThumbnailLoader? thumbnailLoader;
+  final bool enableDrag;
   final VoidCallback? onPressed;
 
   const _ProjectMediaTile({
@@ -235,6 +239,7 @@ class _ProjectMediaTile extends StatefulWidget {
     required this.theme,
     required this.projectClockRunning,
     required this.thumbnailLoader,
+    required this.enableDrag,
     required this.onPressed,
   });
 
@@ -278,7 +283,7 @@ class _ProjectMediaTileState extends State<_ProjectMediaTile> {
   @override
   Widget build(BuildContext context) {
     final bool usable = widget.item.isUsable;
-    return SizedBox(
+    final Widget tile = SizedBox(
       width: sc(132),
       child: InkWell(
         onTap: usable ? widget.onPressed : null,
@@ -337,6 +342,50 @@ class _ProjectMediaTileState extends State<_ProjectMediaTile> {
             ],
           ),
         ),
+      ),
+    );
+
+    if (!usable || !widget.enableDrag) return tile;
+    return Draggable<ProjectMediaItem>(
+      data: widget.item,
+      dragAnchorStrategy: (_, __, ___) => Offset.zero,
+      feedback: Material(
+        color: Colors.transparent,
+        child: SizedBox(
+          width: sc(132),
+          height: sc(74),
+          child: Opacity(opacity: 0.92, child: _dragFeedback()),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.35, child: tile),
+      child: tile,
+    );
+  }
+
+  Widget _dragFeedback() {
+    return Container(
+      padding: EdgeInsets.all(sc(7)),
+      decoration: BoxDecoration(
+        color: R3Theme.panelHi,
+        border: Border.all(color: widget.theme.accentDim),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(
+            Icons.movie_outlined,
+            size: sc(22),
+            color: widget.theme.accentDim,
+          ),
+          SizedBox(width: sc(7)),
+          Expanded(
+            child: Text(
+              widget.item.fileName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: widget.theme.fine.copyWith(color: R3Theme.textBright),
+            ),
+          ),
+        ],
       ),
     );
   }
