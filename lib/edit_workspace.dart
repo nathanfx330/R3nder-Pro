@@ -51,6 +51,7 @@ import 'mosaic_surface_model.dart';
 import 'native_file_dialog.dart';
 import 'playback_trace.dart';
 import 'project_clock.dart';
+import 'project_media_bin_view.dart';
 import 'session_store.dart';
 import 'structural_sequence.dart';
 import 'structural_source_export.dart';
@@ -231,6 +232,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
   int _cachedSourceEndFrame = 0;
   int? _lastPolledPlaybackFrame;
   int _transportGeneration = 0;
+  int _mediaBinRefreshToken = 0;
   String? _musicProbePath;
   double _musicDurationSec = 0.0;
   String? _error;
@@ -912,6 +914,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
       );
 
       if (!mounted) return;
+      _mediaBinRefreshToken += 1;
       _applySourceChange(
         placed.document,
         selectSource: 'EDIT.${placed.editId}',
@@ -1329,6 +1332,14 @@ class _EditWorkspaceState extends State<EditWorkspace>
       child: Column(
         children: [
           _buildImportBar(model, selected, edit, mosaic),
+          if (selected == null || edit != null)
+            ProjectMediaBinPanel(
+              key: const ValueKey<String>('edit-project-media-bin'),
+              theme: widget.theme,
+              projectClockRunning: _playing || _startingPlayback,
+              refreshToken: _mediaBinRefreshToken,
+              workspaceRootResolver: widget.workspaceRootResolver,
+            ),
           if (_error != null)
             Container(
               width: double.infinity,
