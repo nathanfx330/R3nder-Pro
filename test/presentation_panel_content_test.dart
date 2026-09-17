@@ -14,14 +14,16 @@ void main() {
     expect(content.structured, isFalse);
     expect(content.preset, PresentationPanelPreset.simple);
     expect(content.heading, 'ALICE');
+    expect(content.fontFamily, isEmpty);
     expect(content.subtitle, isEmpty);
     expect(content.metadata, isEmpty);
     expect(content.body, body);
   });
 
-  test('documentary block parses subtitle metadata and biography', () {
+  test('documentary block parses font subtitle metadata and biography', () {
     const String body = '''[PANEL]
 PRESET: DOCUMENTARY
+FONT: IBM Plex Sans
 SUBTITLE: Investigative Reporter
 META: ORGANIZATION | Example News
 META: LOCATION | Washington, DC
@@ -36,6 +38,7 @@ Reported on the case for six years.''';
     expect(content.structured, isTrue);
     expect(content.preset, PresentationPanelPreset.documentary);
     expect(content.heading, 'ALICE MORGAN');
+    expect(content.fontFamily, 'IBM Plex Sans');
     expect(content.subtitle, 'Investigative Reporter');
     expect(
       content.metadata,
@@ -56,6 +59,7 @@ Reported on the case for six years.''';
   test('missing PANEL close degrades to legacy visible text', () {
     const String body = '''[PANEL]
 PRESET: DOCUMENTARY
+FONT: serif
 SUBTITLE: Analyst
 Biography survives.''';
 
@@ -66,6 +70,7 @@ Biography survives.''';
 
     expect(content.structured, isFalse);
     expect(content.preset, PresentationPanelPreset.simple);
+    expect(content.fontFamily, isEmpty);
     expect(content.body, body);
   });
 
@@ -81,9 +86,30 @@ Biography survives.''';
     );
   });
 
-  test('canonical writer round trips DOSSIER structured content', () {
+  test('a font alone intentionally promotes SIMPLE to structured PANEL', () {
+    final String body = formatPresentationPanelBody(
+      preset: PresentationPanelPreset.simple,
+      fontFamily: 'serif',
+      subtitle: '',
+      metadata: const <PresentationPanelMetadata>[],
+      body: 'Biography.',
+    );
+
+    expect(body, contains('PRESET: SIMPLE'));
+    expect(body, contains('FONT: serif'));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: body,
+    );
+    expect(parsed.preset, PresentationPanelPreset.simple);
+    expect(parsed.fontFamily, 'serif');
+    expect(parsed.body, 'Biography.');
+  });
+
+  test('canonical writer round trips DOSSIER structured content and font', () {
     final String body = formatPresentationPanelBody(
       preset: PresentationPanelPreset.dossier,
+      fontFamily: 'DejaVu Sans',
       subtitle: 'Case Officer',
       metadata: const <PresentationPanelMetadata>[
         PresentationPanelMetadata(label: 'FILE', value: 'A-104'),
@@ -99,6 +125,7 @@ Biography survives.''';
 
     expect(parsed.structured, isTrue);
     expect(parsed.preset, PresentationPanelPreset.dossier);
+    expect(parsed.fontFamily, 'DejaVu Sans');
     expect(parsed.subtitle, 'Case Officer');
     expect(parsed.metadata, hasLength(2));
     expect(parsed.body, 'Subject biography.');
