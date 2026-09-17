@@ -1,11 +1,12 @@
 // ./lib/edit_cue_authoring.dart
 //
-// Source-backed authoring operations for clip-local presentation cues.
+// Source-backed authoring operations for clip-local CUEs.
 //
 // CUE is not a hidden project model and it is not a generic structural layer.
 // These helpers rewrite only the selected CLIP's authored source, then reparse
-// the canonical document before returning it. The trigger remains source-frame
-// relative while CARD, SIDECARD, or DOSSIER owns its own presentation lifetime.
+// the canonical document before returning it. CARD/SIDECARD/DOSSIER carry
+// content presentations; MAXIMIZE carries only shell timing. Every trigger
+// remains source-frame relative.
 
 import 'package:flutter/material.dart';
 
@@ -120,6 +121,41 @@ String addDossierCueAtProjectFrame({
   return next;
 }
 
+/// Adds one shell-only MAXIMIZE cue at the selected playhead sample.
+String addMaximizeCueAtProjectFrame({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int projectFrame,
+  required int holdFrames,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
+  _validateMaximizeHold(holdFrames);
+
+  final String source = document.source;
+  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+  final String clipIndent = _lineIndentAt(source, selected.clip.block.startOffset);
+  final String cueIndent = '$clipIndent  ';
+  final String payloadIndent = '$cueIndent  ';
+  final String cue = _maximizeCueMarkup(
+    sourceFrame: sourceFrame,
+    holdFrames: holdFrames,
+    lineEnding: lineEnding,
+    firstIndent: cueIndent,
+    continuationIndent: cueIndent,
+    payloadIndent: payloadIndent,
+  );
+
+  final String insertion = '$cue$lineEnding$clipIndent';
+  final String next = document.model.cst.insertBeforeClosingTag(
+    selected.clip.block,
+    insertion,
+  );
+  _validateResult(next, document.editId, trackId, clipId);
+  return next;
+}
+
 /// Rewrites one existing CARD/SIDECARD cue in place while keeping its authored
 /// trigger frame. The returned request may switch CARD <-> SIDECARD explicitly.
 String updateCardCue({
@@ -189,6 +225,40 @@ String updateDossierCue({
   return next;
 }
 
+/// Rewrites one existing MAXIMIZE cue in place while preserving its trigger.
+String updateMaximizeCue({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int cueIndex,
+  required int holdFrames,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final List<EditMaximizeCue> cues = parseClipMaximizeCues(selected.clip);
+  final EditMaximizeCue cue = _maximizeCueAt(cues, cueIndex);
+  _validateMaximizeHold(holdFrames);
+
+  final String source = document.source;
+  final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
+  final String cueIndent = _lineIndentAt(source, cue.startOffset);
+  final String replacement = _maximizeCueMarkup(
+    sourceFrame: cue.sourceFrame,
+    holdFrames: holdFrames,
+    lineEnding: lineEnding,
+    firstIndent: '',
+    continuationIndent: cueIndent,
+    payloadIndent: '$cueIndent  ',
+  );
+
+  final String next = source.replaceRange(
+    cue.startOffset,
+    cue.endOffset,
+    replacement,
+  );
+  _validateResult(next, document.editId, trackId, clipId);
+  return next;
+}
+
 /// Removes exactly one complete authored CARD/SIDECARD CUE block.
 String deleteCardCue({
   required EditSurfaceDocument document,
@@ -227,8 +297,27 @@ String deleteDossierCue({
   return next;
 }
 
+/// Removes exactly one complete authored MAXIMIZE CUE block.
+String deleteMaximizeCue({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required int cueIndex,
+}) {
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final List<EditMaximizeCue> cues = parseClipMaximizeCues(selected.clip);
+  final EditMaximizeCue cue = _maximizeCueAt(cues, cueIndex);
+  final String next = document.source.replaceRange(
+    cue.startOffset,
+    cue.endOffset,
+    '',
+  );
+  EditSurfaceDocument.parse(next, document.editId);
+  return next;
+}
+
 /// Splits a clip using the existing structural split operation, then assigns
-/// every presentation CUE to exactly one resulting half.
+/// every CUE to exactly one resulting half.
 ///
 /// The original split operation necessarily copies the opaque CLIP body to
 /// both halves. That is correct for comments and most future opaque metadata,
@@ -238,7 +327,7 @@ String deleteDossierCue({
 /// window are assigned by source coordinate so they also remain singular.
 ///
 /// Historical name retained because EditSurface and existing tests already call
-/// it. It now owns CARD, SIDECARD, and DOSSIER rather than only CARD-family cues.
+/// it. It now owns CARD, SIDECARD, DOSSIER, and MAXIMIZE.
 String splitClipWithCardCueOwnership({
   required EditSurfaceDocument document,
   required String trackId,
@@ -248,7 +337,8 @@ String splitClipWithCardCueOwnership({
   final EditSurfaceClip original = document.clip(trackId, clipId);
   final List<EditCardCue> cardCues = parseClipCardCues(original.clip);
   final List<EditDossierCue> dossierCues = parseClipDossierCues(original.clip);
-  if (cardCues.isEmpty && dossierCues.isEmpty) {
+  final List<EditMaximizeCue> maximizeCues = parseClipMaximizeCues(original.clip);
+  if (cardCues.isEmpty && dossierCues.isEmpty && maximizeCues.isEmpty) {
     return document.splitClip(trackId, clipId, projectFrame);
   }
 
@@ -281,6 +371,15 @@ String splitClipWithCardCueOwnership({
         rightIn: rightIn,
       ),
   ];
+  final List<bool> maximizeKeepLeft = <bool>[
+    for (final EditMaximizeCue cue in maximizeCues)
+      _cueBelongsLeft(
+        original,
+        cue.sourceFrame,
+        projectFrame: projectFrame,
+        rightIn: rightIn,
+      ),
+  ];
 
   final Set<String> beforeIds = document
       .track(trackId)
@@ -303,6 +402,15 @@ String splitClipWithCardCueOwnership({
 
   // Family indexes are independent. Delete highest index downward so earlier
   // same-family indexes remain stable as source shrinks.
+  for (int i = maximizeCues.length - 1; i >= 0; i--) {
+    after = EditSurfaceDocument.parse(current, document.editId);
+    current = deleteMaximizeCue(
+      document: after,
+      trackId: trackId,
+      clipId: maximizeKeepLeft[i] ? rightId : clipId,
+      cueIndex: i,
+    );
+  }
   for (int i = dossierCues.length - 1; i >= 0; i--) {
     after = EditSurfaceDocument.parse(current, document.editId);
     current = deleteDossierCue(
@@ -345,6 +453,13 @@ EditCardCue _cardCueAt(List<EditCardCue> cues, int cueIndex) {
 }
 
 EditDossierCue _dossierCueAt(List<EditDossierCue> cues, int cueIndex) {
+  if (cueIndex < 0 || cueIndex >= cues.length) {
+    throw RangeError.index(cueIndex, cues, 'cueIndex');
+  }
+  return cues[cueIndex];
+}
+
+EditMaximizeCue _maximizeCueAt(List<EditMaximizeCue> cues, int cueIndex) {
   if (cueIndex < 0 || cueIndex >= cues.length) {
     throw RangeError.index(cueIndex, cues, 'cueIndex');
   }
@@ -417,6 +532,23 @@ String _dossierCueMarkup({
   );
 }
 
+String _maximizeCueMarkup({
+  required int sourceFrame,
+  required int holdFrames,
+  required String lineEnding,
+  required String firstIndent,
+  required String continuationIndent,
+  required String payloadIndent,
+}) {
+  _validateSourceFrame(sourceFrame);
+  _validateMaximizeHold(holdFrames);
+  return (StringBuffer()
+        ..write('$firstIndent[CUE:$sourceFrame]$lineEnding')
+        ..write('$payloadIndent[MAXIMIZE:$holdFrames]$lineEnding')
+        ..write('$continuationIndent[/CUE]'))
+      .toString();
+}
+
 String _wrappedCueMarkup({
   required int sourceFrame,
   required String openTag,
@@ -459,6 +591,16 @@ void _validateSourceFrame(int sourceFrame) {
       sourceFrame,
       'sourceFrame',
       'CUE source frame must be non-negative.',
+    );
+  }
+}
+
+void _validateMaximizeHold(int holdFrames) {
+  if (holdFrames < 0) {
+    throw ArgumentError.value(
+      holdFrames,
+      'holdFrames',
+      'MAXIMIZE hold must be non-negative.',
     );
   }
 }
@@ -540,6 +682,7 @@ void _validateResult(
   final clip = parsed.clip(trackId, clipId).clip;
   parseClipCardCues(clip);
   parseClipDossierCues(clip);
+  parseClipMaximizeCues(clip);
 }
 
 String _lineIndentAt(String source, int offset) {
