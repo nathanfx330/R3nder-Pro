@@ -98,7 +98,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String metadataDraft = panel.metadata
         .map((PresentationPanelMetadata item) => '${item.label} | ${item.value}')
         .join('\n');
-    String bodyDraft = panel.body;
+    String bodyDraft = panel.hasErrors ? '' : panel.body;
+    final List<String> preservedPanelDirectives = panel.preservedDirectives;
 
     return showDialog<CardRequest>(
       context: context,
@@ -143,7 +144,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   parseMetadataDraft();
 
               String? problem;
-              if (imageValue.isEmpty ||
+              if (panel.hasErrors) {
+                problem = 'This CARD has malformed PANEL source. Fix the script warning before editing it here.';
+              } else if (imageValue.isEmpty ||
                   imageValue.contains(':') ||
                   imageValue.contains(']') ||
                   imageValue.contains('\n') ||
@@ -186,6 +189,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 fontFamily: fontDraft,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
+                preservedDirectives: preservedPanelDirectives,
                 body: bodyDraft,
               );
               final Color panelColor = Color.fromARGB(
@@ -420,6 +424,22 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         key: const ValueKey<String>('edit-card-cue-panel-help'),
                         style: widget.theme.fine.copyWith(color: R3Theme.textDim),
                       ),
+                      if (panel.hasWarnings) ...[
+                        SizedBox(height: sc(5)),
+                        Text(
+                          'This PANEL contains directives this build does not use. They will be preserved unchanged when you apply edits.',
+                          key: const ValueKey<String>('edit-card-cue-panel-warning'),
+                          style: widget.theme.fine.copyWith(color: R3Theme.warn),
+                        ),
+                      ],
+                      if (panel.hasErrors) ...[
+                        SizedBox(height: sc(5)),
+                        Text(
+                          'This PANEL is malformed. Fix the script warning first; the GUI will not rewrite it.',
+                          key: const ValueKey<String>('edit-card-cue-panel-error'),
+                          style: widget.theme.fine.copyWith(color: R3Theme.danger),
+                        ),
+                      ],
                       SizedBox(height: sc(8)),
                       Row(
                         children: [
@@ -430,12 +450,14 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                               ),
                               tooltip: 'Panel presentation preset',
                               color: R3Theme.panelHi,
-                              onSelected: (PresentationPanelPreset value) {
-                                setDialogState(() {
-                                  presetDraft = value;
-                                  errorText = null;
-                                });
-                              },
+                              onSelected: panel.hasErrors
+                                  ? null
+                                  : (PresentationPanelPreset value) {
+                                      setDialogState(() {
+                                        presetDraft = value;
+                                        errorText = null;
+                                      });
+                                    },
                               itemBuilder: (_) => PresentationPanelPreset.values
                                   .map(
                                     (PresentationPanelPreset value) =>
@@ -486,6 +508,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                         'edit-card-cue-font-field',
                                       ),
                                       initialValue: fontDraft,
+                                      enabled: !panel.hasErrors,
                                       decoration: const InputDecoration(
                                         labelText: 'Font family',
                                         hintText: 'Blank = project font',
@@ -500,6 +523,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   key: const ValueKey<String>(
                                     'edit-card-cue-font-menu',
                                   ),
+                                  enabled: !panel.hasErrors,
                                   tooltip: 'Common font families',
                                   color: R3Theme.panelHi,
                                   onSelected: (String value) {
@@ -546,10 +570,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-subtitle-field',
                         ),
                         initialValue: subtitleDraft,
+                        enabled: !panel.hasErrors,
                         decoration: const InputDecoration(
                           labelText: 'Subtitle / role',
                           hintText: 'Investigative Reporter',
-                          helperText: 'Short line directly beneath the heading.',
+                          helperText: 'Short line directly beneath the heading. Colons are allowed.',
                         ),
                         style: widget.theme.value,
                         onChanged: (String value) => subtitleDraft = value,
@@ -560,13 +585,14 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-metadata-field',
                         ),
                         initialValue: metadataDraft,
+                        enabled: !panel.hasErrors,
                         minLines: 2,
                         maxLines: 5,
                         decoration: const InputDecoration(
                           labelText: 'Fact rows / metadata',
                           hintText: 'ORGANIZATION | Example News\nLOCATION | Washington, DC',
                           helperText:
-                              'Short facts shown ABOVE the biography. Use LABEL | VALUE, one fact per line.',
+                              'Short facts above the biography. The FIRST | splits LABEL from VALUE; later | characters stay in the value.',
                           alignLabelWithHint: true,
                         ),
                         style: widget.theme.value,
@@ -584,6 +610,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       TextFormField(
                         key: const ValueKey<String>('edit-card-cue-body-field'),
                         initialValue: bodyDraft,
+                        enabled: !panel.hasErrors,
                         minLines: 3,
                         maxLines: 7,
                         decoration: InputDecoration(
@@ -609,7 +636,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 ),
                 TextButton(
                   key: const ValueKey<String>('edit-card-cue-apply'),
-                  onPressed: apply,
+                  onPressed: panel.hasErrors ? null : apply,
                   child: Text(existing == null ? 'ADD CUE' : 'APPLY'),
                 ),
               ],
