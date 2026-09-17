@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 import 'edit_media_import.dart' show resolveActiveWorkspaceRoot;
 import 'project_media_bin.dart';
 import 'project_media_thumbnails.dart';
+import 'project_media_reference_view.dart';
+import 'project_media_references.dart';
 import 'ui_theme.dart';
 
 typedef ProjectMediaBinScanner =
@@ -31,6 +33,8 @@ class ProjectMediaBinPanel extends StatefulWidget {
   final int refreshToken;
   final bool initiallyExpanded;
   final bool enableDrag;
+  final ProjectMediaReferenceCatalog referenceCatalog;
+  final ValueChanged<ProjectMediaReference>? onReferencePressed;
   final String Function()? workspaceRootResolver;
   final ProjectMediaBinScanner? scanMedia;
   final ProjectMediaThumbnailLoader? thumbnailLoader;
@@ -43,6 +47,8 @@ class ProjectMediaBinPanel extends StatefulWidget {
     this.refreshToken = 0,
     this.initiallyExpanded = false,
     this.enableDrag = false,
+    this.referenceCatalog = const ProjectMediaReferenceCatalog.empty(),
+    this.onReferencePressed,
     this.workspaceRootResolver,
     this.scanMedia,
     this.thumbnailLoader,
@@ -102,11 +108,26 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
     setState(_reload);
   }
 
+  List<String> _offlineAuthoredSources() {
+    final Set<String> online = _items
+        .map((ProjectMediaItem item) => item.authoredSource)
+        .whereType<String>()
+        .toSet();
+    return widget.referenceCatalog.authoredSources
+        .where((String source) => !online.contains(source))
+        .toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final List<String> offlineSources = _offlineAuthoredSources();
+    final String fileCount =
+        '${_items.length} ${_items.length == 1 ? 'FILE' : 'FILES'}';
     final String countLabel = _scanError != null
         ? 'UNAVAILABLE'
-        : '${_items.length} ${_items.length == 1 ? 'FILE' : 'FILES'}';
+        : offlineSources.isEmpty
+            ? fileCount
+            : '$fileCount · ${offlineSources.length} OFFLINE';
 
     return Container(
       decoration: const BoxDecoration(
@@ -157,17 +178,17 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
               ],
             ),
           ),
-          if (_expanded) _buildExpanded(),
+          if (_expanded) _buildExpanded(offlineSources),
         ],
       ),
     );
   }
 
-  Widget _buildExpanded() {
+  Widget _buildExpanded(List<String> offlineSources) {
     if (_scanError != null) {
       return _message('PROJECT MEDIA UNAVAILABLE', detail: _scanError);
     }
-    if (_items.isEmpty) {
+    if (_items.isEmpty && offlineSources.isEmpty) {
       return _message(
         'NO PROJECT MEDIA',
         detail: 'Files in video/ appear here.',
@@ -176,22 +197,39 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
 
     final ProjectMediaThumbnailLoader? loader = _thumbnailLoader;
     return SizedBox(
-      height: sc(118),
+      height: sc(128),
       child: ListView.separated(
         key: const ValueKey<String>('project-media-bin-list'),
         padding: EdgeInsets.fromLTRB(sc(10), 0, sc(10), sc(9)),
         scrollDirection: Axis.horizontal,
-        itemCount: _items.length,
+        itemCount: _items.length + offlineSources.length,
         separatorBuilder: (_, __) => SizedBox(width: sc(8)),
         itemBuilder: (BuildContext context, int index) {
+          if (index >= _items.length) {
+            final String source = offlineSources[index - _items.length];
+            return ProjectMediaOfflineTile(
+              key: ValueKey<String>('project-media-offline:$source'),
+              authoredSource: source,
+              references: widget.referenceCatalog.referencesFor(source),
+              theme: widget.theme,
+              onReferencePressed: widget.onReferencePressed,
+            );
+          }
+
           final ProjectMediaItem item = _items[index];
+          final String? authoredSource = item.authoredSource;
+          final List<ProjectMediaReference> references = authoredSource == null
+              ? const <ProjectMediaReference>[]
+              : widget.referenceCatalog.referencesFor(authoredSource);
           return _ProjectMediaTile(
             key: ValueKey<String>('project-media:${item.resolvedPath}'),
             item: item,
+            references: references,
             theme: widget.theme,
             projectClockRunning: widget.projectClockRunning,
             thumbnailLoader: loader,
             enableDrag: widget.enableDrag,
+            onReferencePressed: widget.onReferencePressed,
             onPressed: widget.onItemPressed == null
                 ? null
                 : () => widget.onItemPressed!(item),
@@ -227,19 +265,23 @@ class _ProjectMediaBinPanelState extends State<ProjectMediaBinPanel> {
 
 class _ProjectMediaTile extends StatefulWidget {
   final ProjectMediaItem item;
+  final List<ProjectMediaReference> references;
   final R3Theme theme;
   final bool projectClockRunning;
   final ProjectMediaThumbnailLoader? thumbnailLoader;
   final bool enableDrag;
+  final ValueChanged<ProjectMediaReference>? onReferencePressed;
   final VoidCallback? onPressed;
 
   const _ProjectMediaTile({
     super.key,
     required this.item,
+    required this.references,
     required this.theme,
     required this.projectClockRunning,
     required this.thumbnailLoader,
     required this.enableDrag,
+    required this.onReferencePressed,
     required this.onPressed,
   });
 
@@ -336,6 +378,27 @@ class _ProjectMediaTileState extends State<_ProjectMediaTile> {
                           letterSpacing: sc(1),
                         ),
                       ),
+                    if (usable && widget.references.isNotEmpty) ...<Widget>[
+                      SizedBox(height: sc(2)),
+                      Row(
+                        children: <Widget>[
+                          Text(
+                            'USED ${widget.references.length}',
+                            style: widget.theme.micro.copyWith(
+                              fontSize: sc(8),
+                              letterSpacing: sc(1),
+                            ),
+                          ),
+                          const Spacer(),
+                          ProjectMediaReferenceButton(
+                            authoredSource: widget.item.authoredSource!,
+                            references: widget.references,
+                            theme: widget.theme,
+                            onPressed: widget.onReferencePressed,
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

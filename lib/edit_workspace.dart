@@ -53,6 +53,7 @@ import 'playback_trace.dart';
 import 'project_clock.dart';
 import 'project_media_bin.dart';
 import 'project_media_bin_view.dart';
+import 'project_media_references.dart';
 import 'session_store.dart';
 import 'structural_sequence.dart';
 import 'structural_source_export.dart';
@@ -1367,6 +1368,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
             selected?.kind == StructuralSourceKind.mosaic
         ? model.mosaic(selected!.id)
         : null;
+    final ProjectMediaReferenceCatalog mediaReferences = model == null
+        ? const ProjectMediaReferenceCatalog.empty()
+        : projectMediaReferences(model);
 
     return Material(
       type: MaterialType.transparency,
@@ -1382,6 +1386,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
               workspaceRootResolver: widget.workspaceRootResolver,
               scanMedia: widget.scanProjectMedia,
               thumbnailLoader: widget.loadProjectMediaThumbnail,
+              referenceCatalog: mediaReferences,
+              onReferencePressed: model == null
+                  ? null
+                  : (ProjectMediaReference reference) =>
+                      _selectSource(model, reference.structuralSource),
               enableDrag: edit != null &&
                   !_importing &&
                   !_playing &&
