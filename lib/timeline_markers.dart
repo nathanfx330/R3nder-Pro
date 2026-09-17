@@ -33,7 +33,7 @@ class MarkerInstance {
 }
 
 enum DerivedLandmarkKind {
-  cue,
+  presentationIn,
   presentationOut,
   clipIn,
   clipOut,
@@ -41,10 +41,11 @@ enum DerivedLandmarkKind {
 
 /// UI-only timing truth derived from authored EDIT/CUE state.
 ///
-/// There is intentionally no corresponding authored definition type. CUE,
-/// presentation lifetime, and clip boundaries therefore cannot accidentally be
+/// There is intentionally no corresponding authored definition type.
+/// Presentation lifetime and clip boundaries therefore cannot accidentally be
 /// serialized as duplicate project state merely because a timeline chooses to
-/// draw them.
+/// draw them. A CUE remains the authored/source-relative trigger; its projected
+/// timeline meaning is [DerivedLandmarkKind.presentationIn].
 class DerivedLandmark {
   final DerivedLandmarkKind kind;
   final int frame;
@@ -125,7 +126,7 @@ List<MarkerInstance> projectEditMarkerInstances(
   return _markerInstancesForEdit(edit, definitions);
 }
 
-/// Derived CUE, CARD lifetime, and clip-boundary landmarks for one EDIT.
+/// Derived presentation lifetime and clip-boundary landmarks for one EDIT.
 List<DerivedLandmark> derivedLandmarksForEdit(
   String rawDocument,
   String editId,
@@ -389,7 +390,7 @@ List<DerivedLandmark> _derivedForClip(
       final String presentationName = cue.isSideCard ? 'SIDECARD' : 'CARD';
       out.add(
         DerivedLandmark(
-          kind: DerivedLandmarkKind.cue,
+          kind: DerivedLandmarkKind.presentationIn,
           frame: frame,
           label: '$presentationName IN',
           rootType: rootType,
@@ -429,9 +430,9 @@ List<DerivedLandmark> _derivedForClip(
       if (frame == null) continue;
       out.add(
         DerivedLandmark(
-          kind: DerivedLandmarkKind.cue,
+          kind: DerivedLandmarkKind.presentationIn,
           frame: frame,
-          label: 'DOSSIER CUE',
+          label: 'DOSSIER IN',
           rootType: rootType,
           rootId: rootId,
           containerId: containerId,
