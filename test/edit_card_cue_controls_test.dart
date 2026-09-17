@@ -30,6 +30,41 @@ const String _sourceWithCue = '''[EDIT:main]
 [/EDIT]
 ''';
 
+const String _sourceWithFuturePanelKey = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:40]
+        [CARD:old.png:30:30,30,38:OLD]
+          [PANEL]
+          PRESET: DOCUMENTARY
+          FUTURE_STYLE: archive-2
+          SUBTITLE: Reporter
+          [/PANEL]
+          Biography.
+        [/CARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+const String _sourceWithMalformedPanel = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:40]
+        [CARD:old.png:30:30,30,38:OLD]
+          [PANEL]
+          PRESET: DOCUMENTARY
+          META: BROKEN ROW
+          [/PANEL]
+          Biography.
+        [/CARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
 Widget _host({
   required EditSurfaceClip clip,
   required List<EditCardCue> cues,
@@ -172,6 +207,7 @@ void main() {
     );
     await tester.ensureVisible(body);
     await tester.enterText(body, 'Biography text.');
+    expect(find.textContaining('FIRST |'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
     await tester.pumpAndSettle();
 
@@ -198,6 +234,80 @@ void main() {
       ],
     );
     expect(parsed.body, 'Biography text.');
+  });
+
+  testWidgets('GUI preserves unknown PANEL directives on edit',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithFuturePanelKey,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+    CardRequest? changedCard;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) => changedCard = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-panel-warning')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
+      'UPDATED',
+    );
+    final Finder apply =
+        find.byKey(const ValueKey<String>('edit-card-cue-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+
+    expect(changedCard, isNotNull);
+    expect(changedCard!.body, contains('FUTURE_STYLE: archive-2'));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(parsed.preservedDirectives, <String>['FUTURE_STYLE: archive-2']);
+  });
+
+  testWidgets('malformed PANEL is visible and GUI refuses to rewrite it',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithMalformedPanel,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-panel-error')),
+      findsOneWidget,
+    );
+    final TextButton apply = tester.widget<TextButton>(
+      find.byKey(const ValueKey<String>('edit-card-cue-apply')),
+    );
+    expect(apply.onPressed, isNull);
   });
 
   testWidgets('existing cue can be edited and deleted from inspector controls',
