@@ -59,11 +59,11 @@ class ScriptLinter {
   /// FRAME belongs to sprite text files rather than scripts, but it turns
   /// up in prose often enough that flagging it would be noise.
   ///
-  /// CUE and SIDECARD are CLIP-local structural presentation source. They are
-  /// intentionally not terminal tags: the EDIT cue parser owns them and the
-  /// terminal must never suspend or type them. PANEL is body-local structured
-  /// content and is linted separately below, including when a CARD grammar
-  /// match consumes the entire surrounding body.
+  /// CUE, SIDECARD, and MAXIMIZE are CLIP-local structural source. They are
+  /// intentionally not terminal tags: edit_cue.dart owns them and the terminal
+  /// must never suspend or type them. PANEL is body-local structured content
+  /// and is linted separately below, including when a CARD grammar match
+  /// consumes the entire surrounding body.
   static const Set<String> _nonGrammarKeywords = {
     'DEF_MENU', '/DEF_MENU',
     'ITEM', '/ITEM',
@@ -80,6 +80,7 @@ class ScriptLinter {
     'STRUCT',
     'CUE', '/CUE',
     'SIDECARD', '/SIDECARD',
+    'MAXIMIZE',
     'PANEL', '/PANEL',
   };
 
@@ -119,20 +120,11 @@ class ScriptLinter {
   /// deserves a more useful message than "malformed parameters".
   static const Set<String> _bodyTags = {'CARD', 'DOSSIER', 'TIMELINE'};
 
-  /// A bracketed run that looks like it was meant to be a tag: an opening
-  /// bracket, an optional leading slash, then a bare identifier followed
-  /// by either the closing bracket or a colon.
-  ///
-  /// The shape test is what keeps prose out of the report. `[1, 2, 3, 4]`
-  /// starts with a digit and `["WIPE", "SPEED"]` starts with a quote, so
-  /// neither is tag-shaped and neither is flagged. ASCII art rarely is
-  /// either. The cost of the heuristic is that a genuinely mangled tag
-  /// like `[PAUSE 30]` reads as prose and slips through; the benefit is
-  /// that the report stays trustworthy enough to act on.
-  static final RegExp _tagShaped = RegExp(r'\[(/?[A-Za-z_][A-Za-z0-9_]*)\s*(:|\])');
+  /// A bracketed run that looks like it was meant to be a tag.
+  static final RegExp _tagShaped =
+      RegExp(r'\[(/?[A-Za-z_][A-Za-z0-9_]*)\s*(:|\])');
 
-  /// Comment spans, matched exactly as the preprocessor matches them so
-  /// the linter skips precisely what the engine will delete.
+  /// Comment spans, matched exactly as the preprocessor matches them.
   static final RegExp _comment = RegExp(r'\[#.*?\]', dotAll: true);
 
   /// Validates structured PANEL bodies with the same parser used by the
@@ -195,16 +187,6 @@ class ScriptLinter {
   }
 
   /// Validates the APP `panes` tail.
-  ///
-  /// The main scan above only reports constructs tagRegex FAILED to match,
-  /// and the panes group is `[^\]]+`, so any string at all matches and a
-  /// malformed pane token never reaches it. parseAppPanePlan then drops
-  /// what it cannot read and carries on, which keeps a typo from failing a
-  /// render and also keeps the author from ever finding out.
-  ///
-  /// So the tokens are checked here against the same pattern the parser
-  /// uses, plus the two range errors the parser silently absorbs: a
-  /// one-based hero of 0, and a hero past the end of its own pane.
   static List<LintFinding> _lintAppPanes(
     String rawText,
     int Function(int) lineOf,
@@ -218,12 +200,6 @@ class ScriptLinter {
       if (panes == null || panes.trim().isEmpty) continue;
 
       final int line = lineOf(m.start);
-
-      // Pane structure only means anything to MOSAIC. GRID lays out a
-      // uniform tile grid and never consults the plan, so an authored tail
-      // there is a no-op the author will read as a broken feature. The
-      // node workspace can produce this: the panes field is not gated on
-      // the layout dropdown.
       final String layout = (m.namedGroup('appLayout') ?? 'GRID').toUpperCase();
       if (!layout.startsWith('MOSAIC')) {
         out.add(LintFinding(
@@ -233,12 +209,6 @@ class ScriptLinter {
               'Set the APP layout to MOSAIC for grouping and Pane Life',
         ));
       }
-
-      // A plan that over-runs the folder is clipped, dropping its later
-      // panes and any hero on them. That check lives in the engine rather
-      // than here: the linter never touches disk, and a finding that fired
-      // on every valid pane plan would teach the author to ignore the
-      // strip.
 
       for (final String piece in panes.split(';')) {
         final String tok = piece.trim();
@@ -293,10 +263,6 @@ class ScriptLinter {
   }
 
   /// Scans [rawText] and returns everything suspicious, in document order.
-  ///
-  /// Takes the RAW script rather than the preprocessed one so line numbers
-  /// line up with what the author sees in the editor. Comment and CONFIG
-  /// spans are skipped here rather than stripped, for the same reason.
   static List<LintFinding> lint(String rawText) {
     final List<LintFinding> findings = [];
 
@@ -317,8 +283,6 @@ class ScriptLinter {
       return false;
     }
 
-    // Newline offsets, for turning an offset into a line number without
-    // rescanning the document every time.
     final List<int> lineStarts = [0];
     for (int i = 0; i < rawText.length; i++) {
       if (rawText.codeUnitAt(i) == 10) lineStarts.add(i + 1);
@@ -340,7 +304,6 @@ class ScriptLinter {
     int i = 0;
     while (i < rawText.length) {
       if (rawText.codeUnitAt(i) != 91) {
-        // '['
         i++;
         continue;
       }
@@ -350,20 +313,14 @@ class ScriptLinter {
         continue;
       }
 
-      // Ask the real grammar first. A match consumes the whole construct,
-      // including a body tag's body and closer.
       final Match? ok = tagRegex.matchAsPrefix(rawText, i);
       if (ok != null) {
         i = ok.end;
         continue;
       }
 
-      // matchAsPrefix against the whole string at an offset, rather than
-      // substring(i), which would copy the tail of the document once per
-      // bracket and turn this into an O(n^2) scan on a long script.
       final Match? shaped = _tagShaped.matchAsPrefix(rawText, i);
       if (shaped == null) {
-        // Not tag-shaped: prose, ASCII art, code samples. Leave it alone.
         i++;
         continue;
       }
@@ -374,8 +331,6 @@ class ScriptLinter {
         continue;
       }
 
-      // Pull a readable snippet: to the closing bracket if there is one
-      // reasonably close, otherwise a fixed window.
       final int closeAt = rawText.indexOf(']', i);
       final int close = (closeAt < 0) ? -1 : closeAt - i;
 
@@ -403,7 +358,6 @@ class ScriptLinter {
         message: message,
       ));
 
-      // Step past this construct so one bad tag does not cascade.
       i += (close >= 0) ? close + 1 : 1;
     }
 
