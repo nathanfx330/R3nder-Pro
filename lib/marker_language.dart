@@ -40,11 +40,18 @@ enum MarkerScope {
   clip,
 }
 
-/// Cross-parse identity for one authored MARK.
+/// Parse-scoped address for one authored MARK.
 ///
-/// No generated id is used. Parsing the same document twice produces the same
+/// No generated id is used. Parsing identical source twice produces the same
 /// line/offset/order address, just as RibbonBlock.nodeIndex deliberately uses
 /// document position instead of ScriptNode.id.
+///
+/// This is not durable identity across edits. Inserting or removing bytes above
+/// a marker can change [lineIndex] and [startOffset], and adding or removing an
+/// earlier MARK can change [documentOrder]. Consumers must reacquire addresses
+/// from the current parse before seek/delete/rename operations and must never
+/// persist a MarkerAddress across a source mutation. That instability is
+/// deliberate: authored source remains the only identity-bearing state.
 class MarkerAddress {
   final int documentOrder;
   final int lineIndex;
