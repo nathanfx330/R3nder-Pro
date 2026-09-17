@@ -29,11 +29,45 @@ Biography.''',
     expect(presentationPanelFontFamily(inherited, 'monospace'), 'monospace');
   });
 
+  test('authored kicker overrides preset label and blank keeps preset default', () {
+    final PresentationPanelContent authored = parsePresentationPanelContent(
+      heading: 'ALICE',
+      body: '''[PANEL]
+PRESET: DOCUMENTARY
+KICKER: ARCHIVE / INTERVIEW
+[/PANEL]''',
+    );
+    final PresentationPanelContent documentaryDefault =
+        parsePresentationPanelContent(
+      heading: 'ALICE',
+      body: '''[PANEL]
+PRESET: DOCUMENTARY
+[/PANEL]''',
+    );
+    final PresentationPanelContent dossierDefault = parsePresentationPanelContent(
+      heading: 'ALICE',
+      body: '''[PANEL]
+PRESET: DOSSIER
+[/PANEL]''',
+    );
+
+    expect(presentationPanelKickerText(authored), 'ARCHIVE / INTERVIEW');
+    expect(
+      presentationPanelKickerText(documentaryDefault),
+      'PROFILE / DOCUMENTARY',
+    );
+    expect(
+      presentationPanelKickerText(dossierDefault),
+      'DOSSIER / SUBJECT FILE',
+    );
+  });
+
   test('documentary PANEL semantic painter accepts identity facts and biography', () {
     final PresentationPanelContent content = parsePresentationPanelContent(
       heading: 'JOHN SMITH',
       body: '''[PANEL]
 PRESET: DOCUMENTARY
+KICKER: ARCHIVE / INTERVIEW
 SUBTITLE: Investigative Reporter
 META: ORGANIZATION | Example News
 META: LOCATION | Washington, DC
@@ -68,6 +102,7 @@ Reported on the case for six years.''',
       heading: 'SUBJECT',
       body: '''[PANEL]
 PRESET: DOSSIER
+KICKER: CASE FILE / 17A
 SUBTITLE: Case Officer
 [/PANEL]''',
     );
