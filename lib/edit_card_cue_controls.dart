@@ -93,7 +93,10 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String rgbDraft = '$red,$green,$blue';
     String headingDraft = existing?.heading ?? '';
     PresentationPanelPreset presetDraft = panel.preset;
-    String kickerDraft = panel.kicker;
+    bool kickerFollowsPresetDefault = panel.kicker.trim().isEmpty;
+    String kickerDraft = kickerFollowsPresetDefault
+        ? presentationPanelDefaultKicker(presetDraft)
+        : panel.kicker;
     String fontDraft = panel.fontFamily;
     String subtitleDraft = panel.subtitle;
     String metadataDraft = panel.metadata
@@ -188,9 +191,14 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 return;
               }
 
+              final String cleanKicker = kickerDraft.trim();
+              final String authoredKicker =
+                  cleanKicker == presentationPanelDefaultKicker(presetDraft)
+                      ? ''
+                      : cleanKicker;
               final String authoredBody = formatPresentationPanelBody(
                 preset: presetDraft,
-                kicker: kickerDraft,
+                kicker: authoredKicker,
                 fontFamily: fontDraft,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
@@ -241,11 +249,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 ),
               );
             }
-
-            final String kickerHint =
-                presetDraft == PresentationPanelPreset.dossier
-                    ? 'DOSSIER / SUBJECT FILE'
-                    : 'PROFILE / DOCUMENTARY';
 
             return AlertDialog(
               backgroundColor: R3Theme.panel,
@@ -464,7 +467,23 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   ? null
                                   : (PresentationPanelPreset value) {
                                       setDialogState(() {
+                                        final String previousDefault =
+                                            presentationPanelDefaultKicker(
+                                          presetDraft,
+                                        );
+                                        final bool followsDefault =
+                                            kickerFollowsPresetDefault ||
+                                                kickerDraft.trim().isEmpty ||
+                                                kickerDraft.trim() ==
+                                                    previousDefault;
                                         presetDraft = value;
+                                        if (followsDefault) {
+                                          kickerDraft =
+                                              presentationPanelDefaultKicker(
+                                            presetDraft,
+                                          );
+                                          kickerFollowsPresetDefault = true;
+                                        }
                                         errorText = null;
                                       });
                                     },
@@ -575,20 +594,30 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         ],
                       ),
                       SizedBox(height: sc(10)),
-                      TextFormField(
-                        key: const ValueKey<String>(
-                          'edit-card-cue-kicker-field',
+                      KeyedSubtree(
+                        key: ValueKey<String>(
+                          'edit-card-cue-kicker-draft:$kickerDraft',
                         ),
-                        initialValue: kickerDraft,
-                        enabled: !panel.hasErrors,
-                        decoration: InputDecoration(
-                          labelText: 'Top photo label',
-                          hintText: kickerHint,
-                          helperText:
-                              'Small label over the portrait. Blank uses the preset default shown here.',
+                        child: TextFormField(
+                          key: const ValueKey<String>(
+                            'edit-card-cue-kicker-field',
+                          ),
+                          initialValue: kickerDraft,
+                          enabled: !panel.hasErrors,
+                          decoration: const InputDecoration(
+                            labelText: 'Top photo label',
+                            helperText:
+                                'This is the small label over the portrait. Replace the visible text here to customize it.',
+                          ),
+                          style: widget.theme.value,
+                          onChanged: (String value) {
+                            kickerDraft = value;
+                            final String clean = value.trim();
+                            kickerFollowsPresetDefault = clean.isEmpty ||
+                                clean ==
+                                    presentationPanelDefaultKicker(presetDraft);
+                          },
                         ),
-                        style: widget.theme.value,
-                        onChanged: (String value) => kickerDraft = value,
                       ),
                       SizedBox(height: sc(10)),
                       TextFormField(
