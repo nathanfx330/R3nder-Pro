@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_media_import.dart';
+import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/native_media_probe.dart';
 
 void main() {
@@ -27,6 +28,7 @@ void main() {
       expect(imported.authoredSource, 'video/My Shot.mp4');
       expect(imported.clipBaseId, 'My_Shot');
       expect(imported.durationFrames, 87);
+      expect(imported.sourceLengthFrames, 87);
       expect(imported.speedNumerator, 1);
       expect(imported.speedDenominator, 1);
       expect(File(imported.resolvedPath).existsSync(), isTrue);
@@ -55,6 +57,7 @@ void main() {
       );
 
       expect(imported.durationFrames, 13925);
+      expect(imported.sourceLengthFrames, 11140);
       expect(imported.speedNumerator, 4);
       expect(imported.speedDenominator, 5);
       expect(imported.sourceFpsNumerator, 24);
@@ -137,4 +140,40 @@ void main() {
       temp.deleteSync(recursive: true);
     }
   });
+
+  test('source span conversion is the same arithmetic used by import', () {
+    expect(
+      sourceSpanToProjectFrames(
+        sourceSpanFrames: 80,
+        speed: ExactClipSpeed(4, 5),
+      ),
+      100,
+    );
+  });
+
+  test('workspace conform uses the same timing model without copying', () {
+    final Directory temp = Directory.systemTemp.createTempSync('r3nder_conform_');
+    try {
+      final File media = File('${temp.path}/shot.mp4')
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final ImportedEditVideo conformed = conformWorkspaceMedia(
+        media.path,
+        probeMedia: (_) => const NativeMediaProbeResult(
+          lengthFrames: 80,
+          fpsNumerator: 24,
+          fpsDenominator: 1,
+        ),
+      );
+
+      expect(conformed.resolvedPath, media.absolute.path);
+      expect(conformed.authoredSource, 'video/shot.mp4');
+      expect(conformed.sourceLengthFrames, 80);
+      expect(conformed.durationFrames, 100);
+      expect(conformed.speedNumerator, 4);
+      expect(conformed.speedDenominator, 5);
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
+
 }

@@ -92,6 +92,8 @@ class ExactClipSpeed {
 
   const ExactClipSpeed._(this.numerator, this.denominator);
 
+  static const ExactClipSpeed unity = ExactClipSpeed._(1, 1);
+
   factory ExactClipSpeed(int numerator, [int denominator = 1]) {
     if (numerator <= 0 || denominator <= 0) {
       throw ArgumentError('Clip speed numerator and denominator must be > 0.');

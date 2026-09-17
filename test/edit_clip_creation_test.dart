@@ -1,30 +1,38 @@
 // ./test/edit_clip_creation_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/edit_media_import.dart';
+import 'package:r3nder/edit_media_placement.dart';
+import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/edit_surface_model.dart';
 
 void main() {
-  test('first GUI video creates EDIT main V1 and a real CLIP', () {
+  test('first media placement creates EDIT main V1 and a real CLIP', () {
     const String original = '[TITLE:Opening]\nHello world\n';
 
-    final String next = createEditWithClip(
+    final MediaPlacementResult placed = placeMediaInEdit(
       source: original,
+      media: const ImportedEditVideo(
+        authoredSource: 'video/interview.mp4',
+        resolvedPath: '/workspace/video/interview.mp4',
+        clipBaseId: 'interview',
+        durationFrames: 90,
+        sourceLengthFrames: 90,
+      ),
       editId: 'main',
       trackId: 'V1',
-      clipId: 'interview',
-      mediaSource: 'video/interview.mp4',
       atFrame: 0,
-      durationFrames: 90,
     );
 
-    expect(next.startsWith(original), isTrue);
-    final EditSurfaceDocument document = EditSurfaceDocument.parse(next, 'main');
+    expect(placed.document.startsWith(original), isTrue);
+    final EditSurfaceDocument document =
+        EditSurfaceDocument.parse(placed.document, 'main');
     final EditSurfaceClip clip = document.clip('V1', 'interview');
     expect(clip.source, 'video/interview.mp4');
     expect(clip.atFrame, 0);
     expect(clip.inFrame, 0);
     expect(clip.durationFrames, 90);
-    expect('${clip.speed}', '1');
+    expect(clip.speed, ExactClipSpeed.unity);
   });
 
   test('adding overlay creates V2 without regenerating existing V1 source', () {

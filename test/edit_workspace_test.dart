@@ -192,6 +192,7 @@ void main() {
               resolvedPath: '/workspace/video/interview.mp4',
               clipBaseId: 'interview',
               durationFrames: 90,
+              sourceLengthFrames: 90,
             ),
           ),
         ),
@@ -230,6 +231,7 @@ void main() {
               resolvedPath: '/workspace/video/spring.webm',
               clipBaseId: 'spring',
               durationFrames: 13925,
+              sourceLengthFrames: 11140,
               speedNumerator: 4,
               speedDenominator: 5,
               sourceFpsNumerator: 24,
@@ -249,6 +251,54 @@ void main() {
     expect(clip.speed.numerator, 4);
     expect(clip.speed.denominator, 5);
     expect(clip.clip.sourceFrameAtProjectOffset(30), 24);
+  });
+
+  testWidgets('ADD VIDEO appends when playhead is inside existing V1 clip',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+    String latest = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:base:video/base.mp4:0:0:120:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1000,
+          height: 900,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 60,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
+            pickVideo: () async => '/outside/next.mp4',
+            importVideo: (_) => const ImportedEditVideo(
+              authoredSource: 'video/next.mp4',
+              resolvedPath: '/workspace/video/next.mp4',
+              clipBaseId: 'next',
+              durationFrames: 30,
+              sourceLengthFrames: 30,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('ADD VIDEO'));
+    await tester.pumpAndSettle();
+
+    final EditSurfaceDocument document = EditSurfaceDocument.parse(latest, 'main');
+    expect(document.clip('V1', 'next').atFrame, 120);
+    expect(document.clip('V1', 'next').endFrameExclusive, 150);
   });
 
   testWidgets('ADD OVERLAY creates V2 at current edit playhead',
@@ -280,6 +330,7 @@ void main() {
               resolvedPath: '/workspace/video/title.mov',
               clipBaseId: 'title',
               durationFrames: 48,
+              sourceLengthFrames: 48,
             ),
           ),
         ),

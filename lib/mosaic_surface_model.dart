@@ -561,7 +561,7 @@ class MosaicSurfaceDocument {
       model,
       structuralSource,
     );
-    final ExactClipSpeed authoredSpeed = speed ?? ExactClipSpeed(1);
+    final ExactClipSpeed authoredSpeed = speed ?? ExactClipSpeed.unity;
     final String newline = source.contains('\r\n') ? '\r\n' : '\n';
     final int close = target.block.closeStartOffset;
     final String indent = _lineIndentAt(source, close);
