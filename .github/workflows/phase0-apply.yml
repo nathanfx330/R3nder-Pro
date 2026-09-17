@@ -1,9 +1,9 @@
-name: Phase 0 implementation
+name: Phase 0 minimal implementation
 
 on:
   push:
     branches:
-      - phase0-media-placement
+      - phase0-media-placement-minimal-build
 
 permissions:
   contents: write
@@ -26,20 +26,6 @@ jobs:
         run: |
           python3 tool/phase0_apply.py
           python3 tool/phase0_test_adjust.py
-
-      - name: Format changed Dart files
-        run: |
-          dart format \
-            lib/edit_model.dart \
-            lib/edit_media_import.dart \
-            lib/edit_surface_model.dart \
-            lib/edit_media_placement.dart \
-            lib/edit_workspace.dart \
-            lib/mosaic_surface_model.dart \
-            test/edit_clip_creation_test.dart \
-            test/edit_media_import_test.dart \
-            test/edit_media_placement_test.dart \
-            test/edit_workspace_test.dart
 
       - name: Resolve Flutter packages
         run: flutter pub get
@@ -75,4 +61,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add lib test docs
           git commit -m 'Unify EDIT media placement and make Add Video append'
-          git push origin HEAD:phase0-media-placement
+          git push origin HEAD:phase0-media-placement-minimal-build
