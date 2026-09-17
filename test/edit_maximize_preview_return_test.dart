@@ -62,6 +62,8 @@ const String _source = '''[EDIT:main]
 [/EDIT]
 ''';
 
+String _resolveSource(String value) => '/workspace/$value';
+
 Widget _preview(_FakeBackend backend, int frame) {
   return MaterialApp(
     home: SizedBox(
@@ -73,7 +75,7 @@ Widget _preview(_FakeBackend backend, int frame) {
         currentFrame: frame,
         theme: R3Theme.of(Colors.green),
         backend: backend,
-        resolveSource: (String value) => '/workspace/$value',
+        resolveSource: _resolveSource,
       ),
     ),
   );
