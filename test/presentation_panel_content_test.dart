@@ -4,13 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/presentation_panel_content.dart';
 
 void main() {
-  test('legacy card body stays SIMPLE and untouched', () {
-    const String body = 'First line.\n\nSecond line.';
+  test('legacy card body stays SIMPLE and byte-clean', () {
+    const String body = 'First line.\r\n\r\nSecond line.';
     final PresentationPanelContent content = parsePresentationPanelContent(
       heading: 'ALICE',
       body: body,
     );
 
+    expect(content.panelOpened, isFalse);
     expect(content.structured, isFalse);
     expect(content.preset, PresentationPanelPreset.simple);
     expect(content.heading, 'ALICE');
@@ -18,6 +19,7 @@ void main() {
     expect(content.subtitle, isEmpty);
     expect(content.metadata, isEmpty);
     expect(content.body, body);
+    expect(content.issues, isEmpty);
   });
 
   test('documentary block parses font subtitle metadata and biography', () {
@@ -35,7 +37,9 @@ Reported on the case for six years.''';
       body: body,
     );
 
+    expect(content.panelOpened, isTrue);
     expect(content.structured, isTrue);
+    expect(content.hasErrors, isFalse);
     expect(content.preset, PresentationPanelPreset.documentary);
     expect(content.heading, 'ALICE MORGAN');
     expect(content.fontFamily, 'IBM Plex Sans');
@@ -56,22 +60,108 @@ Reported on the case for six years.''';
     expect(content.body, 'Reported on the case for six years.');
   });
 
-  test('missing PANEL close degrades to legacy visible text', () {
-    const String body = '''[PANEL]
-PRESET: DOCUMENTARY
-FONT: serif
-SUBTITLE: Analyst
-Biography survives.''';
+  test('missing PANEL close is explicit error and keeps raw body', () {
+    const String body = '[PANEL]\r\nPRESET: DOCUMENTARY\r\nBiography survives.';
 
     final PresentationPanelContent content = parsePresentationPanelContent(
       heading: 'SUBJECT',
       body: body,
     );
 
+    expect(content.panelOpened, isTrue);
     expect(content.structured, isFalse);
-    expect(content.preset, PresentationPanelPreset.simple);
-    expect(content.fontFamily, isEmpty);
+    expect(content.hasErrors, isTrue);
+    expect(content.issues, hasLength(1));
+    expect(
+      content.issues.single.code,
+      PresentationPanelIssueCode.missingClosingTag,
+    );
     expect(content.body, body);
+  });
+
+  test('unknown directive is preserved through canonical writer', () {
+    const String source = '''[PANEL]
+PRESET: DOCUMENTARY
+FUTURE_STYLE: archive-2
+SUBTITLE: Analyst
+[/PANEL]
+Biography.''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.hasErrors, isFalse);
+    expect(parsed.hasWarnings, isTrue);
+    expect(parsed.preservedDirectives, <String>['FUTURE_STYLE: archive-2']);
+    expect(
+      parsed.issues.single.code,
+      PresentationPanelIssueCode.unknownDirective,
+    );
+
+    final String rewritten = formatPresentationPanelBody(
+      preset: parsed.preset,
+      fontFamily: parsed.fontFamily,
+      subtitle: parsed.subtitle,
+      metadata: parsed.metadata,
+      preservedDirectives: parsed.preservedDirectives,
+      body: parsed.body,
+    );
+    expect(rewritten, contains('FUTURE_STYLE: archive-2'));
+  });
+
+  test('malformed META is preserved and reported instead of dropped', () {
+    const String source = '''[PANEL]
+PRESET: DOCUMENTARY
+META: BROKEN ROW
+[/PANEL]
+Biography.''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.hasErrors, isTrue);
+    expect(parsed.metadata, isEmpty);
+    expect(parsed.preservedDirectives, <String>['META: BROKEN ROW']);
+    expect(
+      parsed.issues.single.code,
+      PresentationPanelIssueCode.malformedMetadata,
+    );
+  });
+
+  test('META first pipe separates label and later pipes remain value', () {
+    const String source = '''[PANEL]
+PRESET: DOCUMENTARY
+META: RANGE | 1990 | 1995
+[/PANEL]''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.hasErrors, isFalse);
+    expect(parsed.metadata.single.label, 'RANGE');
+    expect(parsed.metadata.single.value, '1990 | 1995');
+  });
+
+  test('invalid preset is preserved and reported', () {
+    const String source = '''[PANEL]
+PRESET: DOCUMENTARRY
+[/PANEL]''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.hasErrors, isTrue);
+    expect(parsed.preset, PresentationPanelPreset.simple);
+    expect(parsed.preservedDirectives, <String>['PRESET: DOCUMENTARRY']);
+    expect(parsed.issues.single.code, PresentationPanelIssueCode.invalidPreset);
   });
 
   test('canonical writer keeps old SIMPLE body source-clean', () {
