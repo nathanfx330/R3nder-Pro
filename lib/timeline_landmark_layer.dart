@@ -2,17 +2,10 @@
 //
 // Shared zero-width landmark paint layer for TEXT and EDIT timelines.
 //
-// The coloured ribbon/clip bands describe intervals. MARK, presentation IN,
-// presentation OUT, clip IN, and clip OUT describe instants, so forcing them
-// into minimum-width blocks would falsify the time axis. This painter is
-// deliberately a separate pass above the bands.
-//
-// Authored MARK definitions keep the strongest treatment. Derived landmarks
-// retain their own timing semantics visually: presentation IN is amber,
-// CARD/SIDECARD presentation OUT is purple, clip IN is green, and clip OUT is
-// red. Clip IN and OUT receive opposite sub-pixel offsets so an outgoing clip
-// boundary and the next clip's incoming boundary can both be seen when they
-// occupy the same exact frame.
+// The coloured ribbon/clip bands describe intervals. MARK and derived
+// presentation/shell/clip boundaries describe instants, so forcing them into
+// minimum-width blocks would falsify the time axis. This painter is deliberately
+// a separate pass above the bands.
 
 import 'package:flutter/material.dart';
 
@@ -128,6 +121,10 @@ class TimelineLandmarkPainter extends CustomPainter {
       case DerivedLandmarkKind.presentationOut:
         base = R3Theme.ribbonMedia;
         break;
+      case DerivedLandmarkKind.shellIn:
+      case DerivedLandmarkKind.shellOut:
+        base = R3Theme.ribbonWindow;
+        break;
       case DerivedLandmarkKind.clipIn:
         base = R3Theme.okGreen;
         break;
@@ -142,6 +139,8 @@ class TimelineLandmarkPainter extends CustomPainter {
     switch (kind) {
       case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
+      case DerivedLandmarkKind.shellIn:
+      case DerivedLandmarkKind.shellOut:
         return 0.0;
       case DerivedLandmarkKind.clipIn:
         return sc(0.8);
@@ -155,6 +154,9 @@ class TimelineLandmarkPainter extends CustomPainter {
       case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
         return height * 0.18;
+      case DerivedLandmarkKind.shellIn:
+      case DerivedLandmarkKind.shellOut:
+        return height * 0.30;
       case DerivedLandmarkKind.clipIn:
       case DerivedLandmarkKind.clipOut:
         return height * 0.42;
@@ -166,11 +168,23 @@ class TimelineLandmarkPainter extends CustomPainter {
       case DerivedLandmarkKind.presentationIn:
       case DerivedLandmarkKind.presentationOut:
         return sc(1.4);
+      case DerivedLandmarkKind.shellIn:
+      case DerivedLandmarkKind.shellOut:
+        return sc(1.2);
       case DerivedLandmarkKind.clipIn:
       case DerivedLandmarkKind.clipOut:
         return sc(1);
     }
   }
+
+  bool _isStart(DerivedLandmarkKind kind) => switch (kind) {
+        DerivedLandmarkKind.presentationIn => true,
+        DerivedLandmarkKind.shellIn => true,
+        DerivedLandmarkKind.clipIn => true,
+        DerivedLandmarkKind.presentationOut => false,
+        DerivedLandmarkKind.shellOut => false,
+        DerivedLandmarkKind.clipOut => false,
+      };
 
   void _paintDerived(Canvas canvas, Size size, DerivedLandmark landmark) {
     if (landmark.frame < 0 || landmark.frame > totalFrames) return;
@@ -190,39 +204,14 @@ class TimelineLandmarkPainter extends CustomPainter {
       paint,
     );
 
-    // Tiny directional caps give each interval family a readable start/end
-    // shape without turning the eight-pixel landmark lane into another track.
-    // CARD/SIDECARD uses the upper tier. Clip boundaries use the lower tier.
-    switch (landmark.kind) {
-      case DerivedLandmarkKind.presentationIn:
-        canvas.drawLine(
-          Offset(x, top),
-          Offset((x + sc(2.4)).clamp(0.0, size.width - 1.0), top),
-          paint,
-        );
-        break;
-      case DerivedLandmarkKind.presentationOut:
-        canvas.drawLine(
-          Offset(x, top),
-          Offset((x - sc(2.4)).clamp(0.0, size.width - 1.0), top),
-          paint,
-        );
-        break;
-      case DerivedLandmarkKind.clipIn:
-        canvas.drawLine(
-          Offset(x, top),
-          Offset((x + sc(2.2)).clamp(0.0, size.width - 1.0), top),
-          paint,
-        );
-        break;
-      case DerivedLandmarkKind.clipOut:
-        canvas.drawLine(
-          Offset(x, top),
-          Offset((x - sc(2.2)).clamp(0.0, size.width - 1.0), top),
-          paint,
-        );
-        break;
-    }
+    final double cap = landmark.kind == DerivedLandmarkKind.clipIn ||
+            landmark.kind == DerivedLandmarkKind.clipOut
+        ? sc(2.2)
+        : sc(2.4);
+    final double endX = _isStart(landmark.kind)
+        ? (x + cap).clamp(0.0, size.width - 1.0)
+        : (x - cap).clamp(0.0, size.width - 1.0);
+    canvas.drawLine(Offset(x, top), Offset(endX, top), paint);
   }
 
   @override
@@ -233,9 +222,8 @@ class TimelineLandmarkPainter extends CustomPainter {
         ? theme.accent.withValues(alpha: 0.35)
         : theme.accent;
 
-    // Derived truth first. Authored intent is painted last so a MARK and
-    // presentation IN on the same frame still read as an authored marker
-    // rather than one fat ambiguous line.
+    // Derived truth first. Authored intent is painted last so a MARK and a
+    // derived boundary on the same frame still read as authored intent.
     for (final DerivedLandmark landmark in derived) {
       _paintDerived(canvas, size, landmark);
     }
