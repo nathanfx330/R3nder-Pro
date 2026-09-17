@@ -220,7 +220,7 @@ void main() {
       expect(instances[1].placementIndex, 1);
     });
 
-    test('CUE and clip IN OUT are derived only', () {
+    test('presentation and clip IN OUT are derived only', () {
       const String source = '''[EDIT:cut]
   [TRACK:V1]
     [CLIP:c1:clip.mp4:10:20:20:2]
@@ -249,7 +249,10 @@ void main() {
         30,
       );
       expect(
-        landmarks.where((item) => item.kind == DerivedLandmarkKind.cue)
+        landmarks
+            .where(
+              (item) => item.kind == DerivedLandmarkKind.presentationIn,
+            )
             .single
             .frame,
         13,
