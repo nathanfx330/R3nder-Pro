@@ -29,6 +29,14 @@ String presentationPanelFontFamily(
   return authored.isEmpty ? inheritedFontFamily : authored;
 }
 
+String presentationPanelKickerText(PresentationPanelContent content) {
+  final String authored = content.kicker.trim();
+  if (authored.isNotEmpty) return authored;
+  return content.preset == PresentationPanelPreset.dossier
+      ? 'DOSSIER / SUBJECT FILE'
+      : 'PROFILE / DOCUMENTARY';
+}
+
 Color presentationPanelAccentColor({
   required Color panelColor,
   required Color headColor,
@@ -95,7 +103,7 @@ void paintPresentationPanelPhotoTreatment({
   final double bottom = imageRect.bottom - math.max(13.0 * scale, lineH * 3.0);
   _paintKicker(
     canvas: canvas,
-    text: _kickerFor(content),
+    text: presentationPanelKickerText(content),
     origin: Offset(imageRect.left + padX, bottom),
     maxWidth: math.max(0.0, imageRect.width - padX * 2.0),
     fontFamily: fontFamily,
@@ -137,7 +145,7 @@ void paintPresentationPanelContent({
   if (showKicker) {
     final double kickerH = _paintKicker(
       canvas: canvas,
-      text: _kickerFor(content),
+      text: presentationPanelKickerText(content),
       origin: Offset(left, cursorY),
       maxWidth: textW,
       fontFamily: fontFamily,
@@ -245,12 +253,6 @@ void paintPresentationPanelContent({
     body.paint(canvas, Offset(left, cursorY));
     canvas.restore();
   }
-}
-
-String _kickerFor(PresentationPanelContent content) {
-  return content.preset == PresentationPanelPreset.dossier
-      ? 'DOSSIER / SUBJECT FILE'
-      : 'PROFILE / DOCUMENTARY';
 }
 
 double _paintKicker({
