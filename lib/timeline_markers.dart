@@ -12,6 +12,7 @@ import 'card_presentation.dart';
 import 'edit_cue.dart';
 import 'edit_model.dart';
 import 'marker_language.dart';
+import 'maximize_presentation.dart';
 import 'structural_sequence.dart';
 
 class MarkerInstance {
@@ -35,17 +36,17 @@ class MarkerInstance {
 enum DerivedLandmarkKind {
   presentationIn,
   presentationOut,
+  shellIn,
+  shellOut,
   clipIn,
   clipOut,
 }
 
 /// UI-only timing truth derived from authored EDIT/CUE state.
 ///
-/// There is intentionally no corresponding authored definition type.
-/// Presentation lifetime and clip boundaries therefore cannot accidentally be
-/// serialized as duplicate project state merely because a timeline chooses to
-/// draw them. A CUE remains the authored/source-relative trigger; its projected
-/// timeline meaning is [DerivedLandmarkKind.presentationIn].
+/// There is intentionally no corresponding authored definition type. CARD and
+/// DOSSIER lifetimes use presentation landmarks. MAXIMIZE paints no content, so
+/// it uses shellIn/shellOut instead of pretending to be a presentation.
 class DerivedLandmark {
   final DerivedLandmarkKind kind;
   final int frame;
@@ -92,10 +93,6 @@ class ProgramTimelineLandmarks {
 }
 
 /// Projects positional TEXT markers through the editor's raw-line simulation.
-///
-/// A TEXT MARK owns no frame count. Its first program frame is the first frame
-/// whose execution line has reached the marker's authored line. Consecutive
-/// zero-time markers therefore naturally share one frame.
 List<MarkerInstance> projectTextMarkerInstances(
   String rawDocument,
   List<int> rawLineAtFrame,
@@ -126,7 +123,7 @@ List<MarkerInstance> projectEditMarkerInstances(
   return _markerInstancesForEdit(edit, definitions);
 }
 
-/// Derived presentation lifetime and clip-boundary landmarks for one EDIT.
+/// Derived presentation, shell, and clip-boundary landmarks for one EDIT.
 List<DerivedLandmark> derivedLandmarksForEdit(
   String rawDocument,
   String editId,
@@ -329,6 +326,7 @@ List<DerivedLandmark> _derivedForEdit(EditSequence edit) {
           rootId: edit.id,
           containerId: track.id,
           boundaryFrameExclusive: edit.projectFrameCount,
+          includeShellCues: true,
         ),
       );
     }
@@ -347,6 +345,7 @@ List<DerivedLandmark> _derivedForMosaic(MosaicSequence mosaic) {
           rootId: mosaic.id,
           containerId: pane.id,
           boundaryFrameExclusive: pane.projectFrameCount,
+          includeShellCues: false,
         ),
       );
     }
@@ -360,6 +359,7 @@ List<DerivedLandmark> _derivedForClip(
   required String rootId,
   required String containerId,
   required int boundaryFrameExclusive,
+  required bool includeShellCues,
 }) {
   final List<DerivedLandmark> out = <DerivedLandmark>[
     DerivedLandmark(
@@ -400,11 +400,6 @@ List<DerivedLandmark> _derivedForClip(
         ),
       );
 
-      // CARD/SIDECARD lifetime is deterministic from authored hold and keeps
-      // running across later EDIT cuts. It ends only when its own presentation
-      // lifetime ends or the enclosing EDIT/MOSAIC pane ends, whichever comes
-      // first. The OUT landmark therefore reflects what the compositor really
-      // shows rather than the source clip's OUT frame.
       final int naturalOut = frame +
           CardPresentationTiming(holdFrames: cue.card.holdFrames)
               .durationFrames;
@@ -425,6 +420,7 @@ List<DerivedLandmark> _derivedForClip(
         );
       }
     }
+
     for (final EditDossierCue cue in parseClipDossierCues(clip)) {
       final int? frame = sourceFrameToProjectFrame(clip, cue.sourceFrame);
       if (frame == null) continue;
@@ -439,6 +435,45 @@ List<DerivedLandmark> _derivedForClip(
           clipId: clip.id,
         ),
       );
+    }
+
+    if (includeShellCues) {
+      for (final EditMaximizeCue cue in parseClipMaximizeCues(clip)) {
+        final int? frame = sourceFrameToProjectFrame(clip, cue.sourceFrame);
+        if (frame == null) continue;
+
+        out.add(
+          DerivedLandmark(
+            kind: DerivedLandmarkKind.shellIn,
+            frame: frame,
+            label: 'MAXIMIZE IN',
+            rootType: rootType,
+            rootId: rootId,
+            containerId: containerId,
+            clipId: clip.id,
+          ),
+        );
+
+        final int naturalOut = frame +
+            MaximizePresentationTiming(holdFrames: cue.holdFrames)
+                .durationFrames;
+        final int visibleOut = naturalOut < boundaryFrameExclusive
+            ? naturalOut
+            : boundaryFrameExclusive;
+        if (visibleOut > frame) {
+          out.add(
+            DerivedLandmark(
+              kind: DerivedLandmarkKind.shellOut,
+              frame: visibleOut,
+              label: 'MAXIMIZE OUT',
+              rootType: rootType,
+              rootId: rootId,
+              containerId: containerId,
+              clipId: clip.id,
+            ),
+          );
+        }
+      }
     }
   } catch (_) {
     // A malformed CUE must not hide clip IN/OUT diagnostic truth. The EDIT
