@@ -939,6 +939,9 @@ void _paintSimpleCardContent({
 }) {
   const double cardHeadingSize = 34.0;
   const double cardBodySize = 20.0;
+  final String selectedFontFamily = content.fontFamily.trim().isEmpty
+      ? fontFamily
+      : content.fontFamily.trim();
 
   final double textW = cardRect.width - pad * 2.0;
   double cursorY = imageBottom + pad * 1.1;
@@ -948,7 +951,7 @@ void _paintSimpleCardContent({
       text: TextSpan(
         text: content.heading,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -978,7 +981,7 @@ void _paintSimpleCardContent({
       text: TextSpan(
         text: content.body,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -1020,6 +1023,9 @@ void _paintRichCardContent({
   required Color ruleColor,
   required String fontFamily,
 }) {
+  final String selectedFontFamily = content.fontFamily.trim().isEmpty
+      ? fontFamily
+      : content.fontFamily.trim();
   final double left = cardRect.left + pad;
   final double right = cardRect.right - pad;
   final double textW = math.max(0.0, right - left);
@@ -1032,7 +1038,7 @@ void _paintRichCardContent({
     text: TextSpan(
       text: kicker,
       style: TextStyle(
-        fontFamily: fontFamily,
+        fontFamily: selectedFontFamily,
         fontFamilyFallback: const [
           'Courier',
           'Consolas',
@@ -1056,7 +1062,7 @@ void _paintRichCardContent({
       text: TextSpan(
         text: content.heading,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -1083,7 +1089,7 @@ void _paintRichCardContent({
       text: TextSpan(
         text: content.subtitle,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -1121,7 +1127,7 @@ void _paintRichCardContent({
       text: TextSpan(
         text: item.label.toUpperCase(),
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -1143,7 +1149,7 @@ void _paintRichCardContent({
       text: TextSpan(
         text: item.value,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
@@ -1187,7 +1193,7 @@ void _paintRichCardContent({
       text: TextSpan(
         text: content.body,
         style: TextStyle(
-          fontFamily: fontFamily,
+          fontFamily: selectedFontFamily,
           fontFamilyFallback: const [
             'Courier',
             'Consolas',
