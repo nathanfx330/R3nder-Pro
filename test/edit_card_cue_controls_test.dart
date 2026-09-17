@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_card_cue_controls.dart';
 import 'package:r3nder/edit_cue.dart';
 import 'package:r3nder/edit_surface_model.dart';
+import 'package:r3nder/presentation_panel_content.dart';
 import 'package:r3nder/presentation_requests.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -110,10 +111,10 @@ void main() {
       find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
       'JOHN SMITH',
     );
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('edit-card-cue-body-field')),
-      'Biography text.',
-    );
+    final Finder body =
+        find.byKey(const ValueKey<String>('edit-card-cue-body-field'));
+    await tester.ensureVisible(body);
+    await tester.enterText(body, 'Biography text.');
     await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
     await tester.pumpAndSettle();
 
@@ -123,6 +124,80 @@ void main() {
     expect(added!.panelColor.toARGB32(), 0xFF182028);
     expect(added!.heading, 'JOHN SMITH');
     expect(added!.body, 'Biography text.');
+  });
+
+  testWidgets('rich CARD GUI authors preset font subtitle metadata and body',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+    CardRequest? added;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) => added = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    final Finder presetMenu =
+        find.byKey(const ValueKey<String>('edit-card-cue-preset-menu'));
+    await tester.ensureVisible(presetMenu);
+    await tester.tap(presetMenu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DOCUMENTARY').last);
+    await tester.pumpAndSettle();
+
+    final Finder font =
+        find.byKey(const ValueKey<String>('edit-card-cue-font-field'));
+    final Finder subtitle =
+        find.byKey(const ValueKey<String>('edit-card-cue-subtitle-field'));
+    final Finder metadata =
+        find.byKey(const ValueKey<String>('edit-card-cue-metadata-field'));
+    final Finder body =
+        find.byKey(const ValueKey<String>('edit-card-cue-body-field'));
+
+    await tester.ensureVisible(font);
+    await tester.enterText(font, 'IBM Plex Sans');
+    await tester.ensureVisible(subtitle);
+    await tester.enterText(subtitle, 'Investigative Reporter');
+    await tester.ensureVisible(metadata);
+    await tester.enterText(
+      metadata,
+      'ORGANIZATION | Example News\nLOCATION | Washington, DC',
+    );
+    await tester.ensureVisible(body);
+    await tester.enterText(body, 'Biography text.');
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
+    await tester.pumpAndSettle();
+
+    expect(added, isNotNull);
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(parsed.structured, isTrue);
+    expect(parsed.preset, PresentationPanelPreset.documentary);
+    expect(parsed.fontFamily, 'IBM Plex Sans');
+    expect(parsed.subtitle, 'Investigative Reporter');
+    expect(
+      parsed.metadata,
+      const <PresentationPanelMetadata>[
+        PresentationPanelMetadata(
+          label: 'ORGANIZATION',
+          value: 'Example News',
+        ),
+        PresentationPanelMetadata(
+          label: 'LOCATION',
+          value: 'Washington, DC',
+        ),
+      ],
+    );
+    expect(parsed.body, 'Biography text.');
   });
 
   testWidgets('existing cue can be edited and deleted from inspector controls',
