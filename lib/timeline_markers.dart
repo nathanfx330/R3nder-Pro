@@ -8,6 +8,7 @@
 // EDIT placed twice in TEXT produces two program instances of the same marker
 // definition and no duplicate authored state.
 
+import 'card_presentation.dart';
 import 'edit_cue.dart';
 import 'edit_model.dart';
 import 'marker_language.dart';
@@ -33,15 +34,17 @@ class MarkerInstance {
 
 enum DerivedLandmarkKind {
   cue,
+  presentationOut,
   clipIn,
   clipOut,
 }
 
 /// UI-only timing truth derived from authored EDIT/CUE state.
 ///
-/// There is intentionally no corresponding authored definition type. CUE and
-/// clip boundaries therefore cannot accidentally be serialized as duplicate
-/// project state merely because a timeline chooses to draw them.
+/// There is intentionally no corresponding authored definition type. CUE,
+/// presentation lifetime, and clip boundaries therefore cannot accidentally be
+/// serialized as duplicate project state merely because a timeline chooses to
+/// draw them.
 class DerivedLandmark {
   final DerivedLandmarkKind kind;
   final int frame;
@@ -122,7 +125,7 @@ List<MarkerInstance> projectEditMarkerInstances(
   return _markerInstancesForEdit(edit, definitions);
 }
 
-/// Derived CUE and clip-boundary landmarks for one EDIT sequence.
+/// Derived CUE, CARD lifetime, and clip-boundary landmarks for one EDIT.
 List<DerivedLandmark> derivedLandmarksForEdit(
   String rawDocument,
   String editId,
@@ -324,6 +327,7 @@ List<DerivedLandmark> _derivedForEdit(EditSequence edit) {
           rootType: 'EDIT',
           rootId: edit.id,
           containerId: track.id,
+          boundaryFrameExclusive: edit.projectFrameCount,
         ),
       );
     }
@@ -341,6 +345,7 @@ List<DerivedLandmark> _derivedForMosaic(MosaicSequence mosaic) {
           rootType: 'MOSAIC',
           rootId: mosaic.id,
           containerId: pane.id,
+          boundaryFrameExclusive: pane.projectFrameCount,
         ),
       );
     }
@@ -353,6 +358,7 @@ List<DerivedLandmark> _derivedForClip(
   required String rootType,
   required String rootId,
   required String containerId,
+  required int boundaryFrameExclusive,
 }) {
   final List<DerivedLandmark> out = <DerivedLandmark>[
     DerivedLandmark(
@@ -379,17 +385,44 @@ List<DerivedLandmark> _derivedForClip(
     for (final EditCardCue cue in parseClipCardCues(clip)) {
       final int? frame = sourceFrameToProjectFrame(clip, cue.sourceFrame);
       if (frame == null) continue;
+
+      final String presentationName = cue.isSideCard ? 'SIDECARD' : 'CARD';
       out.add(
         DerivedLandmark(
           kind: DerivedLandmarkKind.cue,
           frame: frame,
-          label: cue.isSideCard ? 'SIDECARD CUE' : 'CARD CUE',
+          label: '$presentationName IN',
           rootType: rootType,
           rootId: rootId,
           containerId: containerId,
           clipId: clip.id,
         ),
       );
+
+      // CARD/SIDECARD lifetime is deterministic from authored hold and keeps
+      // running across later EDIT cuts. It ends only when its own presentation
+      // lifetime ends or the enclosing EDIT/MOSAIC pane ends, whichever comes
+      // first. The OUT landmark therefore reflects what the compositor really
+      // shows rather than the source clip's OUT frame.
+      final int naturalOut = frame +
+          CardPresentationTiming(holdFrames: cue.card.holdFrames)
+              .durationFrames;
+      final int visibleOut = naturalOut < boundaryFrameExclusive
+          ? naturalOut
+          : boundaryFrameExclusive;
+      if (visibleOut > frame) {
+        out.add(
+          DerivedLandmark(
+            kind: DerivedLandmarkKind.presentationOut,
+            frame: visibleOut,
+            label: '$presentationName OUT',
+            rootType: rootType,
+            rootId: rootId,
+            containerId: containerId,
+            clipId: clip.id,
+          ),
+        );
+      }
     }
     for (final EditDossierCue cue in parseClipDossierCues(clip)) {
       final int? frame = sourceFrameToProjectFrame(clip, cue.sourceFrame);
