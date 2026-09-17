@@ -20,14 +20,21 @@
 // client-side SIDECARD and use the public side-card geometry/panel helpers to
 // move the real outer window instead. This prevents a window-inside-window.
 //
+// Standalone EDIT also needs a stable fake window when an EDIT owns MAXIMIZE
+// cues. Without that baseline, the raw client itself already fills the preview:
+// MAXIMIZE can appear to go fullscreen but has nowhere visible to return. The
+// fake shell therefore remains seated before and after MAXIMIZE and consumes the
+// same shared maximize geometry as TEXT/STRUCT. It is still authoring-only; the
+// real program path continues to move the real STRUCT window.
+//
 // The standalone desktop/video-window shell is public because DOSSIER authoring
 // preview needs the exact same fake environment. That shell is still only an
 // EDIT convenience; authoritative TEXT/STRUCT composition moves the real outer
 // window instead.
 //
 // SIDECARD geometry and its movement curve live in sidecard_geometry.dart.
-// This painter consumes that evaluated geometry; it does not own a second copy
-// of the shell animation policy.
+// MAXIMIZE movement lives in structural_shell_geometry.dart. This painter
+// consumes those evaluated geometries; it does not own a second timing model.
 //
 // Direct EDIT cues fill that EDIT's target. Cues authored directly in a MOSAIC
 // pane are clipped to that pane and, for standalone SIDECARD, sample only that
@@ -42,11 +49,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'card_overlay_state.dart';
+import 'edit_cue.dart';
 import 'edit_model.dart';
+import 'maximize_shell_state.dart';
 import 'presentation_panel_content.dart';
 import 'presentation_panel_painter.dart';
 import 'presentation_requests.dart';
 import 'sidecard_geometry.dart';
+import 'structural_shell_geometry.dart';
 
 export 'card_overlay_state.dart';
 export 'sidecard_geometry.dart';
@@ -66,6 +76,30 @@ String structuralCardImageSource(CardRequest card) {
   }
   final String portable = raw.replaceAll('\\', '/');
   return portable.startsWith('images/') ? portable : 'images/$portable';
+}
+
+/// True when a direct EDIT source contains at least one clip-local MAXIMIZE.
+///
+/// Standalone EDIT authoring uses this to keep a stable fake desktop/window
+/// context across the whole EDIT. Program STRUCT callers never need this helper
+/// because they already own the real outer shell. MOSAIC panes deliberately do
+/// not promote a pane-local cue into outer shell geometry.
+bool structuralSourceHasMaximizeCues(
+  EditDocumentModel model,
+  StructuralSourceRef root,
+) {
+  if (root.kind != StructuralSourceKind.edit || root.id.isEmpty) return false;
+  try {
+    final EditSequence edit = model.edit(root.id);
+    for (final EditTrack track in edit.tracks) {
+      for (final EditClip clip in track.clips) {
+        if (parseClipMaximizeCues(clip).isNotEmpty) return true;
+      }
+    }
+  } catch (_) {
+    return false;
+  }
+  return false;
 }
 
 /// Shared decoded-image cache for preview and BAKE.
@@ -339,7 +373,7 @@ class _StructuralSideCardPanelPainter extends CustomPainter {
 /// It contains no clock. [projectFrame] is supplied by the structural preview
 /// transport, and every build re-evaluates presentation state from that exact
 /// frame. [renderSideCards] is true for standalone EDIT authoring preview and
-/// false when an outer program STRUCT shell owns SIDECARD geometry.
+/// false when an outer program STRUCT shell owns SIDECARD/MAXIMIZE geometry.
 class StructuralCardCueOverlay extends StatefulWidget {
   const StructuralCardCueOverlay({
     super.key,
@@ -400,26 +434,36 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
     super.dispose();
   }
 
-  List<StructuralCardOverlayPlacement> _placements() {
-    if (_model == null ||
-        _root == null ||
-        _parsedSource != widget.source ||
-        _parsedSourceRef != widget.sourceRef) {
-      final EditDocumentModel model = EditDocumentModel.parse(widget.source);
-      final StructuralSourceRef? root =
-          StructuralSourceRef.tryParse(widget.sourceRef);
-      if (root == null ||
-          root.id.isEmpty ||
-          !model.containsStructuralSource(root)) {
-        _model = null;
-        _root = null;
-        return const <StructuralCardOverlayPlacement>[];
-      }
-      _model = model;
-      _root = root;
+  bool _ensureParsed() {
+    if (_model != null &&
+        _root != null &&
+        _parsedSource == widget.source &&
+        _parsedSourceRef == widget.sourceRef) {
+      return true;
+    }
+
+    final EditDocumentModel model = EditDocumentModel.parse(widget.source);
+    final StructuralSourceRef? root =
+        StructuralSourceRef.tryParse(widget.sourceRef);
+    if (root == null ||
+        root.id.isEmpty ||
+        !model.containsStructuralSource(root)) {
+      _model = null;
+      _root = null;
       _parsedSource = widget.source;
       _parsedSourceRef = widget.sourceRef;
+      return false;
     }
+
+    _model = model;
+    _root = root;
+    _parsedSource = widget.source;
+    _parsedSourceRef = widget.sourceRef;
+    return true;
+  }
+
+  List<StructuralCardOverlayPlacement> _placements() {
+    if (!_ensureParsed()) return const <StructuralCardOverlayPlacement>[];
 
     final List<StructuralCardOverlayPlacement> placements =
         structuralCardOverlayPlacements(
@@ -435,6 +479,24 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
     );
   }
 
+  bool _hasStandaloneMaximizeShell() {
+    if (!widget.renderSideCards || !_ensureParsed()) return false;
+    return structuralSourceHasMaximizeCues(_model!, _root!);
+  }
+
+  StructuralMaximizePlacement? _activeMaximize() {
+    if (!_ensureParsed()) return null;
+    try {
+      return structuralMaximizePlacement(
+        _model!,
+        _root!,
+        widget.projectFrame,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _ensureImages(List<StructuralCardOverlayPlacement> placements) {
     if (placements.isEmpty) return;
     _images.ensure(placements).then((bool changed) {
@@ -445,17 +507,36 @@ class _StructuralCardCueOverlayState extends State<StructuralCardCueOverlay> {
   @override
   Widget build(BuildContext context) {
     final List<StructuralCardOverlayPlacement> placements = _placements();
-    if (placements.isEmpty) return const SizedBox.expand();
+    final bool shellContext = _hasStandaloneMaximizeShell();
+    final bool cardOwnsSurface = placements.any(
+      (StructuralCardOverlayPlacement placement) => !placement.isSideCard,
+    );
+    final bool sideCardOwnsShell = placements.any(
+      (StructuralCardOverlayPlacement placement) => placement.isSideCard,
+    );
+    final bool paintStandaloneMaximizeShell =
+        shellContext && !cardOwnsSurface && !sideCardOwnsShell;
+    final StructuralMaximizePlacement? maximize =
+        paintStandaloneMaximizeShell ? _activeMaximize() : null;
+
+    if (placements.isEmpty && !paintStandaloneMaximizeShell) {
+      return const SizedBox.expand();
+    }
     _ensureImages(placements);
 
     Widget painted(ui.Image? structuralImage) {
       return IgnorePointer(
         child: CustomPaint(
+          key: paintStandaloneMaximizeShell
+              ? const ValueKey<String>('edit-standalone-maximize-shell')
+              : null,
           painter: _StructuralCardOverlayPainter(
             placements: placements,
             images: _images,
             structuralImage: structuralImage,
             fontFamily: widget.fontFamily,
+            standaloneMaximizeAmount:
+                paintStandaloneMaximizeShell ? (maximize?.amount ?? 0.0) : null,
           ),
         ),
       );
@@ -479,12 +560,14 @@ class _StructuralCardOverlayPainter extends CustomPainter {
     required this.images,
     required this.structuralImage,
     required this.fontFamily,
+    required this.standaloneMaximizeAmount,
   });
 
   final List<StructuralCardOverlayPlacement> placements;
   final CardOverlayImageCache images;
   final ui.Image? structuralImage;
   final String fontFamily;
+  final double? standaloneMaximizeAmount;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -495,6 +578,18 @@ class _StructuralCardOverlayPainter extends CustomPainter {
 
     canvas.save();
     canvas.translate(frame.left, frame.top);
+
+    final double? maximizeAmount = standaloneMaximizeAmount;
+    if (maximizeAmount != null) {
+      paintStandaloneMaximizeShell(
+        canvas: canvas,
+        size: frame.size,
+        amount: maximizeAmount,
+        structuralImage: structuralImage,
+        fontFamily: fontFamily,
+      );
+    }
+
     paintStructuralCardOverlays(
       canvas: canvas,
       size: frame.size,
@@ -511,12 +606,13 @@ class _StructuralCardOverlayPainter extends CustomPainter {
       oldDelegate.placements != placements ||
       !identical(oldDelegate.images, images) ||
       !identical(oldDelegate.structuralImage, structuralImage) ||
-      oldDelegate.fontFamily != fontFamily;
+      oldDelegate.fontFamily != fontFamily ||
+      oldDelegate.standaloneMaximizeAmount != standaloneMaximizeAmount;
 }
 
 /// Fits the authored 16:9 structural frame inside an arbitrary preview widget.
-/// CARD, SIDECARD, and DOSSIER standalone authoring overlays use this exact
-/// rect so their fake desktop composition never drifts from decoded pixels.
+/// CARD, SIDECARD, DOSSIER, and MAXIMIZE standalone authoring overlays use this
+/// exact rect so their fake desktop composition never drifts from decoded pixels.
 Rect structuralOverlayFit16x9(Size size) {
   if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
   const double aspect = 16.0 / 9.0;
@@ -531,6 +627,71 @@ Rect structuralOverlayFit16x9(Size size) {
     (size.height - h) / 2.0,
     w,
     h,
+  );
+}
+
+/// Seated fake structural window used only by standalone EDIT MAXIMIZE preview.
+///
+/// This intentionally follows the same broad 86%/78% window proportions as the
+/// real STRUCT shell, scaled to the compact authoring preview chrome.
+Rect standaloneMaximizeBaseWindowRect(Size size) {
+  if (size.width <= 0.0 || size.height <= 0.0) return Rect.zero;
+  final double s = math.min(size.width / 1920.0, size.height / 1080.0);
+  final double titleH = 38.0 * s;
+  final double maxW = size.width * 0.86;
+  final double maxH = size.height * 0.78;
+
+  double clientW = maxW;
+  double clientH = clientW * 9.0 / 16.0;
+  if (clientH + titleH > maxH) {
+    clientH = math.max(1.0, maxH - titleH);
+    clientW = clientH * 16.0 / 9.0;
+  }
+
+  final double windowH = clientH + titleH;
+  return Rect.fromLTWH(
+    (size.width - clientW) / 2.0,
+    (size.height - windowH) / 2.0,
+    clientW,
+    windowH,
+  );
+}
+
+/// Shared MAXIMIZE geometry projected into the standalone EDIT fake shell.
+StructuralMaximizeGeometryFrame standaloneMaximizeShellFrameAt({
+  required Size size,
+  required double amount,
+}) {
+  return structuralMaximizeGeometryFrameAt(
+    baseRect: standaloneMaximizeBaseWindowRect(size),
+    fullRect: Offset.zero & size,
+    amount: amount,
+  );
+}
+
+/// Paints the stable standalone EDIT window used around MAXIMIZE cues.
+///
+/// The shell remains seated even when no MAXIMIZE is currently active. That is
+/// the important authoring invariant: once an EDIT contains MAXIMIZE, the cue
+/// expands from a visible window and returns to that same visible window instead
+/// of falling through to the raw full-frame client after its lifetime ends.
+void paintStandaloneMaximizeShell({
+  required Canvas canvas,
+  required Size size,
+  required double amount,
+  required ui.Image? structuralImage,
+  required String fontFamily,
+}) {
+  if (size.width <= 0.0 || size.height <= 0.0) return;
+  final StructuralMaximizeGeometryFrame shell =
+      standaloneMaximizeShellFrameAt(size: size, amount: amount);
+  _paintStandaloneStructuralWindowShell(
+    canvas: canvas,
+    size: size,
+    videoWindow: shell.structuralRect,
+    windowChrome: shell.windowChrome,
+    structuralImage: structuralImage,
+    fontFamily: fontFamily,
   );
 }
 
@@ -596,26 +757,48 @@ SideCardShellFrame paintStandaloneSidePresentationShell({
   );
   if (engineW <= 0.0 || engineH <= 0.0 || raw <= 0.0) return shell;
 
-  final double eased = shell.motionProgress;
-  final Rect videoWindow = shell.videoWindowRect;
-  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
-  final double titleH = math.min(38.0 * s * eased, videoWindow.height);
-  final double radius = 6.0 * s * eased;
-
-  canvas.drawRect(
-    full,
-    Paint()..color = const Color(0xFF1B1D20),
+  _paintStandaloneStructuralWindowShell(
+    canvas: canvas,
+    size: size,
+    videoWindow: shell.videoWindowRect,
+    windowChrome: shell.motionProgress,
+    structuralImage: structuralImage,
+    structuralSourceRect: structuralSourceRect,
+    fontFamily: fontFamily,
   );
+  return shell;
+}
+
+void _paintStandaloneStructuralWindowShell({
+  required Canvas canvas,
+  required Size size,
+  required Rect videoWindow,
+  required double windowChrome,
+  required ui.Image? structuralImage,
+  Rect? structuralSourceRect,
+  required String fontFamily,
+}) {
+  final double engineW = size.width;
+  final double engineH = size.height;
+  if (engineW <= 0.0 || engineH <= 0.0 ||
+      videoWindow.width <= 0.0 || videoWindow.height <= 0.0) {
+    return;
+  }
+
+  final Rect full = Rect.fromLTWH(0, 0, engineW, engineH);
+  final double chrome = windowChrome.clamp(0.0, 1.0).toDouble();
+  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
+  final double titleH = math.min(38.0 * s * chrome, videoWindow.height);
+  final double radius = 6.0 * s * chrome;
+
+  canvas.drawRect(full, Paint()..color = const Color(0xFF1B1D20));
   final Rect taskbar = Rect.fromLTWH(
     0,
     engineH - 42.0 * s,
     engineW,
     42.0 * s,
   );
-  canvas.drawRect(
-    taskbar,
-    Paint()..color = const Color(0xFF111214),
-  );
+  canvas.drawRect(taskbar, Paint()..color = const Color(0xFF111214));
   canvas.drawLine(
     taskbar.topLeft,
     taskbar.topRight,
@@ -629,26 +812,28 @@ SideCardShellFrame paintStandaloneSidePresentationShell({
     videoWindow,
     Radius.circular(radius),
   );
-  if (eased > 0.02) {
+  if (chrome > 0.02) {
     canvas.drawRRect(
-      window.shift(Offset(0, 12.0 * s * eased)),
+      window.shift(Offset(0, 12.0 * s * chrome)),
       Paint()
-        ..color = const Color(0x7A000000)
+        ..color = const Color(0x7A000000).withValues(alpha: 0.48 * chrome)
         ..maskFilter = MaskFilter.blur(
           BlurStyle.normal,
-          24.0 * s * eased,
+          24.0 * s * chrome,
         ),
     );
   }
 
   canvas.drawRRect(window, Paint()..color = const Color(0xFF111111));
-  canvas.drawRRect(
-    window,
-    Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(0.5, s)
-      ..color = const Color(0xFF474747),
-  );
+  if (chrome > 0.001) {
+    canvas.drawRRect(
+      window,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(0.5, s)
+        ..color = const Color(0xFF474747).withValues(alpha: chrome),
+    );
+  }
 
   final Rect header = Rect.fromLTWH(
     videoWindow.left,
@@ -678,18 +863,20 @@ SideCardShellFrame paintStandaloneSidePresentationShell({
   }
 
   if (header.height > 0.0) {
-    canvas.drawRect(header, Paint()..color = const Color(0xFF343231));
+    canvas.drawRect(
+      header,
+      Paint()..color = const Color(0xFF343231).withValues(alpha: chrome),
+    );
     canvas.drawLine(
       header.bottomLeft,
       header.bottomRight,
       Paint()
         ..strokeWidth = math.max(0.5, s)
-        ..color = const Color(0xFF4B4846),
+        ..color = const Color(0xFF4B4846).withValues(alpha: chrome),
     );
-    _drawVideoWindowChrome(canvas, header, s, eased, fontFamily);
+    _drawVideoWindowChrome(canvas, header, s, chrome, fontFamily);
   }
   canvas.restore();
-  return shell;
 }
 
 void _drawTaskbarMark(Canvas canvas, Rect taskbar, double s) {
