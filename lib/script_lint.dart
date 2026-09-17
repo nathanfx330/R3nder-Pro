@@ -1,6 +1,7 @@
 // ./lib/script_lint.dart
 
 import 'parser.dart';
+import 'presentation_panel_content.dart';
 import 'presentation_requests.dart';
 
 // =====================================================================
@@ -60,8 +61,9 @@ class ScriptLinter {
   ///
   /// CUE and SIDECARD are CLIP-local structural presentation source. They are
   /// intentionally not terminal tags: the EDIT cue parser owns them and the
-  /// terminal must never suspend or type them. Ordinary CARD remains in the
-  /// terminal grammar because it is also a valid top-level TEXT presentation.
+  /// terminal must never suspend or type them. PANEL is body-local structured
+  /// content and is linted separately below, including when a CARD grammar
+  /// match consumes the entire surrounding body.
   static const Set<String> _nonGrammarKeywords = {
     'DEF_MENU', '/DEF_MENU',
     'ITEM', '/ITEM',
@@ -78,6 +80,7 @@ class ScriptLinter {
     'STRUCT',
     'CUE', '/CUE',
     'SIDECARD', '/SIDECARD',
+    'PANEL', '/PANEL',
   };
 
   /// Every tag keyword the grammar knows.
@@ -131,6 +134,65 @@ class ScriptLinter {
   /// Comment spans, matched exactly as the preprocessor matches them so
   /// the linter skips precisely what the engine will delete.
   static final RegExp _comment = RegExp(r'\[#.*?\]', dotAll: true);
+
+  /// Validates structured PANEL bodies with the same parser used by the
+  /// renderer and GUI. This is a separate pass because CARD and DOSSIER are
+  /// whole-body grammar matches, so the generic terminal scan deliberately
+  /// skips their opaque contents.
+  static List<LintFinding> _lintPresentationPanels(
+    String rawText,
+    int Function(int) lineOf,
+    bool Function(int) inSkipSpan,
+  ) {
+    final List<LintFinding> out = <LintFinding>[];
+    const String openTag = '[PANEL]';
+    const String closeTag = '[/PANEL]';
+    int cursor = 0;
+
+    while (cursor < rawText.length) {
+      final int open = rawText.indexOf(openTag, cursor);
+      if (open < 0) break;
+      if (inSkipSpan(open)) {
+        cursor = open + openTag.length;
+        continue;
+      }
+
+      final int close = rawText.indexOf(closeTag, open + openTag.length);
+      if (close < 0) {
+        out.add(
+          LintFinding(
+            line: lineOf(open),
+            snippet: openTag,
+            message: 'PANEL is never closed; add [/PANEL].',
+          ),
+        );
+        break;
+      }
+
+      final int end = close + closeTag.length;
+      final String block = rawText.substring(open, end);
+      final PresentationPanelContent parsed = parsePresentationPanelContent(
+        heading: '',
+        body: block,
+      );
+      final int firstLine = lineOf(open);
+      for (final PresentationPanelIssue issue in parsed.issues) {
+        out.add(
+          LintFinding(
+            line: firstLine + issue.lineIndex,
+            snippet: issue.rawLine.trim().isEmpty
+                ? '<blank PANEL line>'
+                : issue.rawLine.trim(),
+            message: issue.message,
+          ),
+        );
+      }
+
+      cursor = end;
+    }
+
+    return out;
+  }
 
   /// Validates the APP `panes` tail.
   ///
@@ -345,6 +407,7 @@ class ScriptLinter {
       i += (close >= 0) ? close + 1 : 1;
     }
 
+    findings.addAll(_lintPresentationPanels(rawText, lineOf, inSkipSpan));
     findings.addAll(_lintAppPanes(rawText, lineOf, inSkipSpan));
     findings.sort((a, b) => a.line.compareTo(b.line));
 
