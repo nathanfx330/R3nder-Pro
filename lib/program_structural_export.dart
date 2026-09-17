@@ -11,13 +11,11 @@
 //
 // Fullscreen CARD CUE presentation is composited into the structural client
 // image before that client is placed into desktop/window choreography.
-// SIDECARD and DOSSIER instead keep the raw structural client inside the one
-// real outer STRUCT window, move that window into the shared left seat, and
-// paint their sibling presentation on the desktop. DOSSIER evolves that sibling
-// from biography card into evidence grid/mosaic while the same video clock keeps
-// advancing. Preview and BAKE share structural_shell_geometry.dart for base
-// shell choreography, sidecard_geometry.dart for presentation displacement,
-// and dossier_overlay.dart for DOSSIER panel painting.
+// SIDECARD and DOSSIER instead move the one real outer STRUCT window and paint
+// sibling content. MAXIMIZE paints nothing: it transforms that same shell toward
+// the full output frame while source decoding and audio time continue unchanged.
+// Preview and BAKE share structural_shell_geometry.dart for both base shell and
+// MAXIMIZE geometry.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -29,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'card_overlay.dart';
 import 'dossier_overlay.dart';
 import 'edit_model.dart';
+import 'maximize_shell_state.dart';
 import 'media_layer.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
@@ -241,6 +240,42 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
+  StructuralMaximizePlacement? _maximizeAtSourceFrame(
+    StructuralSequencePlacement placement,
+    int sourceFrame,
+  ) {
+    if (placement.fullscreen) return null;
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralMaximizePlacement(_editModel, root, sourceFrame);
+  }
+
+  StructuralMaximizePlacement? _maximizeFor(
+    StructuralSequencePlacement placement,
+    int localFrame,
+    int sourceFrame,
+  ) {
+    // Load-bearing gating: a source-frame-zero MAXIMIZE cannot fire during the
+    // placement's opening choreography. Shell cues begin only in showing time.
+    if (placement.stageAt(localFrame) != StructuralSequenceStage.showing) {
+      return null;
+    }
+    return _maximizeAtSourceFrame(placement, sourceFrame);
+  }
+
+  StructuralMaximizePlacement? _maximizeAtSourceEnd(
+    StructuralSequencePlacement placement,
+  ) {
+    if (placement.fullscreen) return null;
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null) return null;
+    return structuralMaximizePlacementAtSourceEnd(
+      _editModel,
+      root,
+      placement.sourceDurationFrames,
+    );
+  }
+
   Future<ui.Image?> renderIfActive({
     required SceneEngine scene,
     required String fontFamily,
@@ -256,17 +291,20 @@ class ProgramStructuralFrameRenderer {
 
     final int localFrame = _localFrame(scene, marker);
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
+    final bool closing = stage == StructuralSequenceStage.closing;
     final StructuralDossierOverlayPlacement? truncatedDossier =
-        stage == StructuralSequenceStage.closing
-            ? _dossierAtSourceEnd(placement)
-            : null;
+        closing ? _dossierAtSourceEnd(placement) : null;
     final StructuralCardOverlayPlacement? truncatedSideCard =
-        truncatedDossier == null && stage == StructuralSequenceStage.closing
+        truncatedDossier == null && closing
             ? _sideCardAtSourceEnd(placement)
             : null;
     final double? truncatedShellSlide = truncatedDossier != null
         ? structuralDossierShellSlide(truncatedDossier)
         : truncatedSideCard?.slide;
+    final StructuralMaximizePlacement? truncatedMaximize =
+        truncatedDossier == null && truncatedSideCard == null && closing
+            ? _maximizeAtSourceEnd(placement)
+            : null;
 
     final _StructuralProgramVisual visual = _StructuralProgramVisual.evaluate(
       placement: placement,
@@ -275,6 +313,7 @@ class ProgramStructuralFrameRenderer {
       outputWidth: width,
       outputHeight: height,
       truncatedShellSlide: truncatedShellSlide,
+      truncatedMaximizeAmount: truncatedMaximize?.amount,
     );
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
@@ -289,6 +328,14 @@ class ProgramStructuralFrameRenderer {
             visual.sourceFrame,
           )
         : null;
+    final StructuralMaximizePlacement? maximize =
+        dossier == null && sideCard == null
+            ? _maximizeFor(
+                placement,
+                localFrame,
+                visual.sourceFrame,
+              )
+            : null;
 
     ui.Image? sourceImage;
     String defaultBottomOverlay = '';
@@ -309,6 +356,7 @@ class ProgramStructuralFrameRenderer {
     Rect structuralRect = visual.structuralRect;
     double desktopOpacity = visual.desktopOpacity;
     double terminalOpacity = visual.terminalOpacity;
+    double structuralChrome = visual.structuralWindowChrome;
     final double? shellSlide = dossier != null
         ? structuralDossierShellSlide(dossier)
         : sideCard?.slide;
@@ -323,6 +371,17 @@ class ProgramStructuralFrameRenderer {
       structuralRect = _normalizedRect(sideShell.videoWindowRect);
       desktopOpacity = sideShell.desktopOpacity;
       terminalOpacity = sideShell.terminalOpacity;
+    }
+
+    if (maximize != null && visual.structuralWindowPresent) {
+      final StructuralMaximizeGeometryFrame maximizeGeometry =
+          structuralMaximizeGeometryFrameAt(
+        baseRect: structuralRect,
+        fullRect: const Rect.fromLTWH(0, 0, 1, 1),
+        amount: maximize.amount,
+      );
+      structuralRect = maximizeGeometry.structuralRect;
+      structuralChrome = maximizeGeometry.windowChrome;
     }
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -355,6 +414,7 @@ class ProgramStructuralFrameRenderer {
         rect: _pixelRect(structuralRect),
         sourceImage: sourceImage,
         opacity: visual.structuralOpacity,
+        windowChrome: structuralChrome,
       );
     }
 
@@ -504,6 +564,7 @@ class ProgramStructuralFrameRenderer {
     required Rect rect,
     required ui.Image? sourceImage,
     required double opacity,
+    required double windowChrome,
   }) {
     if (rect.width <= 0.0 || rect.height <= 0.0 || opacity <= 0.001) {
       return;
@@ -513,8 +574,9 @@ class ProgramStructuralFrameRenderer {
     final double chromeScale =
         scene.terminal.scale * width.toDouble() / engineWidth;
     final double s = chromeScale > 0.0 ? chromeScale : 1.0;
-    final double barH = 38.0 * s;
-    final double radius = 5.0 * s;
+    final double c = windowChrome.clamp(0.0, 1.0).toDouble();
+    final double barH = 38.0 * s * c;
+    final double radius = 5.0 * s * c;
     final RRect window =
         RRect.fromRectAndRadius(rect, Radius.circular(radius));
     final String renderedTitle = expandStructuralChromeExpressions(
@@ -544,21 +606,28 @@ class ProgramStructuralFrameRenderer {
       );
     }
 
-    canvas.drawRRect(
-      window.shift(Offset(0, 16.0 * s)),
-      Paint()
-        ..color = const Color(0x8A000000)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 30.0 * s),
-    );
+    if (c > 0.001) {
+      canvas.drawRRect(
+        window.shift(Offset(0, 16.0 * s * c)),
+        Paint()
+          ..color = const Color(0x8A000000).withValues(alpha: c)
+          ..maskFilter = MaskFilter.blur(
+            BlurStyle.normal,
+            30.0 * s * c,
+          ),
+      );
+    }
 
     canvas.drawRRect(window, Paint()..color = const Color(0xFF171717));
-    canvas.drawRRect(
-      window,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(0.5, s)
-        ..color = const Color(0xFF3B3938),
-    );
+    if (c > 0.001) {
+      canvas.drawRRect(
+        window,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(0.5, s) * c
+          ..color = const Color(0xFF3B3938).withValues(alpha: c),
+      );
+    }
 
     final Rect header = Rect.fromLTWH(
       rect.left,
@@ -624,72 +693,77 @@ class ProgramStructuralFrameRenderer {
       bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
     }
 
-    canvas.drawRect(header, Paint()..color = const Color(0xFF33302F));
-    canvas.drawLine(
-      Offset(header.left, header.bottom),
-      Offset(header.right, header.bottom),
-      Paint()
-        ..strokeWidth = math.max(0.5, s)
-        ..color = const Color(0xFF474341),
-    );
+    if (header.height > 0.01) {
+      canvas.drawRect(
+        header,
+        Paint()..color = const Color(0xFF33302F).withValues(alpha: c),
+      );
+      canvas.drawLine(
+        Offset(header.left, header.bottom),
+        Offset(header.right, header.bottom),
+        Paint()
+          ..strokeWidth = math.max(0.5, s) * c
+          ..color = const Color(0xFF474341).withValues(alpha: c),
+      );
 
-    final double horizontalPad = 14.0 * s;
-    final TextPainter left = TextPainter(
-      text: TextSpan(
-        text: renderedTitle,
-        style: theme.value.copyWith(
-          fontFamily: fontFamily,
-          color: const Color(0xFFC7C3C0),
-          fontSize: 12.0 * s,
-        ),
-      ),
-      maxLines: 1,
-      ellipsis: '…',
-      textDirection: TextDirection.ltr,
-    );
-
-    final String? topText = switch (overlayMode) {
-      StructuralOverlayMode.defaultOverlay =>
-        'F$sourceFrame / $sourceDurationFrames',
-      StructuralOverlayMode.custom =>
-        renderedTop.isEmpty ? null : renderedTop,
-      StructuralOverlayMode.none => null,
-    };
-
-    TextPainter? right;
-    double rightX = header.right - horizontalPad;
-    if (topText != null) {
-      right = TextPainter(
+      final double horizontalPad = 14.0 * s * c;
+      final TextPainter left = TextPainter(
         text: TextSpan(
-          text: topText,
-          style: theme.micro.copyWith(
+          text: renderedTitle,
+          style: theme.value.copyWith(
             fontFamily: fontFamily,
-            color: const Color(0xFF8E8884),
-            fontSize: (theme.micro.fontSize ?? 10.5) * s,
-            letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+            color: const Color(0xFFC7C3C0).withValues(alpha: c),
+            fontSize: 12.0 * s,
           ),
         ),
         maxLines: 1,
         ellipsis: '…',
         textDirection: TextDirection.ltr,
       );
-      right.layout(maxWidth: math.max(0.0, header.width * 0.42));
-      rightX -= right.width;
-    }
 
-    final double labelMax = math.max(
-      0.0,
-      rightX -
-          (header.left + horizontalPad) -
-          (right == null ? 0.0 : 10.0 * s),
-    );
-    left.layout(maxWidth: labelMax);
+      final String? topText = switch (overlayMode) {
+        StructuralOverlayMode.defaultOverlay =>
+          'F$sourceFrame / $sourceDurationFrames',
+        StructuralOverlayMode.custom =>
+          renderedTop.isEmpty ? null : renderedTop,
+        StructuralOverlayMode.none => null,
+      };
 
-    final double leftY = header.top + (header.height - left.height) / 2.0;
-    left.paint(canvas, Offset(header.left + horizontalPad, leftY));
-    if (right != null) {
-      final double rightY = header.top + (header.height - right.height) / 2.0;
-      right.paint(canvas, Offset(rightX, rightY));
+      TextPainter? right;
+      double rightX = header.right - horizontalPad;
+      if (topText != null) {
+        right = TextPainter(
+          text: TextSpan(
+            text: topText,
+            style: theme.micro.copyWith(
+              fontFamily: fontFamily,
+              color: const Color(0xFF8E8884).withValues(alpha: c),
+              fontSize: (theme.micro.fontSize ?? 10.5) * s,
+              letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+            ),
+          ),
+          maxLines: 1,
+          ellipsis: '…',
+          textDirection: TextDirection.ltr,
+        );
+        right.layout(maxWidth: math.max(0.0, header.width * 0.42));
+        rightX -= right.width;
+      }
+
+      final double labelMax = math.max(
+        0.0,
+        rightX -
+            (header.left + horizontalPad) -
+            (right == null ? 0.0 : 10.0 * s),
+      );
+      left.layout(maxWidth: labelMax);
+
+      final double leftY = header.top + (header.height - left.height) / 2.0;
+      left.paint(canvas, Offset(header.left + horizontalPad, leftY));
+      if (right != null) {
+        final double rightY = header.top + (header.height - right.height) / 2.0;
+        right.paint(canvas, Offset(rightX, rightY));
+      }
     }
     canvas.restore();
 
@@ -753,6 +827,7 @@ class _StructuralProgramVisual {
   final double terminalChrome;
   final double structuralOpacity;
   final bool structuralWindowPresent;
+  final double structuralWindowChrome;
 
   const _StructuralProgramVisual({
     required this.sourceFrame,
@@ -763,6 +838,7 @@ class _StructuralProgramVisual {
     required this.terminalChrome,
     required this.structuralOpacity,
     required this.structuralWindowPresent,
+    required this.structuralWindowChrome,
   });
 
   factory _StructuralProgramVisual.evaluate({
@@ -772,6 +848,7 @@ class _StructuralProgramVisual {
     required int outputWidth,
     required int outputHeight,
     double? truncatedShellSlide,
+    double? truncatedMaximizeAmount,
   }) {
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
     final double linear = placement.stageProgressAt(localFrame);
@@ -810,17 +887,27 @@ class _StructuralProgramVisual {
       presentationRect.right * outputWidth,
       presentationRect.bottom * outputHeight,
     );
-    final Rect closingOriginPixels = sideCardClosingOriginRect(
+    final Rect sideClosingOriginPixels = sideCardClosingOriginRect(
       size: Size(outputWidth.toDouble(), outputHeight.toDouble()),
       preCueRect: presentationPixels,
       truncatedSlide: truncatedShellSlide,
     );
-    final Rect closingOrigin = Rect.fromLTRB(
-      closingOriginPixels.left / outputWidth,
-      closingOriginPixels.top / outputHeight,
-      closingOriginPixels.right / outputWidth,
-      closingOriginPixels.bottom / outputHeight,
+    Rect closingOrigin = Rect.fromLTRB(
+      sideClosingOriginPixels.left / outputWidth,
+      sideClosingOriginPixels.top / outputHeight,
+      sideClosingOriginPixels.right / outputWidth,
+      sideClosingOriginPixels.bottom / outputHeight,
     );
+
+    StructuralMaximizeGeometryFrame? truncatedMaxGeometry;
+    if (truncatedMaximizeAmount != null && !placement.fullscreen) {
+      truncatedMaxGeometry = structuralMaximizeGeometryFrameAt(
+        baseRect: presentationRect,
+        fullRect: fullTerminal,
+        amount: truncatedMaximizeAmount,
+      );
+      closingOrigin = truncatedMaxGeometry.structuralRect;
+    }
 
     final StructuralShellFrame shell = structuralShellFrameAt(
       stage: stage,
@@ -836,6 +923,19 @@ class _StructuralProgramVisual {
       contentReady: true,
     );
 
+    double structuralWindowChrome = 1.0;
+    if (stage == StructuralSequenceStage.closing &&
+        truncatedMaxGeometry != null) {
+      final double eased = Curves.easeInOutCubic.transform(
+        linear.clamp(0.0, 1.0).toDouble(),
+      );
+      structuralWindowChrome = ui.lerpDouble(
+        truncatedMaxGeometry.windowChrome,
+        1.0,
+        eased,
+      )!;
+    }
+
     return _StructuralProgramVisual(
       sourceFrame: sourceFrame,
       terminalRect: shell.terminalRect,
@@ -845,6 +945,7 @@ class _StructuralProgramVisual {
       terminalChrome: shell.terminalChrome,
       structuralOpacity: shell.structuralOpacity,
       structuralWindowPresent: shell.structuralWindowPresent,
+      structuralWindowChrome: structuralWindowChrome,
     );
   }
 }
