@@ -11,6 +11,7 @@
 //
 //   [PANEL]
 //   PRESET: DOCUMENTARY
+//   KICKER: PROFILE / DOCUMENTARY
 //   FONT: IBM Plex Sans
 //   SUBTITLE: Investigative Reporter
 //   META: ORGANIZATION | Example News
@@ -114,6 +115,10 @@ class PresentationPanelMetadata {
 class PresentationPanelContent {
   final String heading;
 
+  /// Optional label painted over the portrait. Empty means use the semantic
+  /// default for the selected preset, preserving the look of older rich cards.
+  final String kicker;
+
   /// Optional per-panel family. Empty means inherit the surrounding project
   /// font, which keeps every legacy CARD visually unchanged.
   final String fontFamily;
@@ -138,6 +143,7 @@ class PresentationPanelContent {
 
   const PresentationPanelContent({
     required this.heading,
+    required this.kicker,
     required this.fontFamily,
     required this.subtitle,
     required this.metadata,
@@ -168,6 +174,7 @@ PresentationPanelContent _plainPanelContent({
 }) {
   return PresentationPanelContent(
     heading: heading,
+    kicker: '',
     fontFamily: '',
     subtitle: '',
     metadata: const <PresentationPanelMetadata>[],
@@ -229,9 +236,11 @@ PresentationPanelContent parsePresentationPanelContent({
   }
 
   PresentationPanelPreset preset = PresentationPanelPreset.simple;
+  String kicker = '';
   String fontFamily = '';
   String subtitle = '';
   bool sawPreset = false;
+  bool sawKicker = false;
   bool sawFont = false;
   bool sawSubtitle = false;
   final List<PresentationPanelMetadata> metadata =
@@ -304,6 +313,30 @@ PresentationPanelContent parsePresentationPanelContent({
         }
         sawPreset = true;
         preset = parsedPreset;
+        break;
+      case 'KICKER':
+        if (sawKicker) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate KICKER is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        if (value.isEmpty) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.malformedDirective,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'KICKER requires text; omit KICKER to use the preset default.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawKicker = true;
+        kicker = value;
         break;
       case 'FONT':
         if (sawFont) {
@@ -408,6 +441,7 @@ PresentationPanelContent parsePresentationPanelContent({
 
   return PresentationPanelContent(
     heading: heading,
+    kicker: kicker,
     fontFamily: fontFamily,
     subtitle: subtitle,
     metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
@@ -429,12 +463,14 @@ PresentationPanelContent parsePresentationPanelContent({
 /// build instead of disappearing during a GUI edit.
 String formatPresentationPanelBody({
   required PresentationPanelPreset preset,
+  String kicker = '',
   String fontFamily = '',
   required String subtitle,
   required List<PresentationPanelMetadata> metadata,
   List<String> preservedDirectives = const <String>[],
   required String body,
 }) {
+  final String cleanKicker = kicker.trim();
   final String cleanFont = fontFamily.trim();
   final String cleanSubtitle = subtitle.trim();
   final List<PresentationPanelMetadata> cleanMetadata = metadata
@@ -451,6 +487,7 @@ String formatPresentationPanelBody({
       .toList(growable: false);
 
   if (preset == PresentationPanelPreset.simple &&
+      cleanKicker.isEmpty &&
       cleanFont.isEmpty &&
       cleanSubtitle.isEmpty &&
       cleanMetadata.isEmpty &&
@@ -461,6 +498,9 @@ String formatPresentationPanelBody({
   final StringBuffer out = StringBuffer()
     ..writeln('[PANEL]')
     ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
+  if (cleanKicker.isNotEmpty) {
+    out.writeln('KICKER: $cleanKicker');
+  }
   if (cleanFont.isNotEmpty) {
     out.writeln('FONT: $cleanFont');
   }
