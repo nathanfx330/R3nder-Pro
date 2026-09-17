@@ -31,10 +31,9 @@ String presentationPanelFontFamily(
 
 String presentationPanelKickerText(PresentationPanelContent content) {
   final String authored = content.kicker.trim();
-  if (authored.isNotEmpty) return authored;
-  return content.preset == PresentationPanelPreset.dossier
-      ? 'DOSSIER / SUBJECT FILE'
-      : 'PROFILE / DOCUMENTARY';
+  return authored.isEmpty
+      ? presentationPanelDefaultKicker(content.preset)
+      : authored;
 }
 
 Color presentationPanelAccentColor({
