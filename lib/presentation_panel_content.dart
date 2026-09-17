@@ -11,6 +11,7 @@
 //
 //   [PANEL]
 //   PRESET: DOCUMENTARY
+//   FONT: IBM Plex Sans
 //   SUBTITLE: Investigative Reporter
 //   META: ORGANIZATION | Example News
 //   META: LOCATION | Washington, DC
@@ -70,6 +71,11 @@ class PresentationPanelMetadata {
 
 class PresentationPanelContent {
   final String heading;
+
+  /// Optional per-panel family. Empty means inherit the surrounding project
+  /// font, which keeps every legacy CARD visually unchanged.
+  final String fontFamily;
+
   final String subtitle;
   final List<PresentationPanelMetadata> metadata;
   final String body;
@@ -80,6 +86,7 @@ class PresentationPanelContent {
 
   const PresentationPanelContent({
     required this.heading,
+    required this.fontFamily,
     required this.subtitle,
     required this.metadata,
     required this.body,
@@ -104,6 +111,7 @@ PresentationPanelContent parsePresentationPanelContent({
   if (open >= lines.length || lines[open].trim() != '[PANEL]') {
     return PresentationPanelContent(
       heading: heading,
+      fontFamily: '',
       subtitle: '',
       metadata: const <PresentationPanelMetadata>[],
       body: normalized,
@@ -122,6 +130,7 @@ PresentationPanelContent parsePresentationPanelContent({
   if (close < 0) {
     return PresentationPanelContent(
       heading: heading,
+      fontFamily: '',
       subtitle: '',
       metadata: const <PresentationPanelMetadata>[],
       body: normalized,
@@ -131,6 +140,7 @@ PresentationPanelContent parsePresentationPanelContent({
   }
 
   PresentationPanelPreset preset = PresentationPanelPreset.simple;
+  String fontFamily = '';
   String subtitle = '';
   final List<PresentationPanelMetadata> metadata =
       <PresentationPanelMetadata>[];
@@ -147,6 +157,9 @@ PresentationPanelContent parsePresentationPanelContent({
     switch (key) {
       case 'PRESET':
         preset = presentationPanelPresetFromName(value);
+        break;
+      case 'FONT':
+        fontFamily = value;
         break;
       case 'SUBTITLE':
         subtitle = value;
@@ -177,6 +190,7 @@ PresentationPanelContent parsePresentationPanelContent({
 
   return PresentationPanelContent(
     heading: heading,
+    fontFamily: fontFamily,
     subtitle: subtitle,
     metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
     body: bodyLines.join('\n'),
@@ -185,16 +199,18 @@ PresentationPanelContent parsePresentationPanelContent({
   );
 }
 
-/// Canonical writer used by future GUI controls.
+/// Canonical writer used by CARD-family GUI controls.
 ///
 /// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
 /// existing project never grows metadata syntax simply because it was opened.
 String formatPresentationPanelBody({
   required PresentationPanelPreset preset,
+  String fontFamily = '',
   required String subtitle,
   required List<PresentationPanelMetadata> metadata,
   required String body,
 }) {
+  final String cleanFont = fontFamily.trim();
   final String cleanSubtitle = subtitle.trim();
   final List<PresentationPanelMetadata> cleanMetadata = metadata
       .map(
@@ -210,6 +226,7 @@ String formatPresentationPanelBody({
       .toList(growable: false);
 
   if (preset == PresentationPanelPreset.simple &&
+      cleanFont.isEmpty &&
       cleanSubtitle.isEmpty &&
       cleanMetadata.isEmpty) {
     return body;
@@ -218,6 +235,9 @@ String formatPresentationPanelBody({
   final StringBuffer out = StringBuffer()
     ..writeln('[PANEL]')
     ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
+  if (cleanFont.isNotEmpty) {
+    out.writeln('FONT: $cleanFont');
+  }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
   }
