@@ -57,6 +57,21 @@ String presentationPanelPresetName(PresentationPanelPreset preset) {
   }
 }
 
+/// Semantic label shown over the portrait when no KICKER is authored.
+///
+/// Keeping this alongside the source model lets the renderer and GUI agree on
+/// the visible default without forcing an otherwise redundant KICKER line into
+/// every script.
+String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
+  switch (preset) {
+    case PresentationPanelPreset.dossier:
+      return 'DOSSIER / SUBJECT FILE';
+    case PresentationPanelPreset.simple:
+    case PresentationPanelPreset.documentary:
+      return 'PROFILE / DOCUMENTARY';
+  }
+}
+
 enum PresentationPanelIssueSeverity {
   warning,
   error,
