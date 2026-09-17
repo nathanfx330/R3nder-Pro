@@ -45,6 +45,7 @@ import 'presentation_requests.dart';
 import 'project_media_bin.dart';
 import 'timeline_landmark_layer.dart';
 import 'timeline_markers.dart';
+import 'timeline_snap.dart';
 import 'ui_theme.dart';
 
 typedef EditProjectMediaDrop = void Function(
@@ -113,12 +114,17 @@ class _EditSurfaceState extends State<EditSurface> {
   Timer? _scrubTimer;
   int? _pendingScrubFrame;
   int? _lastSeekSent;
+  String? _mediaDropPreviewTrackId;
+  int? _mediaDropPreviewFrame;
+  String? _clipSnapGuideTrackId;
+  int? _clipSnapGuideFrame;
   ValueListenable<EditPlaybackFrameState>? _playbackFrames;
   ValueListenable<EditPlaybackExactState>? _playbackExact;
 
   final EditSourceHistory _history = EditSourceHistory();
   final ScrollController _horizontal = ScrollController();
   final ScrollController _vertical = ScrollController();
+  final Map<String, GlobalKey> _laneKeys = <String, GlobalKey>{};
   final FocusNode _timelineFocusNode = FocusNode(
     debugLabel: 'edit-timeline-focus',
   );
@@ -756,6 +762,70 @@ class _EditSurfaceState extends State<EditSurface> {
         projectFrame: frame,
       );
     });
+  }
+
+  int get _snapThresholdFrames =>
+      math.max(1, (sc(7) / _pixelsPerFrame).round());
+
+  List<int> _trackSnapAnchors(
+    EditSurfaceTrack? track, {
+    String? excludingClipId,
+  }) {
+    final Set<int> anchors = <int>{0, math.max(0, _effectiveFrame)};
+    for (final EditSurfaceClip clip
+        in track?.clips ?? const <EditSurfaceClip>[]) {
+      if (clip.id == excludingClipId) continue;
+      anchors.add(clip.atFrame);
+      anchors.add(clip.endFrameExclusive);
+    }
+    final List<int> result = anchors.toList()..sort();
+    return result;
+  }
+
+  void _setClipSnapGuide(String trackId, int? anchorFrame) {
+    final String? nextTrack = anchorFrame == null ? null : trackId;
+    if (_clipSnapGuideTrackId == nextTrack &&
+        _clipSnapGuideFrame == anchorFrame) {
+      return;
+    }
+    setState(() {
+      _clipSnapGuideTrackId = nextTrack;
+      _clipSnapGuideFrame = anchorFrame;
+    });
+  }
+
+  int? _mediaDropFrameFor(
+    String trackId,
+    EditSurfaceTrack? track,
+    Offset globalOffset,
+  ) {
+    final GlobalKey? laneKey = _laneKeys[trackId];
+    final BuildContext? laneContext = laneKey?.currentContext;
+    final RenderObject? renderObject = laneContext?.findRenderObject();
+    if (renderObject is! RenderBox) return null;
+    final double dx = renderObject.globalToLocal(globalOffset).dx;
+    final int raw = math.max(0, (dx / _pixelsPerFrame).floor());
+    return snapTimelinePosition(
+      rawFrame: raw,
+      anchors: _trackSnapAnchors(track),
+      thresholdFrames: _snapThresholdFrames,
+    ).frame;
+  }
+
+  Widget _timelineGuide({
+    required Key key,
+    required int frame,
+    required Color color,
+  }) {
+    return Positioned(
+      key: key,
+      left: frame * _pixelsPerFrame - sc(1),
+      top: 0,
+      bottom: 0,
+      child: IgnorePointer(
+        child: Container(width: sc(2), color: color),
+      ),
+    );
   }
 
   int _frameFromDx(double dx, int frames) {
@@ -1404,6 +1474,13 @@ class _EditSurfaceState extends State<EditSurface> {
                     _selectedClipId == clip.id,
                 theme: widget.theme,
                 onSelect: () => _select(clip),
+                snapAnchors: _trackSnapAnchors(
+                  track,
+                  excludingClipId: clip.id,
+                ),
+                snapThresholdFrames: _snapThresholdFrames,
+                onSnapGuideChanged: (int? frame) =>
+                    _setClipSnapGuide(trackId, frame),
                 onMove: (int atFrame) {
                   _commit((EditSurfaceDocument current) {
                     return current.moveClip(trackId, clip.id, atFrame);
@@ -1421,6 +1498,20 @@ class _EditSurfaceState extends State<EditSurface> {
                 },
               ),
             ),
+          if (_clipSnapGuideTrackId == trackId &&
+              _clipSnapGuideFrame != null)
+            _timelineGuide(
+              key: ValueKey<String>('edit-snap-guide-$trackId'),
+              frame: _clipSnapGuideFrame!,
+              color: widget.theme.accent,
+            ),
+          if (_mediaDropPreviewTrackId == trackId &&
+              _mediaDropPreviewFrame != null)
+            _timelineGuide(
+              key: ValueKey<String>('edit-media-drop-preview-$trackId'),
+              frame: _mediaDropPreviewFrame!,
+              color: R3Theme.ribbonMedia,
+            ),
         ],
       ),
     );
@@ -1428,21 +1519,49 @@ class _EditSurfaceState extends State<EditSurface> {
     final EditProjectMediaDrop? onDrop = widget.onProjectMediaDrop;
     if (onDrop == null) return lane;
 
-    final GlobalKey laneKey = GlobalKey();
+    final GlobalKey laneKey =
+        _laneKeys.putIfAbsent(trackId, () => GlobalKey());
     return DragTarget<ProjectMediaItem>(
       key: ValueKey<String>('edit-media-drop-$trackId'),
       hitTestBehavior: HitTestBehavior.opaque,
       onWillAcceptWithDetails: (DragTargetDetails<ProjectMediaItem> details) {
         return !widget.isPlaying && details.data.isUsable;
       },
+      onMove: (DragTargetDetails<ProjectMediaItem> details) {
+        if (widget.isPlaying || !details.data.isUsable) return;
+        final int? frame = _mediaDropFrameFor(
+          trackId,
+          track,
+          details.offset,
+        );
+        if (frame == null ||
+            (_mediaDropPreviewTrackId == trackId &&
+                _mediaDropPreviewFrame == frame)) {
+          return;
+        }
+        setState(() {
+          _mediaDropPreviewTrackId = trackId;
+          _mediaDropPreviewFrame = frame;
+        });
+      },
+      onLeave: (_) {
+        if (_mediaDropPreviewTrackId != trackId) return;
+        setState(() {
+          _mediaDropPreviewTrackId = null;
+          _mediaDropPreviewFrame = null;
+        });
+      },
       onAcceptWithDetails: (DragTargetDetails<ProjectMediaItem> details) {
         if (widget.isPlaying || !details.data.isUsable) return;
-        final BuildContext? laneContext = laneKey.currentContext;
-        final RenderObject? renderObject = laneContext?.findRenderObject();
-        if (renderObject is! RenderBox) return;
-        final double dx = renderObject.globalToLocal(details.offset).dx;
-        final int atFrame = math.max(0, (dx / _pixelsPerFrame).floor());
-        onDrop(details.data, trackId, atFrame);
+        final int? resolved = _mediaDropPreviewTrackId == trackId
+            ? _mediaDropPreviewFrame
+            : _mediaDropFrameFor(trackId, track, details.offset);
+        if (resolved == null) return;
+        setState(() {
+          _mediaDropPreviewTrackId = null;
+          _mediaDropPreviewFrame = null;
+        });
+        onDrop(details.data, trackId, resolved);
       },
       builder: (
         BuildContext context,
@@ -1473,6 +1592,9 @@ class _EditableClipBlock extends StatefulWidget {
   final bool selected;
   final R3Theme theme;
   final VoidCallback onSelect;
+  final List<int> snapAnchors;
+  final int snapThresholdFrames;
+  final ValueChanged<int?> onSnapGuideChanged;
   final ValueChanged<int> onMove;
   final ValueChanged<int> onTrimStart;
   final ValueChanged<int> onTrimEnd;
@@ -1484,6 +1606,9 @@ class _EditableClipBlock extends StatefulWidget {
     required this.selected,
     required this.theme,
     required this.onSelect,
+    required this.snapAnchors,
+    required this.snapThresholdFrames,
+    required this.onSnapGuideChanged,
     required this.onMove,
     required this.onTrimStart,
     required this.onTrimEnd,
@@ -1503,9 +1628,28 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
 
   int get _deltaFrames => (_dragPixels / widget.pixelsPerFrame).round();
 
+  int get _rawMoveAt => math.max(0, widget.clip.atFrame + _deltaFrames);
+
+  TimelineSnapResult get _moveSnap {
+    if (_mode != _ClipDragMode.move || _deltaFrames == 0) {
+      return TimelineSnapResult(
+        frame: _rawMoveAt,
+        anchorFrame: null,
+        edge: null,
+      );
+    }
+    return snapTimelineMove(
+      rawAtFrame: _rawMoveAt,
+      durationFrames: widget.clip.durationFrames,
+      anchors: widget.snapAnchors,
+      thresholdFrames: widget.snapThresholdFrames,
+    );
+  }
+
   int get _previewAt {
     switch (_mode) {
       case _ClipDragMode.move:
+        return _moveSnap.frame;
       case _ClipDragMode.trimStart:
         return math.max(0, widget.clip.atFrame + _deltaFrames);
       case _ClipDragMode.none:
@@ -1534,6 +1678,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     }
     if (_activePointer != null) return;
     widget.onSelect();
+    widget.onSnapGuideChanged(null);
     setState(() {
       _mode = mode;
       _activePointer = event.pointer;
@@ -1547,6 +1692,10 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
     setState(() {
       _dragPixels = event.position.dx - _pointerDownX;
     });
+    if (_mode == _ClipDragMode.move) {
+      final TimelineSnapResult snap = _moveSnap;
+      widget.onSnapGuideChanged(snap.snapped ? snap.anchorFrame : null);
+    }
   }
 
   void _pointerUp(PointerUpEvent event) {
@@ -1562,6 +1711,9 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
   void _finishPointer({required bool commit}) {
     final int delta = _deltaFrames;
     final _ClipDragMode mode = _mode;
+    final int moveAt = mode == _ClipDragMode.move
+        ? _moveSnap.frame
+        : math.max(0, widget.clip.atFrame + delta);
 
     setState(() {
       _mode = _ClipDragMode.none;
@@ -1569,12 +1721,13 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
       _pointerDownX = 0.0;
       _dragPixels = 0.0;
     });
+    widget.onSnapGuideChanged(null);
 
-    if (!commit || delta == 0) return;
+    if (!commit) return;
 
     switch (mode) {
       case _ClipDragMode.move:
-        widget.onMove(math.max(0, widget.clip.atFrame + delta));
+        if (moveAt != widget.clip.atFrame) widget.onMove(moveAt);
         break;
       case _ClipDragMode.trimStart:
         widget.onTrimStart(math.max(0, widget.clip.atFrame + delta));
@@ -1630,9 +1783,11 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: _pointerRegion(
-                mode: _ClipDragMode.move,
-                child: Container(
+              child: MouseRegion(
+                cursor: SystemMouseCursors.move,
+                child: _pointerRegion(
+                  mode: _ClipDragMode.move,
+                  child: Container(
                   padding: EdgeInsets.fromLTRB(sc(9), sc(6), sc(9), sc(4)),
                   decoration: BoxDecoration(
                     color: fill,
@@ -1665,6 +1820,7 @@ class _EditableClipBlockState extends State<_EditableClipBlock> {
                     ],
                   ),
                 ),
+              ),
               ),
             ),
             if (!widget.clip.transition.isNone)

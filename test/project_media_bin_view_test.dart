@@ -1,5 +1,6 @@
 // ./test/project_media_bin_view_test.dart
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/project_media_bin.dart';
@@ -168,6 +169,55 @@ void main() {
     await tester.tap(find.text('bad[name].mp4'));
     await tester.pump();
     expect(activations, 0);
+  });
+
+  testWidgets('vertical mouse wheel scrolls the horizontal media row', (
+    WidgetTester tester,
+  ) async {
+    final List<ProjectMediaItem> items = <ProjectMediaItem>[
+      for (int i = 0; i < 10; i++) _item('shot_$i.mp4'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 600,
+              child: ProjectMediaBinPanel(
+                theme: theme,
+                projectClockRunning: false,
+                initiallyExpanded: true,
+                workspaceRootResolver: () => '/workspace',
+                scanMedia: ({String? workspaceRoot}) => items,
+                thumbnailLoader: _noThumbnail,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder list =
+        find.byKey(const ValueKey<String>('project-media-bin-list'));
+    final Finder scrollableFinder = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
+    final ScrollableState scrollable =
+        tester.state<ScrollableState>(scrollableFinder);
+    expect(scrollable.position.pixels, 0);
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(list),
+        scrollDelta: const Offset(0, 160),
+      ),
+    );
+    await tester.pump();
+
+    expect(scrollable.position.pixels, greaterThan(0));
   });
 
   testWidgets('scan failure is surfaced without throwing out of build', (
