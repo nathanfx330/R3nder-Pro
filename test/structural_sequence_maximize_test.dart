@@ -100,6 +100,13 @@ Future<void> _waitReady(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+void _expectSameRect(Rect actual, Rect expected) {
+  expect(actual.left, closeTo(expected.left, 0.01));
+  expect(actual.top, closeTo(expected.top, 0.01));
+  expect(actual.width, closeTo(expected.width, 0.01));
+  expect(actual.height, closeTo(expected.height, 0.01));
+}
+
 void main() {
   testWidgets('source-frame-zero MAXIMIZE waits for STRUCT showing stage',
       (WidgetTester tester) async {
@@ -138,10 +145,15 @@ void main() {
     final Rect fullscreenRect = tester.getRect(
       find.byKey(const ValueKey<String>('structural-window-positioned')),
     );
-    expect(fullscreenRect.left, closeTo(0, 0.01));
-    expect(fullscreenRect.top, closeTo(25, 0.01));
-    expect(fullscreenRect.width, closeTo(800, 0.01));
-    expect(fullscreenRect.height, closeTo(450, 0.01));
+
+    // FULL means the fitted 16:9 program frame, not the outer test surface.
+    // MaterialApp expands its home to the test view (800x600 by default), so
+    // hard-coding the child SizedBox's requested 500px height incorrectly
+    // expects y=25. The actual fitted program frame is y=75 in that harness.
+    final Rect programRect = tester.getRect(
+      find.byKey(const ValueKey<String>('structural-desktop-layer')),
+    );
+    _expectSameRect(fullscreenRect, programRect);
 
     // Shell movement never replaces the live decoder.
     expect(backend.openCount, 1);
