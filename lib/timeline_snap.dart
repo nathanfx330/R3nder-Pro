@@ -5,6 +5,52 @@
 
 enum TimelineSnapEdge { leading, trailing }
 
+class TimelineSnapSpan {
+  final String id;
+  final int startFrame;
+  final int endFrameExclusive;
+
+  const TimelineSnapSpan({
+    required this.id,
+    required this.startFrame,
+    required this.endFrameExclusive,
+  }) : assert(startFrame >= 0),
+       assert(endFrameExclusive > startFrame);
+}
+
+List<int> exposedTimelineSnapAnchors({
+  required Iterable<TimelineSnapSpan> spans,
+  required int playheadFrame,
+  String? excludingId,
+}) {
+  final List<TimelineSnapSpan> active = spans
+      .where((TimelineSnapSpan span) => span.id != excludingId)
+      .toList(growable: false);
+  final Set<int> anchors = <int>{0, playheadFrame < 0 ? 0 : playheadFrame};
+
+  bool buriedInsideAnotherSpan(TimelineSnapSpan owner, int frame) {
+    for (final TimelineSnapSpan other in active) {
+      if (identical(other, owner) || other.id == owner.id) continue;
+      if (other.startFrame < frame && frame < other.endFrameExclusive) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  for (final TimelineSnapSpan span in active) {
+    if (!buriedInsideAnotherSpan(span, span.startFrame)) {
+      anchors.add(span.startFrame);
+    }
+    if (!buriedInsideAnotherSpan(span, span.endFrameExclusive)) {
+      anchors.add(span.endFrameExclusive);
+    }
+  }
+
+  final List<int> result = anchors.toList()..sort();
+  return List<int>.unmodifiable(result);
+}
+
 class TimelineSnapResult {
   final int frame;
   final int? anchorFrame;

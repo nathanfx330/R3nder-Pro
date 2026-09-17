@@ -134,12 +134,10 @@ MediaPlacementResult placeMediaInEdit({
     media.speedNumerator,
     media.speedDenominator,
   );
-  final int durationFrames = inFrame == 0 && outFrameExclusive == null
-      ? media.durationFrames
-      : sourceSpanToProjectFrames(
-          sourceSpanFrames: sourceEnd - inFrame,
-          speed: speed,
-        );
+  final int durationFrames = sourceSpanToProjectFrames(
+    sourceSpanFrames: sourceEnd - inFrame,
+    speed: speed,
+  );
 
   final EditDocumentModel model = EditDocumentModel.parse(source);
   String next = source;

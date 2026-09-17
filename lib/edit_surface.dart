@@ -771,15 +771,19 @@ class _EditSurfaceState extends State<EditSurface> {
     EditSurfaceTrack? track, {
     String? excludingClipId,
   }) {
-    final Set<int> anchors = <int>{0, math.max(0, _effectiveFrame)};
-    for (final EditSurfaceClip clip
-        in track?.clips ?? const <EditSurfaceClip>[]) {
-      if (clip.id == excludingClipId) continue;
-      anchors.add(clip.atFrame);
-      anchors.add(clip.endFrameExclusive);
-    }
-    final List<int> result = anchors.toList()..sort();
-    return result;
+    final Iterable<TimelineSnapSpan> spans =
+        (track?.clips ?? const <EditSurfaceClip>[]).map(
+      (EditSurfaceClip clip) => TimelineSnapSpan(
+        id: clip.id,
+        startFrame: clip.atFrame,
+        endFrameExclusive: clip.endFrameExclusive,
+      ),
+    );
+    return exposedTimelineSnapAnchors(
+      spans: spans,
+      playheadFrame: _effectiveFrame,
+      excludingId: excludingClipId,
+    );
   }
 
   void _setClipSnapGuide(String trackId, int? anchorFrame) {

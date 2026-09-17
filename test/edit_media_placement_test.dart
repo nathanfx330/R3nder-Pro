@@ -76,6 +76,33 @@ TAIL
     expect(placed.requestedOutFrameExclusive, 120);
   });
 
+  test('whole-file placement derives duration from source span, not cached duration', () {
+    const ImportedEditVideo media = ImportedEditVideo(
+      authoredSource: 'video/24fps.mp4',
+      resolvedPath: '/workspace/video/24fps.mp4',
+      clipBaseId: 'fps24',
+      durationFrames: 999,
+      sourceLengthFrames: 240,
+      speedNumerator: 4,
+      speedDenominator: 5,
+      sourceFpsNumerator: 24,
+      sourceFpsDenominator: 1,
+    );
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: '[EDIT:main]\n[/EDIT]\n',
+      media: media,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 0,
+    );
+
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(placed.document, 'main').clip('V1', 'fps24');
+    expect(clip.durationFrames, 300);
+    expect(placed.durationFrames, 300);
+  });
+
   test('source range beyond media length is rejected', () {
     expect(
       () => placeMediaInEdit(
