@@ -23,6 +23,21 @@ void main() {
     expect(content.issues, isEmpty);
   });
 
+  test('preset default kickers are semantic and shared', () {
+    expect(
+      presentationPanelDefaultKicker(PresentationPanelPreset.documentary),
+      'PROFILE / DOCUMENTARY',
+    );
+    expect(
+      presentationPanelDefaultKicker(PresentationPanelPreset.dossier),
+      'DOSSIER / SUBJECT FILE',
+    );
+    expect(
+      presentationPanelDefaultKicker(PresentationPanelPreset.simple),
+      'PROFILE / DOCUMENTARY',
+    );
+  });
+
   test('documentary block parses kicker font subtitle metadata and biography', () {
     const String body = '''[PANEL]
 PRESET: DOCUMENTARY
