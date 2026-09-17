@@ -1,0 +1,1034 @@
+name: Phase 0 implementation
+
+on:
+  push:
+    branches:
+      - phase0-media-placement
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+
+      - name: Apply Phase 0 source changes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace_once(path, old, new):
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one anchor, found {count}: {old[:80]!r}')
+              write(path, text.replace(old, new, 1))
+
+          def replace_between(path, start, end, replacement):
+              text = read(path)
+              a = text.find(start)
+              if a < 0:
+                  raise SystemExit(f'{path}: missing start marker {start!r}')
+              b = text.find(end, a)
+              if b < 0:
+                  raise SystemExit(f'{path}: missing end marker {end!r}')
+              write(path, text[:a] + replacement + text[b:])
+
+          # ExactClipSpeed has a compile-time unity value for defaults and comparisons.
+          replace_once(
+              'lib/edit_model.dart',
+              "  const ExactClipSpeed._(this.numerator, this.denominator);\n\n  factory ExactClipSpeed(int numerator, [int denominator = 1]) {",
+              "  const ExactClipSpeed._(this.numerator, this.denominator);\n\n  static const ExactClipSpeed unity = ExactClipSpeed._(1, 1);\n\n  factory ExactClipSpeed(int numerator, [int denominator = 1]) {",
+          )
+
+          # Media import now owns one conform path and one source-span conversion.
+          replace_once(
+              'lib/edit_media_import.dart',
+              "import 'engine.dart';\n",
+              "import 'edit_model.dart';\nimport 'engine.dart';\n",
+          )
+          replace_once(
+              'lib/edit_media_import.dart',
+              "  final int durationFrames;\n  final int speedNumerator;",
+              "  final int durationFrames;\n  final int sourceLengthFrames;\n  final int speedNumerator;",
+          )
+          replace_once(
+              'lib/edit_media_import.dart',
+              "    required this.durationFrames,\n    this.speedNumerator = 1,",
+              "    required this.durationFrames,\n    required this.sourceLengthFrames,\n    this.speedNumerator = 1,",
+          )
+          replace_between(
+              'lib/edit_media_import.dart',
+              'ImportedEditVideo importVideoToWorkspace(',
+              'String _basename(',
+              r'''int sourceSpanToProjectFrames({
+  required int sourceSpanFrames,
+  required ExactClipSpeed speed,
+}) {
+  if (sourceSpanFrames <= 0) {
+    throw ArgumentError.value(
+      sourceSpanFrames,
+      'sourceSpanFrames',
+      'Source span must be positive.',
+    );
+  }
+  return (sourceSpanFrames * speed.denominator + speed.numerator - 1) ~/
+      speed.numerator;
+}
+
+ImportedEditVideo conformWorkspaceMedia(
+  String resolvedPath, {
+  int Function(String resolvedPath)? probeFrames,
+  NativeMediaProbeResult Function(String resolvedPath)? probeMedia,
+}) {
+  final File mediaFile = File(resolvedPath).absolute;
+  if (!mediaFile.existsSync()) {
+    throw FileSystemException('Workspace video does not exist.', mediaFile.path);
+  }
+
+  final NativeMediaProbeResult timing;
+  if (probeMedia != null) {
+    timing = probeMedia(mediaFile.path);
+  } else if (probeFrames != null) {
+    timing = NativeMediaProbeResult(
+      lengthFrames: probeFrames(mediaFile.path),
+      fpsNumerator: engineFps,
+      fpsDenominator: 1,
+    );
+  } else {
+    timing = NativeMltMediaProbe().probe(mediaFile.path);
+  }
+
+  if (timing.lengthFrames <= 0 ||
+      timing.fpsNumerator <= 0 ||
+      timing.fpsDenominator <= 0) {
+    throw StateError(
+      'Media probe returned invalid timing: '
+      '${timing.lengthFrames} frames at '
+      '${timing.fpsNumerator}/${timing.fpsDenominator} fps',
+    );
+  }
+
+  // CLIP speed is source frames consumed per project frame. A 24 fps source
+  // in R3nder's 30 fps project therefore becomes 24/30 = 4/5.
+  final ExactClipSpeed speed = ExactClipSpeed(
+    timing.fpsNumerator,
+    timing.fpsDenominator * engineFps,
+  );
+
+  // The same conversion is used for whole-file import and later source-range
+  // placement. Ceiling keeps the final requested source frame addressable; the
+  // final project frame may clamp at the source edge, matching existing import.
+  final int durationFrames = sourceSpanToProjectFrames(
+    sourceSpanFrames: timing.lengthFrames,
+    speed: speed,
+  );
+
+  final String fileName = _basename(mediaFile.path);
+  return ImportedEditVideo(
+    authoredSource: 'video/$fileName',
+    resolvedPath: mediaFile.path,
+    clipBaseId: _clipIdFromFileName(fileName),
+    durationFrames: durationFrames,
+    sourceLengthFrames: timing.lengthFrames,
+    speedNumerator: speed.numerator,
+    speedDenominator: speed.denominator,
+    sourceFpsNumerator: timing.fpsNumerator,
+    sourceFpsDenominator: timing.fpsDenominator,
+  );
+}
+
+ImportedEditVideo importVideoToWorkspace(
+  String pickedPath, {
+  String? workspaceRoot,
+  int Function(String resolvedPath)? probeFrames,
+  NativeMediaProbeResult Function(String resolvedPath)? probeMedia,
+}) {
+  final File sourceFile = File(pickedPath).absolute;
+  if (!sourceFile.existsSync()) {
+    throw FileSystemException('Selected video does not exist.', sourceFile.path);
+  }
+
+  final String workspace =
+      Directory(workspaceRoot ?? resolveActiveWorkspaceRoot()).absolute.path;
+  final Directory videoDir =
+      Directory('$workspace${Platform.pathSeparator}video');
+  videoDir.createSync(recursive: true);
+
+  final String originalName = _basename(sourceFile.path);
+  final String safeName = _safeFileName(originalName);
+  String destinationPath = '${videoDir.path}${Platform.pathSeparator}$safeName';
+
+  bool sameFile = false;
+  final File initialDestination = File(destinationPath);
+  if (initialDestination.existsSync()) {
+    try {
+      sameFile = FileSystemEntity.identicalSync(
+        sourceFile.path,
+        initialDestination.path,
+      );
+    } catch (_) {
+      sameFile = sourceFile.path == initialDestination.absolute.path;
+    }
+  }
+
+  if (!sameFile && initialDestination.existsSync()) {
+    destinationPath = _nextAvailablePath(videoDir.path, safeName);
+  }
+
+  bool copied = false;
+  final File destination = File(destinationPath);
+  if (!sameFile) {
+    sourceFile.copySync(destination.path);
+    copied = true;
+  }
+
+  try {
+    return conformWorkspaceMedia(
+      destination.path,
+      probeFrames: probeFrames,
+      probeMedia: probeMedia,
+    );
+  } catch (_) {
+    if (copied && destination.existsSync()) {
+      destination.deleteSync();
+    }
+    rethrow;
+  }
+}
+
+'''
+          )
+          # The import path no longer owns its own GCD implementation.
+          text = read('lib/edit_media_import.dart')
+          gcd_start = text.find('\nint _gcd(int a, int b) {')
+          if gcd_start >= 0:
+              write('lib/edit_media_import.dart', text[:gcd_start].rstrip() + '\n')
+
+          # Retire the bootstrap CLIP writer; addClip becomes the one CLIP writer.
+          replace_between(
+              'lib/edit_surface_model.dart',
+              'String createEditWithClip({',
+              'class EditSurfaceDocument {',
+              '',
+          )
+          replace_once(
+              'lib/edit_surface_model.dart',
+              "    required int atFrame,\n    required int durationFrames,\n  }) {\n    _validateInsertedClip(\n      editId: editId,\n      trackId: trackId,\n      clipId: clipId,\n      mediaSource: mediaSource,\n      atFrame: atFrame,\n      durationFrames: durationFrames,\n    );\n\n    final String opening = _clipOpeningTag(\n      id: clipId,\n      source: mediaSource,\n      atFrame: atFrame,\n      inFrame: 0,\n      durationFrames: durationFrames,\n      speed: ExactClipSpeed(1),\n    );",
+              "    required int atFrame,\n    required int durationFrames,\n    int inFrame = 0,\n    ExactClipSpeed speed = ExactClipSpeed.unity,\n  }) {\n    _validateInsertedClip(\n      editId: editId,\n      trackId: trackId,\n      clipId: clipId,\n      mediaSource: mediaSource,\n      atFrame: atFrame,\n      inFrame: inFrame,\n      durationFrames: durationFrames,\n    );\n\n    final String opening = _clipOpeningTag(\n      id: clipId,\n      source: mediaSource,\n      atFrame: atFrame,\n      inFrame: inFrame,\n      durationFrames: durationFrames,\n      speed: speed,\n    );",
+          )
+          replace_once(
+              'lib/edit_surface_model.dart',
+              "  required String mediaSource,\n  required int atFrame,\n  required int durationFrames,\n}) {",
+              "  required String mediaSource,\n  required int atFrame,\n  required int inFrame,\n  required int durationFrames,\n}) {",
+          )
+          replace_once(
+              'lib/edit_surface_model.dart',
+              "  if (durationFrames <= 0) {\n",
+              "  if (inFrame < 0) {\n    throw ArgumentError.value(inFrame, 'inFrame', 'Must be non-negative.');\n  }\n  if (durationFrames <= 0) {\n",
+          )
+
+          # Reuse the unity singleton in the other structural surface too.
+          replace_once(
+              'lib/mosaic_surface_model.dart',
+              'speed ?? ExactClipSpeed(1)',
+              'speed ?? ExactClipSpeed.unity',
+          )
+
+          # New common placement layer.
+          write('lib/edit_media_placement.dart', r'''// ./lib/edit_media_placement.dart
+//
+// Shared media-placement primitives for EDIT authoring.
+//
+// UI gestures decide where media belongs. This layer receives an explicit
+// project frame and authors exactly one CLIP through EditSurfaceDocument.
+
+import 'edit_media_import.dart';
+import 'edit_model.dart';
+import 'edit_surface_model.dart';
+
+final RegExp _editIdPattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
+class MediaPlacementResult {
+  final String document;
+  final String editId;
+  final String trackId;
+  final String clipId;
+  final int atFrame;
+  final int inFrame;
+  final int? requestedOutFrameExclusive;
+  final int durationFrames;
+
+  const MediaPlacementResult({
+    required this.document,
+    required this.editId,
+    required this.trackId,
+    required this.clipId,
+    required this.atFrame,
+    required this.inFrame,
+    required this.requestedOutFrameExclusive,
+    required this.durationFrames,
+  });
+}
+
+String uniqueEditId(EditDocumentModel model, String preferredId) {
+  if (!_editIdPattern.hasMatch(preferredId)) {
+    throw ArgumentError.value(
+      preferredId,
+      'preferredId',
+      'EDIT id must use letters, numbers, underscore, or hyphen.',
+    );
+  }
+
+  final Set<String> ids = model.edits.map((EditSequence edit) => edit.id).toSet();
+  if (!ids.contains(preferredId)) return preferredId;
+
+  int suffix = 2;
+  String candidate = '${preferredId}_$suffix';
+  while (ids.contains(candidate)) {
+    suffix++;
+    candidate = '${preferredId}_$suffix';
+  }
+  return candidate;
+}
+
+String appendEmptyEdit({
+  required String source,
+  required String editId,
+}) {
+  if (!_editIdPattern.hasMatch(editId)) {
+    throw ArgumentError.value(
+      editId,
+      'editId',
+      'EDIT id must use letters, numbers, underscore, or hyphen.',
+    );
+  }
+
+  final EditDocumentModel existing = EditDocumentModel.parse(source);
+  if (existing.edits.any((EditSequence edit) => edit.id == editId)) {
+    throw StateError('EDIT "$editId" already exists.');
+  }
+
+  final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+  final StringBuffer out = StringBuffer(source);
+  if (source.isNotEmpty &&
+      !source.endsWith('\n') &&
+      !source.endsWith('\r')) {
+    out.write(newline);
+  }
+  out
+    ..write('[EDIT:$editId]$newline')
+    ..write('[/EDIT]$newline');
+
+  final String next = out.toString();
+  EditDocumentModel.parse(next).edit(editId);
+  return next;
+}
+
+int appendFrameForTrack(EditSurfaceDocument document, String trackId) {
+  final EditSurfaceTrack? track = document.trackOrNull(trackId);
+  if (track == null || track.clips.isEmpty) return 0;
+
+  int end = 0;
+  for (final EditSurfaceClip clip in track.clips) {
+    if (clip.endFrameExclusive > end) end = clip.endFrameExclusive;
+  }
+  return end;
+}
+
+MediaPlacementResult placeMediaInEdit({
+  required String source,
+  required ImportedEditVideo media,
+  required String editId,
+  required String trackId,
+  required int atFrame,
+  int inFrame = 0,
+  int? outFrameExclusive,
+}) {
+  if (atFrame < 0) {
+    throw ArgumentError.value(atFrame, 'atFrame', 'Must be non-negative.');
+  }
+  if (inFrame < 0) {
+    throw ArgumentError.value(inFrame, 'inFrame', 'Must be non-negative.');
+  }
+
+  final int sourceEnd = outFrameExclusive ?? media.sourceLengthFrames;
+  if (sourceEnd <= inFrame) {
+    throw ArgumentError.value(
+      sourceEnd,
+      'outFrameExclusive',
+      'Source out must be greater than source in.',
+    );
+  }
+  if (sourceEnd > media.sourceLengthFrames) {
+    throw ArgumentError.value(
+      sourceEnd,
+      'outFrameExclusive',
+      'Source out exceeds media source length ${media.sourceLengthFrames}.',
+    );
+  }
+
+  final ExactClipSpeed speed = ExactClipSpeed(
+    media.speedNumerator,
+    media.speedDenominator,
+  );
+  final int durationFrames = inFrame == 0 && outFrameExclusive == null
+      ? media.durationFrames
+      : sourceSpanToProjectFrames(
+          sourceSpanFrames: sourceEnd - inFrame,
+          speed: speed,
+        );
+
+  final EditDocumentModel model = EditDocumentModel.parse(source);
+  String next = source;
+  if (!model.edits.any((EditSequence edit) => edit.id == editId)) {
+    next = appendEmptyEdit(source: next, editId: editId);
+  }
+
+  final EditSurfaceDocument document = EditSurfaceDocument.parse(next, editId);
+  final int endFrameExclusive = atFrame + durationFrames;
+  final EditSurfaceTrack? existingTrack = document.trackOrNull(trackId);
+  if (existingTrack != null) {
+    for (final EditSurfaceClip clip in existingTrack.clips) {
+      final bool overlaps =
+          atFrame < clip.endFrameExclusive && clip.atFrame < endFrameExclusive;
+      if (overlaps) {
+        throw StateError(
+          'Plain media placement [$atFrame, $endFrameExclusive) overlaps '
+          'CLIP "${clip.id}" [${clip.atFrame}, ${clip.endFrameExclusive}) '
+          'in TRACK "$trackId". Transitions must be authored explicitly.',
+        );
+      }
+    }
+  }
+
+  final String clipId = document.nextClipId(trackId, media.clipBaseId);
+  final String authored = document.addClip(
+    trackId: trackId,
+    clipId: clipId,
+    mediaSource: media.authoredSource,
+    atFrame: atFrame,
+    inFrame: inFrame,
+    durationFrames: durationFrames,
+    speed: speed,
+  );
+
+  return MediaPlacementResult(
+    document: authored,
+    editId: editId,
+    trackId: trackId,
+    clipId: clipId,
+    atFrame: atFrame,
+    inFrame: inFrame,
+    requestedOutFrameExclusive: outFrameExclusive,
+    durationFrames: durationFrames,
+  );
+}
+''')
+
+          # Workspace: production Add Video now uses the shared primitive. V1
+          # appends; ADD OVERLAY keeps its established playhead semantics.
+          replace_once(
+              'lib/edit_workspace.dart',
+              "import 'edit_media_import.dart';\n",
+              "import 'edit_media_import.dart';\nimport 'edit_media_placement.dart';\n",
+          )
+          replace_between(
+              'lib/edit_workspace.dart',
+              '  Future<void> _addVideo(String trackId) async {',
+              '  void _newEdit(EditDocumentModel model) {',
+              r'''  Future<void> _addVideo(String trackId) async {
+    if (_importing || _exporting || _startingPlayback) return;
+    if (_playing) _pausePlayback();
+    setState(() {
+      _importing = true;
+      _error = null;
+    });
+
+    try {
+      final String? picked = await (widget.pickVideo ?? pickNativeVideoFile)();
+      if (picked == null) return;
+
+      final ImportedEditVideo imported =
+          (widget.importVideo ?? importVideoToWorkspace)(picked);
+      final EditDocumentModel model = EditDocumentModel.parse(_workingSource);
+
+      late final String targetEditId;
+      if (model.edits.isEmpty) {
+        targetEditId = 'main';
+      } else {
+        final StructuralSourceRef? selected = _selectedRefFor(model);
+        targetEditId = selected?.kind == StructuralSourceKind.edit
+            ? selected!.id
+            : model.edits.first.id;
+      }
+
+      // ADD VIDEO is an append gesture. It has no spatial coordinate of its
+      // own, so V1 no longer borrows the transport playhead as hidden input.
+      // ADD OVERLAY retains its existing explicit playhead behavior on V2.
+      int atFrame = _displayFrame;
+      if (trackId == 'V1') {
+        final bool targetExists =
+            model.edits.any((EditSequence edit) => edit.id == targetEditId);
+        atFrame = targetExists
+            ? appendFrameForTrack(
+                EditSurfaceDocument.parse(_workingSource, targetEditId),
+                trackId,
+              )
+            : 0;
+      }
+
+      final MediaPlacementResult placed = placeMediaInEdit(
+        source: _workingSource,
+        media: imported,
+        editId: targetEditId,
+        trackId: trackId,
+        atFrame: atFrame,
+      );
+
+      if (!mounted) return;
+      _applySourceChange(
+        placed.document,
+        selectSource: 'EDIT.${placed.editId}',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+'''
+          )
+          replace_between(
+              'lib/edit_workspace.dart',
+              '  void _newEdit(EditDocumentModel model) {',
+              '  void _newMosaic(EditDocumentModel model) {',
+              r'''  void _newEdit(EditDocumentModel model) {
+    if (_exporting || _startingPlayback) return;
+    final String id = uniqueEditId(model, 'edit');
+
+    try {
+      final String next = appendEmptyEdit(source: _workingSource, editId: id);
+      _applySourceChange(next, selectSource: 'EDIT.$id');
+    } catch (error) {
+      setState(() => _error = '$error');
+    }
+  }
+
+'''
+          )
+
+          # First-clip creation test moves to the shared placement API.
+          replace_once(
+              'test/edit_clip_creation_test.dart',
+              "import 'package:r3nder/edit_surface_model.dart';\n",
+              "import 'package:r3nder/edit_media_import.dart';\nimport 'package:r3nder/edit_media_placement.dart';\nimport 'package:r3nder/edit_surface_model.dart';\n",
+          )
+          replace_between(
+              'test/edit_clip_creation_test.dart',
+              "  test('first GUI video creates EDIT main V1 and a real CLIP', () {",
+              "  test('adding overlay creates V2 without regenerating existing V1 source', () {",
+              r'''  test('first media placement creates EDIT main V1 and a real CLIP', () {
+    const String original = '[TITLE:Opening]\nHello world\n';
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: original,
+      media: const ImportedEditVideo(
+        authoredSource: 'video/interview.mp4',
+        resolvedPath: '/workspace/video/interview.mp4',
+        clipBaseId: 'interview',
+        durationFrames: 90,
+        sourceLengthFrames: 90,
+      ),
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 0,
+    );
+
+    expect(placed.document.startsWith(original), isTrue);
+    final EditSurfaceDocument document =
+        EditSurfaceDocument.parse(placed.document, 'main');
+    final EditSurfaceClip clip = document.clip('V1', 'interview');
+    expect(clip.source, 'video/interview.mp4');
+    expect(clip.atFrame, 0);
+    expect(clip.inFrame, 0);
+    expect(clip.durationFrames, 90);
+    expect(clip.speed, ExactClipSpeed.unity);
+  });
+
+'''
+          )
+          # The test now references ExactClipSpeed directly.
+          replace_once(
+              'test/edit_clip_creation_test.dart',
+              "import 'package:r3nder/edit_media_placement.dart';\n",
+              "import 'package:r3nder/edit_media_placement.dart';\nimport 'package:r3nder/edit_model.dart';\n",
+          )
+
+          # ImportedEditVideo source length is exact and required at all call sites.
+          replace_once(
+              'test/edit_workspace_test.dart',
+              "              durationFrames: 90,\n            ),",
+              "              durationFrames: 90,\n              sourceLengthFrames: 90,\n            ),",
+          )
+          replace_once(
+              'test/edit_workspace_test.dart',
+              "              durationFrames: 13925,\n              speedNumerator: 4,",
+              "              durationFrames: 13925,\n              sourceLengthFrames: 11140,\n              speedNumerator: 4,",
+          )
+          replace_once(
+              'test/edit_workspace_test.dart',
+              "              durationFrames: 48,\n            ),",
+              "              durationFrames: 48,\n              sourceLengthFrames: 48,\n            ),",
+          )
+
+          # Regression: Add Video ignores a playhead parked inside the prior V1 clip.
+          marker = "  testWidgets('ADD OVERLAY creates V2 at current edit playhead',"
+          text = read('test/edit_workspace_test.dart')
+          if text.count(marker) != 1:
+              raise SystemExit('edit_workspace_test.dart: ADD OVERLAY marker not unique')
+          new_test = r'''  testWidgets('ADD VIDEO appends even when playhead is inside existing V1 clip',
+      (WidgetTester tester) async {
+    String latest = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:base:video/base.mp4:0:0:120:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1000,
+          height: 700,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 60,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
+            pickVideo: () async => '/outside/next.mp4',
+            importVideo: (_) => const ImportedEditVideo(
+              authoredSource: 'video/next.mp4',
+              resolvedPath: '/workspace/video/next.mp4',
+              clipBaseId: 'next',
+              durationFrames: 30,
+              sourceLengthFrames: 30,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('ADD VIDEO'));
+    await tester.pumpAndSettle();
+
+    final EditSurfaceDocument document = EditSurfaceDocument.parse(latest, 'main');
+    expect(document.clip('V1', 'next').atFrame, 120);
+    expect(document.clip('V1', 'next').endFrameExclusive, 150);
+  });
+
+'''
+          write('test/edit_workspace_test.dart', text.replace(marker, new_test + marker, 1))
+
+          # Media-import tests cover exact source length, shared conversion, and
+          # direct workspace conforming without another copy path.
+          replace_once(
+              'test/edit_media_import_test.dart',
+              "import 'package:r3nder/edit_media_import.dart';\n",
+              "import 'package:r3nder/edit_media_import.dart';\nimport 'package:r3nder/edit_model.dart';\n",
+          )
+          replace_once(
+              'test/edit_media_import_test.dart',
+              "      expect(imported.durationFrames, 87);\n",
+              "      expect(imported.durationFrames, 87);\n      expect(imported.sourceLengthFrames, 87);\n",
+          )
+          replace_once(
+              'test/edit_media_import_test.dart',
+              "      expect(imported.durationFrames, 13925);\n",
+              "      expect(imported.durationFrames, 13925);\n      expect(imported.sourceLengthFrames, 11140);\n",
+          )
+          text = read('test/edit_media_import_test.dart')
+          insert = r'''
+
+  test('source span conversion is the same arithmetic used by import', () {
+    expect(
+      sourceSpanToProjectFrames(
+        sourceSpanFrames: 80,
+        speed: ExactClipSpeed(4, 5),
+      ),
+      100,
+    );
+  });
+
+  test('workspace media conform uses the same timing model without copying', () {
+    final Directory temp = Directory.systemTemp.createTempSync('r3nder_conform_');
+    try {
+      final File media = File('${temp.path}/shot.mp4')
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final ImportedEditVideo conformed = conformWorkspaceMedia(
+        media.path,
+        probeMedia: (_) => const NativeMediaProbeResult(
+          lengthFrames: 80,
+          fpsNumerator: 24,
+          fpsDenominator: 1,
+        ),
+      );
+
+      expect(conformed.resolvedPath, media.absolute.path);
+      expect(conformed.authoredSource, 'video/shot.mp4');
+      expect(conformed.sourceLengthFrames, 80);
+      expect(conformed.durationFrames, 100);
+      expect(conformed.speedNumerator, 4);
+      expect(conformed.speedDenominator, 5);
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
+'''
+          pos = text.rfind('\n}')
+          if pos < 0:
+              raise SystemExit('edit_media_import_test.dart: no main closing brace')
+          write('test/edit_media_import_test.dart', text[:pos] + insert + text[pos:])
+
+          # Focused contract tests for the placement primitive.
+          write('test/edit_media_placement_test.dart', r'''// ./test/edit_media_placement_test.dart
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/edit_media_import.dart';
+import 'package:r3nder/edit_media_placement.dart';
+import 'package:r3nder/edit_model.dart';
+import 'package:r3nder/edit_surface_model.dart';
+
+const ImportedEditVideo _unityMedia = ImportedEditVideo(
+  authoredSource: 'video/shot.mp4',
+  resolvedPath: '/workspace/video/shot.mp4',
+  clipBaseId: 'shot',
+  durationFrames: 100,
+  sourceLengthFrames: 100,
+);
+
+void main() {
+  test('creates requested target EDIT even when another EDIT already exists', () {
+    const String source = '''HEADER
+[EDIT:main]
+[/EDIT]
+TAIL
+''';
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: source,
+      media: _unityMedia,
+      editId: 'shot_014',
+      trackId: 'V1',
+      atFrame: 0,
+    );
+
+    final EditDocumentModel model = EditDocumentModel.parse(placed.document);
+    expect(model.edits.map((EditSequence edit) => edit.id),
+        <String>['main', 'shot_014']);
+    expect(
+      EditSurfaceDocument.parse(placed.document, 'shot_014')
+          .clip('V1', 'shot')
+          .source,
+      'video/shot.mp4',
+    );
+    expect(placed.document.startsWith(source), isTrue);
+  });
+
+  test('source in and out author inFrame, duration, and conformed speed once', () {
+    const ImportedEditVideo media = ImportedEditVideo(
+      authoredSource: 'video/24fps.mp4',
+      resolvedPath: '/workspace/video/24fps.mp4',
+      clipBaseId: 'fps24',
+      durationFrames: 300,
+      sourceLengthFrames: 240,
+      speedNumerator: 4,
+      speedDenominator: 5,
+      sourceFpsNumerator: 24,
+      sourceFpsDenominator: 1,
+    );
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: '[EDIT:main]\n[/EDIT]\n',
+      media: media,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 10,
+      inFrame: 40,
+      outFrameExclusive: 120,
+    );
+
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(placed.document, 'main').clip('V1', 'fps24');
+    expect(clip.atFrame, 10);
+    expect(clip.inFrame, 40);
+    expect(clip.durationFrames, 100);
+    expect(clip.speed, ExactClipSpeed(4, 5));
+    expect(placed.requestedOutFrameExclusive, 120);
+  });
+
+  test('source range beyond media length is rejected', () {
+    expect(
+      () => placeMediaInEdit(
+        source: '[EDIT:main]\n[/EDIT]\n',
+        media: _unityMedia,
+        editId: 'main',
+        trackId: 'V1',
+        atFrame: 0,
+        inFrame: 90,
+        outFrameExclusive: 101,
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('plain placement rejects occupied frames but exact abutment succeeds', () {
+    const String source = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:base:video/base.mp4:0:0:100:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    expect(
+      () => placeMediaInEdit(
+        source: source,
+        media: _unityMedia,
+        editId: 'main',
+        trackId: 'V1',
+        atFrame: 50,
+      ),
+      throwsStateError,
+    );
+
+    final MediaPlacementResult abutting = placeMediaInEdit(
+      source: source,
+      media: _unityMedia,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 100,
+    );
+    expect(
+      EditSurfaceDocument.parse(abutting.document, 'main')
+          .clip('V1', 'shot')
+          .atFrame,
+      100,
+    );
+  });
+
+  test('same media placed twice on one track receives distinct CLIP ids', () {
+    final MediaPlacementResult first = placeMediaInEdit(
+      source: '[EDIT:main]\n[/EDIT]\n',
+      media: _unityMedia,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 0,
+    );
+    final MediaPlacementResult second = placeMediaInEdit(
+      source: first.document,
+      media: _unityMedia,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 100,
+    );
+
+    expect(first.clipId, 'shot');
+    expect(second.clipId, 'shot_2');
+  });
+
+  test('crossfade-authored overlap survives unrelated legal placement', () {
+    const String source = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/a.mp4:0:0:80:1]
+      [#EDIT_TRANSITION_OUT:CROSSFADE:24]
+    [/CLIP]
+    [CLIP:b:video/b.mp4:56:0:80:1]
+      [#EDIT_TRANSITION:CROSSFADE:24]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    final EditSurfaceDocument before = EditSurfaceDocument.parse(source, 'main');
+    expect(appendFrameForTrack(before, 'V1'), 136);
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: source,
+      media: _unityMedia,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 136,
+    );
+
+    expect(placed.document, contains('[#EDIT_TRANSITION_OUT:CROSSFADE:24]'));
+    expect(placed.document, contains('[#EDIT_TRANSITION:CROSSFADE:24]'));
+    expect(
+      EditSurfaceDocument.parse(placed.document, 'main').clip('V1', 'shot').atFrame,
+      136,
+    );
+  });
+
+  test('CRLF and untouched regions remain byte-for-byte intact', () {
+    const String source = 'HEADER\r\n[EDIT:main]\r\n[/EDIT]\r\nTAIL\r\n';
+
+    final MediaPlacementResult placed = placeMediaInEdit(
+      source: source,
+      media: _unityMedia,
+      editId: 'main',
+      trackId: 'V1',
+      atFrame: 0,
+    );
+
+    expect(placed.document.startsWith('HEADER\r\n[EDIT:main]\r\n'), isTrue);
+    expect(placed.document.endsWith('[/EDIT]\r\nTAIL\r\n'), isTrue);
+    expect(placed.document.replaceAll('\r\n', '').contains('\n'), isFalse);
+  });
+
+  test('unique EDIT id collision walk ignores other structural namespaces', () {
+    const String source = '''[EDIT:shot]
+[/EDIT]
+[MOSAIC:shot_2]
+[/MOSAIC]
+''';
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    expect(uniqueEditId(model, 'shot'), 'shot_2');
+  });
+}
+''')
+
+          # Journey record keeps the failed no-overlap turn instead of smoothing it out.
+          write('docs/MEDIA_BIN_PHASE0_JOURNEY.md', r'''# Media Bin Phase 0 Journey
+
+Phase 0 began as preparation for a media-bin quality-of-life feature. The intended user flow was simple: expose the workspace `video/` folder as thumbnails, let Edit Mode drag those assets into the timeline, and let Text Mode attach video to authored text.
+
+Inspection showed that the architecture already supported most of that goal. The missing feature was not a second video-cue system. It was an ergonomics gap in front of systems that already existed.
+
+## The grammar collision
+
+The first proposal used a TEXT-level `CUE VIDEO` concept. Inspection stopped that early. `CUE` already means clip-local, source-relative triggers inside a CLIP, while `VIDEO` already names the image-sequence construct. Reusing either word at a new scope would make the script grammar ambiguous.
+
+The existing relationship was already the correct one: TEXT references `[STRUCT:EDIT.<id>]`; the EDIT owns the CLIP; the CLIP owns media source, source in, project duration, and speed. A future Attach Media gesture should therefore create a one-clip EDIT and append the STRUCT reference rather than invent another authored representation.
+
+## The bootstrap blocker
+
+The next inspection found that `createEditWithClip` was not a general EDIT creator. It explicitly refused a document that already contained any EDIT blocks. That made it unsuitable for future Text Mode attachment, where a project may already contain several EDITs and the gesture must create a fresh one.
+
+Phase 0 therefore retires the bootstrap writer from production use. Empty EDIT creation and CLIP insertion are composed from separate operations, and every CLIP is authored through `EditSurfaceDocument.addClip`.
+
+## One timing conversion
+
+Import already conformed source rate into exact rational CLIP speed, but the whole-file project duration used a separate ceiling expression. Source-range attachment would have needed the same arithmetic again.
+
+Phase 0 replaces that duplication with `sourceSpanToProjectFrames`. Whole-file import and partial source ranges now use the same conversion. `ImportedEditVideo` also retains the exact probed source-frame length so in/out validation never has to reconstruct it from a rounded project duration.
+
+The ceiling is deliberate. A final project frame may address fractionally beyond the requested source range and clamp at the source edge, matching the existing whole-file import behavior.
+
+## The wrong no-overlap invariant
+
+During review we proposed a stronger rule: clips on a track should never overlap. We agreed on it and briefly treated it as locked architecture.
+
+The existing fixtures disproved it.
+
+Crossfades are authored as overlap. The transition operation moves the right clip backward by the transition length, and transition directives declare how that overlapping region is composited. Existing tests contained the geometry plainly: adjacent clips deliberately overlap by the authored crossfade frame count.
+
+The important lesson was not merely that the proposed invariant was wrong. The correction came from reading fixtures rather than continuing to reason from the API surface. That is a repeatable forensic move for this codebase: when a proposed invariant affects composition, inspect authored fixtures before promoting it into validation.
+
+The Phase 0 rule is therefore narrower. Parsing remains permissive. Direct manipulation remains able to create the overlap transition authoring already depends on. Only a plain media-placement gesture rejects occupied project frames because that gesture carries no transition intent.
+
+A stricter future rule could distinguish declared transition overlap from undeclared overlap, but that requires an atomic transition design and does not belong in the media-bin roadmap.
+
+## The hidden transport coupling
+
+Applying the placement rule exposed one more behavior that had not been part of the original plan. `ADD VIDEO` used the current playhead as its insertion frame. Once plain placement rejected occupied frames, parking the playhead inside a shot and then adding another video would fail.
+
+That coupling was invisible because the button itself has no spatial placement gesture. Phase 0 changes `ADD VIDEO` on V1 to append at the maximum `endFrameExclusive` of the target track. Document order is not assumed to be time order, and existing crossfade overlap is preserved. `ADD OVERLAY` keeps its established playhead behavior on V2.
+
+This is the only intentional user-visible behavior change in Phase 0:
+
+> Add Video appends. Drag will place.
+
+Future bin drag-and-drop will supply its frame from the cursor. Future Text Mode attachment will supply its position from that workflow. The shared placement primitive does not infer any of those UI intentions.
+
+## What Phase 0 leaves behind
+
+The result is a single deterministic media-placement path:
+
+- `ExactClipSpeed.unity` provides a compile-time unity value.
+- `ImportedEditVideo` retains exact source length.
+- `sourceSpanToProjectFrames` is the one source-to-project duration conversion.
+- `conformWorkspaceMedia` separates probe/conform from copy/import.
+- `appendEmptyEdit` creates a new EDIT without assuming the document is empty.
+- `uniqueEditId` owns EDIT collision walking.
+- `addClip` can author source in and conformed speed in one rewrite.
+- `placeMediaInEdit` owns target EDIT creation, CLIP-id collision handling, range validation, and plain-placement occupancy rejection.
+- `ADD VIDEO` appends to V1 rather than borrowing transport position.
+
+The feature was never a missing video-cue system. It was an ergonomics gap in front of an architecture that already did the job.
+''')
+          PY
+
+      - name: Format changed Dart files
+        run: |
+          dart format \
+            lib/edit_model.dart \
+            lib/edit_media_import.dart \
+            lib/edit_surface_model.dart \
+            lib/edit_media_placement.dart \
+            lib/edit_workspace.dart \
+            lib/mosaic_surface_model.dart \
+            test/edit_clip_creation_test.dart \
+            test/edit_media_import_test.dart \
+            test/edit_media_placement_test.dart \
+            test/edit_workspace_test.dart
+
+      - name: Resolve Flutter packages
+        run: flutter pub get
+
+      - name: Run targeted Phase 0 tests
+        run: |
+          flutter test \
+            test/edit_media_import_test.dart \
+            test/edit_clip_creation_test.dart \
+            test/edit_media_placement_test.dart \
+            test/edit_surface_model_test.dart \
+            test/edit_workspace_test.dart
+
+      - name: Confirm retired writer has no references
+        run: |
+          if grep -R -n --exclude-dir=.git 'createEditWithClip' lib test; then
+            echo 'createEditWithClip still has references'
+            exit 1
+          fi
+
+      - name: Commit implementation and remove temporary workflows
+        run: |
+          git rm -f .github/workflows/phase0-audit.yml .github/workflows/phase0-apply.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib test docs
+          git commit -m 'Unify EDIT media placement and make Add Video append'
+          git push origin HEAD:phase0-media-placement
