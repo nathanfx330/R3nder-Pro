@@ -33,13 +33,81 @@ void main() {
     final List<DerivedLandmark> cues = landmarks
         .where((DerivedLandmark item) => item.kind == DerivedLandmarkKind.cue)
         .toList(growable: false);
+    final List<DerivedLandmark> outs = landmarks
+        .where(
+          (DerivedLandmark item) =>
+              item.kind == DerivedLandmarkKind.presentationOut,
+        )
+        .toList(growable: false);
 
     expect(cues, hasLength(3));
     expect(cues.map((DerivedLandmark item) => item.frame), <int>[20, 50, 80]);
     expect(
       cues.map((DerivedLandmark item) => item.label),
-      <String>['CARD CUE', 'SIDECARD CUE', 'DOSSIER CUE'],
+      <String>['CARD IN', 'SIDECARD IN', 'DOSSIER CUE'],
     );
+
+    // CARD/SIDECARD hold 10: 16 opening + 10 seated + 16 closing = 42.
+    expect(outs, hasLength(2));
+    expect(outs.map((DerivedLandmark item) => item.frame), <int>[62, 92]);
+    expect(
+      outs.map((DerivedLandmark item) => item.label),
+      <String>['CARD OUT', 'SIDECARD OUT'],
+    );
+  });
+
+  test('CARD OUT follows presentation lifetime across a later clip cut', () {
+    const String source = '''[EDIT:cut]
+  [TRACK:V1]
+    [CLIP:a:a.mp4:0:0:30:1]
+      [CUE:20]
+        [CARD:person.png:20:24,32,40:FULL]
+          Full card.
+        [/CARD]
+      [/CUE]
+    [/CLIP]
+    [CLIP:b:b.mp4:30:0:70:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    final List<DerivedLandmark> landmarks =
+        derivedLandmarksForEdit(source, 'cut');
+    final DerivedLandmark cardIn = landmarks.singleWhere(
+      (DerivedLandmark item) => item.label == 'CARD IN',
+    );
+    final DerivedLandmark cardOut = landmarks.singleWhere(
+      (DerivedLandmark item) => item.label == 'CARD OUT',
+    );
+
+    expect(cardIn.frame, 20);
+    // 16 open + 20 hold + 16 close = 52 visible frames. The source clip ends
+    // at 30, but the presentation intentionally continues across that cut.
+    expect(cardOut.frame, 72);
+  });
+
+  test('CARD OUT truncates at enclosing EDIT boundary', () {
+    const String source = '''[EDIT:cut]
+  [TRACK:V1]
+    [CLIP:a:a.mp4:0:0:30:1]
+      [CUE:20]
+        [CARD:person.png:50:24,32,40:FULL]
+          Full card.
+        [/CARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
+    final List<DerivedLandmark> landmarks =
+        derivedLandmarksForEdit(source, 'cut');
+    final DerivedLandmark cardOut = landmarks.singleWhere(
+      (DerivedLandmark item) => item.label == 'CARD OUT',
+    );
+
+    expect(cardOut.frame, 30);
   });
 
   test('adjacent clip OUT and IN remain separate landmark definitions', () {
