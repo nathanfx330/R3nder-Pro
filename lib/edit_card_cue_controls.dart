@@ -132,20 +132,24 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         .join('\n');
     String bodyDraft = panel.hasErrors ? '' : panel.body;
     final List<String> preservedPanelDirectives = panel.preservedDirectives;
-    final FocusNode kickerFocus = FocusNode(debugLabel: 'card-kicker');
-    final FocusNode headingFocus = FocusNode(debugLabel: 'card-heading');
-    final FocusNode bodyFocus = FocusNode(debugLabel: 'card-body');
 
-    final CardRequest? result = await showDialog<CardRequest>(
+    return showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
-        String? errorText;
-
-        return StatefulBuilder(
+        return _CardDialogFocusScope(
           builder: (
             BuildContext context,
-            void Function(VoidCallback fn) setDialogState,
+            FocusNode kickerFocus,
+            FocusNode headingFocus,
+            FocusNode bodyFocus,
           ) {
+            String? errorText;
+
+            return StatefulBuilder(
+              builder: (
+                BuildContext context,
+                void Function(VoidCallback fn) setDialogState,
+              ) {
             List<PresentationPanelMetadata>? parseMetadataDraft() {
               final List<PresentationPanelMetadata> out =
                   <PresentationPanelMetadata>[];
@@ -981,15 +985,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 ),
               ],
             );
+              },
+            );
           },
         );
       },
     );
-
-    kickerFocus.dispose();
-    headingFocus.dispose();
-    bodyFocus.dispose();
-    return result;
   }
 
   Future<void> _add() async {
@@ -1146,6 +1147,43 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
   }
 }
 
+
+
+class _CardDialogFocusScope extends StatefulWidget {
+  const _CardDialogFocusScope({required this.builder});
+
+  final Widget Function(
+    BuildContext context,
+    FocusNode kickerFocus,
+    FocusNode headingFocus,
+    FocusNode bodyFocus,
+  ) builder;
+
+  @override
+  State<_CardDialogFocusScope> createState() => _CardDialogFocusScopeState();
+}
+
+class _CardDialogFocusScopeState extends State<_CardDialogFocusScope> {
+  final FocusNode _kickerFocus = FocusNode(debugLabel: 'card-kicker');
+  final FocusNode _headingFocus = FocusNode(debugLabel: 'card-heading');
+  final FocusNode _bodyFocus = FocusNode(debugLabel: 'card-body');
+
+  @override
+  void dispose() {
+    _kickerFocus.dispose();
+    _headingFocus.dispose();
+    _bodyFocus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(
+        context,
+        _kickerFocus,
+        _headingFocus,
+        _bodyFocus,
+      );
+}
 
 class _CardFacePreview extends StatefulWidget {
   const _CardFacePreview({
