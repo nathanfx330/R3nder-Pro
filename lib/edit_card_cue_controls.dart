@@ -7,12 +7,17 @@
 // source by edit_cue_authoring.dart. SideCardRequest is a CardRequest subtype,
 // so the existing inspector/history seam remains one source-backed path.
 
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
 import 'presentation_panel_content.dart';
+import 'presentation_panel_painter.dart';
 import 'presentation_requests.dart';
+import 'sidecard_geometry.dart';
 import 'ui_theme.dart';
 
 typedef EditCardCueChanged = void Function(int cueIndex, CardRequest card);
@@ -25,6 +30,7 @@ class EditCardCueControls extends StatefulWidget {
     required this.playheadFrame,
     required this.theme,
     required this.imageOptions,
+    this.resolveSource,
     required this.onAddAtPlayhead,
     required this.onChanged,
     required this.onDeleted,
@@ -38,6 +44,9 @@ class EditCardCueControls extends StatefulWidget {
   /// Returns workspace-relative image paths when the author opens a CARD form.
   /// The directory is scanned on demand rather than on every EDIT rebuild.
   final List<String> Function()? imageOptions;
+
+  /// Workspace source resolver used only by the transient live card preview.
+  final String Function(String source)? resolveSource;
 
   /// Null while playback is running or when the playhead is outside the CLIP.
   final ValueChanged<CardRequest>? onAddAtPlayhead;
@@ -58,6 +67,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     'DejaVu Serif',
     'DejaVu Sans Mono',
   ];
+
+  static String _draftNumber(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(1);
+  }
 
   int? get _playheadSourceFrame {
     final int frame = widget.playheadFrame;
@@ -92,20 +106,44 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String holdDraft = '${existing?.holdFrames ?? 90}';
     String rgbDraft = '$red,$green,$blue';
     String headingDraft = existing?.heading ?? '';
-    PresentationPanelPreset presetDraft = panel.preset;
+    PresentationPanelPreset presetDraft =
+        existing == null ? PresentationPanelPreset.editorial : panel.preset;
     bool kickerFollowsPresetDefault = panel.kicker.trim().isEmpty;
     String kickerDraft = kickerFollowsPresetDefault
         ? presentationPanelDefaultKicker(presetDraft)
         : panel.kicker;
     String fontDraft = panel.fontFamily;
+    String headingSizeDraft = _draftNumber(
+      panel.headingSize ?? presentationPanelDefaultHeadingSize(presetDraft),
+    );
+    String bodySizeDraft = _draftNumber(
+      panel.bodySize ?? presentationPanelDefaultBodySize(presetDraft),
+    );
+    String imagePercentDraft = _draftNumber(
+      (panel.imageFraction ??
+              presentationPanelDefaultImageFraction(presetDraft)) *
+          100.0,
+    );
+    bool headingSizeTouched = false;
+    bool bodySizeTouched = false;
+    bool imagePercentTouched = false;
     String subtitleDraft = panel.subtitle;
     String metadataDraft = panel.metadata
         .map((PresentationPanelMetadata item) => '${item.label} | ${item.value}')
         .join('\n');
     String bodyDraft = panel.hasErrors ? '' : panel.body;
     final List<String> preservedPanelDirectives = panel.preservedDirectives;
+    final FocusNode kickerFocus = FocusNode(
+      debugLabel: 'edit-card-cue-kicker-focus',
+    );
+    final FocusNode headingFocus = FocusNode(
+      debugLabel: 'edit-card-cue-heading-focus',
+    );
+    final FocusNode bodyFocus = FocusNode(
+      debugLabel: 'edit-card-cue-body-focus',
+    );
 
-    return showDialog<CardRequest>(
+    final CardRequest? result = await showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
         String? errorText;
@@ -700,6 +738,10 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         );
       },
     );
+    kickerFocus.dispose();
+    headingFocus.dispose();
+    bodyFocus.dispose();
+    return result;
   }
 
   Future<void> _add() async {
