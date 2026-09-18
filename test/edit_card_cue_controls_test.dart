@@ -144,9 +144,10 @@ void main() {
 
     expect(find.text('Add CARD cue · source F90'), findsOneWidget);
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-card-cue-image-menu')),
-    );
+    final Finder imageMenu =
+        find.byKey(const ValueKey<String>('edit-card-cue-image-menu'));
+    await tester.ensureVisible(imageMenu);
+    await tester.tap(imageMenu);
     await tester.pumpAndSettle();
     await tester.tap(find.text('people/person.png').last);
     await tester.pumpAndSettle();
@@ -493,7 +494,7 @@ void main() {
     expect(find.text('STYLE'), findsOneWidget);
     expect(find.text('TIMING'), findsOneWidget);
 
-    final Rect preview = tester.getRect(
+    Rect preview = tester.getRect(
       find.byKey(const ValueKey<String>('edit-card-face-preview')),
     );
 
@@ -509,6 +510,9 @@ void main() {
     );
     expect(editable.focusNode.hasFocus, isTrue);
 
+    preview = tester.getRect(
+      find.byKey(const ValueKey<String>('edit-card-face-preview')),
+    );
     await tester.tapAt(
       Offset(preview.center.dx, preview.top + preview.height * 0.52),
     );
@@ -521,6 +525,9 @@ void main() {
     );
     expect(editable.focusNode.hasFocus, isTrue);
 
+    preview = tester.getRect(
+      find.byKey(const ValueKey<String>('edit-card-face-preview')),
+    );
     await tester.tapAt(
       Offset(preview.center.dx, preview.top + preview.height * 0.82),
     );
