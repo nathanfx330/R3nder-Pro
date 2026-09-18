@@ -7,8 +7,13 @@
 // source by edit_cue_authoring.dart. SideCardRequest is a CardRequest subtype,
 // so the existing inspector/history seam remains one source-backed path.
 
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
+import 'card_overlay.dart';
+import 'card_overlay_state.dart';
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
 import 'presentation_panel_content.dart';
@@ -25,6 +30,7 @@ class EditCardCueControls extends StatefulWidget {
     required this.playheadFrame,
     required this.theme,
     required this.imageOptions,
+    this.resolveSource,
     required this.onAddAtPlayhead,
     required this.onChanged,
     required this.onDeleted,
@@ -38,6 +44,10 @@ class EditCardCueControls extends StatefulWidget {
   /// Returns workspace-relative image paths when the author opens a CARD form.
   /// The directory is scanned on demand rather than on every EDIT rebuild.
   final List<String> Function()? imageOptions;
+
+  /// Resolves workspace-relative media for the real-painter card preview.
+  /// Production supplies the same resolver used by structural preview/BAKE.
+  final String Function(String source)? resolveSource;
 
   /// Null while playback is running or when the playhead is outside the CLIP.
   final ValueChanged<CardRequest>? onAddAtPlayhead;
