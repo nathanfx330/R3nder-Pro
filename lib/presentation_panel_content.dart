@@ -79,6 +79,45 @@ String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
   }
 }
 
+double presentationPanelDefaultHeadingSize(
+  PresentationPanelPreset preset,
+) {
+  switch (preset) {
+    case PresentationPanelPreset.editorial:
+      return 32.0;
+    case PresentationPanelPreset.simple:
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 34.0;
+  }
+}
+
+double presentationPanelDefaultBodySize(PresentationPanelPreset preset) {
+  switch (preset) {
+    case PresentationPanelPreset.simple:
+      return 20.0;
+    case PresentationPanelPreset.editorial:
+      return 17.0;
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 15.5;
+  }
+}
+
+double presentationPanelDefaultImageFraction(
+  PresentationPanelPreset preset,
+) {
+  switch (preset) {
+    case PresentationPanelPreset.simple:
+      return 0.42;
+    case PresentationPanelPreset.editorial:
+      return 0.38;
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 0.34;
+  }
+}
+
 enum PresentationPanelIssueSeverity {
   warning,
   error,
@@ -147,21 +186,17 @@ class PresentationPanelContent {
   final String fontFamily;
 
   final String subtitle;
+  final List<PresentationPanelMetadata> metadata;
 
-  /// Optional heading size in 1920x1080 reference-composition units.
-  ///
-  /// Preview and BAKE multiply this authored value by the same uniform
-  /// composition scale; it is never an output-pixel measurement.
+  /// Optional type sizes in the shared 1920x1080 reference composition.
+  /// These are not output pixels. Preview and BAKE both apply
+  /// min(engineW / 1920, engineH / 1080).
   final double? headingSize;
-
-  /// Optional body size in 1920x1080 reference-composition units.
   final double? bodySize;
 
-  /// Optional full-bleed image share of the card height, stored as 0..1.
-  /// Authored source writes this as a percentage, for example IMAGE: 38%.
+  /// Optional hero-image share of the card height, stored as 0..1.
   final double? imageFraction;
 
-  final List<PresentationPanelMetadata> metadata;
   final String body;
   final PresentationPanelPreset preset;
 
@@ -183,10 +218,10 @@ class PresentationPanelContent {
     required this.kicker,
     required this.fontFamily,
     required this.subtitle,
+    required this.metadata,
     required this.headingSize,
     required this.bodySize,
     required this.imageFraction,
-    required this.metadata,
     required this.body,
     required this.preset,
     required this.panelOpened,
@@ -217,10 +252,10 @@ PresentationPanelContent _plainPanelContent({
     kicker: '',
     fontFamily: '',
     subtitle: '',
+    metadata: const <PresentationPanelMetadata>[],
     headingSize: null,
     bodySize: null,
     imageFraction: null,
-    metadata: const <PresentationPanelMetadata>[],
     body: body,
     preset: PresentationPanelPreset.simple,
     panelOpened: panelOpened,
@@ -447,10 +482,7 @@ PresentationPanelContent parsePresentationPanelContent({
           break;
         }
         final double? parsed = double.tryParse(value);
-        if (parsed == null ||
-            !parsed.isFinite ||
-            parsed <= 0.0 ||
-            parsed > 200.0) {
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0 || parsed > 200.0) {
           preserveIssue(
             code: PresentationPanelIssueCode.invalidDirectiveValue,
             severity: PresentationPanelIssueSeverity.error,
@@ -476,10 +508,7 @@ PresentationPanelContent parsePresentationPanelContent({
           break;
         }
         final double? parsed = double.tryParse(value);
-        if (parsed == null ||
-            !parsed.isFinite ||
-            parsed <= 0.0 ||
-            parsed > 200.0) {
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0 || parsed > 200.0) {
           preserveIssue(
             code: PresentationPanelIssueCode.invalidDirectiveValue,
             severity: PresentationPanelIssueSeverity.error,
@@ -516,10 +545,7 @@ PresentationPanelContent parsePresentationPanelContent({
         }
         final double? parsed =
             double.tryParse(value.substring(0, value.length - 1).trim());
-        if (parsed == null ||
-            !parsed.isFinite ||
-            parsed <= 0.0 ||
-            parsed >= 100.0) {
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0 || parsed >= 100.0) {
           preserveIssue(
             code: PresentationPanelIssueCode.invalidDirectiveValue,
             severity: PresentationPanelIssueSeverity.error,
@@ -590,10 +616,10 @@ PresentationPanelContent parsePresentationPanelContent({
     kicker: kicker,
     fontFamily: fontFamily,
     subtitle: subtitle,
+    metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
     headingSize: headingSize,
     bodySize: bodySize,
     imageFraction: imageFraction,
-    metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
     body: bodyLines.join('\n'),
     preset: preset,
     panelOpened: true,
@@ -607,7 +633,11 @@ String _formatPanelNumber(double value) {
   if (value == value.roundToDouble()) return value.toStringAsFixed(0);
   return value
       .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+\
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+}
+
+/// Canonical writer used by CARD-family GUI controls.
 ///
 /// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
 /// existing project never grows metadata syntax simply because it was opened.
@@ -671,144 +701,6 @@ String formatPresentationPanelBody({
   }
   if (imageFraction != null) {
     out.writeln('IMAGE: ${_formatPanelNumber(imageFraction * 100.0)}%');
-  }
-  if (cleanSubtitle.isNotEmpty) {
-    out.writeln('SUBTITLE: $cleanSubtitle');
-  }
-  for (final PresentationPanelMetadata item in cleanMetadata) {
-    out.writeln('META: ${item.label} | ${item.value}');
-  }
-  for (final String rawLine in preservedDirectives) {
-    out.writeln(rawLine);
-  }
-  out.write('[/PANEL]');
-  if (body.isNotEmpty) {
-    out
-      ..writeln()
-      ..write(body);
-  }
-  return out.toString();
-}
-), '')
-      .replaceFirst(RegExp(r'\.\
-///
-/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
-/// existing project never grows metadata syntax simply because it was opened.
-/// Unknown or forward-version directives can be supplied through
-/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
-/// build instead of disappearing during a GUI edit.
-String formatPresentationPanelBody({
-  required PresentationPanelPreset preset,
-  String kicker = '',
-  String fontFamily = '',
-  required String subtitle,
-  required List<PresentationPanelMetadata> metadata,
-  List<String> preservedDirectives = const <String>[],
-  required String body,
-}) {
-  final String cleanKicker = kicker.trim();
-  final String cleanFont = fontFamily.trim();
-  final String cleanSubtitle = subtitle.trim();
-  final List<PresentationPanelMetadata> cleanMetadata = metadata
-      .map(
-        (PresentationPanelMetadata item) => PresentationPanelMetadata(
-          label: item.label.trim(),
-          value: item.value.trim(),
-        ),
-      )
-      .where(
-        (PresentationPanelMetadata item) =>
-            item.label.isNotEmpty && item.value.isNotEmpty,
-      )
-      .toList(growable: false);
-
-  if (preset == PresentationPanelPreset.simple &&
-      cleanKicker.isEmpty &&
-      cleanFont.isEmpty &&
-      cleanSubtitle.isEmpty &&
-      cleanMetadata.isEmpty &&
-      preservedDirectives.isEmpty) {
-    return body;
-  }
-
-  final StringBuffer out = StringBuffer()
-    ..writeln('[PANEL]')
-    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
-  if (cleanKicker.isNotEmpty) {
-    out.writeln('KICKER: $cleanKicker');
-  }
-  if (cleanFont.isNotEmpty) {
-    out.writeln('FONT: $cleanFont');
-  }
-  if (cleanSubtitle.isNotEmpty) {
-    out.writeln('SUBTITLE: $cleanSubtitle');
-  }
-  for (final PresentationPanelMetadata item in cleanMetadata) {
-    out.writeln('META: ${item.label} | ${item.value}');
-  }
-  for (final String rawLine in preservedDirectives) {
-    out.writeln(rawLine);
-  }
-  out.write('[/PANEL]');
-  if (body.isNotEmpty) {
-    out
-      ..writeln()
-      ..write(body);
-  }
-  return out.toString();
-}
-), '');
-}
-
-/// Canonical writer used by CARD-family GUI controls.
-///
-/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
-/// existing project never grows metadata syntax simply because it was opened.
-/// Unknown or forward-version directives can be supplied through
-/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
-/// build instead of disappearing during a GUI edit.
-String formatPresentationPanelBody({
-  required PresentationPanelPreset preset,
-  String kicker = '',
-  String fontFamily = '',
-  required String subtitle,
-  required List<PresentationPanelMetadata> metadata,
-  List<String> preservedDirectives = const <String>[],
-  required String body,
-}) {
-  final String cleanKicker = kicker.trim();
-  final String cleanFont = fontFamily.trim();
-  final String cleanSubtitle = subtitle.trim();
-  final List<PresentationPanelMetadata> cleanMetadata = metadata
-      .map(
-        (PresentationPanelMetadata item) => PresentationPanelMetadata(
-          label: item.label.trim(),
-          value: item.value.trim(),
-        ),
-      )
-      .where(
-        (PresentationPanelMetadata item) =>
-            item.label.isNotEmpty && item.value.isNotEmpty,
-      )
-      .toList(growable: false);
-
-  if (preset == PresentationPanelPreset.simple &&
-      cleanKicker.isEmpty &&
-      cleanFont.isEmpty &&
-      cleanSubtitle.isEmpty &&
-      cleanMetadata.isEmpty &&
-      preservedDirectives.isEmpty) {
-    return body;
-  }
-
-  final StringBuffer out = StringBuffer()
-    ..writeln('[PANEL]')
-    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
-  if (cleanKicker.isNotEmpty) {
-    out.writeln('KICKER: $cleanKicker');
-  }
-  if (cleanFont.isNotEmpty) {
-    out.writeln('FONT: $cleanFont');
   }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
