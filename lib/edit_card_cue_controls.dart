@@ -926,3 +926,203 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     );
   }
 }
+
+
+class _CardFacePreview extends StatefulWidget {
+  const _CardFacePreview({
+    required this.card,
+    required this.resolveSource,
+    this.onKickerTap,
+    this.onHeadingTap,
+    this.onBodyTap,
+  });
+
+  final CardRequest card;
+  final String Function(String source)? resolveSource;
+  final VoidCallback? onKickerTap;
+  final VoidCallback? onHeadingTap;
+  final VoidCallback? onBodyTap;
+
+  @override
+  State<_CardFacePreview> createState() => _CardFacePreviewState();
+}
+
+class _CardFacePreviewState extends State<_CardFacePreview> {
+  CardOverlayImageCache? _cache;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetCache();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CardFacePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.resolveSource, widget.resolveSource)) {
+      _resetCache();
+    } else if (oldWidget.card.image != widget.card.image) {
+      _ensureImage();
+    }
+  }
+
+  void _resetCache() {
+    _cache?.dispose();
+    final String Function(String source)? resolver = widget.resolveSource;
+    _cache = resolver == null ? null : CardOverlayImageCache(resolver);
+    _ensureImage();
+  }
+
+  void _ensureImage() {
+    final CardOverlayImageCache? cache = _cache;
+    if (cache == null || widget.card.image.trim().isEmpty) return;
+    final StructuralCardOverlayPlacement placement =
+        StructuralCardOverlayPlacement(
+      card: widget.card,
+      slide: 1.0,
+      normalizedRect: const Rect.fromLTWH(0, 0, 1, 1),
+    );
+    cache.ensure(<StructuralCardOverlayPlacement>[placement]).then(
+      (bool changed) {
+        if (changed && mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _cache?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Rect reference = sideCardSeatedPanelRect(
+      const Size(1920, 1080),
+    );
+    final PresentationPanelContent content = parsePresentationPanelContent(
+      heading: widget.card.heading,
+      body: widget.card.body,
+    );
+    final double imageFraction = content.imageFraction ??
+        (content.preset == PresentationPanelPreset.editorial
+            ? 0.38
+            : (content.preset == PresentationPanelPreset.simple ? 0.42 : 0.34));
+
+    return Center(
+      child: SizedBox(
+        height: sc(300),
+        child: AspectRatio(
+          aspectRatio: reference.width / reference.height,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Size size = constraints.biggest;
+              final double imageH = size.height * imageFraction;
+              final double contentTop = imageH;
+              final double kickerH = math.min(sc(34), size.height * 0.09);
+              final double headingH = math.min(sc(70), size.height * 0.18);
+              final double bodyTop = math.min(
+                size.height,
+                contentTop + kickerH + headingH,
+              );
+
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  CustomPaint(
+                    key: const ValueKey<String>('edit-card-face-preview'),
+                    painter: _CardFacePreviewPainter(
+                      card: widget.card,
+                      image: _cache?.imageFor(widget.card),
+                      referenceRect: reference,
+                    ),
+                  ),
+                  if (widget.onKickerTap != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: contentTop,
+                      height: kickerH,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: widget.onKickerTap,
+                      ),
+                    ),
+                  if (widget.onHeadingTap != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: contentTop + kickerH,
+                      height: headingH,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: widget.onHeadingTap,
+                      ),
+                    ),
+                  if (widget.onBodyTap != null && bodyTop < size.height)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: bodyTop,
+                      bottom: 0,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: widget.onBodyTap,
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CardFacePreviewPainter extends CustomPainter {
+  const _CardFacePreviewPainter({
+    required this.card,
+    required this.image,
+    required this.referenceRect,
+  });
+
+  final CardRequest card;
+  final ui.Image? image;
+  final Rect referenceRect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final double sx = size.width / referenceRect.width;
+    final double sy = size.height / referenceRect.height;
+    final double scale = math.min(sx, sy);
+    final double drawW = referenceRect.width * scale;
+    final double drawH = referenceRect.height * scale;
+    final Offset origin = Offset(
+      (size.width - drawW) / 2.0,
+      (size.height - drawH) / 2.0,
+    );
+
+    canvas.save();
+    canvas.translate(origin.dx, origin.dy);
+    canvas.scale(scale, scale);
+    paintPresentationCardFace(
+      canvas: canvas,
+      cardRect: Rect.fromLTWH(
+        0,
+        0,
+        referenceRect.width,
+        referenceRect.height,
+      ),
+      referenceScale: 1.0,
+      card: card,
+      image: image,
+      inheritedFontFamily: 'monospace',
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _CardFacePreviewPainter oldDelegate) => true;
+}
