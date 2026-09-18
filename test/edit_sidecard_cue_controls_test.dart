@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_card_cue_controls.dart';
 import 'package:r3nder/edit_cue.dart';
 import 'package:r3nder/edit_surface_model.dart';
+import 'package:r3nder/presentation_panel_content.dart';
 import 'package:r3nder/presentation_requests.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -92,6 +93,14 @@ void main() {
     expect(added, isA<SideCardRequest>());
     expect(added!.image, 'person.png');
     expect(added!.heading, 'JOHN SMITH');
-    expect(added!.body, 'Biography text.');
+    final PresentationPanelContent authored = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(authored.preset, PresentationPanelPreset.editorial);
+    expect(authored.headingSize, 32);
+    expect(authored.bodySize, 17);
+    expect(authored.imageFraction, closeTo(0.38, 0.000001));
+    expect(authored.body, 'Biography text.');
   });
 }
