@@ -105,6 +105,7 @@ void main() {
       contains('[CARD:person.png:90:24,32,40:JOHN SMITH]'),
     );
     expect(key.currentState!.source, contains('Biography text.'));
+    expect(key.currentState!.source, contains('PRESET: EDITORIAL'));
     expect(key.currentState!.source, contains('GAIN=-15.0'));
     expect(
       key.currentState!.source,
