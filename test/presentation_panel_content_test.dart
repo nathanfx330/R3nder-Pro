@@ -283,4 +283,54 @@ PRESET: DOCUMENTARRY
     );
   });
 
+
+  test('style directives round trip reference sizes and image percentage', () {
+    final String body = formatPresentationPanelBody(
+      preset: PresentationPanelPreset.editorial,
+      headingSize: 32,
+      bodySize: 17,
+      imageFraction: 0.38,
+      subtitle: '',
+      metadata: const <PresentationPanelMetadata>[],
+      body: 'Editorial copy.',
+    );
+
+    expect(body, contains('HEADING_SIZE: 32'));
+    expect(body, contains('BODY_SIZE: 17'));
+    expect(body, contains('IMAGE: 38%'));
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'Heading',
+      body: body,
+    );
+    expect(parsed.headingSize, 32);
+    expect(parsed.bodySize, 17);
+    expect(parsed.imageFraction, 0.38);
+    expect(parsed.issues, isEmpty);
+  });
+
+  test('invalid style directives are preserved instead of reinterpreted', () {
+    const String body = '''[PANEL]
+PRESET: EDITORIAL
+HEADING_SIZE: huge
+BODY_SIZE: -2
+IMAGE: 70%
+[/PANEL]
+Copy.''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'Heading',
+      body: body,
+    );
+    expect(parsed.headingSize, isNull);
+    expect(parsed.bodySize, isNull);
+    expect(parsed.imageFraction, isNull);
+    expect(parsed.preservedDirectives, <String>[
+      'HEADING_SIZE: huge',
+      'BODY_SIZE: -2',
+      'IMAGE: 70%',
+    ]);
+    expect(parsed.issues, hasLength(3));
+  });
+
 }

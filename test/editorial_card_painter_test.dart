@@ -56,8 +56,13 @@ Future<Uint8List> _render({
   }
 }
 
-CardRequest _editorialCard({required bool withKicker}) {
+CardRequest _editorialCard({
+  required bool withKicker,
+  String styleDirectives = '',
+}) {
   final String kicker = withKicker ? 'KICKER: WILDLIFE\n' : '';
+  final String style =
+      styleDirectives.isEmpty ? '' : '$styleDirectives\n';
   return CardRequest(
     image: 'hero.png',
     holdFrames: 120,
@@ -65,7 +70,7 @@ CardRequest _editorialCard({required bool withKicker}) {
     heading: 'Elk in the High Country',
     body: '''[PANEL]
 PRESET: EDITORIAL
-${kicker}[/PANEL]
+${kicker}${style}[/PANEL]
 Elk return to higher elevations during late summer.''',
   );
 }
@@ -146,4 +151,89 @@ void main() {
     expect(withKicker[offset + 2], _heroColor.blue);
     expect(withKicker[offset + 3], _heroColor.alpha);
   });
+
+  test('authored IMAGE percentage changes the hero allocation', () async {
+    final ui.Image hero = await _solidHero();
+    addTearDown(hero.dispose);
+
+    final Uint8List shallow = await _render(
+      card: _editorialCard(
+        withKicker: false,
+        styleDirectives: 'IMAGE: 25%',
+      ),
+      hero: hero,
+    );
+    final Uint8List deep = await _render(
+      card: _editorialCard(
+        withKicker: false,
+        styleDirectives: 'IMAGE: 55%',
+      ),
+      hero: hero,
+    );
+
+    final ui.Rect cardRect = sideCardSeatedPanelRect(_size);
+    final int x = cardRect.center.dx.floor();
+    final int y = (cardRect.top + cardRect.height * 0.40).floor();
+    final int offset = (y * _size.width.toInt() + x) * 4;
+
+    expect(deep[offset], _heroColor.red);
+    expect(deep[offset + 1], _heroColor.green);
+    expect(deep[offset + 2], _heroColor.blue);
+    expect(
+      <int>[
+        shallow[offset],
+        shallow[offset + 1],
+        shallow[offset + 2],
+      ],
+      isNot(<int>[_heroColor.red, _heroColor.green, _heroColor.blue]),
+    );
+  });
+
+  test('authored heading/body reference sizes affect only content raster',
+      () async {
+    final ui.Image hero = await _solidHero();
+    addTearDown(hero.dispose);
+
+    final Uint8List defaults = await _render(
+      card: _editorialCard(withKicker: true),
+      hero: hero,
+    );
+    final Uint8List authored = await _render(
+      card: _editorialCard(
+        withKicker: true,
+        styleDirectives: 'HEADING_SIZE: 46\nBODY_SIZE: 24',
+      ),
+      hero: hero,
+    );
+
+    final ui.Rect cardRect = sideCardSeatedPanelRect(_size);
+    final double imageBottom = cardRect.top + cardRect.height * 0.38;
+    expect(
+      _differentPixels(
+        defaults,
+        authored,
+        rect: ui.Rect.fromLTRB(
+          cardRect.left + 4,
+          cardRect.top + 4,
+          cardRect.right - 4,
+          imageBottom - 4,
+        ),
+      ),
+      0,
+    );
+    expect(
+      _differentPixels(
+        defaults,
+        authored,
+        rect: ui.Rect.fromLTRB(
+          cardRect.left + 4,
+          imageBottom + 2,
+          cardRect.right - 4,
+          cardRect.bottom - 4,
+        ),
+      ),
+      greaterThan(0),
+    );
+  });
+
 }

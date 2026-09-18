@@ -138,6 +138,10 @@ void paintPresentationPanelContent({
   );
   final bool editorial =
       content.preset == PresentationPanelPreset.editorial;
+  final double headingSize =
+      content.headingSize ?? (editorial ? 32.0 : 34.0);
+  final double bodySize =
+      content.bodySize ?? (editorial ? 17.0 : 15.5);
   final double left = cardRect.left + pad;
   final double right = cardRect.right - pad;
   final double textW = math.max(0.0, right - left);
@@ -154,6 +158,7 @@ void paintPresentationPanelContent({
               maxWidth: textW,
               fontFamily: fontFamily,
               scale: scale,
+              referenceBodySize: bodySize,
               color: accent,
             )
           : _paintKicker(
@@ -176,7 +181,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (editorial ? 32.0 : 34.0) * scale,
+          fontSize: headingSize * scale,
           fontWeight: editorial ? FontWeight.w700 : FontWeight.w800,
           letterSpacing: (editorial ? 0.0 : -0.15) * scale,
           height: editorial ? 1.08 : 1.02,
@@ -198,7 +203,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 14.5 * scale,
+          fontSize: (editorial ? bodySize * 0.85 : 14.5) * scale,
           fontWeight: editorial ? FontWeight.w500 : FontWeight.w600,
           height: editorial ? 1.28 : 1.20,
           color: accent.withValues(alpha: 0.96),
@@ -253,7 +258,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (editorial ? 17.0 : 15.5) * scale,
+          fontSize: bodySize * scale,
           fontWeight: editorial ? FontWeight.w400 : FontWeight.w500,
           height: editorial ? 1.50 : 1.40,
           color: bodyColor.withValues(alpha: 0.94),
@@ -278,6 +283,7 @@ double _paintEditorialKicker({
   required double maxWidth,
   required String fontFamily,
   required double scale,
+  required double referenceBodySize,
   required Color color,
 }) {
   final TextPainter painter = TextPainter(
@@ -286,9 +292,9 @@ double _paintEditorialKicker({
       style: TextStyle(
         fontFamily: fontFamily,
         fontFamilyFallback: kPresentationPanelFontFallback,
-        fontSize: 10.5 * scale,
+        fontSize: (referenceBodySize * (10.5 / 17.0)) * scale,
         fontWeight: FontWeight.w700,
-        letterSpacing: 1.8 * scale,
+        letterSpacing: (referenceBodySize * (1.8 / 17.0)) * scale,
         color: color.withValues(alpha: 0.96),
       ),
     ),
