@@ -201,11 +201,16 @@ From towering mountains to remote coastlines, wild places sustain extraordinary 
           if (directRgba[offset + 3] != 0xFF) continue;
 
           comparedPixels++;
-          expect(
-            runtimeRgba.sublist(offset, offset + 4),
-            directRgba.sublist(offset, offset + 4),
-            reason: 'Face pixel differs at ($x, $y).',
-          );
+          for (int channel = 0; channel < 4; channel++) {
+            if (runtimeRgba[offset + channel] !=
+                directRgba[offset + channel]) {
+              fail(
+                'Face pixel differs at ($x, $y), channel $channel: '
+                'runtime=${runtimeRgba[offset + channel]} '
+                'direct=${directRgba[offset + channel]}.',
+              );
+            }
+          }
         }
       }
 
