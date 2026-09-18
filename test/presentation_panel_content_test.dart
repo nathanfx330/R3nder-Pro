@@ -260,4 +260,61 @@ PRESET: DOCUMENTARRY
     expect(parsed.metadata, hasLength(2));
     expect(parsed.body, 'Subject biography.');
   });
+  test('authored reference sizes and image percentage round trip', () {
+    const String source = '''[PANEL]
+PRESET: EDITORIAL
+HEADING_SIZE: 32
+BODY_SIZE: 17
+IMAGE: 38%
+[/PANEL]
+Biography.''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.preset, PresentationPanelPreset.editorial);
+    expect(parsed.headingSize, 32);
+    expect(parsed.bodySize, 17);
+    expect(parsed.imageFraction, closeTo(0.38, 0.000001));
+
+    final String rewritten = formatPresentationPanelBody(
+      preset: parsed.preset,
+      kicker: parsed.kicker,
+      fontFamily: parsed.fontFamily,
+      headingSize: parsed.headingSize,
+      bodySize: parsed.bodySize,
+      imageFraction: parsed.imageFraction,
+      subtitle: parsed.subtitle,
+      metadata: parsed.metadata,
+      preservedDirectives: parsed.preservedDirectives,
+      body: parsed.body,
+    );
+
+    expect(rewritten, contains('HEADING_SIZE: 32'));
+    expect(rewritten, contains('BODY_SIZE: 17'));
+    expect(rewritten, contains('IMAGE: 38%'));
+  });
+
+  test('invalid image percentage is preserved and reported', () {
+    const String source = '''[PANEL]
+PRESET: EDITORIAL
+IMAGE: enormous
+[/PANEL]''';
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: source,
+    );
+
+    expect(parsed.imageFraction, isNull);
+    expect(parsed.hasErrors, isTrue);
+    expect(parsed.preservedDirectives, contains('IMAGE: enormous'));
+    expect(
+      parsed.issues.single.code,
+      PresentationPanelIssueCode.malformedDirective,
+    );
+  });
+
 }
