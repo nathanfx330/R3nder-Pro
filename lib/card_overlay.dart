@@ -123,10 +123,18 @@ class CardOverlayImageCache {
 
   Future<bool> ensure(
     Iterable<StructuralCardOverlayPlacement> placements,
-  ) async {
+  ) {
+    return ensureCards(
+      placements.map((StructuralCardOverlayPlacement placement) => placement.card),
+    );
+  }
+
+  /// Ensures decoded images for CARD-family authoring surfaces that do not
+  /// have a structural placement object yet.
+  Future<bool> ensureCards(Iterable<CardRequest> cards) async {
     bool changed = false;
-    for (final StructuralCardOverlayPlacement placement in placements) {
-      final String key = structuralCardImageSource(placement.card);
+    for (final CardRequest card in cards) {
+      final String key = structuralCardImageSource(card);
       if (key.isEmpty ||
           _images.containsKey(key) ||
           _failed.contains(key) ||
