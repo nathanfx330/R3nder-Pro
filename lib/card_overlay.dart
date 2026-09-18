@@ -1037,7 +1037,8 @@ void paintPresentationCardFace(
   final bool photoRich =
       content.preset == PresentationPanelPreset.documentary ||
       content.preset == PresentationPanelPreset.dossier;
-  final double cardImageFrac = editorial ? 0.38 : (rich ? 0.34 : 0.42);
+  final double defaultImageFrac = editorial ? 0.38 : (rich ? 0.34 : 0.42);
+  final double cardImageFrac = content.imageFraction ?? defaultImageFrac;
   final RRect rrect = _presentationCardFaceRRect(rect, scale);
 
   final Color panelColor = card.panelColor;
