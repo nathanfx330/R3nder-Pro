@@ -165,6 +165,87 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               return out;
             }
 
+            double? previewNumber(
+              String raw, {
+              required double min,
+              required double max,
+            }) {
+              final String clean = raw.trim();
+              if (clean.isEmpty) return null;
+              final double? value = double.tryParse(clean);
+              if (value == null || !value.isFinite || value < min || value > max) {
+                return null;
+              }
+              return value;
+            }
+
+            Color previewPanelColor() {
+              final List<int?> values = rgbDraft
+                  .split(',')
+                  .map((String value) => int.tryParse(value.trim()))
+                  .toList(growable: false);
+              if (values.length != 3 ||
+                  values.any((int? value) =>
+                      value == null || value < 0 || value > 255)) {
+                return existing?.panelColor ?? const Color(0xFF1E1E26);
+              }
+              return Color.fromARGB(255, values[0]!, values[1]!, values[2]!);
+            }
+
+            CardRequest previewCard() {
+              if (panel.hasErrors && existing != null) return existing;
+
+              final List<PresentationPanelMetadata> metadata =
+                  parseMetadataDraft() ?? const <PresentationPanelMetadata>[];
+              final String cleanKicker = kickerDraft.trim();
+              final String authoredKicker =
+                  cleanKicker == presentationPanelDefaultKicker(presetDraft)
+                      ? ''
+                      : cleanKicker;
+              final double? imagePercent = previewNumber(
+                imagePercentDraft,
+                min: 1,
+                max: 100,
+              );
+              final String previewBody = formatPresentationPanelBody(
+                preset: presetDraft,
+                kicker: authoredKicker,
+                fontFamily: fontDraft,
+                headingSize: previewNumber(
+                  headingSizeDraft,
+                  min: 1,
+                  max: 200,
+                ),
+                bodySize: previewNumber(
+                  bodySizeDraft,
+                  min: 1,
+                  max: 200,
+                ),
+                imageFraction:
+                    imagePercent == null ? null : imagePercent / 100.0,
+                subtitle: subtitleDraft,
+                metadata: metadata,
+                preservedDirectives: preservedPanelDirectives,
+                body: bodyDraft,
+              );
+              final CardRequest card = sideDraft
+                  ? SideCardRequest(
+                      image: imageDraft.trim(),
+                      holdFrames: int.tryParse(holdDraft.trim()) ?? 0,
+                      panelColor: previewPanelColor(),
+                      heading: headingDraft.trim(),
+                      body: previewBody,
+                    )
+                  : CardRequest(
+                      image: imageDraft.trim(),
+                      holdFrames: int.tryParse(holdDraft.trim()) ?? 0,
+                      panelColor: previewPanelColor(),
+                      heading: headingDraft.trim(),
+                      body: previewBody,
+                    );
+              return card;
+            }
+
             void apply() {
               final String imageValue = imageDraft.trim();
               final int? holdFrames = int.tryParse(holdDraft.trim());
