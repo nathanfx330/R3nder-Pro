@@ -164,11 +164,13 @@ void main() {
 
     expect(find.text('Add CARD cue · source F90'), findsOneWidget);
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-card-cue-image-menu')),
-    );
+    final Finder imageMenu =
+        find.byKey(const ValueKey<String>('edit-card-cue-image-menu'));
+    await tester.ensureVisible(imageMenu);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('people/person.png').last);
+    await tester.tap(imageMenu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('portrait.jpg').last);
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -191,7 +193,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(added, isNotNull);
-    expect(added!.image, 'people/person.png');
+    expect(added!.image, 'portrait.jpg');
     expect(added!.holdFrames, 120);
     expect(added!.panelColor.toARGB32(), 0xFF182028);
     expect(added!.heading, 'JOHN SMITH');
