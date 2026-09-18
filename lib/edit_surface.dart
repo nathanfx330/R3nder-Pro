@@ -31,9 +31,11 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'dossier_overlay.dart';
 import 'edit_clip_inspector.dart';
 import 'edit_cue.dart';
 import 'edit_cue_authoring.dart';
+import 'edit_cue_overlap.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_source_history.dart';
@@ -453,6 +455,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         projectFrame: frame,
         card: card,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -470,6 +473,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         cueIndex: cueIndex,
         card: card,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -499,6 +503,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         projectFrame: frame,
         dossier: dossier,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -516,6 +521,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         cueIndex: cueIndex,
         dossier: dossier,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -542,6 +548,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         projectFrame: frame,
         holdFrames: holdFrames,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -559,6 +566,7 @@ class _EditSurfaceState extends State<EditSurface> {
         clipId: selected.id,
         cueIndex: cueIndex,
         holdFrames: holdFrames,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
@@ -574,6 +582,31 @@ class _EditSurfaceState extends State<EditSurface> {
       );
     });
     if (changed && mounted) _timelineFocusNode.requestFocus();
+  }
+
+  int _dossierCueDurationFrames(DossierRequest dossier) {
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final int evidencePages =
+        structuralDossierCenterPageCount(dossier, resolver);
+    return structuralDossierTiming(
+      dossier,
+      evidencePageCount: evidencePages,
+    ).durationFrames;
+  }
+
+  List<CueOverlapDiagnostic> _cueOverlapDiagnostics(
+    EditSurfaceDocument document,
+  ) {
+    try {
+      return cueOverlapDiagnostics(
+        document,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
+      );
+    } catch (_) {
+      // Diagnostics must never make the EDIT repair surface unavailable.
+      return const <CueOverlapDiagnostic>[];
+    }
   }
 
   List<String> _cardImageOptions() {
@@ -936,6 +969,8 @@ class _EditSurfaceState extends State<EditSurface> {
     final List<EditMaximizeCue> selectedMaximizeCues = selected == null
         ? const <EditMaximizeCue>[]
         : _maximizeCuesFor(selected);
+    final List<CueOverlapDiagnostic> cueOverlapWarnings =
+        _cueOverlapDiagnostics(document);
 
     List<MarkerInstance> timelineMarkers = const <MarkerInstance>[];
     List<DerivedLandmark> timelineDerived = const <DerivedLandmark>[];
@@ -965,6 +1000,23 @@ class _EditSurfaceState extends State<EditSurface> {
               child: Text(
                 _error!,
                 style: widget.theme.fine.copyWith(color: R3Theme.danger),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          if (cueOverlapWarnings.isNotEmpty)
+            Container(
+              key: const ValueKey<String>('edit-cue-overlap-warning'),
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: sc(12),
+                vertical: sc(5),
+              ),
+              color: R3Theme.warn.withValues(alpha: 0.10),
+              child: Text(
+                'CUE OVERLAP: ${cueOverlapWarnings.first.message}'
+                '${cueOverlapWarnings.length > 1 ? '  +${cueOverlapWarnings.length - 1} more' : ''}',
+                style: widget.theme.fine.copyWith(color: R3Theme.warn),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),

@@ -10,8 +10,11 @@
 
 import 'package:flutter/material.dart';
 
+import 'card_presentation.dart';
 import 'edit_cue.dart';
+import 'edit_cue_overlap.dart';
 import 'edit_surface_model.dart';
+import 'maximize_presentation.dart';
 import 'presentation_requests.dart';
 
 class EditCueAuthoringException implements Exception {
@@ -58,10 +61,24 @@ String addCardCueAtProjectFrame({
   required String clipId,
   required int projectFrame,
   required CardRequest card,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
   _validateCard(card);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: sourceFrame,
+    durationFrames: CardPresentationTiming(
+      holdFrames: card.holdFrames,
+    ).durationFrames,
+    lane: CueCollisionLane.presentation,
+    kind: card is SideCardRequest
+        ? CuePayloadKind.sideCard
+        : CuePayloadKind.card,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -93,10 +110,23 @@ String addDossierCueAtProjectFrame({
   required String clipId,
   required int projectFrame,
   required DossierRequest dossier,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
   _validateDossier(dossier);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: sourceFrame,
+    durationFrames: resolvedDossierCueDurationFrames(
+      dossier,
+      dossierDurationFramesFor,
+    ),
+    lane: CueCollisionLane.presentation,
+    kind: CuePayloadKind.dossier,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -128,10 +158,22 @@ String addMaximizeCueAtProjectFrame({
   required String clipId,
   required int projectFrame,
   required int holdFrames,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final int sourceFrame = cueSourceFrameAtProjectFrame(selected, projectFrame);
   _validateMaximizeHold(holdFrames);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: sourceFrame,
+    durationFrames: MaximizePresentationTiming(
+      holdFrames: holdFrames,
+    ).durationFrames,
+    lane: CueCollisionLane.shell,
+    kind: CuePayloadKind.maximize,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -164,11 +206,26 @@ String updateCardCue({
   required String clipId,
   required int cueIndex,
   required CardRequest card,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final List<EditCardCue> cues = parseClipCardCues(selected.clip);
   final EditCardCue cue = _cardCueAt(cues, cueIndex);
   _validateCard(card);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: cue.sourceFrame,
+    durationFrames: CardPresentationTiming(
+      holdFrames: card.holdFrames,
+    ).durationFrames,
+    lane: CueCollisionLane.presentation,
+    kind: card is SideCardRequest
+        ? CuePayloadKind.sideCard
+        : CuePayloadKind.card,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+    excludingSourceStartOffset: cue.startOffset,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -198,11 +255,25 @@ String updateDossierCue({
   required String clipId,
   required int cueIndex,
   required DossierRequest dossier,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final List<EditDossierCue> cues = parseClipDossierCues(selected.clip);
   final EditDossierCue cue = _dossierCueAt(cues, cueIndex);
   _validateDossier(dossier);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: cue.sourceFrame,
+    durationFrames: resolvedDossierCueDurationFrames(
+      dossier,
+      dossierDurationFramesFor,
+    ),
+    lane: CueCollisionLane.presentation,
+    kind: CuePayloadKind.dossier,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+    excludingSourceStartOffset: cue.startOffset,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -232,11 +303,24 @@ String updateMaximizeCue({
   required String clipId,
   required int cueIndex,
   required int holdFrames,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
   final EditSurfaceClip selected = document.clip(trackId, clipId);
   final List<EditMaximizeCue> cues = parseClipMaximizeCues(selected.clip);
   final EditMaximizeCue cue = _maximizeCueAt(cues, cueIndex);
   _validateMaximizeHold(holdFrames);
+  _ensureCueRangeAvailable(
+    document: document,
+    selected: selected,
+    sourceFrame: cue.sourceFrame,
+    durationFrames: MaximizePresentationTiming(
+      holdFrames: holdFrames,
+    ).durationFrames,
+    lane: CueCollisionLane.shell,
+    kind: CuePayloadKind.maximize,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+    excludingSourceStartOffset: cue.startOffset,
+  );
 
   final String source = document.source;
   final String lineEnding = source.contains('\r\n') ? '\r\n' : '\n';
@@ -432,6 +516,46 @@ String splitClipWithCardCueOwnership({
 
   EditSurfaceDocument.parse(current, document.editId);
   return current;
+}
+
+void _ensureCueRangeAvailable({
+  required EditSurfaceDocument document,
+  required EditSurfaceClip selected,
+  required int sourceFrame,
+  required int durationFrames,
+  required CueCollisionLane lane,
+  required CuePayloadKind kind,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
+  int? excludingSourceStartOffset,
+}) {
+  final CueOccupiedRange? range = cueOccupiedRange(
+    selected.clip,
+    sourceFrame,
+    durationFrames,
+  );
+  if (range == null) return;
+
+  final CueOccupiedSpan candidate = CueOccupiedSpan(
+    lane: lane,
+    kind: kind,
+    trackId: selected.trackId,
+    clipId: selected.id,
+    sourceFrame: sourceFrame,
+    range: range,
+  );
+  final CueOccupiedSpan? conflict = firstCueOverlap(
+    document: document,
+    candidate: candidate,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+    excludingSourceStartOffset: excludingSourceStartOffset,
+  );
+  if (conflict == null) return;
+
+  throw EditCueAuthoringException(
+    '${kind.label} cue range $range overlaps '
+    '${conflict.kind.label} cue ${conflict.range} in '
+    '${conflict.trackId}/${conflict.clipId}.',
+  );
 }
 
 bool _cueBelongsLeft(

@@ -17,6 +17,8 @@ const String _source = '''[EDIT:main]
 [/EDIT]
 ''';
 
+int _dossierDurationFrames(DossierRequest _) => 100;
+
 DossierRequest _dossier({
   String folder = 'evidence',
   String image = 'person.png',
@@ -52,6 +54,7 @@ void main() {
       clipId: 'test1_9',
       projectFrame: 113,
       dossier: _dossier(),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
 
     expect(next, contains('[CUE:90]'));
@@ -82,6 +85,7 @@ void main() {
       clipId: 'test1_9',
       projectFrame: 113,
       dossier: _dossier(),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
 
     final String next = updateDossierCue(
@@ -99,6 +103,7 @@ void main() {
         heading: 'UPDATED',
         body: 'New body.',
       ),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
 
     expect(next, contains('[CUE:90]'));
@@ -125,6 +130,7 @@ void main() {
       clipId: 'test1_9',
       projectFrame: 113,
       dossier: _dossier(),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
     final EditSurfaceDocument current =
         EditSurfaceDocument.parse(withCue, 'main');
@@ -153,6 +159,7 @@ void main() {
       clipId: 'test1_9',
       projectFrame: 50,
       dossier: _dossier(heading: 'LEFT DOSSIER'),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
     current = addCardCueAtProjectFrame(
       document: EditSurfaceDocument.parse(current, 'main'),
@@ -166,6 +173,7 @@ void main() {
         heading: 'RIGHT CARD',
         body: 'Right body.',
       ),
+      dossierDurationFramesFor: _dossierDurationFrames,
     );
 
     final String split = splitClipWithCardCueOwnership(

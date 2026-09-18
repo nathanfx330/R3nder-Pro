@@ -29,6 +29,30 @@ class EditCueFormatException implements Exception {
   String toString() => 'EditCueFormatException at $offset: $message';
 }
 
+/// One unbounded occupied interval on the EDIT project timeline.
+///
+/// CUE timing is intentionally hybrid. The trigger is authored in source frames
+/// and projected through the current CLIP geometry, while presentation lifetime
+/// is already a project-frame quantity. The range is therefore not clamped to a
+/// CLIP, EDIT, or parent container boundary.
+class CueOccupiedRange {
+  const CueOccupiedRange({
+    required this.startFrame,
+    required this.endFrameExclusive,
+  })  : assert(startFrame >= 0),
+        assert(endFrameExclusive > startFrame);
+
+  final int startFrame;
+  final int endFrameExclusive;
+
+  bool overlaps(CueOccupiedRange other) =>
+      startFrame < other.endFrameExclusive &&
+      other.startFrame < endFrameExclusive;
+
+  @override
+  String toString() => '[$startFrame, $endFrameExclusive)';
+}
+
 /// CUE-local request for the side-by-side desktop composition.
 ///
 /// It subclasses [CardRequest] on purpose. The inspector, history path, image
@@ -661,6 +685,34 @@ int? cueProjectOffset(EditClip clip, int cueSourceFrame) {
 int? cueProjectFrame(EditClip clip, int cueSourceFrame) {
   final int? offset = cueProjectOffset(clip, cueSourceFrame);
   return offset == null ? null : clip.atFrame + offset;
+}
+
+/// Projects a source-relative CUE trigger plus an already-resolved project
+/// lifetime onto the EDIT timeline.
+///
+/// A null result means the trigger is outside the CLIP's current visible source
+/// window and is therefore inert. The returned range is deliberately unbounded:
+/// presentation lifetime can continue past the source CLIP, and reusable EDITs
+/// can be truncated differently by different parent containers.
+CueOccupiedRange? cueOccupiedRange(
+  EditClip clip,
+  int cueSourceFrame,
+  int durationFrames,
+) {
+  if (durationFrames <= 0) {
+    throw ArgumentError.value(
+      durationFrames,
+      'durationFrames',
+      'CUE occupied duration must be positive.',
+    );
+  }
+
+  final int? startFrame = cueProjectFrame(clip, cueSourceFrame);
+  if (startFrame == null) return null;
+  return CueOccupiedRange(
+    startFrame: startFrame,
+    endFrameExclusive: startFrame + durationFrames,
+  );
 }
 
 int _skipWhitespace(String source, int from) {

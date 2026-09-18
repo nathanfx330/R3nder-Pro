@@ -747,6 +747,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         ),
         SizedBox(height: sc(5)),
         Text(
+          key: const ValueKey<String>('edit-card-cue-playhead'),
           canAdd
               ? 'Playhead F${widget.playheadFrame} → source F$playheadSourceFrame.'
               : 'Park the playhead inside this clip to add a CARD cue.',

@@ -65,7 +65,13 @@ void main() {
         find.byKey(const ValueKey<String>('edit-card-cue-add'));
     await tester.ensureVisible(add);
     await tester.pumpAndSettle();
-    expect(find.textContaining('source F90'), findsOneWidget);
+    final Finder playhead =
+        find.byKey(const ValueKey<String>('edit-card-cue-playhead'));
+    expect(playhead, findsOneWidget);
+    expect(
+      tester.widget<Text>(playhead).data,
+      contains('source F90'),
+    );
 
     await tester.tap(add);
     await tester.pumpAndSettle();

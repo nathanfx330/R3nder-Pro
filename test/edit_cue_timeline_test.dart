@@ -87,7 +87,9 @@ void main() {
     }
   });
 
-  test('overlapping CARD cues preserve authored stacking order', () {
+  test('legacy overlapping CARD cues remain deterministic at runtime', () {
+    // GUI authoring rejects new presentation-lane overlap, but parser/runtime
+    // tolerance remains deliberate for hand-authored and historical source.
     const String source = '''[EDIT:main]
 [TRACK:V1]
 [CLIP:a:video/a.mp4:0:0:80:1]
