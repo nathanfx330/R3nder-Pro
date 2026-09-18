@@ -467,4 +467,71 @@ void main() {
     await tester.pump();
     expect(deletedIndex, 0);
   });
+  testWidgets('live face preview focuses editorial text fields',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-face-preview')),
+      findsOneWidget,
+    );
+    expect(find.text('CONTENT'), findsOneWidget);
+    expect(find.text('TYPE'), findsOneWidget);
+    expect(find.text('STYLE'), findsOneWidget);
+    expect(find.text('TIMING'), findsOneWidget);
+
+    final Rect preview = tester.getRect(
+      find.byKey(const ValueKey<String>('edit-card-face-preview')),
+    );
+
+    await tester.tapAt(
+      Offset(preview.center.dx, preview.top + preview.height * 0.40),
+    );
+    await tester.pump();
+    EditableText editable = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('edit-card-cue-kicker-field')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(editable.focusNode.hasFocus, isTrue);
+
+    await tester.tapAt(
+      Offset(preview.center.dx, preview.top + preview.height * 0.52),
+    );
+    await tester.pump();
+    editable = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(editable.focusNode.hasFocus, isTrue);
+
+    await tester.tapAt(
+      Offset(preview.center.dx, preview.top + preview.height * 0.82),
+    );
+    await tester.pump();
+    editable = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('edit-card-cue-body-field')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(editable.focusNode.hasFocus, isTrue);
+  });
+
 }
