@@ -8,6 +8,7 @@
 // so the existing inspector/history seam remains one source-backed path.
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -1195,5 +1196,202 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         ],
       ),
     );
+  }
+}
+
+
+class _CardFacePreview extends StatefulWidget {
+  const _CardFacePreview({
+    super.key,
+    required this.card,
+    required this.resolveSource,
+    required this.onKickerTap,
+    required this.onHeadingTap,
+    required this.onBodyTap,
+  });
+
+  final CardRequest card;
+  final String Function(String source)? resolveSource;
+  final VoidCallback onKickerTap;
+  final VoidCallback onHeadingTap;
+  final VoidCallback onBodyTap;
+
+  @override
+  State<_CardFacePreview> createState() => _CardFacePreviewState();
+}
+
+class _CardFacePreviewState extends State<_CardFacePreview> {
+  ui.Image? _image;
+  int _loadGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CardFacePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.card.image != widget.card.image ||
+        oldWidget.resolveSource != widget.resolveSource) {
+      _loadImage();
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration++;
+    _image?.dispose();
+    _image = null;
+    super.dispose();
+  }
+
+  String _workspaceImageSource(String raw) {
+    final String clean = raw.trim().replaceAll('\\', '/');
+    if (clean.isEmpty) return '';
+    if (clean.startsWith('/') ||
+        clean.startsWith('\\\\') ||
+        RegExp(r'^[A-Za-z]:[\\/]').hasMatch(clean)) {
+      return clean;
+    }
+    return clean.startsWith('images/') ? clean : 'images/$clean';
+  }
+
+  Future<void> _loadImage() async {
+    final int generation = ++_loadGeneration;
+    final String Function(String source)? resolver = widget.resolveSource;
+    final String source = _workspaceImageSource(widget.card.image);
+    if (resolver == null || source.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _image?.dispose();
+        _image = null;
+      });
+      return;
+    }
+
+    try {
+      final String path = resolver(source);
+      final List<int> bytes = await File(path).readAsBytes();
+      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+      try {
+        final ui.FrameInfo frame = await codec.getNextFrame();
+        if (!mounted || generation != _loadGeneration) {
+          frame.image.dispose();
+          return;
+        }
+        final ui.Image? previous = _image;
+        setState(() => _image = frame.image);
+        previous?.dispose();
+      } finally {
+        codec.dispose();
+      }
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      final ui.Image? previous = _image;
+      setState(() => _image = null);
+      previous?.dispose();
+    }
+  }
+
+  void _handleTap(TapDownDetails details, Size size) {
+    final PresentationPanelContent content = parsePresentationPanelContent(
+      heading: widget.card.heading,
+      body: widget.card.body,
+    );
+    final double imageFraction = content.imageFraction ??
+        presentationPanelDefaultImageFraction(content.preset);
+    final double contentTop = size.height * imageFraction;
+    if (details.localPosition.dy < contentTop) return;
+
+    final Rect reference = sideCardSeatedPanelRect(
+      const Size(1920, 1080),
+    );
+    final double factor =
+        reference.width <= 0 ? 1.0 : size.width / reference.width;
+    final double y = details.localPosition.dy - contentTop;
+    final String kicker = presentationPanelKickerText(content);
+
+    if (kicker.isNotEmpty && y <= 42.0 * factor) {
+      widget.onKickerTap();
+      return;
+    }
+    if (y <= 132.0 * factor) {
+      widget.onHeadingTap();
+      return;
+    }
+    widget.onBodyTap();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Rect reference = sideCardSeatedPanelRect(
+      const Size(1920, 1080),
+    );
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : sc(360);
+        final double width = math.min(maxWidth, sc(360));
+        final double factor =
+            reference.width <= 0 ? 1.0 : width / reference.width;
+        final double height = reference.height * factor;
+        final Size compositionSize = Size(
+          1920.0 * factor,
+          1080.0 * factor,
+        );
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (TapDownDetails details) =>
+              _handleTap(details, Size(width, height)),
+          child: SizedBox(
+            width: width,
+            height: height,
+            child: CustomPaint(
+              painter: _CardFacePreviewPainter(
+                card: widget.card,
+                image: _image,
+                compositionSize: compositionSize,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CardFacePreviewPainter extends CustomPainter {
+  const _CardFacePreviewPainter({
+    required this.card,
+    required this.image,
+    required this.compositionSize,
+  });
+
+  final CardRequest card;
+  final ui.Image? image;
+  final Size compositionSize;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    paintPresentationCardFace(
+      canvas: canvas,
+      compositionSize: compositionSize,
+      cardRect: Offset.zero & size,
+      card: card,
+      image: image,
+      inheritedFontFamily: 'monospace',
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CardFacePreviewPainter oldDelegate) {
+    return !identical(oldDelegate.card, card) ||
+        !identical(oldDelegate.image, image) ||
+        oldDelegate.compositionSize != compositionSize;
   }
 }
