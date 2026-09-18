@@ -783,4 +783,67 @@ void main() {
   });
 
 
+  testWidgets('panel color picker authors visual color back to exact RGB',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+    CardRequest? added;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) => added = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    final Finder pickerButton =
+        find.byKey(const ValueKey<String>('edit-card-cue-color-picker'));
+    await tester.ensureVisible(pickerButton);
+    await tester.tap(pickerButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('r3-color-picker-dialog')),
+      findsOneWidget,
+    );
+
+    final Finder hex =
+        find.byKey(const ValueKey<String>('r3-color-picker-hex-field'));
+    await tester.enterText(hex, '#336699');
+    await tester.pump();
+
+    expect(
+      find.text('RGB  51, 102, 153'),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('r3-color-picker-apply')),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder rgb =
+        find.byKey(const ValueKey<String>('edit-card-cue-rgb-field'));
+    final EditableText rgbEditable = tester.widget<EditableText>(
+      find.descendant(of: rgb, matching: find.byType(EditableText)),
+    );
+    expect(rgbEditable.controller.text, '51,102,153');
+    expect(find.text('#336699'), findsOneWidget);
+
+    final Finder apply =
+        find.byKey(const ValueKey<String>('edit-card-cue-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+
+    expect(added, isNotNull);
+    expect(added!.panelColor.toARGB32(), 0xFF336699);
+  });
+
+
 }
