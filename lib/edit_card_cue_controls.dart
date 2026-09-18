@@ -192,7 +192,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 fontFamily: fontDraft,
                 headingSize: headingSize,
                 bodySize: bodySize,
-                imageFraction: (imagePercent / 100.0).clamp(0.01, 0.99),
+                imageFraction:
+                    (imagePercent / 100.0).clamp(0.01, 0.99).toDouble(),
                 subtitle: subtitleDraft,
                 metadata: metadata,
                 preservedDirectives: preservedPanelDirectives,
