@@ -290,10 +290,11 @@ void _paintEditorialPanelContent({
   final double textW = math.max(0.0, right - left);
   double cursorY = contentTop + pad * 0.78;
 
-  if (showKicker) {
+  final String kickerText = presentationPanelKickerText(content);
+  if (showKicker && kickerText.isNotEmpty) {
     final TextPainter kicker = TextPainter(
       text: TextSpan(
-        text: presentationPanelKickerText(content).toUpperCase(),
+        text: kickerText.toUpperCase(),
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
