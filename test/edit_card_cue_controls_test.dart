@@ -175,7 +175,15 @@ void main() {
     expect(added!.holdFrames, 120);
     expect(added!.panelColor.toARGB32(), 0xFF182028);
     expect(added!.heading, 'JOHN SMITH');
-    expect(added!.body, 'Biography text.');
+    final PresentationPanelContent authored = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(authored.preset, PresentationPanelPreset.editorial);
+    expect(authored.headingSize, 32);
+    expect(authored.bodySize, 17);
+    expect(authored.imageFraction, closeTo(0.38, 0.000001));
+    expect(authored.body, 'Biography text.');
   });
 
   testWidgets('rich CARD GUI authors preset font subtitle metadata and body',
@@ -224,7 +232,7 @@ void main() {
     );
     await tester.ensureVisible(body);
     await tester.enterText(body, 'Biography text.');
-    expect(find.textContaining('FIRST |'), findsOneWidget);
+    expect(find.textContaining('LABEL | VALUE'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
     await tester.pumpAndSettle();
 
