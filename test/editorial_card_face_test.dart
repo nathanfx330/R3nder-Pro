@@ -259,4 +259,105 @@ PRESET: EDITORIAL
       greaterThan(0),
     );
   });
+  test('authored IMAGE percentage changes only hero allocation', () async {
+    final ui.Image hero = await _solidHero();
+    addTearDown(hero.dispose);
+
+    final Uint8List shallow = await _render(
+      _card(
+        heading: '',
+        panelBody: '''[PANEL]
+PRESET: EDITORIAL
+IMAGE: 25%
+[/PANEL]''',
+      ),
+      hero,
+    );
+    final Uint8List deep = await _render(
+      _card(
+        heading: '',
+        panelBody: '''[PANEL]
+PRESET: EDITORIAL
+IMAGE: 55%
+[/PANEL]''',
+      ),
+      hero,
+    );
+
+    final Rect card = sideCardSeatedPanelRect(_size);
+    final int width = _size.width.toInt();
+    final int x = card.center.dx.floor();
+    final int y = (card.top + card.height * 0.40).floor();
+    final int offset = (y * width + x) * 4;
+
+    expect(deep[offset], _heroColor.red);
+    expect(deep[offset + 1], _heroColor.green);
+    expect(deep[offset + 2], _heroColor.blue);
+    expect(
+      <int>[shallow[offset], shallow[offset + 1], shallow[offset + 2]],
+      isNot(<int>[_heroColor.red, _heroColor.green, _heroColor.blue]),
+    );
+  });
+
+  test('authored type sizes change content without touching hero', () async {
+    final ui.Image hero = await _solidHero();
+    addTearDown(hero.dispose);
+
+    final Uint8List defaults = await _render(
+      _card(
+        heading: 'Elk in the High Country',
+        panelBody: '''[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+[/PANEL]
+Elk return to higher elevations during late summer.''',
+      ),
+      hero,
+    );
+    final Uint8List authored = await _render(
+      _card(
+        heading: 'Elk in the High Country',
+        panelBody: '''[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+HEADING_SIZE: 46
+BODY_SIZE: 24
+[/PANEL]
+Elk return to higher elevations during late summer.''',
+      ),
+      hero,
+    );
+
+    final Rect card = sideCardSeatedPanelRect(_size);
+    final double imageBottom = card.top + card.height * 0.38;
+    expect(
+      _differentPixels(
+        defaults,
+        authored,
+        rect: Rect.fromLTRB(
+          card.left + 4,
+          card.top + 4,
+          card.right - 4,
+          imageBottom - 4,
+        ),
+      ),
+      0,
+      reason: 'Type directives must not alter the hero raster.',
+    );
+    expect(
+      _differentPixels(
+        defaults,
+        authored,
+        rect: Rect.fromLTRB(
+          card.left + 4,
+          imageBottom + 2,
+          card.right - 4,
+          card.bottom - 4,
+        ),
+      ),
+      greaterThan(0),
+      reason: 'Authored reference sizes must affect content typography.',
+    );
+  });
+
 }

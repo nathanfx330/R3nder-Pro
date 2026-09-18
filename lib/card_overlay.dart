@@ -1037,7 +1037,8 @@ void paintPresentationCardFace(
   final bool photoRich =
       content.preset == PresentationPanelPreset.documentary ||
       content.preset == PresentationPanelPreset.dossier;
-  final double cardImageFrac = editorial ? 0.38 : (rich ? 0.34 : 0.42);
+  final double cardImageFrac = content.imageFraction ??
+      presentationPanelDefaultImageFraction(content.preset);
   final RRect rrect = _presentationCardFaceRRect(rect, scale);
 
   final Color panelColor = card.panelColor;
@@ -1207,8 +1208,10 @@ void _paintSimpleCardContent({
   required Color ruleColor,
   required String fontFamily,
 }) {
-  const double cardHeadingSize = 34.0;
-  const double cardBodySize = 20.0;
+  final double cardHeadingSize = content.headingSize ??
+      presentationPanelDefaultHeadingSize(content.preset);
+  final double cardBodySize = content.bodySize ??
+      presentationPanelDefaultBodySize(content.preset);
   final String selectedFontFamily = presentationPanelFontFamily(
     content,
     fontFamily,

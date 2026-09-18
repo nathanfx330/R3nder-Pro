@@ -446,6 +446,25 @@ Body copy goes here...
 * **Heading:** (Optional) H1 title text.
 * **Body:** Multi-line text between the opening and closing tags. (Never types in the terminal; renders directly onto the card).
 
+Structured CARD-family bodies may begin with a `[PANEL]` block. Omitting these directives preserves the preset's existing geometry and typography.
+
+```text
+[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+FONT: DejaVu Serif
+HEADING_SIZE: 32
+BODY_SIZE: 17
+IMAGE: 38%
+[/PANEL]
+Body copy continues here.
+```
+
+* **HEADING_SIZE:** Optional heading size in the shared **1920×1080 reference composition**, not output pixels.
+* **BODY_SIZE:** Optional body size in the same 1920×1080 reference composition.
+* **IMAGE:** Optional percentage of the card height reserved for the full-bleed image. It must be greater than 0% and less than 100%.
+* Preview and BAKE apply the same uniform reference scale, `min(outputWidth / 1920, outputHeight / 1080)`, so authored type sizes remain composition-relative across output resolutions.
+
 ### 🗂️ 7. Dynamic Dossiers
 Combine the detailed text of an Info Card with a folder of evidence images. The sequence opens in a side view: a profile card sits on the right while the gallery browses on the left. After the side hold, choose whether the gallery expands into the legacy center grid, becomes a Metro-style mosaic, or leaves with the card without entering a center stage.
 
