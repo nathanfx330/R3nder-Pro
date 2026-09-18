@@ -175,7 +175,12 @@ void main() {
     expect(added!.holdFrames, 120);
     expect(added!.panelColor.toARGB32(), 0xFF182028);
     expect(added!.heading, 'JOHN SMITH');
-    expect(added!.body, 'Biography text.');
+    final PresentationPanelContent addedPanel = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(addedPanel.preset, PresentationPanelPreset.editorial);
+    expect(addedPanel.body, 'Biography text.');
   });
 
   testWidgets('rich CARD GUI authors preset font subtitle metadata and body',
@@ -458,5 +463,127 @@ void main() {
     );
     await tester.pump();
     expect(deletedIndex, 0);
+  });  testWidgets('new cards preview EDITORIAL and author reference sizes',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+    CardRequest? added;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) => added = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-live-preview')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-preset-value')),
+      findsOneWidget,
+    );
+    expect(find.text('EDITORIAL'), findsWidgets);
+
+    final Finder headingSize = find.byKey(
+      const ValueKey<String>('edit-card-cue-heading-size-field'),
+    );
+    final Finder bodySize = find.byKey(
+      const ValueKey<String>('edit-card-cue-body-size-field'),
+    );
+    final Finder imagePercent = find.byKey(
+      const ValueKey<String>('edit-card-cue-image-percent-field'),
+    );
+    await tester.ensureVisible(headingSize);
+    await tester.enterText(headingSize, '36');
+    await tester.enterText(bodySize, '18');
+    await tester.enterText(imagePercent, '40');
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
+      'ELK',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('edit-card-cue-body-field')),
+      'Body.',
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
+    await tester.pumpAndSettle();
+
+    expect(added, isNotNull);
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(parsed.preset, PresentationPanelPreset.editorial);
+    expect(parsed.headingSize, 36);
+    expect(parsed.bodySize, 18);
+    expect(parsed.imageFraction, closeTo(0.40, 0.0001));
   });
+
+  testWidgets('live preview content zones focus the matching authoring fields',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (_) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    final Finder kicker = find.byKey(
+      const ValueKey<String>('edit-card-cue-kicker-field'),
+    );
+    await tester.ensureVisible(kicker);
+    await tester.enterText(kicker, 'WILDLIFE');
+    await tester.pump();
+
+    final Finder preview = find.byKey(
+      const ValueKey<String>('edit-card-cue-live-preview'),
+    );
+    await tester.ensureVisible(preview);
+    final Rect rect = tester.getRect(preview);
+
+    // EDITORIAL's default hero is 38%, so the first content band belongs to
+    // the kicker and the next band to the heading.
+    await tester.tapAt(
+      Offset(rect.center.dx, rect.top + rect.height * 0.43),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<EditableText>(
+        find.descendant(of: kicker, matching: find.byType(EditableText)),
+      ).focusNode.hasFocus,
+      isTrue,
+    );
+
+    await tester.tapAt(
+      Offset(rect.center.dx, rect.top + rect.height * 0.54),
+    );
+    await tester.pump();
+    final Finder heading = find.byKey(
+      const ValueKey<String>('edit-card-cue-heading-field'),
+    );
+    expect(
+      tester.widget<EditableText>(
+        find.descendant(of: heading, matching: find.byType(EditableText)),
+      ).focusNode.hasFocus,
+      isTrue,
+    );
+  });
+
+
 }
