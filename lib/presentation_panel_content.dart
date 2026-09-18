@@ -150,8 +150,8 @@ class PresentationPanelContent {
   final List<PresentationPanelMetadata> metadata;
 
   /// Optional type sizes in the shared 1920x1080 reference composition.
-  /// These are not output pixels; Preview and BAKE apply the same reference
-  /// scale: min(engineW / 1920, engineH / 1080).
+  /// These are not output pixels. Preview and BAKE both apply
+  /// min(engineW / 1920, engineH / 1080).
   final double? headingSize;
   final double? bodySize;
 
@@ -594,7 +594,7 @@ String _formatPanelNumber(double value) {
   if (value == value.roundToDouble()) return value.toStringAsFixed(0);
   return value
       .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+\
+      .replaceFirst(RegExp(r'0+
 ///
 /// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
 /// existing project never grows metadata syntax simply because it was opened.
@@ -677,7 +677,7 @@ String formatPresentationPanelBody({
   return out.toString();
 }
 ), '')
-      .replaceFirst(RegExp(r'\.\
+      .replaceFirst(RegExp(r'\\.
 ///
 /// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
 /// existing project never grows metadata syntax simply because it was opened.
@@ -688,9 +688,6 @@ String formatPresentationPanelBody({
   required PresentationPanelPreset preset,
   String kicker = '',
   String fontFamily = '',
-  double? headingSize,
-  double? bodySize,
-  double? imageFraction,
   required String subtitle,
   required List<PresentationPanelMetadata> metadata,
   List<String> preservedDirectives = const <String>[],
@@ -715,9 +712,6 @@ String formatPresentationPanelBody({
   if (preset == PresentationPanelPreset.simple &&
       cleanKicker.isEmpty &&
       cleanFont.isEmpty &&
-      headingSize == null &&
-      bodySize == null &&
-      imageFraction == null &&
       cleanSubtitle.isEmpty &&
       cleanMetadata.isEmpty &&
       preservedDirectives.isEmpty) {
@@ -732,15 +726,6 @@ String formatPresentationPanelBody({
   }
   if (cleanFont.isNotEmpty) {
     out.writeln('FONT: $cleanFont');
-  }
-  if (headingSize != null) {
-    out.writeln('HEADING_SIZE: ${_formatPanelNumber(headingSize)}');
-  }
-  if (bodySize != null) {
-    out.writeln('BODY_SIZE: ${_formatPanelNumber(bodySize)}');
-  }
-  if (imageFraction != null) {
-    out.writeln('IMAGE: ${_formatPanelNumber(imageFraction * 100.0)}%');
   }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
@@ -773,9 +758,6 @@ String formatPresentationPanelBody({
   required PresentationPanelPreset preset,
   String kicker = '',
   String fontFamily = '',
-  double? headingSize,
-  double? bodySize,
-  double? imageFraction,
   required String subtitle,
   required List<PresentationPanelMetadata> metadata,
   List<String> preservedDirectives = const <String>[],
@@ -800,9 +782,6 @@ String formatPresentationPanelBody({
   if (preset == PresentationPanelPreset.simple &&
       cleanKicker.isEmpty &&
       cleanFont.isEmpty &&
-      headingSize == null &&
-      bodySize == null &&
-      imageFraction == null &&
       cleanSubtitle.isEmpty &&
       cleanMetadata.isEmpty &&
       preservedDirectives.isEmpty) {
@@ -817,15 +796,6 @@ String formatPresentationPanelBody({
   }
   if (cleanFont.isNotEmpty) {
     out.writeln('FONT: $cleanFont');
-  }
-  if (headingSize != null) {
-    out.writeln('HEADING_SIZE: ${_formatPanelNumber(headingSize)}');
-  }
-  if (bodySize != null) {
-    out.writeln('BODY_SIZE: ${_formatPanelNumber(bodySize)}');
-  }
-  if (imageFraction != null) {
-    out.writeln('IMAGE: ${_formatPanelNumber(imageFraction * 100.0)}%');
   }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
