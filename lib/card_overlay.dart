@@ -1013,16 +1013,6 @@ void _paintCardAtSeatedRect({
     return;
   }
 
-  const double cardRadius = 16.0;
-  const double cardPadFrac = 0.055;
-
-  final PresentationPanelContent content = parsePresentationPanelContent(
-    heading: card.heading,
-    body: card.body,
-  );
-  final bool rich = content.preset != PresentationPanelPreset.simple;
-  final double cardImageFrac = rich ? 0.34 : 0.42;
-
   final double s = math.min(engineW / 1920.0, engineH / 1080.0);
   final double rawProgress = slide.clamp(0.0, 1.0).toDouble();
   final double e = Curves.easeOutCubic.transform(rawProgress);
@@ -1032,10 +1022,6 @@ void _paintCardAtSeatedRect({
     seatedRect.top,
     seatedRect.width,
     seatedRect.height,
-  );
-  final RRect rrect = RRect.fromRectAndRadius(
-    cardRect,
-    Radius.circular(cardRadius * s),
   );
 
   canvas.save();
@@ -1048,6 +1034,54 @@ void _paintCardAtSeatedRect({
   canvas.rotate(angle);
   canvas.scale(scaleEffect, scaleEffect);
   canvas.translate(-pivotX, -pivotY);
+
+  paintPresentationCardFace(
+    canvas: canvas,
+    cardRect: cardRect,
+    referenceScale: s,
+    card: card,
+    image: image,
+    inheritedFontFamily: fontFamily,
+  );
+
+  canvas.restore();
+}
+
+/// Paints one complete CARD-family face at its already-resolved rectangle.
+///
+/// This is the rendering seam shared by runtime overlays and the EDIT inspector
+/// preview. The caller owns only placement and motion. The face owns every
+/// visual inside that geometry: shadow, panel surface, hero image, rich photo
+/// treatment, and the simple/rich content branch.
+///
+/// [referenceScale] is the same 1920x1080 composition scale used by runtime:
+/// min(engineW / 1920, engineH / 1080). It is explicit so a preview cannot
+/// accidentally reinterpret authored typography as output pixels.
+void paintPresentationCardFace({
+  required Canvas canvas,
+  required Rect cardRect,
+  required double referenceScale,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+}) {
+  if (cardRect.width <= 0.0 || cardRect.height <= 0.0) return;
+
+  const double cardRadius = 16.0;
+  const double cardPadFrac = 0.055;
+
+  final PresentationPanelContent content = parsePresentationPanelContent(
+    heading: card.heading,
+    body: card.body,
+  );
+  final bool rich = content.preset != PresentationPanelPreset.simple;
+  final double cardImageFrac = rich ? 0.34 : 0.42;
+  final double s = referenceScale;
+
+  final RRect rrect = RRect.fromRectAndRadius(
+    cardRect,
+    Radius.circular(cardRadius * s),
+  );
 
   canvas.drawRRect(
     rrect.shift(Offset(-2 * s, 4 * s)),
@@ -1115,7 +1149,7 @@ void _paintCardAtSeatedRect({
       content: content,
       panelColor: panelColor,
       headColor: headColor,
-      inheritedFontFamily: fontFamily,
+      inheritedFontFamily: inheritedFontFamily,
       scale: s,
     );
   }
@@ -1133,7 +1167,7 @@ void _paintCardAtSeatedRect({
       panelColor: panelColor,
       headColor: headColor,
       bodyColor: bodyColor,
-      inheritedFontFamily: fontFamily,
+      inheritedFontFamily: inheritedFontFamily,
       showKicker: imageRect == null,
     );
   } else {
@@ -1147,11 +1181,10 @@ void _paintCardAtSeatedRect({
       headColor: headColor,
       bodyColor: bodyColor,
       ruleColor: ruleColor,
-      fontFamily: fontFamily,
+      fontFamily: inheritedFontFamily,
     );
   }
 
-  canvas.restore();
   canvas.restore();
 }
 
