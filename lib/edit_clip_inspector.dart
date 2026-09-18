@@ -755,7 +755,7 @@ class _ClipAudioControlsState extends State<_ClipAudioControls> {
                   ClipAudioGain.parse(value),
                 );
               } on FormatException catch (error) {
-                setDialogState(() => errorText = '${error.message}');
+                setDialogState(() => errorText = error.message);
               }
             }
 
