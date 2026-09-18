@@ -205,10 +205,18 @@ void main() {
       find.byKey(const ValueKey<String>('edit-card-cue-hold-field')),
       '120',
     );
+    final Finder colorPicker =
+        find.byKey(const ValueKey<String>('edit-card-cue-color-picker'));
+    await tester.ensureVisible(colorPicker);
+    await tester.tap(colorPicker);
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.byKey(const ValueKey<String>('edit-card-cue-rgb-field')),
-      '24,32,40',
+      find.byKey(const ValueKey<String>('r3-color-hex-field')),
+      '#182028',
     );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey<String>('r3-color-apply')));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
       'JOHN SMITH',
