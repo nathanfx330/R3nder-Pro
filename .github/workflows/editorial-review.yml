@@ -1,4 +1,5 @@
 name: Editorial Sidecard Review
+# Temporary branch-only validation; remove after review.
 
 on:
   push:
