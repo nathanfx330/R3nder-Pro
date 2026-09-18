@@ -85,6 +85,24 @@ const String _sourceWithEditorialGeometry = '''[EDIT:main]
 [/EDIT]
 ''';
 
+const String _sourceWithSidecardMetadata = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:40]
+        [SIDECARD:old.png:30:30,30,38:SUBJECT]
+          [PANEL]
+          PRESET: DOCUMENTARY
+          META: ORGANIZATION | Example News
+          META: LOCATION | Washington, DC
+          [/PANEL]
+          Biography.
+        [/SIDECARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
 const String _sourceWithMalformedPanel = '''[EDIT:main]
   [TRACK:V1]
     [CLIP:shot:video/shot.mp4:0:0:300:1]
@@ -164,6 +182,16 @@ void main() {
 
     expect(find.text('Add CARD cue · source F90'), findsOneWidget);
 
+    expect(find.text('CONTENT'), findsOneWidget);
+    expect(find.text('TYPE'), findsOneWidget);
+    expect(find.text('STYLE'), findsOneWidget);
+    expect(find.text('TIMING'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-preset-value')),
+      findsOneWidget,
+    );
+    expect(find.text('EDITORIAL'), findsWidgets);
+
     final Finder imageMenu =
         find.byKey(const ValueKey<String>('edit-card-cue-image-menu'));
     await tester.ensureVisible(imageMenu);
@@ -197,7 +225,15 @@ void main() {
     expect(added!.holdFrames, 120);
     expect(added!.panelColor.toARGB32(), 0xFF182028);
     expect(added!.heading, 'JOHN SMITH');
-    expect(added!.body, 'Biography text.');
+    final PresentationPanelContent addedPanel = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(addedPanel.preset, PresentationPanelPreset.editorial);
+    expect(addedPanel.body, 'Biography text.');
+    expect(addedPanel.headingSize, isNull);
+    expect(addedPanel.bodySize, isNull);
+    expect(addedPanel.imageFraction, isNull);
   });
 
   testWidgets('rich CARD GUI authors preset font subtitle metadata and body',
@@ -246,7 +282,6 @@ void main() {
     );
     await tester.ensureVisible(body);
     await tester.enterText(body, 'Biography text.');
-    expect(find.textContaining('FIRST |'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
     await tester.pumpAndSettle();
 
@@ -530,5 +565,118 @@ void main() {
     expect(parsed.imageFraction, 0.44);
     expect(parsed.kicker, 'WILDLIFE');
   });
+
+  testWidgets('Stage 5 controls author explicit type and hero geometry',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+    CardRequest? added;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) => added = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    final Finder headingSize = find.byKey(
+      const ValueKey<String>('edit-card-cue-heading-size-field'),
+    );
+    final Finder bodySize = find.byKey(
+      const ValueKey<String>('edit-card-cue-body-size-field'),
+    );
+    final Finder imagePercent = find.byKey(
+      const ValueKey<String>('edit-card-cue-image-percent-field'),
+    );
+    final Finder font =
+        find.byKey(const ValueKey<String>('edit-card-cue-font-field'));
+
+    await tester.ensureVisible(font);
+    await tester.enterText(font, 'DejaVu Serif');
+    await tester.ensureVisible(headingSize);
+    await tester.enterText(headingSize, '36');
+    await tester.enterText(bodySize, '18');
+    await tester.enterText(imagePercent, '70');
+
+    final Finder apply =
+        find.byKey(const ValueKey<String>('edit-card-cue-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+
+    expect(added, isNotNull);
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: added!.heading,
+      body: added!.body,
+    );
+    expect(parsed.preset, PresentationPanelPreset.editorial);
+    expect(parsed.fontFamily, 'DejaVu Serif');
+    expect(parsed.headingSize, 36.0);
+    expect(parsed.bodySize, 18.0);
+    expect(parsed.imageFraction, 0.70);
+  });
+
+  testWidgets('SIDECARD hides META controls but preserves authored META',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithSidecardMetadata,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+    CardRequest? changedCard;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) => changedCard = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-style-value')),
+      findsOneWidget,
+    );
+    expect(find.text('SIDE CARD + VIDEO WINDOW'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-metadata-field')),
+      findsNothing,
+    );
+
+    final Finder apply =
+        find.byKey(const ValueKey<String>('edit-card-cue-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+
+    expect(changedCard, isNotNull);
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(
+      parsed.metadata,
+      const <PresentationPanelMetadata>[
+        PresentationPanelMetadata(
+          label: 'ORGANIZATION',
+          value: 'Example News',
+        ),
+        PresentationPanelMetadata(
+          label: 'LOCATION',
+          value: 'Washington, DC',
+        ),
+      ],
+    );
+  });
+
 
 }
