@@ -145,6 +145,20 @@ class PresentationPanelContent {
   final String fontFamily;
 
   final String subtitle;
+
+  /// Optional heading size in the 1920x1080 reference composition.
+  ///
+  /// This is not an output-pixel measurement. Preview and BAKE both multiply
+  /// it by min(engineW / 1920, engineH / 1080).
+  final double? headingSize;
+
+  /// Optional body size in the 1920x1080 reference composition.
+  final double? bodySize;
+
+  /// Optional hero-image share of the card height, expressed as 0..1.
+  /// Authored source writes this as a percentage (for example IMAGE: 38%).
+  final double? imageFraction;
+
   final List<PresentationPanelMetadata> metadata;
   final String body;
   final PresentationPanelPreset preset;
@@ -167,6 +181,9 @@ class PresentationPanelContent {
     required this.kicker,
     required this.fontFamily,
     required this.subtitle,
+    required this.headingSize,
+    required this.bodySize,
+    required this.imageFraction,
     required this.metadata,
     required this.body,
     required this.preset,
@@ -198,6 +215,9 @@ PresentationPanelContent _plainPanelContent({
     kicker: '',
     fontFamily: '',
     subtitle: '',
+    headingSize: null,
+    bodySize: null,
+    imageFraction: null,
     metadata: const <PresentationPanelMetadata>[],
     body: body,
     preset: PresentationPanelPreset.simple,
@@ -260,10 +280,16 @@ PresentationPanelContent parsePresentationPanelContent({
   String kicker = '';
   String fontFamily = '';
   String subtitle = '';
+  double? headingSize;
+  double? bodySize;
+  double? imageFraction;
   bool sawPreset = false;
   bool sawKicker = false;
   bool sawFont = false;
   bool sawSubtitle = false;
+  bool sawHeadingSize = false;
+  bool sawBodySize = false;
+  bool sawImage = false;
   final List<PresentationPanelMetadata> metadata =
       <PresentationPanelMetadata>[];
   final List<String> preserved = <String>[];
@@ -407,6 +433,86 @@ PresentationPanelContent parsePresentationPanelContent({
         sawSubtitle = true;
         subtitle = value;
         break;
+      case 'HEADING_SIZE':
+        if (sawHeadingSize) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate HEADING_SIZE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final double? parsed = double.tryParse(value);
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.malformedDirective,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'HEADING_SIZE requires a positive reference-unit number.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawHeadingSize = true;
+        headingSize = parsed;
+        break;
+      case 'BODY_SIZE':
+        if (sawBodySize) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate BODY_SIZE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final double? parsed = double.tryParse(value);
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.malformedDirective,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'BODY_SIZE requires a positive reference-unit number.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawBodySize = true;
+        bodySize = parsed;
+        break;
+      case 'IMAGE':
+        if (sawImage) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate IMAGE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final String rawPercent =
+            value.endsWith('%') ? value.substring(0, value.length - 1).trim() : '';
+        final double? parsed = double.tryParse(rawPercent);
+        if (parsed == null ||
+            !parsed.isFinite ||
+            parsed <= 0.0 ||
+            parsed > 100.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.malformedDirective,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'IMAGE requires a percentage greater than 0 and at most 100.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawImage = true;
+        imageFraction = parsed / 100.0;
+        break;
       case 'META':
         // The first pipe is the delimiter. Any later pipes belong to the value,
         // so text such as "RANGE | 1990 | 1995" is deterministic.
@@ -465,6 +571,9 @@ PresentationPanelContent parsePresentationPanelContent({
     kicker: kicker,
     fontFamily: fontFamily,
     subtitle: subtitle,
+    headingSize: headingSize,
+    bodySize: bodySize,
+    imageFraction: imageFraction,
     metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
     body: bodyLines.join('\n'),
     preset: preset,
@@ -486,6 +595,9 @@ String formatPresentationPanelBody({
   required PresentationPanelPreset preset,
   String kicker = '',
   String fontFamily = '',
+  double? headingSize,
+  double? bodySize,
+  double? imageFraction,
   required String subtitle,
   required List<PresentationPanelMetadata> metadata,
   List<String> preservedDirectives = const <String>[],
@@ -510,6 +622,9 @@ String formatPresentationPanelBody({
   if (preset == PresentationPanelPreset.simple &&
       cleanKicker.isEmpty &&
       cleanFont.isEmpty &&
+      headingSize == null &&
+      bodySize == null &&
+      imageFraction == null &&
       cleanSubtitle.isEmpty &&
       cleanMetadata.isEmpty &&
       preservedDirectives.isEmpty) {
@@ -524,6 +639,15 @@ String formatPresentationPanelBody({
   }
   if (cleanFont.isNotEmpty) {
     out.writeln('FONT: $cleanFont');
+  }
+  if (headingSize != null) {
+    out.writeln('HEADING_SIZE: ${_panelNumber(headingSize)}');
+  }
+  if (bodySize != null) {
+    out.writeln('BODY_SIZE: ${_panelNumber(bodySize)}');
+  }
+  if (imageFraction != null) {
+    out.writeln('IMAGE: ${_panelNumber(imageFraction * 100.0)}%');
   }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
@@ -541,4 +665,16 @@ String formatPresentationPanelBody({
       ..write(body);
   }
   return out.toString();
+}
+
+
+String _panelNumber(double value) {
+  final int rounded = value.round();
+  if ((value - rounded).abs() < 0.000001) return '$rounded';
+  String out = value.toStringAsFixed(3);
+  while (out.contains('.') && out.endsWith('0')) {
+    out = out.substring(0, out.length - 1);
+  }
+  if (out.endsWith('.')) out = out.substring(0, out.length - 1);
+  return out;
 }
