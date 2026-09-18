@@ -594,7 +594,11 @@ String _formatPanelNumber(double value) {
   if (value == value.roundToDouble()) return value.toStringAsFixed(0);
   return value
       .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0+
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\\.$'), '');
+}
+
+/// Canonical writer used by CARD-family GUI controls.
 ///
 /// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
 /// existing project never grows metadata syntax simply because it was opened.
@@ -658,144 +662,6 @@ String formatPresentationPanelBody({
   }
   if (imageFraction != null) {
     out.writeln('IMAGE: ${_formatPanelNumber(imageFraction * 100.0)}%');
-  }
-  if (cleanSubtitle.isNotEmpty) {
-    out.writeln('SUBTITLE: $cleanSubtitle');
-  }
-  for (final PresentationPanelMetadata item in cleanMetadata) {
-    out.writeln('META: ${item.label} | ${item.value}');
-  }
-  for (final String rawLine in preservedDirectives) {
-    out.writeln(rawLine);
-  }
-  out.write('[/PANEL]');
-  if (body.isNotEmpty) {
-    out
-      ..writeln()
-      ..write(body);
-  }
-  return out.toString();
-}
-), '')
-      .replaceFirst(RegExp(r'\\.
-///
-/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
-/// existing project never grows metadata syntax simply because it was opened.
-/// Unknown or forward-version directives can be supplied through
-/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
-/// build instead of disappearing during a GUI edit.
-String formatPresentationPanelBody({
-  required PresentationPanelPreset preset,
-  String kicker = '',
-  String fontFamily = '',
-  required String subtitle,
-  required List<PresentationPanelMetadata> metadata,
-  List<String> preservedDirectives = const <String>[],
-  required String body,
-}) {
-  final String cleanKicker = kicker.trim();
-  final String cleanFont = fontFamily.trim();
-  final String cleanSubtitle = subtitle.trim();
-  final List<PresentationPanelMetadata> cleanMetadata = metadata
-      .map(
-        (PresentationPanelMetadata item) => PresentationPanelMetadata(
-          label: item.label.trim(),
-          value: item.value.trim(),
-        ),
-      )
-      .where(
-        (PresentationPanelMetadata item) =>
-            item.label.isNotEmpty && item.value.isNotEmpty,
-      )
-      .toList(growable: false);
-
-  if (preset == PresentationPanelPreset.simple &&
-      cleanKicker.isEmpty &&
-      cleanFont.isEmpty &&
-      cleanSubtitle.isEmpty &&
-      cleanMetadata.isEmpty &&
-      preservedDirectives.isEmpty) {
-    return body;
-  }
-
-  final StringBuffer out = StringBuffer()
-    ..writeln('[PANEL]')
-    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
-  if (cleanKicker.isNotEmpty) {
-    out.writeln('KICKER: $cleanKicker');
-  }
-  if (cleanFont.isNotEmpty) {
-    out.writeln('FONT: $cleanFont');
-  }
-  if (cleanSubtitle.isNotEmpty) {
-    out.writeln('SUBTITLE: $cleanSubtitle');
-  }
-  for (final PresentationPanelMetadata item in cleanMetadata) {
-    out.writeln('META: ${item.label} | ${item.value}');
-  }
-  for (final String rawLine in preservedDirectives) {
-    out.writeln(rawLine);
-  }
-  out.write('[/PANEL]');
-  if (body.isNotEmpty) {
-    out
-      ..writeln()
-      ..write(body);
-  }
-  return out.toString();
-}
-), '');
-}
-
-/// Canonical writer used by CARD-family GUI controls.
-///
-/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
-/// existing project never grows metadata syntax simply because it was opened.
-/// Unknown or forward-version directives can be supplied through
-/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
-/// build instead of disappearing during a GUI edit.
-String formatPresentationPanelBody({
-  required PresentationPanelPreset preset,
-  String kicker = '',
-  String fontFamily = '',
-  required String subtitle,
-  required List<PresentationPanelMetadata> metadata,
-  List<String> preservedDirectives = const <String>[],
-  required String body,
-}) {
-  final String cleanKicker = kicker.trim();
-  final String cleanFont = fontFamily.trim();
-  final String cleanSubtitle = subtitle.trim();
-  final List<PresentationPanelMetadata> cleanMetadata = metadata
-      .map(
-        (PresentationPanelMetadata item) => PresentationPanelMetadata(
-          label: item.label.trim(),
-          value: item.value.trim(),
-        ),
-      )
-      .where(
-        (PresentationPanelMetadata item) =>
-            item.label.isNotEmpty && item.value.isNotEmpty,
-      )
-      .toList(growable: false);
-
-  if (preset == PresentationPanelPreset.simple &&
-      cleanKicker.isEmpty &&
-      cleanFont.isEmpty &&
-      cleanSubtitle.isEmpty &&
-      cleanMetadata.isEmpty &&
-      preservedDirectives.isEmpty) {
-    return body;
-  }
-
-  final StringBuffer out = StringBuffer()
-    ..writeln('[PANEL]')
-    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
-  if (cleanKicker.isNotEmpty) {
-    out.writeln('KICKER: $cleanKicker');
-  }
-  if (cleanFont.isNotEmpty) {
-    out.writeln('FONT: $cleanFont');
   }
   if (cleanSubtitle.isNotEmpty) {
     out.writeln('SUBTITLE: $cleanSubtitle');
