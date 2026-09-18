@@ -172,6 +172,66 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               return out;
             }
 
+            CardRequest previewCard() {
+              final List<int?> rgb = rgbDraft
+                  .split(',')
+                  .map((String value) => int.tryParse(value.trim()))
+                  .toList(growable: false);
+              final Color panelColor = rgb.length == 3 &&
+                      rgb.every(
+                        (int? value) =>
+                            value != null && value >= 0 && value <= 255,
+                      )
+                  ? Color.fromARGB(255, rgb[0]!, rgb[1]!, rgb[2]!)
+                  : (existing?.panelColor ?? const Color(0xFF1E1E26));
+              final double headingSize =
+                  double.tryParse(headingSizeDraft.trim()) ??
+                      presentationPanelDefaultHeadingSize(presetDraft);
+              final double bodySize = double.tryParse(bodySizeDraft.trim()) ??
+                  presentationPanelDefaultBodySize(presetDraft);
+              final double imagePercent =
+                  double.tryParse(imagePercentDraft.trim()) ??
+                      presentationPanelDefaultImageFraction(presetDraft) * 100.0;
+              final List<PresentationPanelMetadata> metadata =
+                  parseMetadataDraft() ?? const <PresentationPanelMetadata>[];
+              final String cleanKicker = kickerDraft.trim();
+              final String authoredKicker =
+                  cleanKicker == presentationPanelDefaultKicker(presetDraft)
+                      ? ''
+                      : cleanKicker;
+              final String previewBody = formatPresentationPanelBody(
+                preset: presetDraft,
+                kicker: authoredKicker,
+                fontFamily: fontDraft,
+                headingSize: headingSize,
+                bodySize: bodySize,
+                imageFraction: (imagePercent / 100.0).clamp(0.01, 0.99),
+                subtitle: subtitleDraft,
+                metadata: metadata,
+                preservedDirectives: preservedPanelDirectives,
+                body: bodyDraft,
+              );
+              final String previewImage = imageDraft.trim();
+              final String previewHeading = headingDraft.trim();
+              final int previewHold =
+                  int.tryParse(holdDraft.trim()) ?? existing?.holdFrames ?? 90;
+              return sideDraft
+                  ? SideCardRequest(
+                      image: previewImage,
+                      holdFrames: previewHold,
+                      panelColor: panelColor,
+                      heading: previewHeading,
+                      body: previewBody,
+                    )
+                  : CardRequest(
+                      image: previewImage,
+                      holdFrames: previewHold,
+                      panelColor: panelColor,
+                      heading: previewHeading,
+                      body: previewBody,
+                    );
+            }
+
             void apply() {
               final String imageValue = imageDraft.trim();
               final int? holdFrames = int.tryParse(holdDraft.trim());
@@ -184,6 +244,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   .toList(growable: false);
               final List<PresentationPanelMetadata>? metadata =
                   parseMetadataDraft();
+              final double? headingSize =
+                  double.tryParse(headingSizeDraft.trim());
+              final double? bodySize =
+                  double.tryParse(bodySizeDraft.trim());
+              final double? imagePercent =
+                  double.tryParse(imagePercentDraft.trim());
 
               String? problem;
               if (panel.hasErrors) {
@@ -211,6 +277,21 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 problem = 'Top label must stay on one line.';
               } else if (fontDraft.contains('\n') || fontDraft.contains('\r')) {
                 problem = 'Font family must stay on one line.';
+              } else if (headingSize == null ||
+                  !headingSize.isFinite ||
+                  headingSize <= 0 ||
+                  headingSize > 200) {
+                problem = 'Heading size must be greater than 0 and at most 200.';
+              } else if (bodySize == null ||
+                  !bodySize.isFinite ||
+                  bodySize <= 0 ||
+                  bodySize > 200) {
+                problem = 'Body size must be greater than 0 and at most 200.';
+              } else if (imagePercent == null ||
+                  !imagePercent.isFinite ||
+                  imagePercent < 25 ||
+                  imagePercent > 55) {
+                problem = 'Image height must stay between 25% and 55%.';
               } else if (subtitleDraft.contains('\n') ||
                   subtitleDraft.contains('\r')) {
                 problem = 'Subtitle must stay on one line.';
@@ -238,6 +319,16 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 preset: presetDraft,
                 kicker: authoredKicker,
                 fontFamily: fontDraft,
+                headingSize:
+                    panel.headingSize != null || headingSizeTouched
+                        ? headingSize
+                        : null,
+                bodySize:
+                    panel.bodySize != null || bodySizeTouched ? bodySize : null,
+                imageFraction:
+                    panel.imageFraction != null || imagePercentTouched
+                        ? imagePercent! / 100.0
+                        : null,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
                 preservedDirectives: preservedPanelDirectives,
