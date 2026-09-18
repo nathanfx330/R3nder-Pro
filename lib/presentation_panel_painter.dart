@@ -181,7 +181,9 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.headingSize ?? 34.0) * scale,
+          fontSize: (content.headingSize ??
+                  presentationPanelDefaultHeadingSize(content.preset)) *
+              scale,
           fontWeight: FontWeight.w800,
           letterSpacing: -0.15 * scale,
           height: 1.02,
@@ -256,7 +258,9 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.bodySize ?? 15.5) * scale,
+          fontSize: (content.bodySize ??
+                  presentationPanelDefaultBodySize(content.preset)) *
+              scale,
           fontWeight: FontWeight.w500,
           height: 1.40,
           color: bodyColor.withValues(alpha: 0.94),
@@ -305,7 +309,7 @@ void paintPresentationCardFace({
       content.preset == PresentationPanelPreset.documentary ||
       content.preset == PresentationPanelPreset.dossier;
   final double cardImageFrac = content.imageFraction ??
-      (editorial ? 0.38 : (rich ? 0.34 : 0.42));
+      presentationPanelDefaultImageFraction(content.preset);
 
   final double scale = math.min(
     compositionSize.width / 1920.0,
@@ -474,7 +478,9 @@ void _paintEditorialPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.headingSize ?? 32.0) * scale,
+          fontSize: (content.headingSize ??
+                  presentationPanelDefaultHeadingSize(content.preset)) *
+              scale,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.0,
           height: 1.08,
@@ -496,7 +502,9 @@ void _paintEditorialPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.bodySize ?? 17.0) * scale,
+          fontSize: (content.bodySize ??
+                  presentationPanelDefaultBodySize(content.preset)) *
+              scale,
           fontWeight: FontWeight.w400,
           height: 1.50,
           color: bodyColor.withValues(alpha: 0.96),
@@ -525,8 +533,10 @@ void _paintSimpleCardContent({
   required Color ruleColor,
   required String fontFamily,
 }) {
-  final double cardHeadingSize = content.headingSize ?? 34.0;
-  final double cardBodySize = content.bodySize ?? 20.0;
+  final double cardHeadingSize = content.headingSize ??
+      presentationPanelDefaultHeadingSize(content.preset);
+  final double cardBodySize = content.bodySize ??
+      presentationPanelDefaultBodySize(content.preset);
   final String selectedFontFamily = presentationPanelFontFamily(
     content,
     fontFamily,
