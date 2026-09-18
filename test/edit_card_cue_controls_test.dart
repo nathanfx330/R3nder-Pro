@@ -121,8 +121,19 @@ Widget _host({
   );
 }
 
+void desktopTestWidgets(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  testWidgets(description, (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await body(tester);
+  });
+}
+
 void main() {
-  testWidgets('add CARD cue form uses exact source frame and image picker',
+  desktopTestWidgets('add CARD cue form uses exact source frame and image picker',
       (WidgetTester tester) async {
     final EditSurfaceClip clip =
         EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
@@ -183,7 +194,7 @@ void main() {
     expect(addedPanel.body, 'Biography text.');
   });
 
-  testWidgets('rich CARD GUI authors preset font subtitle metadata and body',
+  desktopTestWidgets('rich CARD GUI authors preset font subtitle metadata and body',
       (WidgetTester tester) async {
     final EditSurfaceClip clip =
         EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
@@ -257,7 +268,7 @@ void main() {
     expect(parsed.body, 'Biography text.');
   });
 
-  testWidgets('default documentary top label is visible but stays implicit',
+  desktopTestWidgets('default documentary top label is visible but stays implicit',
       (WidgetTester tester) async {
     final EditSurfaceClip clip = EditSurfaceDocument.parse(
       _sourceWithDocumentaryDefaultKicker,
@@ -302,7 +313,7 @@ void main() {
     );
   });
 
-  testWidgets('top photo label can be replaced from the GUI',
+  desktopTestWidgets('top photo label can be replaced from the GUI',
       (WidgetTester tester) async {
     final EditSurfaceClip clip = EditSurfaceDocument.parse(
       _sourceWithDocumentaryDefaultKicker,
@@ -339,7 +350,7 @@ void main() {
     expect(parsed.kicker, 'INTERVIEW SUBJECT');
   });
 
-  testWidgets('GUI preserves unknown PANEL directives on edit',
+  desktopTestWidgets('GUI preserves unknown PANEL directives on edit',
       (WidgetTester tester) async {
     final EditSurfaceClip clip = EditSurfaceDocument.parse(
       _sourceWithFuturePanelKey,
@@ -383,7 +394,7 @@ void main() {
     expect(parsed.preservedDirectives, <String>['FUTURE_STYLE: archive-2']);
   });
 
-  testWidgets('malformed PANEL is visible and GUI refuses to rewrite it',
+  desktopTestWidgets('malformed PANEL is visible and GUI refuses to rewrite it',
       (WidgetTester tester) async {
     final EditSurfaceClip clip = EditSurfaceDocument.parse(
       _sourceWithMalformedPanel,
@@ -413,7 +424,7 @@ void main() {
     expect(apply.onPressed, isNull);
   });
 
-  testWidgets('existing cue can be edited and deleted from inspector controls',
+  desktopTestWidgets('existing cue can be edited and deleted from inspector controls',
       (WidgetTester tester) async {
     final EditSurfaceClip clip = EditSurfaceDocument.parse(
       _sourceWithCue,
@@ -462,7 +473,7 @@ void main() {
     );
     await tester.pump();
     expect(deletedIndex, 0);
-  });  testWidgets('new cards preview EDITORIAL and author reference sizes',
+  });  desktopTestWidgets('new cards preview EDITORIAL and author reference sizes',
       (WidgetTester tester) async {
     final EditSurfaceClip clip =
         EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
@@ -526,7 +537,7 @@ void main() {
     expect(parsed.imageFraction, closeTo(0.40, 0.0001));
   });
 
-  testWidgets('live preview content zones focus the matching authoring fields',
+  desktopTestWidgets('live preview content zones focus the matching authoring fields',
       (WidgetTester tester) async {
     final EditSurfaceClip clip =
         EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
