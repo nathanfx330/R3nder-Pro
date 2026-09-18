@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import 'edit_cue.dart';
 import 'edit_surface_model.dart';
+import 'presentation_card_face_preview.dart';
 import 'presentation_panel_content.dart';
 import 'presentation_requests.dart';
 import 'ui_theme.dart';
@@ -25,6 +26,7 @@ class EditCardCueControls extends StatefulWidget {
     required this.playheadFrame,
     required this.theme,
     required this.imageOptions,
+    this.resolveImageSource,
     required this.onAddAtPlayhead,
     required this.onChanged,
     required this.onDeleted,
@@ -38,6 +40,10 @@ class EditCardCueControls extends StatefulWidget {
   /// Returns workspace-relative image paths when the author opens a CARD form.
   /// The directory is scanned on demand rather than on every EDIT rebuild.
   final List<String> Function()? imageOptions;
+
+  /// Resolves workspace-relative CARD image sources for the live face preview.
+  /// Production passes the same resolver used by structural preview.
+  final String Function(String source)? resolveImageSource;
 
   /// Null while playback is running or when the playhead is outside the CLIP.
   final ValueChanged<CardRequest>? onAddAtPlayhead;
@@ -134,6 +140,57 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               return out;
             }
 
+            Color previewPanelColor() {
+              final List<int?> channels = rgbDraft
+                  .split(',')
+                  .map((String value) => int.tryParse(value.trim()))
+                  .toList(growable: false);
+              if (channels.length == 3 &&
+                  channels.every(
+                    (int? value) =>
+                        value != null && value >= 0 && value <= 255,
+                  )) {
+                return Color.fromARGB(
+                  255,
+                  channels[0]!,
+                  channels[1]!,
+                  channels[2]!,
+                );
+              }
+              return existing?.panelColor ?? const Color(0xFF1E1E26);
+            }
+
+            CardRequest previewCard() {
+              final List<PresentationPanelMetadata> metadata =
+                  parseMetadataDraft() ?? panel.metadata;
+              final String cleanKicker = kickerDraft.trim();
+              final String authoredKicker =
+                  cleanKicker == presentationPanelDefaultKicker(presetDraft)
+                      ? ''
+                      : cleanKicker;
+              final String previewBody = panel.hasErrors
+                  ? (existing?.body ?? bodyDraft)
+                  : formatPresentationPanelBody(
+                      preset: presetDraft,
+                      kicker: authoredKicker,
+                      fontFamily: fontDraft,
+                      headingSize: panel.headingSize,
+                      bodySize: panel.bodySize,
+                      imageFraction: panel.imageFraction,
+                      subtitle: subtitleDraft,
+                      metadata: metadata,
+                      preservedDirectives: preservedPanelDirectives,
+                      body: bodyDraft,
+                    );
+              return CardRequest(
+                image: imageDraft.trim(),
+                holdFrames: int.tryParse(holdDraft.trim()) ?? 0,
+                panelColor: previewPanelColor(),
+                heading: headingDraft.trim(),
+                body: previewBody,
+              );
+            }
+
             void apply() {
               final String imageValue = imageDraft.trim();
               final int? holdFrames = int.tryParse(holdDraft.trim());
@@ -200,6 +257,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 preset: presetDraft,
                 kicker: authoredKicker,
                 fontFamily: fontDraft,
+                headingSize: panel.headingSize,
+                bodySize: panel.bodySize,
+                imageFraction: panel.imageFraction,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
                 preservedDirectives: preservedPanelDirectives,
@@ -324,6 +384,21 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         ],
                       ),
                       SizedBox(height: sc(10)),
+                      if (!panel.hasErrors) ...[
+                        Container(
+                          padding: EdgeInsets.all(sc(8)),
+                          decoration: BoxDecoration(
+                            color: R3Theme.bg,
+                            border: Border.all(color: R3Theme.hairline),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: PresentationCardFacePreview(
+                            card: previewCard(),
+                            resolveSource: widget.resolveImageSource,
+                          ),
+                        ),
+                        SizedBox(height: sc(10)),
+                      ],
                       Row(
                         children: [
                           Expanded(
@@ -340,7 +415,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   labelText: 'Image in workspace images/',
                                 ),
                                 style: widget.theme.value,
-                                onChanged: (String value) => imageDraft = value,
+                                onChanged: (String value) {
+                                  setDialogState(() {
+                                    imageDraft = value;
+                                    errorText = null;
+                                  });
+                                },
                               ),
                             ),
                           ),
@@ -413,7 +493,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                 labelText: 'Panel r,g,b',
                               ),
                               style: widget.theme.value,
-                              onChanged: (String value) => rgbDraft = value,
+                              onChanged: (String value) {
+                                setDialogState(() {
+                                  rgbDraft = value;
+                                  errorText = null;
+                                });
+                              },
                             ),
                           ),
                         ],
@@ -426,7 +511,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         initialValue: headingDraft,
                         decoration: const InputDecoration(labelText: 'Heading / name'),
                         style: widget.theme.value,
-                        onChanged: (String value) => headingDraft = value,
+                        onChanged: (String value) {
+                          setDialogState(() {
+                            headingDraft = value;
+                            errorText = null;
+                          });
+                        },
                       ),
                       SizedBox(height: sc(14)),
                       Text('PANEL CONTENT', style: widget.theme.microAccent),
@@ -543,7 +633,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                         hintText: 'Blank = project font',
                                       ),
                                       style: widget.theme.value,
-                                      onChanged: (String value) => fontDraft = value,
+                                      onChanged: (String value) {
+                                        setDialogState(() {
+                                          fontDraft = value;
+                                          errorText = null;
+                                        });
+                                      },
                                     ),
                                   ),
                                 ),
@@ -611,11 +706,16 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           ),
                           style: widget.theme.value,
                           onChanged: (String value) {
-                            kickerDraft = value;
-                            final String clean = value.trim();
-                            kickerFollowsPresetDefault = clean.isEmpty ||
-                                clean ==
-                                    presentationPanelDefaultKicker(presetDraft);
+                            setDialogState(() {
+                              kickerDraft = value;
+                              final String clean = value.trim();
+                              kickerFollowsPresetDefault = clean.isEmpty ||
+                                  clean ==
+                                      presentationPanelDefaultKicker(
+                                        presetDraft,
+                                      );
+                              errorText = null;
+                            });
                           },
                         ),
                       ),
@@ -632,7 +732,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           helperText: 'Short line directly beneath the heading. Colons are allowed.',
                         ),
                         style: widget.theme.value,
-                        onChanged: (String value) => subtitleDraft = value,
+                        onChanged: (String value) {
+                          setDialogState(() {
+                            subtitleDraft = value;
+                            errorText = null;
+                          });
+                        },
                       ),
                       SizedBox(height: sc(10)),
                       TextFormField(
@@ -651,7 +756,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           alignLabelWithHint: true,
                         ),
                         style: widget.theme.value,
-                        onChanged: (String value) => metadataDraft = value,
+                        onChanged: (String value) {
+                          setDialogState(() {
+                            metadataDraft = value;
+                            errorText = null;
+                          });
+                        },
                       ),
                       SizedBox(height: sc(14)),
                       Text('BIOGRAPHY', style: widget.theme.microAccent),
@@ -678,7 +788,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           alignLabelWithHint: true,
                         ),
                         style: widget.theme.value,
-                        onChanged: (String value) => bodyDraft = value,
+                        onChanged: (String value) {
+                          setDialogState(() {
+                            bodyDraft = value;
+                            errorText = null;
+                          });
+                        },
                       ),
                     ],
                   ),

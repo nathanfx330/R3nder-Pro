@@ -1188,6 +1188,8 @@ class _EditSurfaceState extends State<EditSurface> {
                   maximizeCues: selectedMaximizeCues,
                   playheadFrame: _effectiveFrame,
                   cardImageOptions: selected == null ? null : _cardImageOptions,
+                  cardResolveSource:
+                      widget.resolveSource ?? resolveWorkspaceMediaSource,
                   dossierFolderOptions:
                       selected == null ? null : _dossierFolderOptions,
                   dossierImageOptions:

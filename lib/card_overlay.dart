@@ -121,12 +121,15 @@ class CardOverlayImageCache {
     return key.isEmpty ? null : _images[key];
   }
 
-  Future<bool> ensure(
-    Iterable<StructuralCardOverlayPlacement> placements,
-  ) async {
+  /// Ensures decoded images for arbitrary CARD-family requests.
+  ///
+  /// Runtime placement loading and the EDIT inspector face preview share this
+  /// exact cache/decode path so authoring cannot quietly use different image
+  /// semantics from Preview/BAKE.
+  Future<bool> ensureCards(Iterable<CardRequest> cards) async {
     bool changed = false;
-    for (final StructuralCardOverlayPlacement placement in placements) {
-      final String key = structuralCardImageSource(placement.card);
+    for (final CardRequest card in cards) {
+      final String key = structuralCardImageSource(card);
       if (key.isEmpty ||
           _images.containsKey(key) ||
           _failed.contains(key) ||
@@ -158,6 +161,15 @@ class CardOverlayImageCache {
     }
     return changed;
   }
+
+  Future<bool> ensure(
+    Iterable<StructuralCardOverlayPlacement> placements,
+  ) =>
+      ensureCards(
+        placements.map(
+          (StructuralCardOverlayPlacement placement) => placement.card,
+        ),
+      );
 
   void dispose() {
     if (_disposed) return;
