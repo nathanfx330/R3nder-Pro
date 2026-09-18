@@ -179,7 +179,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 34.0 * scale,
+          fontSize: (content.headingSize ?? 34.0) * scale,
           fontWeight: FontWeight.w800,
           letterSpacing: -0.15 * scale,
           height: 1.02,
@@ -254,7 +254,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 15.5 * scale,
+          fontSize: (content.bodySize ?? 15.5) * scale,
           fontWeight: FontWeight.w500,
           height: 1.40,
           color: bodyColor.withValues(alpha: 0.94),
@@ -319,7 +319,7 @@ void _paintEditorialPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 32.0 * scale,
+          fontSize: (content.headingSize ?? 32.0) * scale,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.0,
           height: 1.08,
@@ -341,7 +341,7 @@ void _paintEditorialPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 17.0 * scale,
+          fontSize: (content.bodySize ?? 17.0) * scale,
           fontWeight: FontWeight.w400,
           height: 1.50,
           color: bodyColor.withValues(alpha: 0.96),
