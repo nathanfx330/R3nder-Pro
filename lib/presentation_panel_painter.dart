@@ -132,6 +132,23 @@ void paintPresentationPanelContent({
   required String inheritedFontFamily,
   required bool showKicker,
 }) {
+  if (content.preset == PresentationPanelPreset.editorial) {
+    _paintEditorialPanelContent(
+      canvas: canvas,
+      cardRect: cardRect,
+      contentTop: contentTop,
+      content: content,
+      pad: pad,
+      scale: scale,
+      panelColor: panelColor,
+      headColor: headColor,
+      bodyColor: bodyColor,
+      inheritedFontFamily: inheritedFontFamily,
+      showKicker: showKicker,
+    );
+    return;
+  }
+
   final String fontFamily =
       presentationPanelFontFamily(content, inheritedFontFamily);
   final Color accent = presentationPanelAccentColor(
@@ -143,10 +160,11 @@ void paintPresentationPanelContent({
   final double textW = math.max(0.0, right - left);
   double cursorY = contentTop + pad * 0.70;
 
-  if (showKicker) {
+  final String kickerText = presentationPanelKickerText(content);
+  if (showKicker && kickerText.isNotEmpty) {
     final double kickerH = _paintKicker(
       canvas: canvas,
-      text: presentationPanelKickerText(content),
+      text: kickerText,
       origin: Offset(left, cursorY),
       maxWidth: textW,
       fontFamily: fontFamily,
@@ -163,7 +181,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 34.0 * scale,
+          fontSize: (content.headingSize ?? 34.0) * scale,
           fontWeight: FontWeight.w800,
           letterSpacing: -0.15 * scale,
           height: 1.02,
@@ -238,7 +256,7 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 15.5 * scale,
+          fontSize: (content.bodySize ?? 15.5) * scale,
           fontWeight: FontWeight.w500,
           height: 1.40,
           color: bodyColor.withValues(alpha: 0.94),
@@ -281,7 +299,13 @@ void paintPresentationCardFace({
     body: card.body,
   );
   final bool rich = content.preset != PresentationPanelPreset.simple;
-  final double cardImageFrac = rich ? 0.34 : 0.42;
+  final bool editorial =
+      content.preset == PresentationPanelPreset.editorial;
+  final bool photoRich =
+      content.preset == PresentationPanelPreset.documentary ||
+      content.preset == PresentationPanelPreset.dossier;
+  final double cardImageFrac = content.imageFraction ??
+      (editorial ? 0.38 : (rich ? 0.34 : 0.42));
 
   final double scale = math.min(
     compositionSize.width / 1920.0,
@@ -307,7 +331,7 @@ void paintPresentationCardFace({
       darkPanel ? const Color(0xDDE8E5E0) : const Color(0xDD26221E);
   final Color ruleColor = headColor.withValues(alpha: 0.55);
 
-  if (rich) {
+  if (photoRich) {
     final Color surfaceTop = darkPanel
         ? Color.lerp(panelColor, Colors.white, 0.045)!
         : Color.lerp(panelColor, Colors.white, 0.16)!;
@@ -351,7 +375,7 @@ void paintPresentationCardFace({
     _drawImageCover(canvas, image, imageRect);
   }
 
-  if (rich && imageRect != null) {
+  if (photoRich && imageRect != null) {
     paintPresentationPanelPhotoTreatment(
       canvas: canvas,
       imageRect: imageRect,
@@ -377,7 +401,7 @@ void paintPresentationCardFace({
       headColor: headColor,
       bodyColor: bodyColor,
       inheritedFontFamily: inheritedFontFamily,
-      showKicker: imageRect == null,
+      showKicker: editorial || imageRect == null,
     );
   } else {
     _paintSimpleCardContent(
@@ -397,6 +421,98 @@ void paintPresentationCardFace({
   canvas.restore();
 }
 
+void _paintEditorialPanelContent({
+  required Canvas canvas,
+  required Rect cardRect,
+  required double contentTop,
+  required PresentationPanelContent content,
+  required double pad,
+  required double scale,
+  required Color panelColor,
+  required Color headColor,
+  required Color bodyColor,
+  required String inheritedFontFamily,
+  required bool showKicker,
+}) {
+  final String fontFamily =
+      presentationPanelFontFamily(content, inheritedFontFamily);
+  final Color accent = presentationPanelAccentColor(
+    panelColor: panelColor,
+    headColor: headColor,
+  );
+  final double left = cardRect.left + pad;
+  final double right = cardRect.right - pad;
+  final double textW = math.max(0.0, right - left);
+  double cursorY = contentTop + pad * 0.78;
+
+  final String kicker = presentationPanelKickerText(content);
+  if (showKicker && kicker.isNotEmpty) {
+    final TextPainter kickerPainter = TextPainter(
+      text: TextSpan(
+        text: kicker.toUpperCase(),
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: 10.5 * scale,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.65 * scale,
+          color: accent.withValues(alpha: 0.94),
+        ),
+      ),
+      maxLines: 1,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+    kickerPainter.paint(canvas, Offset(left, cursorY));
+    cursorY += kickerPainter.height + pad * 0.34;
+  }
+
+  if (content.heading.isNotEmpty) {
+    final TextPainter heading = TextPainter(
+      text: TextSpan(
+        text: content.heading,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: (content.headingSize ?? 32.0) * scale,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.0,
+          height: 1.08,
+          color: headColor,
+        ),
+      ),
+      maxLines: 3,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+    heading.paint(canvas, Offset(left, cursorY));
+    cursorY += heading.height + pad * 0.52;
+  }
+
+  if (content.body.isNotEmpty && cursorY < cardRect.bottom - pad) {
+    final TextPainter body = TextPainter(
+      text: TextSpan(
+        text: content.body,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: (content.bodySize ?? 17.0) * scale,
+          fontWeight: FontWeight.w400,
+          height: 1.50,
+          color: bodyColor.withValues(alpha: 0.96),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTRB(left, cursorY, right, cardRect.bottom - pad),
+    );
+    body.paint(canvas, Offset(left, cursorY));
+    canvas.restore();
+  }
+}
+
 void _paintSimpleCardContent({
   required Canvas canvas,
   required Rect cardRect,
@@ -409,8 +525,8 @@ void _paintSimpleCardContent({
   required Color ruleColor,
   required String fontFamily,
 }) {
-  const double cardHeadingSize = 34.0;
-  const double cardBodySize = 20.0;
+  final double cardHeadingSize = content.headingSize ?? 34.0;
+  final double cardBodySize = content.bodySize ?? 20.0;
   final String selectedFontFamily = presentationPanelFontFamily(
     content,
     fontFamily,
