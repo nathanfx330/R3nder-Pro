@@ -31,11 +31,13 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'cue_span_layer.dart';
 import 'dossier_overlay.dart';
 import 'edit_clip_inspector.dart';
 import 'edit_cue.dart';
 import 'edit_cue_authoring.dart';
 import 'edit_cue_overlap.dart';
+import 'edit_cue_sliding.dart';
 import 'edit_model.dart';
 import 'edit_playback_frame.dart';
 import 'edit_source_history.dart';
@@ -584,6 +586,35 @@ class _EditSurfaceState extends State<EditSurface> {
     if (changed && mounted) _timelineFocusNode.requestFocus();
   }
 
+  bool _moveCueFromTimeline(
+    CueMoveBaseline baseline,
+    int targetStartFrame,
+  ) {
+    final bool changed = _commit((EditSurfaceDocument current) {
+      return moveCueTrigger(
+        document: current,
+        trackId: baseline.trackId,
+        clipId: baseline.clipId,
+        baseline: baseline,
+        targetProjectFrame: targetStartFrame,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
+      );
+    });
+    if (changed && mounted) {
+      setState(() {
+        _selectedTrackId = baseline.trackId;
+        _selectedClipId = baseline.clipId;
+      });
+      _timelineFocusNode.requestFocus();
+    }
+    return changed;
+  }
+
+  void _rejectCueMovePreview(String message) {
+    if (!mounted) return;
+    setState(() => _error = message);
+  }
+
   int _dossierCueDurationFrames(DossierRequest dossier) {
     final String Function(String source) resolver =
         widget.resolveSource ?? resolveWorkspaceMediaSource;
@@ -593,20 +624,6 @@ class _EditSurfaceState extends State<EditSurface> {
       dossier,
       evidencePageCount: evidencePages,
     ).durationFrames;
-  }
-
-  List<CueOverlapDiagnostic> _cueOverlapDiagnostics(
-    EditSurfaceDocument document,
-  ) {
-    try {
-      return cueOverlapDiagnostics(
-        document,
-        dossierDurationFramesFor: _dossierCueDurationFrames,
-      );
-    } catch (_) {
-      // Diagnostics must never make the EDIT repair surface unavailable.
-      return const <CueOverlapDiagnostic>[];
-    }
   }
 
   List<String> _cardImageOptions() {
@@ -969,8 +986,20 @@ class _EditSurfaceState extends State<EditSurface> {
     final List<EditMaximizeCue> selectedMaximizeCues = selected == null
         ? const <EditMaximizeCue>[]
         : _maximizeCuesFor(selected);
-    final List<CueOverlapDiagnostic> cueOverlapWarnings =
-        _cueOverlapDiagnostics(document);
+
+    List<CueOccupiedSpan> timelineCueSpans = const <CueOccupiedSpan>[];
+    List<CueOverlapDiagnostic> cueOverlapWarnings =
+        const <CueOverlapDiagnostic>[];
+    try {
+      timelineCueSpans = projectCueOccupiedSpans(
+        document,
+        dossierDurationFramesFor: _dossierCueDurationFrames,
+      );
+      cueOverlapWarnings = cueOverlapDiagnosticsForSpans(timelineCueSpans);
+    } catch (_) {
+      // Resolver-aware cue overlays are diagnostic/authoring UI. A resolver
+      // failure must not make the EDIT itself unavailable.
+    }
 
     List<MarkerInstance> timelineMarkers = const <MarkerInstance>[];
     List<DerivedLandmark> timelineDerived = const <DerivedLandmark>[];
@@ -1099,6 +1128,8 @@ class _EditSurfaceState extends State<EditSurface> {
                                                           contentFrames,
                                                           timelineMarkers,
                                                           timelineDerived,
+                                                          document,
+                                                          timelineCueSpans,
                                                         ),
                                                         for (final String trackId
                                                             in trackIds)
@@ -1451,54 +1482,82 @@ class _EditSurfaceState extends State<EditSurface> {
     int frames,
     List<MarkerInstance> markers,
     List<DerivedLandmark> derived,
+    EditSurfaceDocument document,
+    List<CueOccupiedSpan> cueSpans,
   ) {
-    return GestureDetector(
-      key: const ValueKey<String>('edit-timeline-scrub'),
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (TapDownDetails details) {
-        _seekOnce(_frameFromDx(details.localPosition.dx, frames));
-      },
-      onHorizontalDragStart: (DragStartDetails details) {
-        _startScrub(_frameFromDx(details.localPosition.dx, frames));
-      },
-      onHorizontalDragUpdate: (DragUpdateDetails details) {
-        _queueScrub(_frameFromDx(details.localPosition.dx, frames));
-      },
-      onHorizontalDragEnd: (_) {
-        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
-      },
-      onHorizontalDragCancel: () {
-        _finishScrub(_pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame);
-      },
-      child: SizedBox(
-        height: _kRulerHeight,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(
-                size: Size(width, _kRulerHeight),
-                painter: _EditRulerPainter(
-                  pixelsPerFrame: _pixelsPerFrame,
-                  frames: frames,
-                  theme: widget.theme,
-                ),
+    return SizedBox(
+      height: _kRulerHeight,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              key: const ValueKey<String>('edit-timeline-scrub'),
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (TapDownDetails details) {
+                _seekOnce(_frameFromDx(details.localPosition.dx, frames));
+              },
+              onHorizontalDragStart: (DragStartDetails details) {
+                _startScrub(_frameFromDx(details.localPosition.dx, frames));
+              },
+              onHorizontalDragUpdate: (DragUpdateDetails details) {
+                _queueScrub(_frameFromDx(details.localPosition.dx, frames));
+              },
+              onHorizontalDragEnd: (_) {
+                _finishScrub(
+                  _pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame,
+                );
+              },
+              onHorizontalDragCancel: () {
+                _finishScrub(
+                  _pendingScrubFrame ?? _lastSeekSent ?? _effectiveFrame,
+                );
+              },
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      size: Size(width, _kRulerHeight),
+                      painter: _EditRulerPainter(
+                        pixelsPerFrame: _pixelsPerFrame,
+                        frames: frames,
+                        theme: widget.theme,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: kTimelineLandmarkLayerHeight,
+                    child: TimelineLandmarkLayer(
+                      markers: markers,
+                      derived: derived,
+                      totalFrames: frames,
+                      pixelsPerFrame: _pixelsPerFrame,
+                      theme: widget.theme,
+                    ),
+                  ),
+                ],
               ),
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: kTimelineLandmarkLayerHeight,
-              child: TimelineLandmarkLayer(
-                markers: markers,
-                derived: derived,
-                totalFrames: frames,
-                pixelsPerFrame: _pixelsPerFrame,
-                theme: widget.theme,
-              ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: sc(2),
+            height: kCueSpanLayerHeight,
+            child: CueSpanLayer(
+              document: document,
+              spans: cueSpans,
+              totalFrames: frames,
+              pixelsPerFrame: _pixelsPerFrame,
+              theme: widget.theme,
+              enabled: !widget.isPlaying,
+              onCommit: _moveCueFromTimeline,
+              onInvalidRelease: _rejectCueMovePreview,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

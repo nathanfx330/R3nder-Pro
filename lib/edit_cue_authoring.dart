@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'card_presentation.dart';
 import 'edit_cue.dart';
 import 'edit_cue_overlap.dart';
+import 'edit_cue_sliding.dart';
 import 'edit_surface_model.dart';
 import 'maximize_presentation.dart';
 import 'presentation_requests.dart';
@@ -340,6 +341,147 @@ String updateMaximizeCue({
     replacement,
   );
   _validateResult(next, document.editId, trackId, clipId);
+  return next;
+}
+
+/// Moves one authored CUE trigger without rebuilding its payload.
+///
+/// [baseline] is the immutable drag-start collision snapshot. Current DOSSIER
+/// durations are resolved again here before source is touched, so a workspace
+/// change during the gesture cannot silently author an overlap.
+String moveCueTrigger({
+  required EditSurfaceDocument document,
+  required String trackId,
+  required String clipId,
+  required CueMoveBaseline baseline,
+  required int targetProjectFrame,
+  DossierCueDurationFramesResolver? dossierDurationFramesFor,
+}) {
+  if (baseline.trackId != trackId || baseline.clipId != clipId) {
+    throw const EditCueAuthoringException(
+      'CUE drag baseline no longer belongs to the selected CLIP.',
+    );
+  }
+
+  final EditSurfaceClip selected = document.clip(trackId, clipId);
+  final int projectOffset = targetProjectFrame - selected.atFrame;
+  if (projectOffset < 0 || projectOffset >= selected.durationFrames) {
+    throw ArgumentError.value(
+      targetProjectFrame,
+      'targetProjectFrame',
+      'CUE trigger must remain inside its owning CLIP.',
+    );
+  }
+  if (!isReachableCueProjectOffset(selected.clip.speed, projectOffset)) {
+    throw ArgumentError.value(
+      targetProjectFrame,
+      'targetProjectFrame',
+      'CUE trigger project frame is not reachable at the CLIP speed.',
+    );
+  }
+
+  final List<CueOccupiedSpan> freshSpans = projectCueOccupiedSpans(
+    document,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+  );
+  final CueOccupiedSpan moving = freshSpans.singleWhere(
+    (CueOccupiedSpan span) =>
+        span.sourceStartOffset == baseline.sourceStartOffset,
+    orElse: () => throw const EditCueAuthoringException(
+      'Unable to reacquire the dragged CUE from canonical source.',
+    ),
+  );
+  if (moving.trackId != trackId || moving.clipId != clipId) {
+    throw const EditCueAuthoringException(
+      'Dragged CUE moved to a different CLIP before commit.',
+    );
+  }
+
+  final int durationFrames =
+      moving.range.endFrameExclusive - moving.range.startFrame;
+  final CueOccupiedSpan candidate = CueOccupiedSpan(
+    lane: moving.lane,
+    kind: moving.kind,
+    trackId: moving.trackId,
+    clipId: moving.clipId,
+    sourceFrame: moving.sourceFrame,
+    range: CueOccupiedRange(
+      startFrame: targetProjectFrame,
+      endFrameExclusive: targetProjectFrame + durationFrames,
+    ),
+    sourceStartOffset: baseline.sourceStartOffset,
+  );
+  final CueMoveCommitValidation validation = validateCueMoveCommit(
+    baseline: baseline,
+    candidate: candidate,
+    freshSpans: freshSpans,
+  );
+  if (!validation.isLegal) {
+    throw EditCueAuthoringException(
+      validation.message ?? 'CUE move is not legal.',
+    );
+  }
+
+  final int sourceDelta = canonicalCueSourceDeltaForProjectOffset(
+    selected.clip.speed,
+    projectOffset,
+  );
+  final int sourceFrame = selected.inFrame + sourceDelta;
+  final String source = document.source;
+  final int cueStart = baseline.sourceStartOffset;
+  if (cueStart < 0 ||
+      cueStart + 5 > source.length ||
+      !source.startsWith('[CUE:', cueStart)) {
+    throw const EditCueAuthoringException(
+      'Dragged CUE source anchor is no longer valid.',
+    );
+  }
+  final int digitsStart = cueStart + 5;
+  final int close = source.indexOf(']', digitsStart);
+  if (close < 0 || close >= selected.clip.block.closeStartOffset) {
+    throw const EditCueAuthoringException(
+      'Dragged CUE trigger is malformed.',
+    );
+  }
+  final int? previousSourceFrame =
+      int.tryParse(source.substring(digitsStart, close));
+  if (previousSourceFrame == null) {
+    throw const EditCueAuthoringException(
+      'Dragged CUE trigger is not an integer source frame.',
+    );
+  }
+  if (previousSourceFrame == sourceFrame) return source;
+
+  final String next = source.replaceRange(
+    digitsStart,
+    close,
+    '$sourceFrame',
+  );
+  _validateResult(next, document.editId, trackId, clipId);
+
+  // Reparse proof: replacing 99 with 100 may shift every later absolute source
+  // offset, but this CUE's own '[' remains anchored at the same offset.
+  final EditSurfaceDocument reparsed =
+      EditSurfaceDocument.parse(next, document.editId);
+  final List<CueOccupiedSpan> reparsedSpans = projectCueOccupiedSpans(
+    reparsed,
+    dossierDurationFramesFor: dossierDurationFramesFor,
+  );
+  final CueOccupiedSpan reacquired = reparsedSpans.singleWhere(
+    (CueOccupiedSpan span) =>
+        span.sourceStartOffset == baseline.sourceStartOffset,
+    orElse: () => throw const EditCueAuthoringException(
+      'Dragged CUE could not be reacquired after source rewrite.',
+    ),
+  );
+  if (reacquired.trackId != trackId ||
+      reacquired.clipId != clipId ||
+      reacquired.range.startFrame != targetProjectFrame) {
+    throw const EditCueAuthoringException(
+      'Dragged CUE did not reproject to the committed frame.',
+    );
+  }
+
   return next;
 }
 

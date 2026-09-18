@@ -45,12 +45,106 @@ class CueOccupiedRange {
   final int startFrame;
   final int endFrameExclusive;
 
-  bool overlaps(CueOccupiedRange other) =>
-      startFrame < other.endFrameExclusive &&
-      other.startFrame < endFrameExclusive;
+  int intersectionFrames(CueOccupiedRange other) {
+    final int start = startFrame > other.startFrame
+        ? startFrame
+        : other.startFrame;
+    final int end = endFrameExclusive < other.endFrameExclusive
+        ? endFrameExclusive
+        : other.endFrameExclusive;
+    final int frames = end - start;
+    return frames > 0 ? frames : 0;
+  }
+
+  bool overlaps(CueOccupiedRange other) => intersectionFrames(other) > 0;
 
   @override
   String toString() => '[$startFrame, $endFrameExclusive)';
+}
+
+/// Smallest project offset at or after [requestedOffset] that can be authored
+/// by an integer source-frame CUE under [speed].
+int reachableCueProjectOffsetAtOrAfter(
+  ExactClipSpeed speed,
+  int requestedOffset,
+) {
+  if (requestedOffset < 0) {
+    throw ArgumentError.value(
+      requestedOffset,
+      'requestedOffset',
+      'Project offset must be non-negative.',
+    );
+  }
+  final int sourceDelta = requestedOffset == 0
+      ? 0
+      : ((requestedOffset - 1) * speed.numerator) ~/ speed.denominator + 1;
+  return (sourceDelta * speed.denominator + speed.numerator - 1) ~/
+      speed.numerator;
+}
+
+/// Largest project offset at or before [requestedOffset] that can be authored
+/// by an integer source-frame CUE under [speed].
+int reachableCueProjectOffsetAtOrBefore(
+  ExactClipSpeed speed,
+  int requestedOffset,
+) {
+  if (requestedOffset < 0) {
+    throw ArgumentError.value(
+      requestedOffset,
+      'requestedOffset',
+      'Project offset must be non-negative.',
+    );
+  }
+  final int sourceDelta =
+      (requestedOffset * speed.numerator) ~/ speed.denominator;
+  return (sourceDelta * speed.denominator + speed.numerator - 1) ~/
+      speed.numerator;
+}
+
+/// Reachable project offset nearest [requestedOffset]. Exact ties choose the
+/// lower offset so dragging is deterministic and does not bias one direction.
+int nearestReachableCueProjectOffset(
+  ExactClipSpeed speed,
+  int requestedOffset,
+) {
+  final int lower = reachableCueProjectOffsetAtOrBefore(
+    speed,
+    requestedOffset,
+  );
+  final int upper = reachableCueProjectOffsetAtOrAfter(
+    speed,
+    requestedOffset,
+  );
+  return requestedOffset - lower <= upper - requestedOffset ? lower : upper;
+}
+
+bool isReachableCueProjectOffset(
+  ExactClipSpeed speed,
+  int projectOffset,
+) {
+  if (projectOffset < 0) return false;
+  return reachableCueProjectOffsetAtOrBefore(speed, projectOffset) ==
+      projectOffset;
+}
+
+/// Canonical smallest integer source delta that projects to [projectOffset].
+///
+/// The offset must already be reachable. Choosing the smallest equivalent
+/// source frame matters at speeds such as 2/1 where several source frames map
+/// to the same project frame and would diverge after a later slip/speed edit.
+int canonicalCueSourceDeltaForProjectOffset(
+  ExactClipSpeed speed,
+  int projectOffset,
+) {
+  if (!isReachableCueProjectOffset(speed, projectOffset)) {
+    throw ArgumentError.value(
+      projectOffset,
+      'projectOffset',
+      'Project offset is not reachable at speed $speed.',
+    );
+  }
+  if (projectOffset == 0) return 0;
+  return ((projectOffset - 1) * speed.numerator) ~/ speed.denominator + 1;
 }
 
 /// CUE-local request for the side-by-side desktop composition.

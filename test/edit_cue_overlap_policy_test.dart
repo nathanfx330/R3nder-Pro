@@ -143,8 +143,8 @@ void main() {
     );
   });
 
-  test('CARD and MAXIMIZE may occupy identical frames on separate lanes', () {
-    String source = addCardCueAtProjectFrame(
+  test('CARD and MAXIMIZE block each other despite semantic lane split', () {
+    final String source = addCardCueAtProjectFrame(
       document: EditSurfaceDocument.parse(_singleClip, 'main'),
       trackId: 'V1',
       clipId: 'shot',
@@ -152,23 +152,31 @@ void main() {
       card: _card(),
     );
 
-    source = addMaximizeCueAtProjectFrame(
-      document: EditSurfaceDocument.parse(source, 'main'),
-      trackId: 'V1',
-      clipId: 'shot',
-      projectFrame: 0,
-      holdFrames: 16,
+    expect(
+      () => addMaximizeCueAtProjectFrame(
+        document: EditSurfaceDocument.parse(source, 'main'),
+        trackId: 'V1',
+        clipId: 'shot',
+        projectFrame: 0,
+        holdFrames: 16,
+      ),
+      throwsA(isA<EditCueAuthoringException>()),
     );
+  });
 
-    expect(parseClipCardCues(
-      EditSurfaceDocument.parse(source, 'main').clip('V1', 'shot').clip,
-    ), hasLength(1));
-    expect(parseClipMaximizeCues(
-      EditSurfaceDocument.parse(source, 'main').clip('V1', 'shot').clip,
-    ), hasLength(1));
+  test('legacy CARD and MAXIMIZE overlap is resolver-aware diagnostic truth', () {
+    const String source = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:shot:video/shot.mp4:0:0:160:1]
+[CUE:0][CARD:card.png:8]Card.[/CARD][/CUE]
+[CUE:10][MAXIMIZE:16][/CUE]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+''';
     expect(
       cueOverlapDiagnostics(EditSurfaceDocument.parse(source, 'main')),
-      isEmpty,
+      hasLength(1),
     );
   });
 

@@ -4,7 +4,7 @@ Parser / runtime
 : Existing overlapping CUEs remain parseable and deterministic.
 
 GUI cue authoring
-: Creation and duration edits reject new same-lane occupied-range overlap.
+: Creation and duration edits reject new conflicting occupied-range overlap.
 
 Clip geometry
 : Slip, trim, and speed remain independent and may later create overlap through source-to-project rounding. That is permitted.
@@ -30,7 +30,7 @@ That hybrid is intentional. It also means a later slip, trim-IN, or speed edit c
 
 The authoring policy does not guard those CLIP operations.
 
-## Collision lanes
+## Semantic lanes and collision policy
 
 Presentation lane:
 
@@ -42,9 +42,16 @@ Shell lane:
 
 - MAXIMIZE
 
-Same-lane intersection is rejected while authoring a new CUE or changing a CUE duration. Exact abutment is legal.
+The lanes describe what the cue means and how the UI renders it. They are not
+separate authoring collision universes.
 
-CARD/SIDECARD/DOSSIER do not block MAXIMIZE. MAXIMIZE blocks another MAXIMIZE.
+All currently supported CUE intervals are mutually exclusive. A CARD,
+SIDECARD, DOSSIER, or MAXIMIZE blocks every other CUE interval. Exact abutment
+is legal.
+
+This was tightened after manual timeline testing: allowing MAXIMIZE to pass
+through a CARD meant the UI could author fullscreen shell motion while card
+content was still presenting, which is not a coherent authored state.
 
 ## No visibility clamp
 
@@ -64,7 +71,7 @@ The EDIT UI obtains that duration from the same asset-backed page-count and DOSS
 
 Historical or hand-authored overlap still parses and plays. The old stacking-order runtime test remains, with its intent changed from supported GUI authoring to runtime tolerance.
 
-A separate resolver-aware diagnostic projection scans current occupied ranges and reports same-lane overlap. It is not ScriptLinter or EditGraphLinter. This distinction matters because the same unchanged script can gain or lose a DOSSIER overlap when workspace assets change.
+A separate resolver-aware diagnostic projection scans current occupied ranges and reports conflicting overlap. It is not ScriptLinter or EditGraphLinter. This distinction matters because the same unchanged script can gain or lose a DOSSIER overlap when workspace assets change.
 
 The EDIT surface displays these diagnostics as warnings. They do not rewrite source.
 
@@ -73,10 +80,11 @@ The EDIT surface displays these diagnostics as warnings. They do not rewrite sou
 The test suite protects both halves of the design:
 
 - exact abutment is accepted
-- same-lane intersection is rejected on creation
+- conflicting CUE intersection is rejected on creation
 - duration expansion into a neighbor is rejected
-- CARD and MAXIMIZE may overlap
+- CARD and MAXIMIZE mutually block despite distinct semantic lanes
 - CARD/SIDECARD/DOSSIER mutually block
+- MAXIMIZE also blocks every presentation cue
 - edit self-comparison is excluded by exact CUE source offset
 - inert CUEs outside the current CLIP source window block nothing
 - DOSSIER diagnostics change with injected resolved duration

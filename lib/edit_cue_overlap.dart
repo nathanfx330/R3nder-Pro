@@ -4,8 +4,8 @@
 //
 // Parser/runtime tolerance is deliberately broader than GUI authoring policy.
 // Existing overlapping source remains valid and deterministic. This layer only
-// projects occupied ranges and reports same-lane intersections so authoring can
-// reject new ones and the EDIT surface can warn about overlaps produced later
+// projects occupied ranges and reports authoring-conflict intersections so
+// new edits can be rejected and the EDIT surface can warn about overlaps later
 // by slip, trim, speed, or workspace asset changes.
 
 import 'card_presentation.dart';
@@ -21,6 +21,33 @@ typedef DossierCueDurationFramesResolver = int Function(
 enum CueCollisionLane {
   presentation,
   shell,
+}
+
+
+/// Semantic lanes remain distinct for rendering and diagnostics, but current
+/// authoring policy treats every CUE interval as mutually exclusive.
+///
+/// Keep this as an explicit matrix rather than collapsing the lanes: MAXIMIZE
+/// is still shell geometry rather than content presentation, and a future cue
+/// kind can change compatibility here without rewriting projection/UI meaning.
+bool cueCollisionLanesConflict(
+  CueCollisionLane first,
+  CueCollisionLane second,
+) {
+  switch (first) {
+    case CueCollisionLane.presentation:
+      switch (second) {
+        case CueCollisionLane.presentation:
+        case CueCollisionLane.shell:
+          return true;
+      }
+    case CueCollisionLane.shell:
+      switch (second) {
+        case CueCollisionLane.presentation:
+        case CueCollisionLane.shell:
+          return true;
+      }
+  }
 }
 
 enum CuePayloadKind {
@@ -211,7 +238,7 @@ CueOccupiedSpan? firstCueOverlap({
     dossierDurationFramesFor: dossierDurationFramesFor,
   )) {
     if (existing.sourceStartOffset == excludingSourceStartOffset) continue;
-    if (existing.lane != candidate.lane) continue;
+    if (!cueCollisionLanesConflict(existing.lane, candidate.lane)) continue;
     if (candidate.range.overlaps(existing.range)) return existing;
   }
   return null;
@@ -226,23 +253,27 @@ List<CueOverlapDiagnostic> cueOverlapDiagnostics(
   EditSurfaceDocument document, {
   DossierCueDurationFramesResolver? dossierDurationFramesFor,
 }) {
-  final List<CueOccupiedSpan> spans = projectCueOccupiedSpans(
-    document,
-    dossierDurationFramesFor: dossierDurationFramesFor,
+  return cueOverlapDiagnosticsForSpans(
+    projectCueOccupiedSpans(
+      document,
+      dossierDurationFramesFor: dossierDurationFramesFor,
+    ),
   );
+}
+
+List<CueOverlapDiagnostic> cueOverlapDiagnosticsForSpans(
+  List<CueOccupiedSpan> spans,
+) {
   final List<CueOverlapDiagnostic> out = <CueOverlapDiagnostic>[];
 
   for (int i = 0; i < spans.length; i++) {
     final CueOccupiedSpan first = spans[i];
     for (int j = i + 1; j < spans.length; j++) {
       final CueOccupiedSpan second = spans[j];
-      if (second.range.startFrame >= first.range.endFrameExclusive &&
-          second.lane == first.lane) {
-        // Same-lane spans are start-sorted, but another lane may be interleaved,
-        // so this is only an inexpensive skip rather than an outer-loop break.
-        continue;
+      if (second.range.startFrame >= first.range.endFrameExclusive) {
+        break;
       }
-      if (first.lane != second.lane) continue;
+      if (!cueCollisionLanesConflict(first.lane, second.lane)) continue;
       if (!first.range.overlaps(second.range)) continue;
       out.add(CueOverlapDiagnostic(first, second));
     }
