@@ -51,8 +51,19 @@ class _HarnessState extends State<_Harness> {
   }
 }
 
+void desktopTestWidgets(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  testWidgets(description, (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await body(tester);
+  });
+}
+
 void main() {
-  testWidgets('EDIT inspector authors cue at playhead and undo restores source',
+  desktopTestWidgets('EDIT inspector authors cue at playhead and undo restores source',
       (WidgetTester tester) async {
     final GlobalKey<_HarnessState> key = GlobalKey<_HarnessState>();
     await tester.pumpWidget(_Harness(key: key));
