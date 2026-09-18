@@ -1082,8 +1082,12 @@ void paintPresentationCardFace({
     heading: card.heading,
     body: card.body,
   );
-  final bool rich = content.preset != PresentationPanelPreset.simple;
-  final double cardImageFrac = rich ? 0.34 : 0.42;
+  final bool structured =
+      content.preset != PresentationPanelPreset.simple;
+  final bool editorial =
+      content.preset == PresentationPanelPreset.editorial;
+  final bool photoTreated = structured && !editorial;
+  final double cardImageFrac = editorial ? 0.38 : (photoTreated ? 0.34 : 0.42);
   final double s = math.min(
     compositionSize.width / 1920.0,
     compositionSize.height / 1080.0,
@@ -1108,7 +1112,7 @@ void paintPresentationCardFace({
       darkPanel ? const Color(0xDDE8E5E0) : const Color(0xDD26221E);
   final Color ruleColor = headColor.withValues(alpha: 0.55);
 
-  if (rich) {
+  if (photoTreated) {
     final Color surfaceTop = darkPanel
         ? Color.lerp(panelColor, Colors.white, 0.045)!
         : Color.lerp(panelColor, Colors.white, 0.16)!;
@@ -1152,7 +1156,7 @@ void paintPresentationCardFace({
     _drawImageCover(canvas, image, imageRect);
   }
 
-  if (rich && imageRect != null) {
+  if (photoTreated && imageRect != null) {
     paintPresentationPanelPhotoTreatment(
       canvas: canvas,
       imageRect: imageRect,
@@ -1166,7 +1170,7 @@ void paintPresentationCardFace({
 
   final double pad = cardRect.width * cardPadFrac;
 
-  if (rich) {
+  if (structured) {
     paintPresentationPanelContent(
       canvas: canvas,
       cardRect: cardRect,
@@ -1178,7 +1182,7 @@ void paintPresentationCardFace({
       headColor: headColor,
       bodyColor: bodyColor,
       inheritedFontFamily: inheritedFontFamily,
-      showKicker: imageRect == null,
+      showKicker: editorial || imageRect == null,
     );
   } else {
     _paintSimpleCardContent(

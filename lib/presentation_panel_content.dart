@@ -26,6 +26,7 @@
 
 enum PresentationPanelPreset {
   simple,
+  editorial,
   documentary,
   dossier,
 }
@@ -34,6 +35,8 @@ PresentationPanelPreset? _tryPresentationPanelPresetFromName(String raw) {
   switch (raw.trim().toUpperCase()) {
     case 'SIMPLE':
       return PresentationPanelPreset.simple;
+    case 'EDITORIAL':
+      return PresentationPanelPreset.editorial;
     case 'DOCUMENTARY':
       return PresentationPanelPreset.documentary;
     case 'DOSSIER':
@@ -50,6 +53,8 @@ String presentationPanelPresetName(PresentationPanelPreset preset) {
   switch (preset) {
     case PresentationPanelPreset.simple:
       return 'SIMPLE';
+    case PresentationPanelPreset.editorial:
+      return 'EDITORIAL';
     case PresentationPanelPreset.documentary:
       return 'DOCUMENTARY';
     case PresentationPanelPreset.dossier:
@@ -57,13 +62,15 @@ String presentationPanelPresetName(PresentationPanelPreset preset) {
   }
 }
 
-/// Semantic label shown over the portrait when no KICKER is authored.
+/// Semantic label used when a preset defines an implicit KICKER.
 ///
-/// Keeping this alongside the source model lets the renderer and GUI agree on
-/// the visible default without forcing an otherwise redundant KICKER line into
-/// every script.
+/// EDITORIAL deliberately has no implicit kicker: its category line is optional
+/// authored content below the hero image. DOCUMENTARY/DOSSIER keep their legacy
+/// semantic defaults so existing rich cards remain visually unchanged.
 String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
   switch (preset) {
+    case PresentationPanelPreset.editorial:
+      return '';
     case PresentationPanelPreset.dossier:
       return 'DOSSIER / SUBJECT FILE';
     case PresentationPanelPreset.simple:

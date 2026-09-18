@@ -260,4 +260,27 @@ PRESET: DOCUMENTARRY
     expect(parsed.metadata, hasLength(2));
     expect(parsed.body, 'Subject biography.');
   });
+
+  test('EDITORIAL round trips and has no implicit kicker', () {
+    final String body = formatPresentationPanelBody(
+      preset: PresentationPanelPreset.editorial,
+      kicker: 'WILDLIFE',
+      subtitle: '',
+      metadata: const <PresentationPanelMetadata>[],
+      body: 'Elk move to higher elevations.',
+    );
+
+    expect(body, contains('PRESET: EDITORIAL'));
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'Elk in the High Country',
+      body: body,
+    );
+    expect(parsed.preset, PresentationPanelPreset.editorial);
+    expect(parsed.kicker, 'WILDLIFE');
+    expect(
+      presentationPanelDefaultKicker(PresentationPanelPreset.editorial),
+      isEmpty,
+    );
+  });
+
 }

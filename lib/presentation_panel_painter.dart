@@ -136,22 +136,37 @@ void paintPresentationPanelContent({
     panelColor: panelColor,
     headColor: headColor,
   );
+  final bool editorial =
+      content.preset == PresentationPanelPreset.editorial;
   final double left = cardRect.left + pad;
   final double right = cardRect.right - pad;
   final double textW = math.max(0.0, right - left);
   double cursorY = contentTop + pad * 0.70;
 
   if (showKicker) {
-    final double kickerH = _paintKicker(
-      canvas: canvas,
-      text: presentationPanelKickerText(content),
-      origin: Offset(left, cursorY),
-      maxWidth: textW,
-      fontFamily: fontFamily,
-      scale: scale,
-      color: accent,
-    );
-    cursorY += kickerH + pad * 0.34;
+    final String kicker = presentationPanelKickerText(content);
+    if (kicker.isNotEmpty) {
+      final double kickerH = editorial
+          ? _paintEditorialKicker(
+              canvas: canvas,
+              text: kicker,
+              origin: Offset(left, cursorY),
+              maxWidth: textW,
+              fontFamily: fontFamily,
+              scale: scale,
+              color: accent,
+            )
+          : _paintKicker(
+              canvas: canvas,
+              text: kicker,
+              origin: Offset(left, cursorY),
+              maxWidth: textW,
+              fontFamily: fontFamily,
+              scale: scale,
+              color: accent,
+            );
+      cursorY += kickerH + pad * 0.34;
+    }
   }
 
   if (content.heading.isNotEmpty) {
@@ -161,10 +176,10 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 34.0 * scale,
-          fontWeight: FontWeight.w800,
-          letterSpacing: -0.15 * scale,
-          height: 1.02,
+          fontSize: (editorial ? 32.0 : 34.0) * scale,
+          fontWeight: editorial ? FontWeight.w700 : FontWeight.w800,
+          letterSpacing: (editorial ? 0.0 : -0.15) * scale,
+          height: editorial ? 1.08 : 1.02,
           color: headColor,
         ),
       ),
@@ -173,7 +188,7 @@ void paintPresentationPanelContent({
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: textW);
     heading.paint(canvas, Offset(left, cursorY));
-    cursorY += heading.height + pad * 0.18;
+    cursorY += heading.height + pad * (editorial ? 0.30 : 0.18);
   }
 
   if (content.subtitle.isNotEmpty) {
@@ -184,8 +199,8 @@ void paintPresentationPanelContent({
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
           fontSize: 14.5 * scale,
-          fontWeight: FontWeight.w600,
-          height: 1.20,
+          fontWeight: editorial ? FontWeight.w500 : FontWeight.w600,
+          height: editorial ? 1.28 : 1.20,
           color: accent.withValues(alpha: 0.96),
         ),
       ),
@@ -216,19 +231,21 @@ void paintPresentationPanelContent({
   }
 
   if (content.body.isNotEmpty && cursorY < cardRect.bottom - pad) {
-    final String section = content.preset == PresentationPanelPreset.dossier
-        ? 'SUBJECT NOTES'
-        : 'BIOGRAPHY';
-    final double labelH = _paintSectionLabel(
-      canvas: canvas,
-      text: section,
-      origin: Offset(left, cursorY),
-      maxWidth: textW,
-      fontFamily: fontFamily,
-      scale: scale,
-      color: accent.withValues(alpha: 0.82),
-    );
-    cursorY += labelH + pad * 0.22;
+    if (!editorial) {
+      final String section = content.preset == PresentationPanelPreset.dossier
+          ? 'SUBJECT NOTES'
+          : 'BIOGRAPHY';
+      final double labelH = _paintSectionLabel(
+        canvas: canvas,
+        text: section,
+        origin: Offset(left, cursorY),
+        maxWidth: textW,
+        fontFamily: fontFamily,
+        scale: scale,
+        color: accent.withValues(alpha: 0.82),
+      );
+      cursorY += labelH + pad * 0.22;
+    }
 
     final TextPainter body = TextPainter(
       text: TextSpan(
@@ -236,9 +253,9 @@ void paintPresentationPanelContent({
         style: TextStyle(
           fontFamily: fontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 15.5 * scale,
-          fontWeight: FontWeight.w500,
-          height: 1.40,
+          fontSize: (editorial ? 17.0 : 15.5) * scale,
+          fontWeight: editorial ? FontWeight.w400 : FontWeight.w500,
+          height: editorial ? 1.50 : 1.40,
           color: bodyColor.withValues(alpha: 0.94),
         ),
       ),
@@ -252,6 +269,35 @@ void paintPresentationPanelContent({
     body.paint(canvas, Offset(left, cursorY));
     canvas.restore();
   }
+}
+
+double _paintEditorialKicker({
+  required Canvas canvas,
+  required String text,
+  required Offset origin,
+  required double maxWidth,
+  required String fontFamily,
+  required double scale,
+  required Color color,
+}) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: kPresentationPanelFontFallback,
+        fontSize: 10.5 * scale,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.8 * scale,
+        color: color.withValues(alpha: 0.96),
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+  painter.paint(canvas, origin);
+  return math.max(painter.height, 12.0 * scale);
 }
 
 double _paintKicker({
