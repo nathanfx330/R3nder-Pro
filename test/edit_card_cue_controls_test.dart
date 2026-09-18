@@ -515,7 +515,8 @@ void main() {
     );
     expect(legacyPanel.preset, PresentationPanelPreset.simple);
     expect(legacyPanel.structured, isFalse);
-    expect(legacyPanel.body, 'Old body.');
+    expect(legacyPanel.body.trim(), 'Old body.');
+    expect(changedCard!.body, isNot(contains('[PANEL]')));
 
     await tester.tap(
       find.byKey(const ValueKey<String>('edit-card-cue-delete-0')),
