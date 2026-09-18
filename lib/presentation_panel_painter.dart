@@ -136,6 +136,23 @@ void paintPresentationPanelContent({
     panelColor: panelColor,
     headColor: headColor,
   );
+
+  if (content.preset == PresentationPanelPreset.editorial) {
+    _paintEditorialPanelContent(
+      canvas: canvas,
+      cardRect: cardRect,
+      contentTop: contentTop,
+      content: content,
+      pad: pad,
+      scale: scale,
+      fontFamily: fontFamily,
+      accent: accent,
+      headColor: headColor,
+      bodyColor: bodyColor,
+      showKicker: showKicker,
+    );
+    return;
+  }
   final double left = cardRect.left + pad;
   final double right = cardRect.right - pad;
   final double textW = math.max(0.0, right - left);
@@ -252,6 +269,152 @@ void paintPresentationPanelContent({
     body.paint(canvas, Offset(left, cursorY));
     canvas.restore();
   }
+}
+
+void _paintEditorialPanelContent({
+  required Canvas canvas,
+  required Rect cardRect,
+  required double contentTop,
+  required PresentationPanelContent content,
+  required double pad,
+  required double scale,
+  required String fontFamily,
+  required Color accent,
+  required Color headColor,
+  required Color bodyColor,
+  required bool showKicker,
+}) {
+  final double left = cardRect.left + pad;
+  final double right = cardRect.right - pad;
+  final double textW = math.max(0.0, right - left);
+  double cursorY = contentTop + pad * 0.72;
+
+  if (showKicker) {
+    final double kickerH = _paintEditorialKicker(
+      canvas: canvas,
+      text: presentationPanelKickerText(content),
+      origin: Offset(left, cursorY),
+      maxWidth: textW,
+      fontFamily: fontFamily,
+      scale: scale,
+      color: accent,
+    );
+    cursorY += kickerH + pad * 0.34;
+  }
+
+  if (content.heading.isNotEmpty) {
+    final TextPainter heading = TextPainter(
+      text: TextSpan(
+        text: content.heading,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: 32.0 * scale,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.0,
+          height: 1.08,
+          color: headColor,
+        ),
+      ),
+      maxLines: 2,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+    heading.paint(canvas, Offset(left, cursorY));
+    cursorY += heading.height + pad * 0.34;
+  }
+
+  if (content.subtitle.isNotEmpty) {
+    final TextPainter subtitle = TextPainter(
+      text: TextSpan(
+        text: content.subtitle,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: 14.5 * scale,
+          fontWeight: FontWeight.w400,
+          fontStyle: FontStyle.italic,
+          height: 1.28,
+          color: bodyColor.withValues(alpha: 0.76),
+        ),
+      ),
+      maxLines: 2,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+    subtitle.paint(canvas, Offset(left, cursorY));
+    cursorY += subtitle.height + pad * 0.38;
+  }
+
+  if (content.metadata.isNotEmpty) {
+    cursorY = _paintMetadataGrid(
+      canvas: canvas,
+      content: content,
+      left: left,
+      right: right,
+      top: cursorY,
+      cardBottom: cardRect.bottom - pad,
+      fontFamily: fontFamily,
+      scale: scale,
+      accent: accent,
+      headColor: headColor,
+    );
+    cursorY += pad * 0.46;
+  }
+
+  if (content.body.isNotEmpty && cursorY < cardRect.bottom - pad) {
+    final TextPainter body = TextPainter(
+      text: TextSpan(
+        text: content.body,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: 17.0 * scale,
+          fontWeight: FontWeight.w400,
+          height: 1.50,
+          color: bodyColor.withValues(alpha: 0.96),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textW);
+
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTRB(left, cursorY, right, cardRect.bottom - pad),
+    );
+    body.paint(canvas, Offset(left, cursorY));
+    canvas.restore();
+  }
+}
+
+double _paintEditorialKicker({
+  required Canvas canvas,
+  required String text,
+  required Offset origin,
+  required double maxWidth,
+  required String fontFamily,
+  required double scale,
+  required Color color,
+}) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: kPresentationPanelFontFallback,
+        fontSize: 10.5 * scale,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.8 * scale,
+        color: color,
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: math.max(0.0, maxWidth));
+
+  painter.paint(canvas, origin);
+  return math.max(painter.height, 12.0 * scale);
 }
 
 double _paintKicker({
