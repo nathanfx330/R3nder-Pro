@@ -79,10 +79,10 @@ int _differentPixels(
 }) {
   final int width = _size.width.toInt();
   final int height = _size.height.toInt();
-  final int left = rect.left.ceil().clamp(0, width);
-  final int right = rect.right.floor().clamp(0, width);
-  final int top = rect.top.ceil().clamp(0, height);
-  final int bottom = rect.bottom.floor().clamp(0, height);
+  final int left = rect.left.ceil().clamp(0, width).toInt();
+  final int right = rect.right.floor().clamp(0, width).toInt();
+  final int top = rect.top.ceil().clamp(0, height).toInt();
+  final int bottom = rect.bottom.floor().clamp(0, height).toInt();
 
   int count = 0;
   for (int y = top; y < bottom; y++) {
