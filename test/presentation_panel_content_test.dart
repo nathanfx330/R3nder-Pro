@@ -234,6 +234,89 @@ PRESET: DOCUMENTARRY
     expect(parsed.body, 'Biography.');
   });
 
+  test('PANEL size and image directives parse in reference units', () {
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: '''[PANEL]
+PRESET: EDITORIAL
+HEADING_SIZE: 36
+BODY_SIZE: 18.5
+IMAGE: 44%
+[/PANEL]
+Biography.''',
+    );
+
+    expect(parsed.hasErrors, isFalse);
+    expect(parsed.headingSize, 36.0);
+    expect(parsed.bodySize, 18.5);
+    expect(parsed.imageFraction, 0.44);
+    expect(parsed.body, 'Biography.');
+  });
+
+  test('absent PANEL geometry directives preserve legacy null state', () {
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: '''[PANEL]
+PRESET: DOCUMENTARY
+[/PANEL]
+Biography.''',
+    );
+
+    expect(parsed.headingSize, isNull);
+    expect(parsed.bodySize, isNull);
+    expect(parsed.imageFraction, isNull);
+  });
+
+  test('invalid PANEL geometry values are preserved and reported', () {
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: '''[PANEL]
+PRESET: EDITORIAL
+HEADING_SIZE: 0
+BODY_SIZE: nope
+IMAGE: 100%
+[/PANEL]''',
+    );
+
+    expect(parsed.hasErrors, isTrue);
+    expect(parsed.headingSize, isNull);
+    expect(parsed.bodySize, isNull);
+    expect(parsed.imageFraction, isNull);
+    expect(parsed.issues, hasLength(3));
+    expect(
+      parsed.issues.map((PresentationPanelIssue issue) => issue.code),
+      everyElement(PresentationPanelIssueCode.invalidDirectiveValue),
+    );
+    expect(
+      parsed.preservedDirectives,
+      <String>['HEADING_SIZE: 0', 'BODY_SIZE: nope', 'IMAGE: 100%'],
+    );
+  });
+
+  test('canonical writer round trips PANEL geometry directives', () {
+    final String body = formatPresentationPanelBody(
+      preset: PresentationPanelPreset.editorial,
+      headingSize: 36,
+      bodySize: 18.5,
+      imageFraction: 0.44,
+      subtitle: '',
+      metadata: const <PresentationPanelMetadata>[],
+      body: 'Biography.',
+    );
+
+    expect(body, contains('HEADING_SIZE: 36'));
+    expect(body, contains('BODY_SIZE: 18.5'));
+    expect(body, contains('IMAGE: 44%'));
+
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: 'SUBJECT',
+      body: body,
+    );
+    expect(parsed.headingSize, 36.0);
+    expect(parsed.bodySize, 18.5);
+    expect(parsed.imageFraction, 0.44);
+  });
+
   test('canonical writer round trips DOSSIER structured content font and kicker', () {
     final String body = formatPresentationPanelBody(
       preset: PresentationPanelPreset.dossier,
