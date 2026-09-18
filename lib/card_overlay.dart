@@ -1077,7 +1077,8 @@ void paintPresentationCardFace({
   final bool rich = content.preset != PresentationPanelPreset.simple;
   final bool editorial =
       content.preset == PresentationPanelPreset.editorial;
-  final double cardImageFrac = editorial ? 0.38 : (rich ? 0.34 : 0.42);
+  final double cardImageFrac =
+      content.imageFraction ?? (editorial ? 0.38 : (rich ? 0.34 : 0.42));
   final double s = referenceScale;
 
   final RRect rrect = RRect.fromRectAndRadius(
@@ -1219,7 +1220,7 @@ void _paintSimpleCardContent({
         style: TextStyle(
           fontFamily: selectedFontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: cardHeadingSize * scale,
+          fontSize: (content.headingSize ?? cardHeadingSize) * scale,
           fontWeight: FontWeight.bold,
           letterSpacing: 1.5 * scale,
           color: headColor,
@@ -1244,7 +1245,7 @@ void _paintSimpleCardContent({
         style: TextStyle(
           fontFamily: selectedFontFamily,
           fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: cardBodySize * scale,
+          fontSize: (content.bodySize ?? cardBodySize) * scale,
           fontWeight: FontWeight.bold,
           height: 1.55,
           color: bodyColor,
