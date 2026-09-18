@@ -494,13 +494,10 @@ void main() {
     expect(find.text('STYLE'), findsOneWidget);
     expect(find.text('TIMING'), findsOneWidget);
 
-    Rect preview = tester.getRect(
-      find.byKey(const ValueKey<String>('edit-card-face-preview')),
-    );
-
-    await tester.tapAt(
-      Offset(preview.center.dx, preview.top + preview.height * 0.40),
-    );
+    final Finder kickerHit =
+        find.byKey(const ValueKey<String>('edit-card-preview-kicker-hit'));
+    await tester.ensureVisible(kickerHit);
+    await tester.tap(kickerHit);
     await tester.pump();
     EditableText editable = tester.widget<EditableText>(
       find.descendant(
@@ -510,12 +507,10 @@ void main() {
     );
     expect(editable.focusNode.hasFocus, isTrue);
 
-    preview = tester.getRect(
-      find.byKey(const ValueKey<String>('edit-card-face-preview')),
-    );
-    await tester.tapAt(
-      Offset(preview.center.dx, preview.top + preview.height * 0.52),
-    );
+    final Finder headingHit =
+        find.byKey(const ValueKey<String>('edit-card-preview-heading-hit'));
+    await tester.ensureVisible(headingHit);
+    await tester.tap(headingHit);
     await tester.pump();
     editable = tester.widget<EditableText>(
       find.descendant(
@@ -525,12 +520,10 @@ void main() {
     );
     expect(editable.focusNode.hasFocus, isTrue);
 
-    preview = tester.getRect(
-      find.byKey(const ValueKey<String>('edit-card-face-preview')),
-    );
-    await tester.tapAt(
-      Offset(preview.center.dx, preview.top + preview.height * 0.82),
-    );
+    final Finder bodyHit =
+        find.byKey(const ValueKey<String>('edit-card-preview-body-hit'));
+    await tester.ensureVisible(bodyHit);
+    await tester.tap(bodyHit);
     await tester.pump();
     editable = tester.widget<EditableText>(
       find.descendant(
