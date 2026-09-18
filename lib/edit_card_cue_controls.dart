@@ -14,6 +14,7 @@ import 'edit_surface_model.dart';
 import 'presentation_card_face_preview.dart';
 import 'presentation_panel_content.dart';
 import 'presentation_requests.dart';
+import 'r3_color_picker.dart';
 import 'ui_theme.dart';
 
 typedef EditCardCueChanged = void Function(int cueIndex, CardRequest card);
@@ -174,18 +175,23 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               return out;
             }
 
-            CardRequest previewCard() {
+            Color draftPanelColor() {
               final List<int?> rgb = rgbDraft
                   .split(',')
                   .map((String value) => int.tryParse(value.trim()))
                   .toList(growable: false);
-              final Color panelColor = rgb.length == 3 &&
-                      rgb.every(
-                        (int? value) =>
-                            value != null && value >= 0 && value <= 255,
-                      )
-                  ? Color.fromARGB(255, rgb[0]!, rgb[1]!, rgb[2]!)
-                  : (existing?.panelColor ?? const Color(0xFF1E1E26));
+              if (rgb.length == 3 &&
+                  rgb.every(
+                    (int? value) =>
+                        value != null && value >= 0 && value <= 255,
+                  )) {
+                return Color.fromARGB(255, rgb[0]!, rgb[1]!, rgb[2]!);
+              }
+              return existing?.panelColor ?? const Color(0xFF1E1E26);
+            }
+
+            CardRequest previewCard() {
+              final Color panelColor = draftPanelColor();
               final double headingSize =
                   double.tryParse(headingSizeDraft.trim()) ??
                       presentationPanelDefaultHeadingSize(presetDraft);
@@ -943,21 +949,97 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Row(
                         children: [
                           Expanded(
-                            child: TextFormField(
+                            child: InkWell(
                               key: const ValueKey<String>(
-                                'edit-card-cue-rgb-field',
+                                'edit-card-cue-color-picker',
                               ),
-                              initialValue: rgbDraft,
-                              decoration: const InputDecoration(
-                                labelText: 'Panel r,g,b',
-                              ),
-                              style: widget.theme.value,
-                              onChanged: (String value) {
+                              borderRadius: BorderRadius.circular(3),
+                              onTap: () async {
+                                final Color? picked = await showR3ColorPicker(
+                                  context: context,
+                                  initialColor: draftPanelColor(),
+                                  theme: widget.theme,
+                                  title: 'PANEL COLOR',
+                                );
+                                if (picked == null || !context.mounted) return;
+                                final int value = picked.toARGB32();
+                                final int pickedRed = (value >> 16) & 0xFF;
+                                final int pickedGreen = (value >> 8) & 0xFF;
+                                final int pickedBlue = value & 0xFF;
                                 setDialogState(() {
-                                  rgbDraft = value;
+                                  rgbDraft =
+                                      '$pickedRed,$pickedGreen,$pickedBlue';
                                   errorText = null;
                                 });
                               },
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: sc(10),
+                                  vertical: sc(9),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: R3Theme.bg,
+                                  border: Border.all(
+                                    color: R3Theme.hairline,
+                                  ),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      key: const ValueKey<String>(
+                                        'edit-card-cue-color-swatch',
+                                      ),
+                                      width: sc(30),
+                                      height: sc(30),
+                                      decoration: BoxDecoration(
+                                        color: draftPanelColor(),
+                                        border: Border.all(
+                                          color: R3Theme.textDim,
+                                        ),
+                                        borderRadius:
+                                            BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                    SizedBox(width: sc(9)),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            'PANEL COLOR',
+                                            style: widget.theme.micro,
+                                          ),
+                                          SizedBox(height: sc(2)),
+                                          Text(
+                                            r3ColorHex(draftPanelColor()),
+                                            key: const ValueKey<String>(
+                                              'edit-card-cue-color-hex',
+                                            ),
+                                            style: widget.theme.value,
+                                          ),
+                                          Text(
+                                            'RGB $rgbDraft',
+                                            key: const ValueKey<String>(
+                                              'edit-card-cue-color-rgb',
+                                            ),
+                                            style: widget.theme.fine.copyWith(
+                                              color: R3Theme.textMid,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(
+                                      Icons.colorize_outlined,
+                                      size: 17,
+                                      color: R3Theme.textMid,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                           SizedBox(width: sc(10)),
