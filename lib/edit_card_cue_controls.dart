@@ -64,6 +64,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     'DejaVu Sans Mono',
   ];
 
+  static String _draftNumber(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(1);
+  }
+
   int? get _playheadSourceFrame {
     final int frame = widget.playheadFrame;
     if (frame < widget.clip.atFrame || frame >= widget.clip.endFrameExclusive) {
@@ -97,19 +102,33 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String holdDraft = '${existing?.holdFrames ?? 90}';
     String rgbDraft = '$red,$green,$blue';
     String headingDraft = existing?.heading ?? '';
-    PresentationPanelPreset presetDraft = panel.preset;
+    PresentationPanelPreset presetDraft =
+        existing == null ? PresentationPanelPreset.editorial : panel.preset;
     bool kickerFollowsPresetDefault = panel.kicker.trim().isEmpty;
     String kickerDraft = kickerFollowsPresetDefault
         ? presentationPanelDefaultKicker(presetDraft)
         : panel.kicker;
     String fontDraft = panel.fontFamily;
+    String headingSizeDraft = _draftNumber(
+      panel.headingSize ?? presentationPanelDefaultHeadingSize(presetDraft),
+    );
+    String bodySizeDraft = _draftNumber(
+      panel.bodySize ?? presentationPanelDefaultBodySize(presetDraft),
+    );
+    String imagePercentDraft = _draftNumber(
+      (panel.imageFraction ??
+              presentationPanelDefaultImageFraction(presetDraft)) *
+          100.0,
+    );
+    bool headingSizeTouched = false;
+    bool bodySizeTouched = false;
+    bool imagePercentTouched = false;
     String subtitleDraft = panel.subtitle;
     String metadataDraft = panel.metadata
         .map((PresentationPanelMetadata item) => '${item.label} | ${item.value}')
         .join('\n');
     String bodyDraft = panel.hasErrors ? '' : panel.body;
     final List<String> preservedPanelDirectives = panel.preservedDirectives;
-
     return showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -139,55 +158,65 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               return out;
             }
 
-            Color previewPanelColor() {
-              final List<int?> channels = rgbDraft
+            CardRequest previewCard() {
+              final List<int?> rgb = rgbDraft
                   .split(',')
                   .map((String value) => int.tryParse(value.trim()))
                   .toList(growable: false);
-              if (channels.length == 3 &&
-                  channels.every(
-                    (int? value) =>
-                        value != null && value >= 0 && value <= 255,
-                  )) {
-                return Color.fromARGB(
-                  255,
-                  channels[0]!,
-                  channels[1]!,
-                  channels[2]!,
-                );
-              }
-              return existing?.panelColor ?? const Color(0xFF1E1E26);
-            }
-
-            CardRequest previewCard() {
-              final List<PresentationPanelMetadata> metadata =
-                  parseMetadataDraft() ?? panel.metadata;
+              final Color panelColor = rgb.length == 3 &&
+                      rgb.every(
+                        (int? value) =>
+                            value != null && value >= 0 && value <= 255,
+                      )
+                  ? Color.fromARGB(255, rgb[0]!, rgb[1]!, rgb[2]!)
+                  : (existing?.panelColor ?? const Color(0xFF1E1E26));
+              final double headingSize =
+                  double.tryParse(headingSizeDraft.trim()) ??
+                      presentationPanelDefaultHeadingSize(presetDraft);
+              final double bodySize = double.tryParse(bodySizeDraft.trim()) ??
+                  presentationPanelDefaultBodySize(presetDraft);
+              final double imagePercent =
+                  double.tryParse(imagePercentDraft.trim()) ??
+                      presentationPanelDefaultImageFraction(presetDraft) * 100.0;
+              final List<PresentationPanelMetadata> metadata = sideDraft
+                  ? panel.metadata
+                  : (parseMetadataDraft() ?? panel.metadata);
               final String cleanKicker = kickerDraft.trim();
               final String authoredKicker =
                   cleanKicker == presentationPanelDefaultKicker(presetDraft)
                       ? ''
                       : cleanKicker;
-              final String previewBody = panel.hasErrors
-                  ? (existing?.body ?? bodyDraft)
-                  : formatPresentationPanelBody(
-                      preset: presetDraft,
-                      kicker: authoredKicker,
-                      fontFamily: fontDraft,
-                      headingSize: panel.headingSize,
-                      bodySize: panel.bodySize,
-                      imageFraction: panel.imageFraction,
-                      subtitle: subtitleDraft,
-                      metadata: metadata,
-                      preservedDirectives: preservedPanelDirectives,
-                      body: bodyDraft,
-                    );
-              return CardRequest(
-                image: imageDraft.trim(),
-                holdFrames: int.tryParse(holdDraft.trim()) ?? 0,
-                panelColor: previewPanelColor(),
-                heading: headingDraft.trim(),
-                body: previewBody,
+              final String previewBody = formatPresentationPanelBody(
+                preset: presetDraft,
+                kicker: authoredKicker,
+                fontFamily: fontDraft,
+                headingSize: headingSize,
+                bodySize: bodySize,
+                imageFraction: (imagePercent / 100.0).clamp(0.01, 0.99),
+                subtitle: subtitleDraft,
+                metadata: metadata,
+                preservedDirectives: preservedPanelDirectives,
+                body: bodyDraft,
               );
+              final String previewImage = imageDraft.trim();
+              final String previewHeading = headingDraft.trim();
+              final int previewHold =
+                  int.tryParse(holdDraft.trim()) ?? existing?.holdFrames ?? 90;
+              return sideDraft
+                  ? SideCardRequest(
+                      image: previewImage,
+                      holdFrames: previewHold,
+                      panelColor: panelColor,
+                      heading: previewHeading,
+                      body: previewBody,
+                    )
+                  : CardRequest(
+                      image: previewImage,
+                      holdFrames: previewHold,
+                      panelColor: panelColor,
+                      heading: previewHeading,
+                      body: previewBody,
+                    );
             }
 
             void apply() {
@@ -201,7 +230,13 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   .map((String value) => int.tryParse(value))
                   .toList(growable: false);
               final List<PresentationPanelMetadata>? metadata =
-                  parseMetadataDraft();
+                  sideDraft ? panel.metadata : parseMetadataDraft();
+              final double? headingSize =
+                  double.tryParse(headingSizeDraft.trim());
+              final double? bodySize =
+                  double.tryParse(bodySizeDraft.trim());
+              final double? imagePercent =
+                  double.tryParse(imagePercentDraft.trim());
 
               String? problem;
               if (panel.hasErrors) {
@@ -229,6 +264,21 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 problem = 'Top label must stay on one line.';
               } else if (fontDraft.contains('\n') || fontDraft.contains('\r')) {
                 problem = 'Font family must stay on one line.';
+              } else if (headingSize == null ||
+                  !headingSize.isFinite ||
+                  headingSize <= 0 ||
+                  headingSize > 200) {
+                problem = 'Heading size must be greater than 0 and at most 200.';
+              } else if (bodySize == null ||
+                  !bodySize.isFinite ||
+                  bodySize <= 0 ||
+                  bodySize > 200) {
+                problem = 'Body size must be greater than 0 and at most 200.';
+              } else if (imagePercent == null ||
+                  !imagePercent.isFinite ||
+                  imagePercent < 25 ||
+                  imagePercent > 55) {
+                problem = 'Image height must stay between 25% and 55%.';
               } else if (subtitleDraft.contains('\n') ||
                   subtitleDraft.contains('\r')) {
                 problem = 'Subtitle must stay on one line.';
@@ -256,9 +306,16 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 preset: presetDraft,
                 kicker: authoredKicker,
                 fontFamily: fontDraft,
-                headingSize: panel.headingSize,
-                bodySize: panel.bodySize,
-                imageFraction: panel.imageFraction,
+                headingSize:
+                    panel.headingSize != null || headingSizeTouched
+                        ? headingSize
+                        : null,
+                bodySize:
+                    panel.bodySize != null || bodySizeTouched ? bodySize : null,
+                imageFraction:
+                    panel.imageFraction != null || imagePercentTouched
+                        ? imagePercent! / 100.0
+                        : null,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
                 preservedDirectives: preservedPanelDirectives,
@@ -309,6 +366,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
               );
             }
 
+            final CardRequest preview = previewCard();
+
             return AlertDialog(
               backgroundColor: R3Theme.panel,
               title: Text(
@@ -324,65 +383,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'PRESENTATION',
-                              style: widget.theme.micro,
-                            ),
-                          ),
-                          PopupMenuButton<bool>(
-                            key: const ValueKey<String>('edit-card-cue-style-menu'),
-                            tooltip: 'Card presentation style',
-                            color: R3Theme.panelHi,
-                            onSelected: (bool value) {
-                              setDialogState(() {
-                                sideDraft = value;
-                                errorText = null;
-                              });
-                            },
-                            itemBuilder: (_) => const <PopupMenuEntry<bool>>[
-                              PopupMenuItem<bool>(
-                                value: false,
-                                child: Text('FULLSCREEN CARD'),
-                              ),
-                              PopupMenuItem<bool>(
-                                value: true,
-                                child: Text('SIDE CARD + VIDEO WINDOW'),
-                              ),
-                            ],
-                            child: menuShell(
-                              width: sc(220),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      sideDraft
-                                          ? 'SIDE CARD + VIDEO WINDOW'
-                                          : 'FULLSCREEN CARD',
-                                      key: const ValueKey<String>(
-                                        'edit-card-cue-style-value',
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: widget.theme.micro.copyWith(
-                                        color: R3Theme.textBright,
-                                      ),
-                                    ),
-                                  ),
-                                  const Icon(
-                                    Icons.arrow_drop_down,
-                                    size: 15,
-                                    color: R3Theme.textDim,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: sc(10)),
+                      Text('LIVE PREVIEW', style: widget.theme.microAccent),
+                      SizedBox(height: sc(6)),
                       if (!panel.hasErrors) ...[
                         Container(
                           key: const ValueKey<String>(
@@ -395,13 +397,42 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: PresentationCardFacePreview(
-                            card: previewCard(),
+                            card: preview,
                             resolveSource: widget.resolveImageSource,
                             height: sc(230),
                           ),
                         ),
-                        SizedBox(height: sc(10)),
                       ],
+                      if (panel.hasWarnings) ...[
+                        SizedBox(height: sc(8)),
+                        Text(
+                          'This PANEL contains directives this build does not '
+                          'use. They will be preserved unchanged when you apply '
+                          'edits.',
+                          key: const ValueKey<String>(
+                            'edit-card-cue-panel-warning',
+                          ),
+                          style: widget.theme.fine.copyWith(
+                            color: R3Theme.warn,
+                          ),
+                        ),
+                      ],
+                      if (panel.hasErrors) ...[
+                        SizedBox(height: sc(8)),
+                        Text(
+                          'This PANEL is malformed. Fix the script warning '
+                          'first; the GUI will not rewrite it.',
+                          key: const ValueKey<String>(
+                            'edit-card-cue-panel-error',
+                          ),
+                          style: widget.theme.fine.copyWith(
+                            color: R3Theme.danger,
+                          ),
+                        ),
+                      ],
+                      SizedBox(height: sc(16)),
+                      Text('CONTENT', style: widget.theme.microAccent),
+                      SizedBox(height: sc(8)),
                       Row(
                         children: [
                           Expanded(
@@ -415,7 +446,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                 ),
                                 initialValue: imageDraft,
                                 decoration: const InputDecoration(
-                                  labelText: 'Image in workspace images/',
+                                  labelText: 'Hero image',
+                                  hintText: 'workspace images/',
                                 ),
                                 style: widget.theme.value,
                                 onChanged: (String value) {
@@ -456,7 +488,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                               ),
                               decoration: BoxDecoration(
                                 color: R3Theme.bg,
-                                border: Border.all(color: R3Theme.hairline),
+                                border: Border.all(
+                                  color: R3Theme.hairline,
+                                ),
                                 borderRadius: BorderRadius.circular(3),
                               ),
                               child: const Icon(
@@ -469,42 +503,34 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         ],
                       ),
                       SizedBox(height: sc(10)),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              key: const ValueKey<String>(
-                                'edit-card-cue-hold-field',
-                              ),
-                              initialValue: holdDraft,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'Hold frames',
-                              ),
-                              style: widget.theme.value,
-                              onChanged: (String value) => holdDraft = value,
-                            ),
+                      KeyedSubtree(
+                        key: ValueKey<String>(
+                          'edit-card-cue-kicker-draft:$kickerDraft',
+                        ),
+                        child: TextFormField(
+                          key: const ValueKey<String>(
+                            'edit-card-cue-kicker-field',
                           ),
-                          SizedBox(width: sc(10)),
-                          Expanded(
-                            child: TextFormField(
-                              key: const ValueKey<String>(
-                                'edit-card-cue-rgb-field',
-                              ),
-                              initialValue: rgbDraft,
-                              decoration: const InputDecoration(
-                                labelText: 'Panel r,g,b',
-                              ),
-                              style: widget.theme.value,
-                              onChanged: (String value) {
-                                setDialogState(() {
-                                  rgbDraft = value;
-                                  errorText = null;
-                                });
-                              },
-                            ),
+                          initialValue: kickerDraft,
+                          enabled: !panel.hasErrors,
+                          decoration: const InputDecoration(
+                            labelText: 'Kicker / category',
+                            hintText: 'WILDLIFE',
                           ),
-                        ],
+                          style: widget.theme.value,
+                          onChanged: (String value) {
+                            setDialogState(() {
+                              kickerDraft = value;
+                              final String clean = value.trim();
+                              kickerFollowsPresetDefault = clean.isEmpty ||
+                                  clean ==
+                                      presentationPanelDefaultKicker(
+                                        presetDraft,
+                                      );
+                              errorText = null;
+                            });
+                          },
+                        ),
                       ),
                       SizedBox(height: sc(10)),
                       TextFormField(
@@ -512,7 +538,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-heading-field',
                         ),
                         initialValue: headingDraft,
-                        decoration: const InputDecoration(labelText: 'Heading / name'),
+                        decoration: const InputDecoration(
+                          labelText: 'Heading',
+                        ),
                         style: widget.theme.value,
                         onChanged: (String value) {
                           setDialogState(() {
@@ -521,36 +549,87 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           });
                         },
                       ),
-                      SizedBox(height: sc(14)),
-                      Text('PANEL CONTENT', style: widget.theme.microAccent),
-                      SizedBox(height: sc(4)),
-                      Text(
-                        'The card reads top to bottom: top label → name → role → fact rows → biography. '
-                        'Fact rows are short LABEL | VALUE items. The biography is normal prose beneath them.',
-                        key: const ValueKey<String>('edit-card-cue-panel-help'),
-                        style: widget.theme.fine.copyWith(color: R3Theme.textDim),
+                      SizedBox(height: sc(10)),
+                      TextFormField(
+                        key: const ValueKey<String>(
+                          'edit-card-cue-body-field',
+                        ),
+                        initialValue: bodyDraft,
+                        enabled: !panel.hasErrors,
+                        minLines: 3,
+                        maxLines: 7,
+                        decoration: InputDecoration(
+                          labelText: 'Body copy',
+                          hintText:
+                              'Write the short editorial copy shown beneath '
+                              'the heading.',
+                          errorText: errorText,
+                          alignLabelWithHint: true,
+                        ),
+                        style: widget.theme.value,
+                        onChanged: (String value) {
+                          setDialogState(() {
+                            bodyDraft = value;
+                            errorText = null;
+                          });
+                        },
                       ),
-                      if (panel.hasWarnings) ...[
-                        SizedBox(height: sc(5)),
-                        Text(
-                          'This PANEL contains directives this build does not use. They will be preserved unchanged when you apply edits.',
-                          key: const ValueKey<String>('edit-card-cue-panel-warning'),
-                          style: widget.theme.fine.copyWith(color: R3Theme.warn),
+                      if (presetDraft != PresentationPanelPreset.editorial) ...[
+                        SizedBox(height: sc(10)),
+                        TextFormField(
+                          key: const ValueKey<String>(
+                            'edit-card-cue-subtitle-field',
+                          ),
+                          initialValue: subtitleDraft,
+                          enabled: !panel.hasErrors,
+                          decoration: const InputDecoration(
+                            labelText: 'Subtitle / role',
+                            hintText: 'Investigative Reporter',
+                          ),
+                          style: widget.theme.value,
+                          onChanged: (String value) {
+                            setDialogState(() {
+                              subtitleDraft = value;
+                              errorText = null;
+                            });
+                          },
                         ),
-                      ],
-                      if (panel.hasErrors) ...[
-                        SizedBox(height: sc(5)),
-                        Text(
-                          'This PANEL is malformed. Fix the script warning first; the GUI will not rewrite it.',
-                          key: const ValueKey<String>('edit-card-cue-panel-error'),
-                          style: widget.theme.fine.copyWith(color: R3Theme.danger),
-                        ),
-                      ],
+                        if (!sideDraft) ...[
+                          SizedBox(height: sc(10)),
+                          TextFormField(
+                            key: const ValueKey<String>(
+                              'edit-card-cue-metadata-field',
+                            ),
+                            initialValue: metadataDraft,
+                            enabled: !panel.hasErrors,
+                            minLines: 2,
+                            maxLines: 5,
+                            decoration: const InputDecoration(
+                              labelText: 'Fact rows / metadata',
+                              hintText:
+                                  'ORGANIZATION | Example News\n'
+                                  'LOCATION | Washington, DC',
+                              alignLabelWithHint: true,
+                            ),
+                            style: widget.theme.value,
+                            onChanged: (String value) {
+                              setDialogState(() {
+                                metadataDraft = value;
+                                errorText = null;
+                              });
+                            },
+                          ),
+                        ],
+
+                        ],
+                      SizedBox(height: sc(16)),
+                      Text('TYPE', style: widget.theme.microAccent),
                       SizedBox(height: sc(8)),
                       Row(
                         children: [
                           Expanded(
-                            child: PopupMenuButton<PresentationPanelPreset>(
+                            child:
+                                PopupMenuButton<PresentationPanelPreset>(
                               key: const ValueKey<String>(
                                 'edit-card-cue-preset-menu',
                               ),
@@ -562,8 +641,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                       setDialogState(() {
                                         final String previousDefault =
                                             presentationPanelDefaultKicker(
-                                          presetDraft,
-                                        );
+                                              presetDraft,
+                                            );
                                         final bool followsDefault =
                                             kickerFollowsPresetDefault ||
                                                 kickerDraft.trim().isEmpty ||
@@ -573,30 +652,64 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                         if (followsDefault) {
                                           kickerDraft =
                                               presentationPanelDefaultKicker(
-                                            presetDraft,
-                                          );
+                                                presetDraft,
+                                              );
                                           kickerFollowsPresetDefault = true;
+                                        }
+                                        if (panel.headingSize == null &&
+                                            !headingSizeTouched) {
+                                          headingSizeDraft = _draftNumber(
+                                            presentationPanelDefaultHeadingSize(
+                                              presetDraft,
+                                            ),
+                                          );
+                                        }
+                                        if (panel.bodySize == null &&
+                                            !bodySizeTouched) {
+                                          bodySizeDraft = _draftNumber(
+                                            presentationPanelDefaultBodySize(
+                                              presetDraft,
+                                            ),
+                                          );
+                                        }
+                                        if (panel.imageFraction == null &&
+                                            !imagePercentTouched) {
+                                          imagePercentDraft = _draftNumber(
+                                            presentationPanelDefaultImageFraction(
+                                                  presetDraft,
+                                                ) *
+                                                100.0,
+                                          );
                                         }
                                         errorText = null;
                                       });
                                     },
-                              itemBuilder: (_) => PresentationPanelPreset.values
-                                  .map(
-                                    (PresentationPanelPreset value) =>
-                                        PopupMenuItem<PresentationPanelPreset>(
-                                      value: value,
-                                      child: Text(
-                                        presentationPanelPresetName(value),
-                                      ),
-                                    ),
-                                  )
-                                  .toList(growable: false),
+                              itemBuilder: (_) =>
+                                  PresentationPanelPreset.values
+                                      .map(
+                                        (
+                                          PresentationPanelPreset value,
+                                        ) =>
+                                            PopupMenuItem<
+                                              PresentationPanelPreset
+                                            >(
+                                              value: value,
+                                              child: Text(
+                                                presentationPanelPresetName(
+                                                  value,
+                                                ),
+                                              ),
+                                            ),
+                                      )
+                                      .toList(growable: false),
                               child: menuShell(
                                 child: Row(
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        presentationPanelPresetName(presetDraft),
+                                        presentationPanelPresetName(
+                                          presetDraft,
+                                        ),
                                         key: const ValueKey<String>(
                                           'edit-card-cue-preset-value',
                                         ),
@@ -633,7 +746,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                       enabled: !panel.hasErrors,
                                       decoration: const InputDecoration(
                                         labelText: 'Font family',
-                                        hintText: 'Blank = project font',
+                                        hintText: 'Project font',
                                       ),
                                       style: widget.theme.value,
                                       onChanged: (String value) {
@@ -661,10 +774,13 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   },
                                   itemBuilder: (_) => _fontChoices
                                       .map(
-                                        (String value) => PopupMenuItem<String>(
+                                        (String value) =>
+                                            PopupMenuItem<String>(
                                           value: value,
                                           child: Text(
-                                            value.isEmpty ? 'PROJECT FONT' : value,
+                                            value.isEmpty
+                                                ? 'PROJECT FONT'
+                                                : value,
                                           ),
                                         ),
                                       )
@@ -676,7 +792,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                     ),
                                     decoration: BoxDecoration(
                                       color: R3Theme.bg,
-                                      border: Border.all(color: R3Theme.hairline),
+                                      border: Border.all(
+                                        color: R3Theme.hairline,
+                                      ),
                                       borderRadius: BorderRadius.circular(3),
                                     ),
                                     child: const Icon(
@@ -692,109 +810,206 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         ],
                       ),
                       SizedBox(height: sc(10)),
-                      KeyedSubtree(
-                        key: ValueKey<String>(
-                          'edit-card-cue-kicker-draft:$kickerDraft',
-                        ),
-                        child: TextFormField(
-                          key: const ValueKey<String>(
-                            'edit-card-cue-kicker-field',
+                      Row(
+                        children: [
+                          Expanded(
+                            child: KeyedSubtree(
+                              key: ValueKey<String>(
+                                'edit-card-cue-heading-size:'
+                                '$headingSizeDraft',
+                              ),
+                              child: TextFormField(
+                                key: const ValueKey<String>(
+                                  'edit-card-cue-heading-size-field',
+                                ),
+                                initialValue: headingSizeDraft,
+                                enabled: !panel.hasErrors,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Heading size',
+                                  suffixText: 'ref',
+                                ),
+                                style: widget.theme.value,
+                                onChanged: (String value) {
+                                  setDialogState(() {
+                                    headingSizeDraft = value;
+                                    headingSizeTouched = true;
+                                    errorText = null;
+                                  });
+                                },
+                              ),
+                            ),
                           ),
-                          initialValue: kickerDraft,
-                          enabled: !panel.hasErrors,
-                          decoration: const InputDecoration(
-                            labelText: 'Top photo label',
-                            helperText:
-                                'This is the small label over the portrait. Replace the visible text here to customize it.',
+                          SizedBox(width: sc(10)),
+                          Expanded(
+                            child: KeyedSubtree(
+                              key: ValueKey<String>(
+                                'edit-card-cue-body-size:$bodySizeDraft',
+                              ),
+                              child: TextFormField(
+                                key: const ValueKey<String>(
+                                  'edit-card-cue-body-size-field',
+                                ),
+                                initialValue: bodySizeDraft,
+                                enabled: !panel.hasErrors,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Body size',
+                                  suffixText: 'ref',
+                                ),
+                                style: widget.theme.value,
+                                onChanged: (String value) {
+                                  setDialogState(() {
+                                    bodySizeDraft = value;
+                                    bodySizeTouched = true;
+                                    errorText = null;
+                                  });
+                                },
+                              ),
+                            ),
                           ),
-                          style: widget.theme.value,
-                          onChanged: (String value) {
-                            setDialogState(() {
-                              kickerDraft = value;
-                              final String clean = value.trim();
-                              kickerFollowsPresetDefault = clean.isEmpty ||
-                                  clean ==
-                                      presentationPanelDefaultKicker(presetDraft);
-                              errorText = null;
-                            });
-                          },
-                        ),
+                        ],
+                      ),
+                      SizedBox(height: sc(16)),
+                      Text('STYLE', style: widget.theme.microAccent),
+                      SizedBox(height: sc(8)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Presentation',
+                              style: widget.theme.micro,
+                            ),
+                          ),
+                          PopupMenuButton<bool>(
+                            key: const ValueKey<String>(
+                              'edit-card-cue-style-menu',
+                            ),
+                            tooltip: 'Card presentation style',
+                            color: R3Theme.panelHi,
+                            onSelected: (bool value) {
+                              setDialogState(() {
+                                sideDraft = value;
+                                errorText = null;
+                              });
+                            },
+                            itemBuilder: (_) =>
+                                const <PopupMenuEntry<bool>>[
+                              PopupMenuItem<bool>(
+                                value: false,
+                                child: Text('FULLSCREEN CARD'),
+                              ),
+                              PopupMenuItem<bool>(
+                                value: true,
+                                child: Text('SIDE CARD + VIDEO WINDOW'),
+                              ),
+                            ],
+                            child: menuShell(
+                              width: sc(220),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      sideDraft
+                                          ? 'SIDE CARD + VIDEO WINDOW'
+                                          : 'FULLSCREEN CARD',
+                                      key: const ValueKey<String>(
+                                        'edit-card-cue-style-value',
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: widget.theme.micro.copyWith(
+                                        color: R3Theme.textBright,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.arrow_drop_down,
+                                    size: 15,
+                                    color: R3Theme.textDim,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       SizedBox(height: sc(10)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-rgb-field',
+                              ),
+                              initialValue: rgbDraft,
+                              decoration: const InputDecoration(
+                                labelText: 'Panel r,g,b',
+                              ),
+                              style: widget.theme.value,
+                              onChanged: (String value) {
+                                setDialogState(() {
+                                  rgbDraft = value;
+                                  errorText = null;
+                                });
+                              },
+                            ),
+                          ),
+                          SizedBox(width: sc(10)),
+                          Expanded(
+                            child: KeyedSubtree(
+                              key: ValueKey<String>(
+                                'edit-card-cue-image-percent:'
+                                '$imagePercentDraft',
+                              ),
+                              child: TextFormField(
+                                key: const ValueKey<String>(
+                                  'edit-card-cue-image-percent-field',
+                                ),
+                                initialValue: imagePercentDraft,
+                                enabled: !panel.hasErrors,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Hero height',
+                                  suffixText: '%',
+                                  helperText: '25–55',
+                                ),
+                                style: widget.theme.value,
+                                onChanged: (String value) {
+                                  setDialogState(() {
+                                    imagePercentDraft = value;
+                                    imagePercentTouched = true;
+                                    errorText = null;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: sc(16)),
+                      Text('TIMING', style: widget.theme.microAccent),
+                      SizedBox(height: sc(8)),
                       TextFormField(
                         key: const ValueKey<String>(
-                          'edit-card-cue-subtitle-field',
+                          'edit-card-cue-hold-field',
                         ),
-                        initialValue: subtitleDraft,
-                        enabled: !panel.hasErrors,
+                        initialValue: holdDraft,
+                        keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
-                          labelText: 'Subtitle / role',
-                          hintText: 'Investigative Reporter',
-                          helperText: 'Short line directly beneath the heading. Colons are allowed.',
+                          labelText: 'Hold frames',
                         ),
                         style: widget.theme.value,
-                        onChanged: (String value) {
-                          setDialogState(() {
-                            subtitleDraft = value;
-                            errorText = null;
-                          });
-                        },
-                      ),
-                      SizedBox(height: sc(10)),
-                      TextFormField(
-                        key: const ValueKey<String>(
-                          'edit-card-cue-metadata-field',
-                        ),
-                        initialValue: metadataDraft,
-                        enabled: !panel.hasErrors,
-                        minLines: 2,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          labelText: 'Fact rows / metadata',
-                          hintText: 'ORGANIZATION | Example News\nLOCATION | Washington, DC',
-                          helperText:
-                              'Short facts above the biography. The FIRST | splits LABEL from VALUE; later | characters stay in the value.',
-                          alignLabelWithHint: true,
-                        ),
-                        style: widget.theme.value,
-                        onChanged: (String value) {
-                          setDialogState(() {
-                            metadataDraft = value;
-                            errorText = null;
-                          });
-                        },
-                      ),
-                      SizedBox(height: sc(14)),
-                      Text('BIOGRAPHY', style: widget.theme.microAccent),
-                      SizedBox(height: sc(4)),
-                      Text(
-                        'This is the paragraph that appears below the fact rows. Write ordinary sentences here, not another metadata tag.',
-                        key: const ValueKey<String>('edit-card-cue-biography-help'),
-                        style: widget.theme.fine.copyWith(color: R3Theme.textDim),
-                      ),
-                      SizedBox(height: sc(7)),
-                      TextFormField(
-                        key: const ValueKey<String>('edit-card-cue-body-field'),
-                        initialValue: bodyDraft,
-                        enabled: !panel.hasErrors,
-                        minLines: 3,
-                        maxLines: 7,
-                        decoration: InputDecoration(
-                          labelText: 'Biography paragraph (optional)',
-                          hintText:
-                              'John Smith joined Example News in 2018. His reporting focused on the people and organizations behind the story.',
-                          helperText:
-                              'Normal prose shown BELOW metadata. Do not use LABEL | VALUE here.',
-                          errorText: errorText,
-                          alignLabelWithHint: true,
-                        ),
-                        style: widget.theme.value,
-                        onChanged: (String value) {
-                          setDialogState(() {
-                            bodyDraft = value;
-                            errorText = null;
-                          });
-                        },
+                        onChanged: (String value) => holdDraft = value,
                       ),
                     ],
                   ),
