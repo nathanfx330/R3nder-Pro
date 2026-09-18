@@ -79,6 +79,45 @@ String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
   }
 }
 
+double presentationPanelDefaultHeadingSize(
+  PresentationPanelPreset preset,
+) {
+  switch (preset) {
+    case PresentationPanelPreset.editorial:
+      return 32.0;
+    case PresentationPanelPreset.simple:
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 34.0;
+  }
+}
+
+double presentationPanelDefaultBodySize(PresentationPanelPreset preset) {
+  switch (preset) {
+    case PresentationPanelPreset.simple:
+      return 20.0;
+    case PresentationPanelPreset.editorial:
+      return 17.0;
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 15.5;
+  }
+}
+
+double presentationPanelDefaultImageFraction(
+  PresentationPanelPreset preset,
+) {
+  switch (preset) {
+    case PresentationPanelPreset.simple:
+      return 0.42;
+    case PresentationPanelPreset.editorial:
+      return 0.38;
+    case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.dossier:
+      return 0.34;
+  }
+}
+
 enum PresentationPanelIssueSeverity {
   warning,
   error,
