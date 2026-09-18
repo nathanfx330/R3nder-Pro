@@ -42,7 +42,6 @@
 
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -1073,30 +1072,4 @@ void _drawImageContainFromSource(
     fitted,
     Paint()..filterQuality = FilterQuality.low,
   );
-}
-
-void _drawImageCover(Canvas canvas, ui.Image image, Rect rect) {
-  final double iw = image.width.toDouble();
-  final double ih = image.height.toDouble();
-  if (iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0) {
-    return;
-  }
-  final double scale = math.max(rect.width / iw, rect.height / ih);
-  final double w = iw * scale;
-  final double h = ih * scale;
-  final Rect destination = Rect.fromLTWH(
-    rect.left + (rect.width - w) / 2.0,
-    rect.top + (rect.height - h) / 2.0,
-    w,
-    h,
-  );
-  canvas.save();
-  canvas.clipRect(rect);
-  canvas.drawImageRect(
-    image,
-    Rect.fromLTWH(0, 0, iw, ih),
-    destination,
-    Paint()..filterQuality = FilterQuality.high,
-  );
-  canvas.restore();
 }
