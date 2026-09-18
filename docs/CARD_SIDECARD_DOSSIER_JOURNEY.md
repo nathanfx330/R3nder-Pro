@@ -1300,6 +1300,187 @@ That is why it now feels integrated rather than bolted on.
 
 ---
 
+
+# EDITORIAL SIDECARD refinement
+
+The next round of work did not reopen SIDECARD shell geometry.
+
+Repeated use showed that the outer composition was already doing the right thing:
+the structural source becomes a real desktop window on the left and the CARD
+face seats beside it on the right. The friction was inside the face itself and
+inside the EDIT authoring dialog.
+
+The old SIMPLE face used a full width hero image, a large tracked bold heading,
+a short rule, and bold body copy. The result was functional but read more like a
+system notification than an editorial page. The inspector exposed the data
+needed to author it, but the author had to mentally assemble the result from a
+long form.
+
+The redesign therefore kept one boundary fixed:
+
+```text
+SIDECARD shell
+    unchanged
+
+CARD face
+    redesigned through an opt in preset
+
+EDIT inspector
+    previews and authors the same face
+```
+
+## Why the divider disappears
+
+The line was initially identified as a decoration we did not like. That was not
+a strong enough design reason to remove it.
+
+The actual relationship became clear after following the rich photo treatment.
+In DOCUMENTARY and DOSSIER the accent line belongs to the over image identity
+treatment: the kicker sits on the photograph and the rule helps anchor that
+annotation.
+
+EDITORIAL makes a different choice.
+
+The kicker moves below the hero image and becomes the first item in the content
+hierarchy:
+
+```text
+hero image
+
+kicker
+heading
+
+body
+```
+
+Once the kicker leaves the photograph, the divider has no structural job. The
+rule disappears because the content relationship changed, not because an
+arbitrary decoration was deleted. Existing photo scrim and rule machinery
+remain intact for presets that still use the over image treatment.
+
+## One face painter, not an inspector approximation
+
+Before changing the look, the complete CARD face was extracted into one shared
+painter. The seam includes:
+
+```text
+panel surface
+shadow
+hero image placement
+photo treatment
+preset content branch
+typography
+```
+
+Callers own placement and motion only.
+
+The extraction is guarded by a raster parity test. It drives the real SIDECARD
+runtime to a fully seated frame, captures the pixels from the runtime path, then
+calls the shared face painter directly with the seated rectangle produced by the
+runtime geometry. The two images must be byte identical.
+
+That distinction matters. Constructing an equivalent rectangle independently
+would only prove that the painter is deterministic. Using the runtime derived
+rectangle proves that no fill, shadow, clip, photo treatment, or text drawing was
+accidentally left behind in the caller.
+
+## EDITORIAL v1
+
+EDITORIAL is intentionally small:
+
+```text
+full bleed hero image, default 38 percent
+
+optional kicker below the image
+
+heading, default 32 reference units
+
+body, default 17 reference units, regular weight
+
+flat panel
+no divider
+no footer
+no related media module
+no timestamps or navigation chrome
+```
+
+Legacy SIMPLE, DOCUMENTARY, and DOSSIER source keeps its existing preset and
+rendering. Newly authored CARD family cues from the EDIT inspector begin with
+EDITORIAL explicitly authored in their PANEL block.
+
+The source extension remains inside the existing PANEL grammar:
+
+```text
+[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+HEADING_SIZE: 32
+BODY_SIZE: 17
+IMAGE: 38%
+[/PANEL]
+```
+
+Absent size directives retain the selected preset defaults. Opening and saving
+legacy source does not materialize style directives that were not already
+authored.
+
+## Reference composition units
+
+Typography sizes are not output pixels.
+
+Both Preview and BAKE derive the presentation scale from:
+
+```text
+min(engineW / 1920, engineH / 1080)
+```
+
+An authored value such as `BODY_SIZE: 17` is therefore a position in the
+1920 by 1080 reference composition. It does not mean seventeen physical pixels
+in a 4K render. Keeping this rule shared is what preserves Preview and BAKE
+parity across output resolutions.
+
+## Inspector authoring
+
+The CARD family dialog is reorganized around the author's decisions rather than
+the request object's field order:
+
+```text
+LIVE PREVIEW
+
+CONTENT
+TYPE
+STYLE
+TIMING
+```
+
+The preview calls the same complete face painter used by runtime rendering.
+Kicker, heading, and body regions are selection surfaces: clicking them focuses
+the corresponding authoring field.
+
+The controls deliberately stay narrow. The inspector exposes font family,
+heading size, body size, hero image proportion, and panel color. Padding, line
+spacing, text alignment, kicker sizing, and automatic text contrast remain
+renderer decisions rather than becoming another freeform layout language.
+
+## Footer deliberately deferred
+
+Static design studies briefly suggested a small row of reference photographs at
+the bottom of the card.
+
+That idea was not included in EDITORIAL v1.
+
+At SIDECARD width the footer is not a small ornament: three landscape thumbnails
+consume enough vertical space to roughly halve the available body copy. A still
+mockup cannot tell us whether that trade is useful during a presentation that is
+only on screen for a few seconds beside moving video.
+
+The grammar direction is known if real use later justifies it: repeated FOOTER
+directives inside PANEL, preserved individually rather than a comma separated
+mini language. But no footer grammar or rendering is added in this pass. First
+the simpler face must be judged in motion.
+
+---
+
 # Accepted baseline
 
 As of the current accepted `main` baseline after the evidence semantic cleanup:
