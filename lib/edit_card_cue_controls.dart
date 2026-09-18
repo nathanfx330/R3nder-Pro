@@ -276,9 +276,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 problem = 'Body size must be greater than 0 and at most 200.';
               } else if (imagePercent == null ||
                   !imagePercent.isFinite ||
-                  imagePercent < 25 ||
-                  imagePercent > 55) {
-                problem = 'Image height must stay between 25% and 55%.';
+                  imagePercent <= 0 ||
+                  imagePercent >= 100) {
+                problem = 'Image height must be greater than 0% and less than 100%.';
               } else if (subtitleDraft.contains('\n') ||
                   subtitleDraft.contains('\r')) {
                 problem = 'Subtitle must stay on one line.';
@@ -980,7 +980,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                 decoration: const InputDecoration(
                                   labelText: 'Hero height',
                                   suffixText: '%',
-                                  helperText: '25–55',
+                                  helperText: '> 0 and < 100',
                                 ),
                                 style: widget.theme.value,
                                 onChanged: (String value) {
