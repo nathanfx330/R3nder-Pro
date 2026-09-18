@@ -49,8 +49,19 @@ Widget _host({required ValueChanged<CardRequest> onAdd}) {
   );
 }
 
+void desktopTestWidgets(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  testWidgets(description, (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await body(tester);
+  });
+}
+
 void main() {
-  testWidgets('add form can author SIDE CARD + VIDEO WINDOW',
+  desktopTestWidgets('add form can author SIDE CARD + VIDEO WINDOW',
       (WidgetTester tester) async {
     CardRequest? added;
 
