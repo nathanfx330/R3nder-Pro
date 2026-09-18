@@ -1248,11 +1248,12 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
   }
 
   String _workspaceImageSource(String raw) {
-    final String clean = raw.trim().replaceAll('\\', '/');
-    if (clean.isEmpty) return '';
+    final String rawTrimmed = raw.trim();
+    if (rawTrimmed.isEmpty) return '';
+    final String clean = rawTrimmed.replaceAll('\\', '/');
     if (clean.startsWith('/') ||
-        clean.startsWith('\\\\') ||
-        RegExp(r'^[A-Za-z]:[\\/]').hasMatch(clean)) {
+        clean.startsWith('//') ||
+        RegExp(r'^[A-Za-z]:[\\/]').hasMatch(rawTrimmed)) {
       return clean;
     }
     return clean.startsWith('images/') ? clean : 'images/$clean';
@@ -1273,7 +1274,7 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
 
     try {
       final String path = resolver(source);
-      final List<int> bytes = await File(path).readAsBytes();
+      final bytes = await File(path).readAsBytes();
       final ui.Codec codec = await ui.instantiateImageCodec(bytes);
       try {
         final ui.FrameInfo frame = await codec.getNextFrame();
