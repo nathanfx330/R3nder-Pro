@@ -26,6 +26,7 @@
 
 enum PresentationPanelPreset {
   simple,
+  editorial,
   documentary,
   dossier,
 }
@@ -34,6 +35,8 @@ PresentationPanelPreset? _tryPresentationPanelPresetFromName(String raw) {
   switch (raw.trim().toUpperCase()) {
     case 'SIMPLE':
       return PresentationPanelPreset.simple;
+    case 'EDITORIAL':
+      return PresentationPanelPreset.editorial;
     case 'DOCUMENTARY':
       return PresentationPanelPreset.documentary;
     case 'DOSSIER':
@@ -50,6 +53,8 @@ String presentationPanelPresetName(PresentationPanelPreset preset) {
   switch (preset) {
     case PresentationPanelPreset.simple:
       return 'SIMPLE';
+    case PresentationPanelPreset.editorial:
+      return 'EDITORIAL';
     case PresentationPanelPreset.documentary:
       return 'DOCUMENTARY';
     case PresentationPanelPreset.dossier:
@@ -67,6 +72,7 @@ String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
     case PresentationPanelPreset.dossier:
       return 'DOSSIER / SUBJECT FILE';
     case PresentationPanelPreset.simple:
+    case PresentationPanelPreset.editorial:
     case PresentationPanelPreset.documentary:
       return 'PROFILE / DOCUMENTARY';
   }
