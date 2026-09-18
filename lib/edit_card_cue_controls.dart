@@ -14,6 +14,7 @@ import 'edit_surface_model.dart';
 import 'presentation_card_face_preview.dart';
 import 'presentation_panel_content.dart';
 import 'presentation_requests.dart';
+import 'r3_color_picker.dart';
 import 'ui_theme.dart';
 
 typedef EditCardCueChanged = void Function(int cueIndex, CardRequest card);
@@ -142,6 +143,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         TextEditingController(text: bodySizeDraft);
     final TextEditingController imagePercentController =
         TextEditingController(text: imagePercentDraft);
+    final TextEditingController rgbController =
+        TextEditingController(text: rgbDraft);
 
     ModalRoute<dynamic>? dialogRoute;
     final CardRequest? result = await showDialog<CardRequest>(
@@ -941,23 +944,114 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       ),
                       SizedBox(height: sc(10)),
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
-                            child: TextFormField(
-                              key: const ValueKey<String>(
-                                'edit-card-cue-rgb-field',
-                              ),
-                              initialValue: rgbDraft,
-                              decoration: const InputDecoration(
-                                labelText: 'Panel r,g,b',
-                              ),
-                              style: widget.theme.value,
-                              onChanged: (String value) {
-                                setDialogState(() {
-                                  rgbDraft = value;
-                                  errorText = null;
-                                });
-                              },
+                            flex: 2,
+                            child: Row(
+                              children: [
+                                InkWell(
+                                  key: const ValueKey<String>(
+                                    'edit-card-cue-color-picker',
+                                  ),
+                                  onTap: panel.hasErrors
+                                      ? null
+                                      : () async {
+                                          final Color? picked =
+                                              await showR3ColorPicker(
+                                            context: dialogContext,
+                                            initialColor: preview.panelColor,
+                                            title: 'PANEL COLOR',
+                                          );
+                                          if (picked == null) return;
+                                          final int pickedArgb =
+                                              picked.toARGB32();
+                                          final int pickedRed =
+                                              (pickedArgb >> 16) & 0xFF;
+                                          final int pickedGreen =
+                                              (pickedArgb >> 8) & 0xFF;
+                                          final int pickedBlue =
+                                              pickedArgb & 0xFF;
+                                          final String value =
+                                              '$pickedRed,$pickedGreen,$pickedBlue';
+                                          setDialogState(() {
+                                            rgbDraft = value;
+                                            rgbController.text = value;
+                                            errorText = null;
+                                          });
+                                        },
+                                  borderRadius: BorderRadius.circular(3),
+                                  child: Container(
+                                    width: sc(112),
+                                    height: sc(48),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: sc(7),
+                                      vertical: sc(6),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: R3Theme.bg,
+                                      border: Border.all(
+                                        color: R3Theme.hairline,
+                                      ),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          key: const ValueKey<String>(
+                                            'edit-card-cue-color-swatch',
+                                          ),
+                                          width: sc(30),
+                                          height: sc(30),
+                                          decoration: BoxDecoration(
+                                            color: preview.panelColor,
+                                            border: Border.all(
+                                              color: R3Theme.textDim,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(2),
+                                          ),
+                                        ),
+                                        SizedBox(width: sc(7)),
+                                        Expanded(
+                                          child: Text(
+                                            r3ColorHex(preview.panelColor),
+                                            key: const ValueKey<String>(
+                                              'edit-card-cue-color-hex',
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.clip,
+                                            style:
+                                                widget.theme.fine.copyWith(
+                                              color: R3Theme.textMid,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: sc(8)),
+                                Expanded(
+                                  child: TextFormField(
+                                    key: const ValueKey<String>(
+                                      'edit-card-cue-rgb-field',
+                                    ),
+                                    controller: rgbController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Exact RGB',
+                                      hintText: '24,32,40',
+                                    ),
+                                    style: widget.theme.value,
+                                    onChanged: (String value) {
+                                      setDialogState(() {
+                                        rgbDraft = value;
+                                        errorText = null;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           SizedBox(width: sc(10)),
@@ -967,24 +1061,24 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                 'edit-card-cue-image-percent-field',
                               ),
                               controller: imagePercentController,
-                                enabled: !panel.hasErrors,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Hero height',
-                                  suffixText: '%',
-                                  helperText: '> 0 and < 100',
-                                ),
-                                style: widget.theme.value,
-                                onChanged: (String value) {
-                                  setDialogState(() {
-                                    imagePercentDraft = value;
-                                    imagePercentTouched = true;
-                                    errorText = null;
-                                  });
-                                },
+                              enabled: !panel.hasErrors,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              decoration: const InputDecoration(
+                                labelText: 'Hero height',
+                                suffixText: '%',
+                                helperText: '> 0 and < 100',
+                              ),
+                              style: widget.theme.value,
+                              onChanged: (String value) {
+                                setDialogState(() {
+                                  imagePercentDraft = value;
+                                  imagePercentTouched = true;
+                                  errorText = null;
+                                });
+                              },
                             ),
                           ),
                         ],
@@ -1035,6 +1129,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     headingSizeController.dispose();
     bodySizeController.dispose();
     imagePercentController.dispose();
+    rgbController.dispose();
     return result;
   }
 
