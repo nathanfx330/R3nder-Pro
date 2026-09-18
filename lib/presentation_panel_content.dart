@@ -28,6 +28,7 @@ enum PresentationPanelPreset {
   simple,
   documentary,
   dossier,
+  editorial,
 }
 
 PresentationPanelPreset? _tryPresentationPanelPresetFromName(String raw) {
@@ -38,6 +39,8 @@ PresentationPanelPreset? _tryPresentationPanelPresetFromName(String raw) {
       return PresentationPanelPreset.documentary;
     case 'DOSSIER':
       return PresentationPanelPreset.dossier;
+    case 'EDITORIAL':
+      return PresentationPanelPreset.editorial;
     default:
       return null;
   }
@@ -54,6 +57,8 @@ String presentationPanelPresetName(PresentationPanelPreset preset) {
       return 'DOCUMENTARY';
     case PresentationPanelPreset.dossier:
       return 'DOSSIER';
+    case PresentationPanelPreset.editorial:
+      return 'EDITORIAL';
   }
 }
 
@@ -68,6 +73,7 @@ String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
       return 'DOSSIER / SUBJECT FILE';
     case PresentationPanelPreset.simple:
     case PresentationPanelPreset.documentary:
+    case PresentationPanelPreset.editorial:
       return 'PROFILE / DOCUMENTARY';
   }
 }
