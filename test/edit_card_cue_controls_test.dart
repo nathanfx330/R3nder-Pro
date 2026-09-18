@@ -603,6 +603,43 @@ void main() {
     final Finder font =
         find.byKey(const ValueKey<String>('edit-card-cue-font-field'));
 
+    expect(
+      tester
+          .widget<EditableText>(
+            find.descendant(
+              of: headingSize,
+              matching: find.byType(EditableText),
+            ),
+          )
+          .controller
+          .text,
+      '32',
+    );
+    expect(
+      tester
+          .widget<EditableText>(
+            find.descendant(
+              of: bodySize,
+              matching: find.byType(EditableText),
+            ),
+          )
+          .controller
+          .text,
+      '17',
+    );
+    expect(
+      tester
+          .widget<EditableText>(
+            find.descendant(
+              of: imagePercent,
+              matching: find.byType(EditableText),
+            ),
+          )
+          .controller
+          .text,
+      '38',
+    );
+
     await tester.ensureVisible(font);
     await tester.enterText(font, 'DejaVu Serif');
     await tester.ensureVisible(headingSize);
