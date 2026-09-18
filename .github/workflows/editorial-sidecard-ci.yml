@@ -24,3 +24,6 @@ jobs:
           test/presentation_panel_content_test.dart
           test/edit_card_cue_controls_test.dart
           test/edit_sidecard_cue_controls_test.dart
+          test/card_overlay_test.dart
+          test/presentation_panel_painter_test.dart
+          test/dossier_overlay_test.dart
