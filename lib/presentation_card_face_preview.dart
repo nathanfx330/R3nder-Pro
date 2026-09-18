@@ -67,6 +67,34 @@ double presentationCardFacePreviewScale(
   return fitted.width / reference.width;
 }
 
+void paintPresentationCardFacePreview({
+  required Canvas canvas,
+  required Size slotSize,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+  double inset = 8.0,
+}) {
+  final Rect rect = presentationCardFacePreviewRect(
+    slotSize,
+    inset: inset,
+  );
+  final double scale = presentationCardFacePreviewScale(
+    slotSize,
+    inset: inset,
+  );
+  if (rect.isEmpty || scale <= 0.0) return;
+
+  paintPresentationCardFace(
+    canvas,
+    rect,
+    scale,
+    card,
+    image,
+    inheritedFontFamily,
+  );
+}
+
 class PresentationCardFacePreview extends StatefulWidget {
   const PresentationCardFacePreview({
     super.key,
@@ -180,23 +208,13 @@ class _PresentationCardFacePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Rect rect = presentationCardFacePreviewRect(
-      slotSize,
+    paintPresentationCardFacePreview(
+      canvas: canvas,
+      slotSize: slotSize,
+      card: card,
+      image: image,
+      inheritedFontFamily: inheritedFontFamily,
       inset: inset,
-    );
-    final double scale = presentationCardFacePreviewScale(
-      slotSize,
-      inset: inset,
-    );
-    if (rect.isEmpty || scale <= 0.0) return;
-
-    paintPresentationCardFace(
-      canvas,
-      rect,
-      scale,
-      card,
-      image,
-      inheritedFontFamily,
     );
   }
 
