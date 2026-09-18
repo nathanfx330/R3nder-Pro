@@ -106,9 +106,11 @@ class _R3ColorPickerDialogState extends State<_R3ColorPickerDialog> {
   void _setSv(Offset localPosition, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
     final double saturation =
-        (localPosition.dx / size.width).clamp(0.0, 1.0);
+        (localPosition.dx / size.width).clamp(0.0, 1.0).toDouble();
     final double value =
-        (1.0 - (localPosition.dy / size.height)).clamp(0.0, 1.0);
+        (1.0 - (localPosition.dy / size.height))
+            .clamp(0.0, 1.0)
+            .toDouble();
     setState(() {
       _hsv = _hsv
           .withSaturation(saturation)
@@ -121,7 +123,11 @@ class _R3ColorPickerDialogState extends State<_R3ColorPickerDialog> {
   void _setHue(Offset localPosition, Size size) {
     if (size.width <= 0) return;
     final double hue =
-        ((localPosition.dx / size.width).clamp(0.0, 1.0) * 360.0) % 360.0;
+        ((localPosition.dx / size.width)
+                    .clamp(0.0, 1.0)
+                    .toDouble() *
+                359.999)
+            .toDouble();
     setState(() {
       _hsv = _hsv.withHue(hue);
       _hexError = null;
