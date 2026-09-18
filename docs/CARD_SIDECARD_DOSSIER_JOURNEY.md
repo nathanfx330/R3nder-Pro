@@ -1326,3 +1326,294 @@ The focused regression suite for the final semantic cleanup passed:
 The feature was then manually run again in the Linux app and accepted in motion.
 
 The next useful work should come from repeated real use and visible friction, not from reopening the foundation simply because the foundation is finally quiet.
+
+
+---
+
+# EDITORIAL — refining the CARD face without reopening SIDECARD
+
+The next SIDECARD problem was not structural.
+
+The shell already behaved correctly:
+
+```text
+real structural video window on the left
+CARD-family face on the right
+one decoder
+one clock
+shared Preview / BAKE geometry
+```
+
+What felt wrong was the card face itself.
+
+The old SIMPLE face had a strong hero image, but the text below it still read like a generated information panel:
+
+```text
+bold heading
+accent rule
+bold body copy
+fixed type sizes
+```
+
+The EDIT inspector exposed the underlying fields, but it still felt like editing a data structure rather than designing the thing on screen.
+
+That led to a deliberately narrow redesign.
+
+## The rule disappeared because its job moved
+
+The first instinct was simply that the divider line looked dated.
+
+That was not a strong enough reason to remove it.
+
+The richer CARD presets revealed the actual relationship. Their accent treatment exists because the kicker is painted over the photograph. The line and scrim give that over-image label a visual baseline.
+
+EDITORIAL makes a different choice:
+
+```text
+hero image
+    ↓
+kicker
+    ↓
+heading
+    ↓
+body
+```
+
+The kicker moves below the photograph into the content hierarchy.
+
+Once that happened, the divider no longer had a structural job.
+
+So EDITORIAL removes the rule as a consequence of relocating the kicker, not as arbitrary decoration cleanup.
+
+The older photo-treatment path remains intact for presets that still use it. EDITORIAL not needing the scrim is not evidence that the scrim should be deleted.
+
+## One full face painter became the seam
+
+The inspector preview could not be allowed to re-create the card with ordinary Flutter widgets.
+
+That would have made the preview a second renderer and guaranteed drift.
+
+The complete face was therefore extracted into one public painter:
+
+```dart
+paintPresentationCardFace(
+  canvas: ...,
+  cardRect: ...,
+  referenceScale: ...,
+  card: ...,
+  image: ...,
+  inheritedFontFamily: ...,
+)
+```
+
+The caller still owns placement and motion.
+
+The face painter owns:
+
+```text
+shadow
+panel surface
+hero image
+photo treatment
+simple / rich / editorial content branch
+typography
+```
+
+The EDIT preview calls the same painter.
+
+## The extraction is proved with pixels
+
+A refactor described as visually neutral is not accepted on trust.
+
+The parity test drives the real runtime SIDECARD path to a fully seated frame, loads a real decoded hero image through the normal cache, captures the runtime pixels, then paints the extracted face directly into the runtime-derived seated rectangle.
+
+The RGBA buffers must match exactly.
+
+That distinction matters.
+
+If a test constructed an equivalent rectangle for both sides, it would only prove that the painter is deterministic. It would not prove that no fill, clip, shadow, or image treatment remained behind in the caller.
+
+The precedent is the same one used by the structural raster handoff tests:
+
+```text
+prove the seam with pixels, not a readiness flag
+```
+
+## EDITORIAL is explicit, not a silent migration
+
+Existing CARD and SIDECARD source keeps its old rendering.
+
+EDITORIAL is an explicit PANEL preset.
+
+New cards authored from the EDIT inspector opt into it, while old projects remain visually stable.
+
+Its first defaults are intentionally restrained:
+
+```text
+hero image          about 38%
+kicker              below image
+heading             32 reference units
+body                17 reference units
+body weight         regular
+heading tracking    approximately zero
+body line height    about 1.5
+panel               flat
+divider             none
+```
+
+The hero image remains full bleed.
+
+The face is closer to an editorial page than a streaming-service module.
+
+## Authored size is reference composition data
+
+The new optional PANEL directives are:
+
+```text
+HEADING_SIZE: 32
+BODY_SIZE: 17
+IMAGE: 38%
+```
+
+They deliberately live in `[PANEL]` rather than expanding the colon-delimited CARD or SIDECARD header.
+
+The reference scale is:
+
+```text
+scale = min(engineW / 1920, engineH / 1080)
+```
+
+Preview and BAKE use the same rule.
+
+Therefore an authored typographic size is a position in the 1920x1080 reference composition, not a measurement of the output.
+
+`BODY_SIZE:17` does not mean 17 output pixels.
+
+Treating it as pixels would make the same card wrap differently at preview, 1080p, and 4K and would silently break render parity.
+
+The GUI applies conservative editing bounds, while the parser stays more permissive so source remains forward-compatible.
+
+## The EDIT inspector became composition-first
+
+The old card dialog was functional but utilitarian.
+
+The redesigned flow starts with the actual card face and then groups the controls by the author's intent:
+
+```text
+LIVE FACE PREVIEW
+
+CONTENT
+TYPE
+STYLE
+TIMING
+```
+
+The preview is not an approximation.
+
+It builds a transient CardRequest from the same drafts that will be serialized, resolves the hero through the workspace media resolver, and sends both through `paintPresentationCardFace`.
+
+The preview also acts as a selection surface.
+
+Clicking its kicker, heading, or body region focuses the corresponding authoring field.
+
+This is intentionally small interaction design, but it changes the dialog from “edit properties and imagine the result” to “touch the result and edit what you touched.”
+
+## What is deliberately not exposed
+
+The first pass does not add knobs simply because they are possible.
+
+The renderer still owns:
+
+```text
+line spacing
+content padding
+text alignment
+kicker size
+inter-element spacing
+```
+
+The inspector exposes the values that materially change the composition:
+
+```text
+font
+heading size
+body size
+hero-image percentage
+panel color
+```
+
+The goal is useful artistic control, not a desktop-publishing surface.
+
+## The footer idea was deferred on purpose
+
+A mockup suggested that a small row of supporting images might look attractive at the bottom of EDITORIAL.
+
+It was explicitly deferred.
+
+At SIDECARD width, that strip is not a small ornament. It trades directly against body-copy space and changes the card from one authoritative photograph plus copy into a multi-image module.
+
+That decision should be made after watching EDITORIAL in motion, not from a still mockup.
+
+If it is revisited later, the likely source shape is repeated PANEL directives:
+
+```text
+FOOTER: images/a.jpg
+FOOTER: images/b.jpg
+FOOTER: images/c.jpg
+```
+
+Repeated directives fit the existing parser model better than a comma mini-language and preserve per-line diagnostics.
+
+But no FOOTER grammar or rendering is part of EDITORIAL v1.
+
+## The new contract
+
+The current CARD-family styling boundary is now:
+
+```text
+CARD / SIDECARD / DOSSIER source
+        ↓
+PresentationPanelContent
+        ↓
+paintPresentationCardFace
+        ↓
+runtime / inspector preview / BAKE
+```
+
+SIDECARD shell geometry remains a separate authority:
+
+```text
+sidecard_geometry.dart
+        ↓
+outer structural window placement
+```
+
+The face does not own the shell.
+
+The shell does not own the face.
+
+That separation is what allowed the visual redesign to happen without reopening the structural work that was already correct.
+
+## Tests that make this trustworthy
+
+The EDITORIAL pass added explicit regression coverage for:
+
+```text
+runtime seated face == direct face painter pixels
+EDITORIAL parses as an explicit PANEL preset
+EDITORIAL paints no kicker or photo treatment inside the hero image
+HEADING_SIZE / BODY_SIZE / IMAGE round-trip through PANEL source
+malformed style directives are preserved and diagnosed
+new inspector-authored cards explicitly write EDITORIAL defaults
+unknown PANEL directives still survive GUI edits
+live face preview focuses kicker / heading / body controls
+```
+
+The important rule remains the same as the rest of r3nder:
+
+```text
+source is authority
+shared pure rendering owns appearance
+tests prove seams
+motion still gets the final visual vote
+```
