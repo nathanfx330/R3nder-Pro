@@ -595,7 +595,7 @@ String _formatPanelNumber(double value) {
   return value
       .toStringAsFixed(2)
       .replaceFirst(RegExp(r'0+$'), '')
-      .replaceFirst(RegExp(r'\\.$'), '');
+      .replaceFirst(RegExp(r'\.$'), '');
 }
 
 /// Canonical writer used by CARD-family GUI controls.
