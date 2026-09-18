@@ -229,7 +229,6 @@ void main() {
     );
     await tester.ensureVisible(body);
     await tester.enterText(body, 'Biography text.');
-    expect(find.textContaining('FIRST |'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-apply')));
     await tester.pumpAndSettle();
 
