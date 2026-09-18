@@ -509,6 +509,13 @@ void main() {
     expect(changedIndex, 0);
     expect(changedCard, isNotNull);
     expect(changedCard!.heading, 'UPDATED');
+    final PresentationPanelContent legacyPanel = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(legacyPanel.preset, PresentationPanelPreset.simple);
+    expect(legacyPanel.structured, isFalse);
+    expect(legacyPanel.body, 'Old body.');
 
     await tester.tap(
       find.byKey(const ValueKey<String>('edit-card-cue-delete-0')),
