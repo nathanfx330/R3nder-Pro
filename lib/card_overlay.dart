@@ -1013,17 +1013,7 @@ void _paintCardAtSeatedRect({
     return;
   }
 
-  const double cardRadius = 16.0;
-  const double cardPadFrac = 0.055;
-
-  final PresentationPanelContent content = parsePresentationPanelContent(
-    heading: card.heading,
-    body: card.body,
-  );
-  final bool rich = content.preset != PresentationPanelPreset.simple;
-  final double cardImageFrac = rich ? 0.34 : 0.42;
-
-  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
+  final Size compositionSize = Size(engineW, engineH);
   final double rawProgress = slide.clamp(0.0, 1.0).toDouble();
   final double e = Curves.easeOutCubic.transform(rawProgress);
   final double left = engineW + (seatedRect.left - engineW) * e;
@@ -1033,13 +1023,12 @@ void _paintCardAtSeatedRect({
     seatedRect.width,
     seatedRect.height,
   );
-  final RRect rrect = RRect.fromRectAndRadius(
-    cardRect,
-    Radius.circular(cardRadius * s),
-  );
 
   canvas.save();
 
+  // CARD-family motion belongs to placement, not to the face painter. At a
+  // fully seated frame this transform is identity, which lets raster parity
+  // tests prove that no visible face work remains behind in this caller.
   final double pivotX = left + cardRect.width / 2.0;
   final double pivotY = cardRect.center.dy;
   final double angle = (1.0 - rawProgress) * -0.04;
@@ -1048,6 +1037,61 @@ void _paintCardAtSeatedRect({
   canvas.rotate(angle);
   canvas.scale(scaleEffect, scaleEffect);
   canvas.translate(-pivotX, -pivotY);
+
+  paintPresentationCardFace(
+    canvas: canvas,
+    compositionSize: compositionSize,
+    cardRect: cardRect,
+    card: card,
+    image: image,
+    inheritedFontFamily: fontFamily,
+  );
+
+  canvas.restore();
+}
+
+/// Paints the complete visible CARD-family face into [cardRect].
+///
+/// This is the single visual seam shared by runtime CARD/SIDECARD painting and
+/// the future EDIT inspector preview. Placement and slide motion stay outside;
+/// the face owns everything visible once the rectangle is known: shadow,
+/// surface, image treatment, rich/simple branching, and typography.
+///
+/// [compositionSize] is required because presentation typography is authored in
+/// the 1920x1080 reference composition. The scale is always
+/// min(width / 1920, height / 1080), matching Preview and BAKE.
+void paintPresentationCardFace({
+  required Canvas canvas,
+  required Size compositionSize,
+  required Rect cardRect,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+}) {
+  if (compositionSize.width <= 0.0 ||
+      compositionSize.height <= 0.0 ||
+      cardRect.width <= 0.0 ||
+      cardRect.height <= 0.0) {
+    return;
+  }
+
+  const double cardRadius = 16.0;
+  const double cardPadFrac = 0.055;
+
+  final PresentationPanelContent content = parsePresentationPanelContent(
+    heading: card.heading,
+    body: card.body,
+  );
+  final bool rich = content.preset != PresentationPanelPreset.simple;
+  final double cardImageFrac = rich ? 0.34 : 0.42;
+  final double s = math.min(
+    compositionSize.width / 1920.0,
+    compositionSize.height / 1080.0,
+  );
+  final RRect rrect = RRect.fromRectAndRadius(
+    cardRect,
+    Radius.circular(cardRadius * s),
+  );
 
   canvas.drawRRect(
     rrect.shift(Offset(-2 * s, 4 * s)),
@@ -1115,7 +1159,7 @@ void _paintCardAtSeatedRect({
       content: content,
       panelColor: panelColor,
       headColor: headColor,
-      inheritedFontFamily: fontFamily,
+      inheritedFontFamily: inheritedFontFamily,
       scale: s,
     );
   }
@@ -1133,7 +1177,7 @@ void _paintCardAtSeatedRect({
       panelColor: panelColor,
       headColor: headColor,
       bodyColor: bodyColor,
-      inheritedFontFamily: fontFamily,
+      inheritedFontFamily: inheritedFontFamily,
       showKicker: imageRect == null,
     );
   } else {
@@ -1147,11 +1191,10 @@ void _paintCardAtSeatedRect({
       headColor: headColor,
       bodyColor: bodyColor,
       ruleColor: ruleColor,
-      fontFamily: fontFamily,
+      fontFamily: inheritedFontFamily,
     );
   }
 
-  canvas.restore();
   canvas.restore();
 }
 
