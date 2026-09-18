@@ -959,7 +959,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   context: context,
                                   initialColor: draftPanelColor(),
                                   theme: widget.theme,
-                                  title: 'PANEL COLOR',
+                                  title: 'BACKGROUND COLOR',
                                 );
                                 if (picked == null || !context.mounted) return;
                                 final int value = picked.toARGB32();
@@ -1009,7 +1009,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Text(
-                                            'PANEL COLOR',
+                                            'BACKGROUND COLOR',
                                             style: widget.theme.micro,
                                           ),
                                           SizedBox(height: sc(2)),
