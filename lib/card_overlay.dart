@@ -243,7 +243,7 @@ void paintStructuralCardOverlays({
 /// The caller owns desktop and structural video window pixels. This helper owns
 /// only the existing CARD visual, so Preview and BAKE can stage the real outer
 /// window without duplicating card geometry or typography.
-void paintStructuralSideCardPanel({
+Rect? paintStructuralSideCardPanel({
   required Canvas canvas,
   required Size size,
   required StructuralCardOverlayPlacement placement,
@@ -254,9 +254,9 @@ void paintStructuralSideCardPanel({
       placement.slide <= 0.0 ||
       size.width <= 0.0 ||
       size.height <= 0.0) {
-    return;
+    return null;
   }
-  _paintCardAtSeatedRect(
+  return _paintCardAtSeatedRect(
     canvas: canvas,
     engineW: size.width,
     engineH: size.height,
@@ -999,21 +999,32 @@ void _paintCardPanel(
   );
 }
 
-void _paintCardAtSeatedRect({
-  required Canvas canvas,
-  required double engineW,
-  required double engineH,
-  required Rect seatedRect,
-  required double slide,
-  required CardRequest card,
-  required ui.Image? image,
-  required String fontFamily,
-}) {
-  if (slide <= 0.0 || seatedRect.width <= 0.0 || seatedRect.height <= 0.0) {
-    return;
-  }
-
+RRect _presentationCardFaceRRect(Rect rect, double scale) {
   const double cardRadius = 16.0;
+  return RRect.fromRectAndRadius(
+    rect,
+    Radius.circular(cardRadius * scale),
+  );
+}
+
+/// Paints the intrinsic CARD-family face inside [rect].
+///
+/// Placement, motion, pivot transforms, and the environmental drop shadow are
+/// caller-owned. Everything intrinsic to the card surface lives here: rounded
+/// clipping, panel treatment, image treatment, typography, and content
+/// placement. [scale] is the uniform 1920x1080 reference-composition scale
+/// chosen by the caller; this painter deliberately knows nothing about engine
+/// dimensions or image caches.
+void paintPresentationCardFace(
+  Canvas canvas,
+  Rect rect,
+  double scale,
+  CardRequest card,
+  ui.Image? image,
+  String inheritedFontFamily,
+) {
+  if (rect.width <= 0.0 || rect.height <= 0.0 || scale <= 0.0) return;
+
   const double cardPadFrac = 0.055;
 
   final PresentationPanelContent content = parsePresentationPanelContent(
@@ -1022,39 +1033,7 @@ void _paintCardAtSeatedRect({
   );
   final bool rich = content.preset != PresentationPanelPreset.simple;
   final double cardImageFrac = rich ? 0.34 : 0.42;
-
-  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
-  final double rawProgress = slide.clamp(0.0, 1.0).toDouble();
-  final double e = Curves.easeOutCubic.transform(rawProgress);
-  final double left = engineW + (seatedRect.left - engineW) * e;
-  final Rect cardRect = Rect.fromLTWH(
-    left,
-    seatedRect.top,
-    seatedRect.width,
-    seatedRect.height,
-  );
-  final RRect rrect = RRect.fromRectAndRadius(
-    cardRect,
-    Radius.circular(cardRadius * s),
-  );
-
-  canvas.save();
-
-  final double pivotX = left + cardRect.width / 2.0;
-  final double pivotY = cardRect.center.dy;
-  final double angle = (1.0 - rawProgress) * -0.04;
-  final double scaleEffect = 0.98 + 0.02 * rawProgress;
-  canvas.translate(pivotX, pivotY);
-  canvas.rotate(angle);
-  canvas.scale(scaleEffect, scaleEffect);
-  canvas.translate(-pivotX, -pivotY);
-
-  canvas.drawRRect(
-    rrect.shift(Offset(-2 * s, 4 * s)),
-    Paint()
-      ..color = const Color(0x66000000)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 14 * s),
-  );
+  final RRect rrect = _presentationCardFaceRRect(rect, scale);
 
   final Color panelColor = card.panelColor;
   final bool darkPanel = panelColor.computeLuminance() < 0.35;
@@ -1078,13 +1057,13 @@ void _paintCardAtSeatedRect({
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: <Color>[surfaceTop, surfaceBottom],
-        ).createShader(cardRect),
+        ).createShader(rect),
     );
     canvas.drawRRect(
       rrect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(0.8 * s, 0.6)
+        ..strokeWidth = math.max(0.8 * scale, 0.6)
         ..color = headColor.withValues(alpha: 0.15),
     );
   } else {
@@ -1094,15 +1073,15 @@ void _paintCardAtSeatedRect({
   canvas.save();
   canvas.clipRRect(rrect);
 
-  double imageBottom = cardRect.top;
+  double imageBottom = rect.top;
   Rect? imageRect;
   if (image != null) {
-    final double imageH = cardRect.height * cardImageFrac;
-    imageBottom = cardRect.top + imageH;
+    final double imageH = rect.height * cardImageFrac;
+    imageBottom = rect.top + imageH;
     imageRect = Rect.fromLTWH(
-      cardRect.left,
-      cardRect.top,
-      cardRect.width,
+      rect.left,
+      rect.top,
+      rect.width,
       imageH,
     );
     _drawImageCover(canvas, image, imageRect);
@@ -1115,44 +1094,100 @@ void _paintCardAtSeatedRect({
       content: content,
       panelColor: panelColor,
       headColor: headColor,
-      inheritedFontFamily: fontFamily,
-      scale: s,
+      inheritedFontFamily: inheritedFontFamily,
+      scale: scale,
     );
   }
 
-  final double pad = cardRect.width * cardPadFrac;
+  final double pad = rect.width * cardPadFrac;
 
   if (rich) {
     paintPresentationPanelContent(
       canvas: canvas,
-      cardRect: cardRect,
+      cardRect: rect,
       contentTop: imageBottom,
       content: content,
       pad: pad,
-      scale: s,
+      scale: scale,
       panelColor: panelColor,
       headColor: headColor,
       bodyColor: bodyColor,
-      inheritedFontFamily: fontFamily,
+      inheritedFontFamily: inheritedFontFamily,
       showKicker: imageRect == null,
     );
   } else {
     _paintSimpleCardContent(
       canvas: canvas,
-      cardRect: cardRect,
+      cardRect: rect,
       imageBottom: imageBottom,
       content: content,
       pad: pad,
-      scale: s,
+      scale: scale,
       headColor: headColor,
       bodyColor: bodyColor,
       ruleColor: ruleColor,
-      fontFamily: fontFamily,
+      fontFamily: inheritedFontFamily,
     );
   }
 
   canvas.restore();
+}
+
+Rect? _paintCardAtSeatedRect({
+  required Canvas canvas,
+  required double engineW,
+  required double engineH,
+  required Rect seatedRect,
+  required double slide,
+  required CardRequest card,
+  required ui.Image? image,
+  required String fontFamily,
+}) {
+  if (slide <= 0.0 || seatedRect.width <= 0.0 || seatedRect.height <= 0.0) {
+    return null;
+  }
+
+  final double s = math.min(engineW / 1920.0, engineH / 1080.0);
+  final double rawProgress = slide.clamp(0.0, 1.0).toDouble();
+  final double e = Curves.easeOutCubic.transform(rawProgress);
+  final double left = engineW + (seatedRect.left - engineW) * e;
+  final Rect cardRect = Rect.fromLTWH(
+    left,
+    seatedRect.top,
+    seatedRect.width,
+    seatedRect.height,
+  );
+  final RRect shadowShape = _presentationCardFaceRRect(cardRect, s);
+
+  canvas.save();
+
+  final double pivotX = left + cardRect.width / 2.0;
+  final double pivotY = cardRect.center.dy;
+  final double angle = (1.0 - rawProgress) * -0.04;
+  final double scaleEffect = 0.98 + 0.02 * rawProgress;
+  canvas.translate(pivotX, pivotY);
+  canvas.rotate(angle);
+  canvas.scale(scaleEffect, scaleEffect);
+  canvas.translate(-pivotX, -pivotY);
+
+  canvas.drawRRect(
+    shadowShape.shift(Offset(-2 * s, 4 * s)),
+    Paint()
+      ..color = const Color(0x66000000)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 14 * s),
+  );
+
+  paintPresentationCardFace(
+    canvas,
+    cardRect,
+    s,
+    card,
+    image,
+    fontFamily,
+  );
+
   canvas.restore();
+  return cardRect;
 }
 
 void _paintSimpleCardContent({
