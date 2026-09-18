@@ -33,6 +33,7 @@ class EditClipInspector extends StatelessWidget {
   final List<EditMaximizeCue> maximizeCues;
   final int playheadFrame;
   final List<String> Function()? cardImageOptions;
+  final String Function(String source)? cardResolveSource;
   final List<String> Function()? dossierFolderOptions;
   final List<String> Function()? dossierImageOptions;
   final ValueChanged<CardRequest>? onAddCardCueAtPlayhead;
@@ -61,6 +62,7 @@ class EditClipInspector extends StatelessWidget {
     this.maximizeCues = const <EditMaximizeCue>[],
     this.playheadFrame = 0,
     this.cardImageOptions,
+    this.cardResolveSource,
     this.dossierFolderOptions,
     this.dossierImageOptions,
     this.onAddCardCueAtPlayhead,
@@ -200,6 +202,7 @@ class EditClipInspector extends StatelessWidget {
                   playheadFrame: playheadFrame,
                   theme: theme,
                   imageOptions: cardImageOptions,
+                  resolveSource: cardResolveSource,
                   onAddAtPlayhead: onAddCardCueAtPlayhead,
                   onChanged: onCardCueChanged,
                   onDeleted: onCardCueDeleted,
