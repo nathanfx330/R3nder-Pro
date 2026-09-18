@@ -104,15 +104,28 @@ void main() {
         const ValueKey<String>('presentation-card-face-preview'),
       ),
     );
-    final ui.Image preview = await boundary.toImage(pixelRatio: 1.0);
-    final ui.Image direct = await _direct(card);
+    final ui.Image? preview = await tester.runAsync<ui.Image>(
+      () => boundary.toImage(pixelRatio: 1.0),
+    );
+    final ui.Image? direct = await tester.runAsync<ui.Image>(
+      () => _direct(card),
+    );
+    expect(preview, isNotNull);
+    expect(direct, isNotNull);
+
     try {
-      final Uint8List previewBytes = await _rgba(preview);
-      final Uint8List directBytes = await _rgba(direct);
-      expect(previewBytes, orderedEquals(directBytes));
+      final Uint8List? previewBytes = await tester.runAsync<Uint8List>(
+        () => _rgba(preview!),
+      );
+      final Uint8List? directBytes = await tester.runAsync<Uint8List>(
+        () => _rgba(direct!),
+      );
+      expect(previewBytes, isNotNull);
+      expect(directBytes, isNotNull);
+      expect(previewBytes, orderedEquals(directBytes!));
     } finally {
-      preview.dispose();
-      direct.dispose();
+      preview!.dispose();
+      direct!.dispose();
     }
   });
 }
