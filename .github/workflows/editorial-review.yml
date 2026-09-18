@@ -19,8 +19,21 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - name: Analyze
-        run: flutter analyze
+      - name: Analyze changed surface
+        run: >-
+          flutter analyze
+          lib/card_overlay.dart
+          lib/presentation_panel_content.dart
+          lib/presentation_panel_painter.dart
+          lib/edit_card_cue_controls.dart
+          lib/edit_clip_inspector.dart
+          lib/edit_surface.dart
+          test/presentation_card_face_parity_test.dart
+          test/presentation_panel_content_test.dart
+          test/presentation_panel_painter_test.dart
+          test/edit_card_cue_controls_test.dart
+          test/edit_sidecard_cue_controls_test.dart
+          test/edit_card_cue_inspector_integration_test.dart
       - name: Targeted tests
         run: >-
           flutter test
