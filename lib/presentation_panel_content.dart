@@ -90,6 +90,7 @@ enum PresentationPanelIssueCode {
   malformedDirective,
   malformedMetadata,
   invalidPreset,
+  invalidDirectiveValue,
   duplicateDirective,
 }
 
@@ -146,6 +147,20 @@ class PresentationPanelContent {
   final String fontFamily;
 
   final String subtitle;
+
+  /// Optional heading size in 1920x1080 reference-composition units.
+  ///
+  /// Preview and BAKE multiply this authored value by the same uniform
+  /// composition scale; it is never an output-pixel measurement.
+  final double? headingSize;
+
+  /// Optional body size in 1920x1080 reference-composition units.
+  final double? bodySize;
+
+  /// Optional full-bleed image share of the card height, stored as 0..1.
+  /// Authored source writes this as a percentage, for example IMAGE: 38%.
+  final double? imageFraction;
+
   final List<PresentationPanelMetadata> metadata;
   final String body;
   final PresentationPanelPreset preset;
@@ -168,6 +183,9 @@ class PresentationPanelContent {
     required this.kicker,
     required this.fontFamily,
     required this.subtitle,
+    required this.headingSize,
+    required this.bodySize,
+    required this.imageFraction,
     required this.metadata,
     required this.body,
     required this.preset,
@@ -199,6 +217,9 @@ PresentationPanelContent _plainPanelContent({
     kicker: '',
     fontFamily: '',
     subtitle: '',
+    headingSize: null,
+    bodySize: null,
+    imageFraction: null,
     metadata: const <PresentationPanelMetadata>[],
     body: body,
     preset: PresentationPanelPreset.simple,
@@ -261,10 +282,16 @@ PresentationPanelContent parsePresentationPanelContent({
   String kicker = '';
   String fontFamily = '';
   String subtitle = '';
+  double? headingSize;
+  double? bodySize;
+  double? imageFraction;
   bool sawPreset = false;
   bool sawKicker = false;
   bool sawFont = false;
   bool sawSubtitle = false;
+  bool sawHeadingSize = false;
+  bool sawBodySize = false;
+  bool sawImageFraction = false;
   final List<PresentationPanelMetadata> metadata =
       <PresentationPanelMetadata>[];
   final List<String> preserved = <String>[];
@@ -408,6 +435,103 @@ PresentationPanelContent parsePresentationPanelContent({
         sawSubtitle = true;
         subtitle = value;
         break;
+      case 'HEADING_SIZE':
+        if (sawHeadingSize) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate HEADING_SIZE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final double? parsed = double.tryParse(value);
+        if (parsed == null ||
+            !parsed.isFinite ||
+            parsed <= 0.0 ||
+            parsed > 200.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.invalidDirectiveValue,
+            severity: PresentationPanelIssueSeverity.error,
+            message:
+                'HEADING_SIZE requires a positive 1920x1080 reference size up to 200.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawHeadingSize = true;
+        headingSize = parsed;
+        break;
+      case 'BODY_SIZE':
+        if (sawBodySize) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate BODY_SIZE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final double? parsed = double.tryParse(value);
+        if (parsed == null ||
+            !parsed.isFinite ||
+            parsed <= 0.0 ||
+            parsed > 200.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.invalidDirectiveValue,
+            severity: PresentationPanelIssueSeverity.error,
+            message:
+                'BODY_SIZE requires a positive 1920x1080 reference size up to 200.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawBodySize = true;
+        bodySize = parsed;
+        break;
+      case 'IMAGE':
+        if (sawImageFraction) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.duplicateDirective,
+            severity: PresentationPanelIssueSeverity.warning,
+            message: 'Duplicate IMAGE is preserved but ignored.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        if (!value.endsWith('%')) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.invalidDirectiveValue,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'IMAGE requires a percentage such as 38%.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        final double? parsed =
+            double.tryParse(value.substring(0, value.length - 1).trim());
+        if (parsed == null ||
+            !parsed.isFinite ||
+            parsed <= 0.0 ||
+            parsed >= 100.0) {
+          preserveIssue(
+            code: PresentationPanelIssueCode.invalidDirectiveValue,
+            severity: PresentationPanelIssueSeverity.error,
+            message: 'IMAGE percentage must be greater than 0 and less than 100.',
+            lineIndex: i,
+            rawLine: rawLine,
+          );
+          break;
+        }
+        sawImageFraction = true;
+        imageFraction = parsed / 100.0;
+        break;
       case 'META':
         // The first pipe is the delimiter. Any later pipes belong to the value,
         // so text such as "RANGE | 1990 | 1995" is deterministic.
@@ -466,6 +590,9 @@ PresentationPanelContent parsePresentationPanelContent({
     kicker: kicker,
     fontFamily: fontFamily,
     subtitle: subtitle,
+    headingSize: headingSize,
+    bodySize: bodySize,
+    imageFraction: imageFraction,
     metadata: List<PresentationPanelMetadata>.unmodifiable(metadata),
     body: bodyLines.join('\n'),
     preset: preset,
@@ -474,6 +601,163 @@ PresentationPanelContent parsePresentationPanelContent({
     preservedDirectives: List<String>.unmodifiable(preserved),
     issues: List<PresentationPanelIssue>.unmodifiable(issues),
   );
+}
+
+String _formatPanelNumber(double value) {
+  if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+\
+///
+/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
+/// existing project never grows metadata syntax simply because it was opened.
+/// Unknown or forward-version directives can be supplied through
+/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
+/// build instead of disappearing during a GUI edit.
+String formatPresentationPanelBody({
+  required PresentationPanelPreset preset,
+  String kicker = '',
+  String fontFamily = '',
+  double? headingSize,
+  double? bodySize,
+  double? imageFraction,
+  required String subtitle,
+  required List<PresentationPanelMetadata> metadata,
+  List<String> preservedDirectives = const <String>[],
+  required String body,
+}) {
+  final String cleanKicker = kicker.trim();
+  final String cleanFont = fontFamily.trim();
+  final String cleanSubtitle = subtitle.trim();
+  final List<PresentationPanelMetadata> cleanMetadata = metadata
+      .map(
+        (PresentationPanelMetadata item) => PresentationPanelMetadata(
+          label: item.label.trim(),
+          value: item.value.trim(),
+        ),
+      )
+      .where(
+        (PresentationPanelMetadata item) =>
+            item.label.isNotEmpty && item.value.isNotEmpty,
+      )
+      .toList(growable: false);
+
+  if (preset == PresentationPanelPreset.simple &&
+      cleanKicker.isEmpty &&
+      cleanFont.isEmpty &&
+      headingSize == null &&
+      bodySize == null &&
+      imageFraction == null &&
+      cleanSubtitle.isEmpty &&
+      cleanMetadata.isEmpty &&
+      preservedDirectives.isEmpty) {
+    return body;
+  }
+
+  final StringBuffer out = StringBuffer()
+    ..writeln('[PANEL]')
+    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
+  if (cleanKicker.isNotEmpty) {
+    out.writeln('KICKER: $cleanKicker');
+  }
+  if (cleanFont.isNotEmpty) {
+    out.writeln('FONT: $cleanFont');
+  }
+  if (headingSize != null) {
+    out.writeln('HEADING_SIZE: ${_formatPanelNumber(headingSize)}');
+  }
+  if (bodySize != null) {
+    out.writeln('BODY_SIZE: ${_formatPanelNumber(bodySize)}');
+  }
+  if (imageFraction != null) {
+    out.writeln('IMAGE: ${_formatPanelNumber(imageFraction * 100.0)}%');
+  }
+  if (cleanSubtitle.isNotEmpty) {
+    out.writeln('SUBTITLE: $cleanSubtitle');
+  }
+  for (final PresentationPanelMetadata item in cleanMetadata) {
+    out.writeln('META: ${item.label} | ${item.value}');
+  }
+  for (final String rawLine in preservedDirectives) {
+    out.writeln(rawLine);
+  }
+  out.write('[/PANEL]');
+  if (body.isNotEmpty) {
+    out
+      ..writeln()
+      ..write(body);
+  }
+  return out.toString();
+}
+), '')
+      .replaceFirst(RegExp(r'\.\
+///
+/// Legacy SIMPLE cards with no structured fields are emitted unchanged so an
+/// existing project never grows metadata syntax simply because it was opened.
+/// Unknown or forward-version directives can be supplied through
+/// [preservedDirectives]; they are emitted unchanged and remain ignored by this
+/// build instead of disappearing during a GUI edit.
+String formatPresentationPanelBody({
+  required PresentationPanelPreset preset,
+  String kicker = '',
+  String fontFamily = '',
+  required String subtitle,
+  required List<PresentationPanelMetadata> metadata,
+  List<String> preservedDirectives = const <String>[],
+  required String body,
+}) {
+  final String cleanKicker = kicker.trim();
+  final String cleanFont = fontFamily.trim();
+  final String cleanSubtitle = subtitle.trim();
+  final List<PresentationPanelMetadata> cleanMetadata = metadata
+      .map(
+        (PresentationPanelMetadata item) => PresentationPanelMetadata(
+          label: item.label.trim(),
+          value: item.value.trim(),
+        ),
+      )
+      .where(
+        (PresentationPanelMetadata item) =>
+            item.label.isNotEmpty && item.value.isNotEmpty,
+      )
+      .toList(growable: false);
+
+  if (preset == PresentationPanelPreset.simple &&
+      cleanKicker.isEmpty &&
+      cleanFont.isEmpty &&
+      cleanSubtitle.isEmpty &&
+      cleanMetadata.isEmpty &&
+      preservedDirectives.isEmpty) {
+    return body;
+  }
+
+  final StringBuffer out = StringBuffer()
+    ..writeln('[PANEL]')
+    ..writeln('PRESET: ${presentationPanelPresetName(preset)}');
+  if (cleanKicker.isNotEmpty) {
+    out.writeln('KICKER: $cleanKicker');
+  }
+  if (cleanFont.isNotEmpty) {
+    out.writeln('FONT: $cleanFont');
+  }
+  if (cleanSubtitle.isNotEmpty) {
+    out.writeln('SUBTITLE: $cleanSubtitle');
+  }
+  for (final PresentationPanelMetadata item in cleanMetadata) {
+    out.writeln('META: ${item.label} | ${item.value}');
+  }
+  for (final String rawLine in preservedDirectives) {
+    out.writeln(rawLine);
+  }
+  out.write('[/PANEL]');
+  if (body.isNotEmpty) {
+    out
+      ..writeln()
+      ..write(body);
+  }
+  return out.toString();
+}
+), '');
 }
 
 /// Canonical writer used by CARD-family GUI controls.
