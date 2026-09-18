@@ -65,6 +65,26 @@ const String _sourceWithFuturePanelKey = '''[EDIT:main]
 [/EDIT]
 ''';
 
+const String _sourceWithEditorialGeometry = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:300:1]
+      [CUE:40]
+        [SIDECARD:old.png:30:30,30,38:ELK]
+          [PANEL]
+          PRESET: EDITORIAL
+          KICKER: WILDLIFE
+          HEADING_SIZE: 36
+          BODY_SIZE: 18
+          IMAGE: 44%
+          [/PANEL]
+          Biography.
+        [/SIDECARD]
+      [/CUE]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+''';
+
 const String _sourceWithMalformedPanel = '''[EDIT:main]
   [TRACK:V1]
     [CLIP:shot:video/shot.mp4:0:0:300:1]
@@ -459,4 +479,54 @@ void main() {
     await tester.pump();
     expect(deletedIndex, 0);
   });
+  testWidgets('read-only face preview preserves authored PANEL geometry on apply',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithEditorialGeometry,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+    CardRequest? changedCard;
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) => changedCard = card,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('edit-card-cue-preview-slot')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey<String>('presentation-card-face-preview'),
+      ),
+      findsOneWidget,
+    );
+
+    final Finder apply =
+        find.byKey(const ValueKey<String>('edit-card-cue-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+
+    expect(changedCard, isNotNull);
+    final PresentationPanelContent parsed = parsePresentationPanelContent(
+      heading: changedCard!.heading,
+      body: changedCard!.body,
+    );
+    expect(parsed.preset, PresentationPanelPreset.editorial);
+    expect(parsed.headingSize, 36.0);
+    expect(parsed.bodySize, 18.0);
+    expect(parsed.imageFraction, 0.44);
+    expect(parsed.kicker, 'WILDLIFE');
+  });
+
 }
