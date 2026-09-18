@@ -129,9 +129,25 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         .join('\n');
     String bodyDraft = panel.hasErrors ? '' : panel.body;
     final List<String> preservedPanelDirectives = panel.preservedDirectives;
-    return showDialog<CardRequest>(
+
+    final TextEditingController imageController =
+        TextEditingController(text: imageDraft);
+    final TextEditingController kickerController =
+        TextEditingController(text: kickerDraft);
+    final TextEditingController fontController =
+        TextEditingController(text: fontDraft);
+    final TextEditingController headingSizeController =
+        TextEditingController(text: headingSizeDraft);
+    final TextEditingController bodySizeController =
+        TextEditingController(text: bodySizeDraft);
+    final TextEditingController imagePercentController =
+        TextEditingController(text: imagePercentDraft);
+
+    ModalRoute<dynamic>? dialogRoute;
+    final CardRequest? result = await showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
+        dialogRoute ??= ModalRoute.of(dialogContext);
         String? errorText;
 
         return StatefulBuilder(
@@ -437,15 +453,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Row(
                         children: [
                           Expanded(
-                            child: KeyedSubtree(
-                              key: ValueKey<String>(
-                                'edit-card-cue-image-draft:$imageDraft',
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-image-field',
                               ),
-                              child: TextFormField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-image-field',
-                                ),
-                                initialValue: imageDraft,
+                              controller: imageController,
                                 decoration: const InputDecoration(
                                   labelText: 'Hero image',
                                   hintText: 'workspace images/',
@@ -457,7 +469,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                     errorText = null;
                                   });
                                 },
-                              ),
                             ),
                           ),
                           SizedBox(width: sc(8)),
@@ -471,6 +482,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             onSelected: (String value) {
                               setDialogState(() {
                                 imageDraft = value;
+                                imageController.text = value;
                                 errorText = null;
                               });
                             },
@@ -504,15 +516,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         ],
                       ),
                       SizedBox(height: sc(10)),
-                      KeyedSubtree(
-                        key: ValueKey<String>(
-                          'edit-card-cue-kicker-draft:$kickerDraft',
+                      TextFormField(
+                        key: const ValueKey<String>(
+                          'edit-card-cue-kicker-field',
                         ),
-                        child: TextFormField(
-                          key: const ValueKey<String>(
-                            'edit-card-cue-kicker-field',
-                          ),
-                          initialValue: kickerDraft,
+                        controller: kickerController,
                           enabled: !panel.hasErrors,
                           decoration: const InputDecoration(
                             labelText: 'Kicker / category',
@@ -531,7 +539,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                               errorText = null;
                             });
                           },
-                        ),
                       ),
                       SizedBox(height: sc(10)),
                       TextFormField(
@@ -654,6 +661,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                               presentationPanelDefaultKicker(
                                                 presetDraft,
                                               );
+                                          kickerController.text = kickerDraft;
                                           kickerFollowsPresetDefault = true;
                                         }
                                         if (panel.headingSize == null &&
@@ -663,6 +671,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                               presetDraft,
                                             ),
                                           );
+                                          headingSizeController.text =
+                                              headingSizeDraft;
                                         }
                                         if (panel.bodySize == null &&
                                             !bodySizeTouched) {
@@ -671,6 +681,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                               presetDraft,
                                             ),
                                           );
+                                          bodySizeController.text =
+                                              bodySizeDraft;
                                         }
                                         if (panel.imageFraction == null &&
                                             !imagePercentTouched) {
@@ -680,6 +692,8 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                                 ) *
                                                 100.0,
                                           );
+                                          imagePercentController.text =
+                                              imagePercentDraft;
                                         }
                                         errorText = null;
                                       });
@@ -734,15 +748,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             child: Row(
                               children: [
                                 Expanded(
-                                  child: KeyedSubtree(
-                                    key: ValueKey<String>(
-                                      'edit-card-cue-font-draft:$fontDraft',
+                                  child: TextFormField(
+                                    key: const ValueKey<String>(
+                                      'edit-card-cue-font-field',
                                     ),
-                                    child: TextFormField(
-                                      key: const ValueKey<String>(
-                                        'edit-card-cue-font-field',
-                                      ),
-                                      initialValue: fontDraft,
+                                    controller: fontController,
                                       enabled: !panel.hasErrors,
                                       decoration: const InputDecoration(
                                         labelText: 'Font family',
@@ -755,7 +765,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                           errorText = null;
                                         });
                                       },
-                                    ),
                                   ),
                                 ),
                                 SizedBox(width: sc(6)),
@@ -769,6 +778,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                   onSelected: (String value) {
                                     setDialogState(() {
                                       fontDraft = value;
+                                      fontController.text = value;
                                       errorText = null;
                                     });
                                   },
@@ -813,16 +823,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                       Row(
                         children: [
                           Expanded(
-                            child: KeyedSubtree(
-                              key: ValueKey<String>(
-                                'edit-card-cue-heading-size:'
-                                '$headingSizeDraft',
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-heading-size-field',
                               ),
-                              child: TextFormField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-heading-size-field',
-                                ),
-                                initialValue: headingSizeDraft,
+                              controller: headingSizeController,
                                 enabled: !panel.hasErrors,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(
@@ -840,20 +845,15 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                     errorText = null;
                                   });
                                 },
-                              ),
                             ),
                           ),
                           SizedBox(width: sc(10)),
                           Expanded(
-                            child: KeyedSubtree(
-                              key: ValueKey<String>(
-                                'edit-card-cue-body-size:$bodySizeDraft',
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-body-size-field',
                               ),
-                              child: TextFormField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-body-size-field',
-                                ),
-                                initialValue: bodySizeDraft,
+                              controller: bodySizeController,
                                 enabled: !panel.hasErrors,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(
@@ -871,7 +871,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                     errorText = null;
                                   });
                                 },
-                              ),
                             ),
                           ),
                         ],
@@ -963,16 +962,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           ),
                           SizedBox(width: sc(10)),
                           Expanded(
-                            child: KeyedSubtree(
-                              key: ValueKey<String>(
-                                'edit-card-cue-image-percent:'
-                                '$imagePercentDraft',
+                            child: TextFormField(
+                              key: const ValueKey<String>(
+                                'edit-card-cue-image-percent-field',
                               ),
-                              child: TextFormField(
-                                key: const ValueKey<String>(
-                                  'edit-card-cue-image-percent-field',
-                                ),
-                                initialValue: imagePercentDraft,
+                              controller: imagePercentController,
                                 enabled: !panel.hasErrors,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(
@@ -991,7 +985,6 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                                     errorText = null;
                                   });
                                 },
-                              ),
                             ),
                           ),
                         ],
@@ -1031,6 +1024,18 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         );
       },
     );
+
+    final ModalRoute<dynamic>? completedRoute = dialogRoute;
+    if (completedRoute != null) {
+      await completedRoute.completed;
+    }
+    imageController.dispose();
+    kickerController.dispose();
+    fontController.dispose();
+    headingSizeController.dispose();
+    bodySizeController.dispose();
+    imagePercentController.dispose();
+    return result;
   }
 
   Future<void> _add() async {
