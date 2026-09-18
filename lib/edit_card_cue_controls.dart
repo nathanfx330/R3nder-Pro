@@ -69,6 +69,12 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     'DejaVu Sans Mono',
   ];
 
+  static String _displayNumber(double value) {
+    final int rounded = value.round();
+    if ((value - rounded).abs() < 0.000001) return '$rounded';
+    return value.toStringAsFixed(1);
+  }
+
   int? get _playheadSourceFrame {
     final int frame = widget.playheadFrame;
     if (frame < widget.clip.atFrame || frame >= widget.clip.endFrameExclusive) {
@@ -171,6 +177,18 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                   .toList(growable: false);
               final List<PresentationPanelMetadata>? metadata =
                   parseMetadataDraft();
+              final String cleanHeadingSize = headingSizeDraft.trim();
+              final String cleanBodySize = bodySizeDraft.trim();
+              final String cleanImagePercent = imagePercentDraft.trim();
+              final double? headingSize = cleanHeadingSize.isEmpty
+                  ? null
+                  : double.tryParse(cleanHeadingSize);
+              final double? bodySize = cleanBodySize.isEmpty
+                  ? null
+                  : double.tryParse(cleanBodySize);
+              final double? imagePercent = cleanImagePercent.isEmpty
+                  ? null
+                  : double.tryParse(cleanImagePercent);
 
               String? problem;
               if (panel.hasErrors) {
@@ -198,6 +216,25 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 problem = 'Top label must stay on one line.';
               } else if (fontDraft.contains('\n') || fontDraft.contains('\r')) {
                 problem = 'Font family must stay on one line.';
+              } else if (headingSize != null &&
+                  (!headingSize.isFinite ||
+                      headingSize < 8.0 ||
+                      headingSize > 96.0)) {
+                problem = 'Heading size must be 8–96 reference units.';
+              } else if (cleanHeadingSize.isNotEmpty && headingSize == null) {
+                problem = 'Heading size must be a number or left blank.';
+              } else if (bodySize != null &&
+                  (!bodySize.isFinite || bodySize < 8.0 || bodySize > 72.0)) {
+                problem = 'Body size must be 8–72 reference units.';
+              } else if (cleanBodySize.isNotEmpty && bodySize == null) {
+                problem = 'Body size must be a number or left blank.';
+              } else if (imagePercent != null &&
+                  (!imagePercent.isFinite ||
+                      imagePercent < 25.0 ||
+                      imagePercent > 55.0)) {
+                problem = 'Image height must be 25–55 percent.';
+              } else if (cleanImagePercent.isNotEmpty && imagePercent == null) {
+                problem = 'Image height must be a percentage number or left blank.';
               } else if (subtitleDraft.contains('\n') ||
                   subtitleDraft.contains('\r')) {
                 problem = 'Subtitle must stay on one line.';
@@ -225,9 +262,10 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                 preset: presetDraft,
                 kicker: authoredKicker,
                 fontFamily: fontDraft,
-                headingSize: panel.headingSize,
-                bodySize: panel.bodySize,
-                imageFraction: panel.imageFraction,
+                headingSize: headingSize,
+                bodySize: bodySize,
+                imageFraction:
+                    imagePercent == null ? null : imagePercent / 100.0,
                 subtitle: subtitleDraft,
                 metadata: metadata!,
                 preservedDirectives: preservedPanelDirectives,
