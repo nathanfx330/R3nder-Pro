@@ -1208,8 +1208,8 @@ void _paintSimpleCardContent({
   required Color ruleColor,
   required String fontFamily,
 }) {
-  const double cardHeadingSize = 34.0;
-  const double cardBodySize = 20.0;
+  final double cardHeadingSize = content.headingSize ?? 34.0;
+  final double cardBodySize = content.bodySize ?? 20.0;
   final String selectedFontFamily = presentationPanelFontFamily(
     content,
     fontFamily,
