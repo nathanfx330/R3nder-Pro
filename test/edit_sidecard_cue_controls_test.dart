@@ -69,9 +69,10 @@ void main() {
     );
     expect(find.text('FULLSCREEN CARD'), findsWidgets);
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('edit-card-cue-style-menu')),
-    );
+    final Finder styleMenu =
+        find.byKey(const ValueKey<String>('edit-card-cue-style-menu'));
+    await tester.ensureVisible(styleMenu);
+    await tester.tap(styleMenu);
     await tester.pumpAndSettle();
     await tester.tap(find.text('SIDE CARD + VIDEO WINDOW').last);
     await tester.pumpAndSettle();
