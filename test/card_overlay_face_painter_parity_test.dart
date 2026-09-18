@@ -113,14 +113,17 @@ void main() {
       final Directory imagesDir = Directory('${root.path}/images')
         ..createSync(recursive: true);
 
-      final ui.Image source = await _makeSourceImage();
-      final ByteData? png =
-          await source.toByteData(format: ui.ImageByteFormat.png);
+      final ui.Image? source =
+          await tester.runAsync<ui.Image>(_makeSourceImage);
+      expect(source, isNotNull);
+      final ByteData? png = await tester.runAsync<ByteData?>(
+        () => source!.toByteData(format: ui.ImageByteFormat.png),
+      );
       expect(png, isNotNull);
       File('${imagesDir.path}/subject.png').writeAsBytesSync(
         png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
       );
-      source.dispose();
+      source!.dispose();
 
       final SideCardRequest card = SideCardRequest(
         image: 'subject.png',
@@ -150,35 +153,50 @@ From towering mountains to remote coastlines, wild places sustain extraordinary 
         if (root.existsSync()) root.deleteSync(recursive: true);
       });
 
-      final bool changed = await images.ensure(
-        <StructuralCardOverlayPlacement>[placement],
+      final bool? changed = await tester.runAsync<bool>(
+        () => images.ensure(<StructuralCardOverlayPlacement>[placement]),
       );
       expect(changed, isTrue);
       expect(images.imageFor(card), isNotNull);
 
       Rect? runtimeRect;
-      final ui.Image runtime = await _renderRuntime(
-        size: size,
-        placement: placement,
-        images: images,
-        onRect: (Rect rect) => runtimeRect = rect,
+      final ui.Image? runtime = await tester.runAsync<ui.Image>(
+        () => _renderRuntime(
+          size: size,
+          placement: placement,
+          images: images,
+          onRect: (Rect rect) => runtimeRect = rect,
+        ),
       );
+      expect(runtime, isNotNull);
       expect(runtimeRect, isNotNull);
 
-      final ui.Image direct = await _renderDirectFace(
-        size: size,
-        rect: runtimeRect!,
-        scale: scale,
-        card: card,
-        image: images.imageFor(card),
+      final ui.Image? direct = await tester.runAsync<ui.Image>(
+        () => _renderDirectFace(
+          size: size,
+          rect: runtimeRect!,
+          scale: scale,
+          card: card,
+          image: images.imageFor(card),
+        ),
       );
+      expect(direct, isNotNull);
 
-      final Uint8List runtimeRgba = await _rgba(runtime);
-      final Uint8List directRgba = await _rgba(direct);
-      runtime.dispose();
-      direct.dispose();
+      final Uint8List? runtimeRgba = await tester.runAsync<Uint8List>(
+        () => _rgba(runtime!),
+      );
+      final Uint8List? directRgba = await tester.runAsync<Uint8List>(
+        () => _rgba(direct!),
+      );
+      expect(runtimeRgba, isNotNull);
+      expect(directRgba, isNotNull);
+      runtime!.dispose();
+      direct!.dispose();
 
-      expect(runtimeRgba.length, directRgba.length);
+      final Uint8List runtimeBytes = runtimeRgba!;
+      final Uint8List directBytes = directRgba!;
+
+      expect(runtimeBytes.length, directBytes.length);
 
       // The runtime path deliberately owns the drop shadow while the direct
       // face painter deliberately does not. The blur can bleed into the four
@@ -198,16 +216,16 @@ From towering mountains to remote coastlines, wild places sustain extraordinary 
         for (int x = 0; x < width; x++) {
           if (!faceRect.contains(Offset(x + 0.5, y + 0.5))) continue;
           final int offset = (y * width + x) * 4;
-          if (directRgba[offset + 3] != 0xFF) continue;
+          if (directBytes[offset + 3] != 0xFF) continue;
 
           comparedPixels++;
           for (int channel = 0; channel < 4; channel++) {
-            if (runtimeRgba[offset + channel] !=
-                directRgba[offset + channel]) {
+            if (runtimeBytes[offset + channel] !=
+                directBytes[offset + channel]) {
               fail(
                 'Face pixel differs at ($x, $y), channel $channel: '
-                'runtime=${runtimeRgba[offset + channel]} '
-                'direct=${directRgba[offset + channel]}.',
+                'runtime=${runtimeBytes[offset + channel]} '
+                'direct=${directBytes[offset + channel]}.',
               );
             }
           }
@@ -225,12 +243,12 @@ From towering mountains to remote coastlines, wild places sustain extraordinary 
       final int cornerX = faceRect.left.floor();
       final int cornerY = faceRect.top.floor();
       final int cornerOffset = (cornerY * width + cornerX) * 4;
-      expect(directRgba[cornerOffset + 3], lessThan(0xFF));
+      expect(directBytes[cornerOffset + 3], lessThan(0xFF));
 
       final int centerX = faceRect.center.dx.floor();
       final int centerY = faceRect.center.dy.floor();
       final int centerOffset = (centerY * width + centerX) * 4;
-      expect(directRgba[centerOffset + 3], 0xFF);
+      expect(directBytes[centerOffset + 3], 0xFF);
     },
   );
 }
