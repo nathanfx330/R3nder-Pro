@@ -724,4 +724,63 @@ void main() {
   });
 
 
+  testWidgets('typing keeps field focus while live preview rebuilds',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip =
+        EditSurfaceDocument.parse(_source, 'main').clip('V1', 'shot');
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: const <EditCardCue>[],
+        playheadFrame: 113,
+        onAdd: (CardRequest card) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-add')));
+    await tester.pumpAndSettle();
+
+    Future<void> expectFocusSurvives(
+      Finder field,
+      String first,
+      String second,
+    ) async {
+      await tester.ensureVisible(field);
+      await tester.tap(field);
+      await tester.pump();
+      await tester.enterText(field, first);
+      await tester.pump();
+
+      EditableText editable = tester.widget<EditableText>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      );
+      expect(editable.focusNode.hasFocus, isTrue);
+
+      await tester.enterText(field, second);
+      await tester.pump();
+      editable = tester.widget<EditableText>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      );
+      expect(editable.focusNode.hasFocus, isTrue);
+    }
+
+    await expectFocusSurvives(
+      find.byKey(const ValueKey<String>('edit-card-cue-kicker-field')),
+      'W',
+      'WI',
+    );
+    await expectFocusSurvives(
+      find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
+      'E',
+      'EL',
+    );
+    await expectFocusSurvives(
+      find.byKey(const ValueKey<String>('edit-card-cue-image-percent-field')),
+      '4',
+      '44',
+    );
+  });
+
+
 }
