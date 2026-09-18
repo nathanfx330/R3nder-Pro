@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/card_overlay.dart';
 import 'package:r3nder/presentation_card_face_preview.dart';
@@ -36,7 +35,28 @@ Future<Uint8List> _rgba(ui.Image image) async {
   );
 }
 
-Future<ui.Image> _direct(CardRequest card) async {
+Future<ui.Image> _renderPreviewHelper(CardRequest card) async {
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final Canvas canvas = Canvas(recorder);
+  paintPresentationCardFacePreview(
+    canvas: canvas,
+    slotSize: _slot,
+    card: card,
+    image: null,
+    inheritedFontFamily: 'monospace',
+  );
+  final ui.Picture picture = recorder.endRecording();
+  try {
+    return await picture.toImage(
+      _slot.width.toInt(),
+      _slot.height.toInt(),
+    );
+  } finally {
+    picture.dispose();
+  }
+}
+
+Future<ui.Image> _renderDirectFace(CardRequest card) async {
   final ui.PictureRecorder recorder = ui.PictureRecorder();
   final Canvas canvas = Canvas(recorder);
   final Rect rect = presentationCardFacePreviewRect(_slot);
@@ -79,7 +99,7 @@ void main() {
     expect(rect.height, closeTo(reference.height * scale, 0.0001));
   });
 
-  testWidgets('preview raster exactly matches direct shared face painter',
+  testWidgets('preview widget mounts the read-only shared painter surface',
       (WidgetTester tester) async {
     final CardRequest card = _card();
 
@@ -98,34 +118,40 @@ void main() {
     );
     await tester.pump();
 
-    final RenderRepaintBoundary boundary =
-        tester.renderObject<RenderRepaintBoundary>(
+    expect(
       find.byKey(
         const ValueKey<String>('presentation-card-face-preview'),
       ),
+      findsOneWidget,
     );
-    final ui.Image? preview = await tester.runAsync<ui.Image>(
-      () => boundary.toImage(pixelRatio: 1.0),
+    expect(
+      find.byKey(
+        const ValueKey<String>('presentation-card-face-preview-paint'),
+      ),
+      findsOneWidget,
     );
-    final ui.Image? direct = await tester.runAsync<ui.Image>(
-      () => _direct(card),
-    );
-    expect(preview, isNotNull);
-    expect(direct, isNotNull);
 
+    final Size paintedSize = tester.getSize(
+      find.byKey(
+        const ValueKey<String>('presentation-card-face-preview-paint'),
+      ),
+    );
+    expect(paintedSize, _slot);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('preview paint helper exactly matches direct shared face painter',
+      () async {
+    final CardRequest card = _card();
+    final ui.Image preview = await _renderPreviewHelper(card);
+    final ui.Image direct = await _renderDirectFace(card);
     try {
-      final Uint8List? previewBytes = await tester.runAsync<Uint8List>(
-        () => _rgba(preview!),
-      );
-      final Uint8List? directBytes = await tester.runAsync<Uint8List>(
-        () => _rgba(direct!),
-      );
-      expect(previewBytes, isNotNull);
-      expect(directBytes, isNotNull);
-      expect(previewBytes, orderedEquals(directBytes!));
+      final Uint8List previewBytes = await _rgba(preview);
+      final Uint8List directBytes = await _rgba(direct);
+      expect(previewBytes, orderedEquals(directBytes));
     } finally {
-      preview!.dispose();
-      direct!.dispose();
+      preview.dispose();
+      direct.dispose();
     }
   });
 }
