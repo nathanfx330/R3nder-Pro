@@ -102,20 +102,35 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     String holdDraft = '${existing?.holdFrames ?? 90}';
     String rgbDraft = '$red,$green,$blue';
     String headingDraft = existing?.heading ?? '';
-    PresentationPanelPreset presetDraft = panel.preset;
+    PresentationPanelPreset presetDraft =
+        existing == null ? PresentationPanelPreset.editorial : panel.preset;
     bool kickerFollowsPresetDefault = panel.kicker.trim().isEmpty;
     String kickerDraft = kickerFollowsPresetDefault
         ? presentationPanelDefaultKicker(presetDraft)
         : panel.kicker;
     String fontDraft = panel.fontFamily;
+    String headingSizeDraft = existing == null
+        ? '32'
+        : (panel.headingSize == null ? '' : _displayNumber(panel.headingSize!));
+    String bodySizeDraft = existing == null
+        ? '17'
+        : (panel.bodySize == null ? '' : _displayNumber(panel.bodySize!));
+    String imagePercentDraft = existing == null
+        ? '38'
+        : (panel.imageFraction == null
+            ? ''
+            : _displayNumber(panel.imageFraction! * 100.0));
     String subtitleDraft = panel.subtitle;
     String metadataDraft = panel.metadata
         .map((PresentationPanelMetadata item) => '${item.label} | ${item.value}')
         .join('\n');
     String bodyDraft = panel.hasErrors ? '' : panel.body;
     final List<String> preservedPanelDirectives = panel.preservedDirectives;
+    final FocusNode kickerFocus = FocusNode(debugLabel: 'card-kicker');
+    final FocusNode headingFocus = FocusNode(debugLabel: 'card-heading');
+    final FocusNode bodyFocus = FocusNode(debugLabel: 'card-body');
 
-    return showDialog<CardRequest>(
+    final CardRequest? result = await showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
         String? errorText;
@@ -713,6 +728,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         );
       },
     );
+
+    kickerFocus.dispose();
+    headingFocus.dispose();
+    bodyFocus.dispose();
+    return result;
   }
 
   Future<void> _add() async {
