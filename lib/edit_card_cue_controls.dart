@@ -1301,6 +1301,9 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
                       top: contentTop,
                       height: kickerH,
                       child: GestureDetector(
+                        key: const ValueKey<String>(
+                          'edit-card-preview-kicker-hit',
+                        ),
                         behavior: HitTestBehavior.translucent,
                         onTap: widget.onKickerTap,
                       ),
@@ -1312,6 +1315,9 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
                       top: contentTop + kickerH,
                       height: headingH,
                       child: GestureDetector(
+                        key: const ValueKey<String>(
+                          'edit-card-preview-heading-hit',
+                        ),
                         behavior: HitTestBehavior.translucent,
                         onTap: widget.onHeadingTap,
                       ),
@@ -1323,6 +1329,9 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
                       top: bodyTop,
                       bottom: 0,
                       child: GestureDetector(
+                        key: const ValueKey<String>(
+                          'edit-card-preview-body-hit',
+                        ),
                         behavior: HitTestBehavior.translucent,
                         onTap: widget.onBodyTap,
                       ),
