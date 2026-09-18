@@ -9,10 +9,12 @@
 // a freeform layout language.
 
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import 'presentation_panel_content.dart';
+import 'presentation_requests.dart';
 
 const List<String> kPresentationPanelFontFallback = <String>[
   'Courier',
@@ -252,6 +254,250 @@ void paintPresentationPanelContent({
     body.paint(canvas, Offset(left, cursorY));
     canvas.restore();
   }
+}
+
+
+/// Paints the complete CARD-family face into [cardRect].
+///
+/// This is the single visual authority for panel surface, shadow, hero image,
+/// photo treatment, and text hierarchy. Callers own only placement, motion,
+/// and clipping to their structural target. [compositionSize] is the enclosing
+/// render composition used to derive the shared 1920x1080 reference scale.
+void paintPresentationCardFace({
+  required Canvas canvas,
+  required Size compositionSize,
+  required Rect cardRect,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+}) {
+  if (cardRect.width <= 0.0 || cardRect.height <= 0.0) return;
+
+  const double cardRadius = 16.0;
+  const double cardPadFrac = 0.055;
+
+  final PresentationPanelContent content = parsePresentationPanelContent(
+    heading: card.heading,
+    body: card.body,
+  );
+  final bool rich = content.preset != PresentationPanelPreset.simple;
+  final double cardImageFrac = rich ? 0.34 : 0.42;
+
+  final double scale = math.min(
+    compositionSize.width / 1920.0,
+    compositionSize.height / 1080.0,
+  );
+  final RRect rrect = RRect.fromRectAndRadius(
+    cardRect,
+    Radius.circular(cardRadius * scale),
+  );
+
+  canvas.drawRRect(
+    rrect.shift(Offset(-2 * scale, 4 * scale)),
+    Paint()
+      ..color = const Color(0x66000000)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 14 * scale),
+  );
+
+  final Color panelColor = card.panelColor;
+  final bool darkPanel = panelColor.computeLuminance() < 0.35;
+  final Color headColor =
+      darkPanel ? const Color(0xFFF2F0EC) : const Color(0xFF14120F);
+  final Color bodyColor =
+      darkPanel ? const Color(0xDDE8E5E0) : const Color(0xDD26221E);
+  final Color ruleColor = headColor.withValues(alpha: 0.55);
+
+  if (rich) {
+    final Color surfaceTop = darkPanel
+        ? Color.lerp(panelColor, Colors.white, 0.045)!
+        : Color.lerp(panelColor, Colors.white, 0.16)!;
+    final Color surfaceBottom = darkPanel
+        ? Color.lerp(panelColor, Colors.black, 0.16)!
+        : Color.lerp(panelColor, Colors.black, 0.06)!;
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[surfaceTop, surfaceBottom],
+        ).createShader(cardRect),
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(0.8 * scale, 0.6)
+        ..color = headColor.withValues(alpha: 0.15),
+    );
+  } else {
+    canvas.drawRRect(rrect, Paint()..color = panelColor);
+  }
+
+  canvas.save();
+  canvas.clipRRect(rrect);
+
+  double imageBottom = cardRect.top;
+  Rect? imageRect;
+  if (image != null) {
+    final double imageH = cardRect.height * cardImageFrac;
+    imageBottom = cardRect.top + imageH;
+    imageRect = Rect.fromLTWH(
+      cardRect.left,
+      cardRect.top,
+      cardRect.width,
+      imageH,
+    );
+    _drawImageCover(canvas, image, imageRect);
+  }
+
+  if (rich && imageRect != null) {
+    paintPresentationPanelPhotoTreatment(
+      canvas: canvas,
+      imageRect: imageRect,
+      content: content,
+      panelColor: panelColor,
+      headColor: headColor,
+      inheritedFontFamily: inheritedFontFamily,
+      scale: scale,
+    );
+  }
+
+  final double pad = cardRect.width * cardPadFrac;
+
+  if (rich) {
+    paintPresentationPanelContent(
+      canvas: canvas,
+      cardRect: cardRect,
+      contentTop: imageBottom,
+      content: content,
+      pad: pad,
+      scale: scale,
+      panelColor: panelColor,
+      headColor: headColor,
+      bodyColor: bodyColor,
+      inheritedFontFamily: inheritedFontFamily,
+      showKicker: imageRect == null,
+    );
+  } else {
+    _paintSimpleCardContent(
+      canvas: canvas,
+      cardRect: cardRect,
+      imageBottom: imageBottom,
+      content: content,
+      pad: pad,
+      scale: scale,
+      headColor: headColor,
+      bodyColor: bodyColor,
+      ruleColor: ruleColor,
+      fontFamily: inheritedFontFamily,
+    );
+  }
+
+  canvas.restore();
+}
+
+void _paintSimpleCardContent({
+  required Canvas canvas,
+  required Rect cardRect,
+  required double imageBottom,
+  required PresentationPanelContent content,
+  required double pad,
+  required double scale,
+  required Color headColor,
+  required Color bodyColor,
+  required Color ruleColor,
+  required String fontFamily,
+}) {
+  const double cardHeadingSize = 34.0;
+  const double cardBodySize = 20.0;
+  final String selectedFontFamily = presentationPanelFontFamily(
+    content,
+    fontFamily,
+  );
+
+  final double textW = cardRect.width - pad * 2.0;
+  double cursorY = imageBottom + pad * 1.1;
+
+  if (content.heading.isNotEmpty) {
+    final TextPainter heading = TextPainter(
+      text: TextSpan(
+        text: content.heading,
+        style: TextStyle(
+          fontFamily: selectedFontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: cardHeadingSize * scale,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1.5 * scale,
+          color: headColor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    heading.layout(maxWidth: textW);
+    heading.paint(canvas, Offset(cardRect.left + pad, cursorY));
+    cursorY += heading.height + pad * 0.45;
+    canvas.drawRect(
+      Rect.fromLTWH(cardRect.left + pad, cursorY, textW * 0.42, 3 * scale),
+      Paint()..color = ruleColor,
+    );
+    cursorY += pad * 0.65;
+  }
+
+  if (content.body.isNotEmpty) {
+    final TextPainter body = TextPainter(
+      text: TextSpan(
+        text: content.body,
+        style: TextStyle(
+          fontFamily: selectedFontFamily,
+          fontFamilyFallback: kPresentationPanelFontFallback,
+          fontSize: cardBodySize * scale,
+          fontWeight: FontWeight.bold,
+          height: 1.55,
+          color: bodyColor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    body.layout(maxWidth: textW);
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTRB(
+        cardRect.left,
+        imageBottom,
+        cardRect.right,
+        cardRect.bottom,
+      ),
+    );
+    body.paint(canvas, Offset(cardRect.left + pad, cursorY));
+    canvas.restore();
+  }
+}
+
+void _drawImageCover(Canvas canvas, ui.Image image, Rect rect) {
+  final double iw = image.width.toDouble();
+  final double ih = image.height.toDouble();
+  if (iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0) {
+    return;
+  }
+  final double imageScale = math.max(rect.width / iw, rect.height / ih);
+  final double w = iw * imageScale;
+  final double h = ih * imageScale;
+  final Rect destination = Rect.fromLTWH(
+    rect.left + (rect.width - w) / 2.0,
+    rect.top + (rect.height - h) / 2.0,
+    w,
+    h,
+  );
+  canvas.save();
+  canvas.clipRect(rect);
+  canvas.drawImageRect(
+    image,
+    Rect.fromLTWH(0, 0, iw, ih),
+    destination,
+    Paint()..filterQuality = FilterQuality.high,
+  );
+  canvas.restore();
 }
 
 double _paintKicker({
