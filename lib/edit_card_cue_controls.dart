@@ -144,9 +144,11 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
       debugLabel: 'edit-card-cue-body-focus',
     );
 
+    ModalRoute<dynamic>? dialogRoute;
     final CardRequest? result = await showDialog<CardRequest>(
       context: context,
       builder: (BuildContext dialogContext) {
+        dialogRoute ??= ModalRoute.of(dialogContext);
         String? errorText;
 
         return StatefulBuilder(
@@ -1039,6 +1041,10 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         );
       },
     );
+    final ModalRoute<dynamic>? completedRoute = dialogRoute;
+    if (completedRoute != null) {
+      await completedRoute.completed;
+    }
     kickerFocus.dispose();
     headingFocus.dispose();
     bodyFocus.dispose();
@@ -1336,7 +1342,7 @@ class _CardFacePreviewState extends State<_CardFacePreview> {
         final double maxWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : sc(360);
-        final double width = math.min(maxWidth, sc(360));
+        final double width = math.min(maxWidth, sc(240));
         final double factor =
             reference.width <= 0 ? 1.0 : width / reference.width;
         final double height = reference.height * factor;
