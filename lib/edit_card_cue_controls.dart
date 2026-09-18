@@ -620,8 +620,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             },
                           ),
                         ],
-
-                        ],
+                      ],
                       SizedBox(height: sc(16)),
                       Text('TYPE', style: widget.theme.microAccent),
                       SizedBox(height: sc(8)),
