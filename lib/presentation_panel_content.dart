@@ -71,8 +71,9 @@ String presentationPanelDefaultKicker(PresentationPanelPreset preset) {
   switch (preset) {
     case PresentationPanelPreset.dossier:
       return 'DOSSIER / SUBJECT FILE';
-    case PresentationPanelPreset.simple:
     case PresentationPanelPreset.editorial:
+      return '';
+    case PresentationPanelPreset.simple:
     case PresentationPanelPreset.documentary:
       return 'PROFILE / DOCUMENTARY';
   }
