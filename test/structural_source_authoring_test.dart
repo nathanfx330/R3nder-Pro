@@ -113,6 +113,10 @@ void main() {
     [CLIP:wall:MOSAIC.wall:0:0:20:1]
     [/CLIP]
   [/TRACK]
+  [TRACK:V2]
+    [CLIP:direct:EDIT.inner:0:0:10:1]
+    [/CLIP]
+  [/TRACK]
 [/EDIT]
 [STRUCT:EDIT.outer]
 [STRUCT:MOSAIC.wall]
@@ -140,6 +144,10 @@ void main() {
           .source,
       'EDIT.inner',
     );
+    expect(
+      afterMosaic.edit('outer').track('V2').clip('direct').source,
+      'EDIT.inner',
+    );
     expect(renamedMosaic, contains('[STRUCT:MOSAIC.evidence_wall]'));
 
     final String renamedInner = renameStructuralSource(
@@ -160,6 +168,10 @@ void main() {
           .pane('pane1')
           .clip('inner')
           .source,
+      'EDIT.interview',
+    );
+    expect(
+      finalModel.edit('outer').track('V2').clip('direct').source,
       'EDIT.interview',
     );
     expect(
