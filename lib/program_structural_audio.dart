@@ -201,13 +201,6 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
       <int, _RuntimeOccurrenceTrace>{};
 
   final bool editorMode = useEditorLineMap || editorRawLineAtFrame != null;
-  final Map<int, int> placementIndexByLine = editorMode
-      ? <int, int>{
-          for (int i = 0; i < placements.length; i++)
-            placements[i].lineIndex: i,
-        }
-      : const <int, int>{};
-  final Map<int, int> editorEventStarts = <int, int>{};
 
   void observePlacement({
     required int placementIndex,
@@ -266,47 +259,52 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
     existing.framesSeen++;
   }
 
-  void observeEditorLine(int projectFrame, int rawLine) {
-    final int? placementIndex = placementIndexByLine[rawLine];
-    if (placementIndex == null) return;
-
-    final StructuralSequencePlacement placement = placements[placementIndex];
-    final int eventStart = editorEventStarts.putIfAbsent(
-      placementIndex,
-      () => projectFrame,
+  void observeEditorFrameMap(List<int> lineMap) {
+    final List<int?> starts = editorStructuralPlacementStarts(
+      placements: placements,
+      rawLineAtFrame: lineMap,
     );
-    final int localFrame = projectFrame - eventStart;
-    if (localFrame < 0 || localFrame >= placement.durationFrames) {
-      throw ProgramStructuralAudioException(
-        'Editor STRUCT line ${placement.lineIndex} exposed local frame '
-        '$localFrame outside placement $placementIndex duration '
-        '${placement.durationFrames}.',
-      );
+
+    for (int placementIndex = 0;
+        placementIndex < placements.length;
+        placementIndex++) {
+      final int? eventStart = starts[placementIndex];
+      if (eventStart == null) continue;
+
+      final StructuralSequencePlacement placement =
+          placements[placementIndex];
+      if (!placement.resolves || !placement.clipAudio) continue;
+
+      final int eventEnd = eventStart + placement.durationFrames;
+      if (eventStart < 0 || eventEnd > totalFrames) {
+        throw ProgramStructuralAudioException(
+          'Editor STRUCT placement $placementIndex owns authored span '
+          '[$eventStart, $eventEnd) outside the $totalFrames-frame program.',
+        );
+      }
+
+      for (int localFrame = 0;
+          localFrame < placement.durationFrames;
+          localFrame++) {
+        observePlacement(
+          placementIndex: placementIndex,
+          localFrame: localFrame,
+          projectFrame: eventStart + localFrame,
+        );
+      }
     }
-
-    observePlacement(
-      placementIndex: placementIndex,
-      localFrame: localFrame,
-      projectFrame: projectFrame,
-    );
   }
 
   scene.reset();
   try {
     if (editorRawLineAtFrame != null) {
-      for (int projectFrame = 0;
-          projectFrame < totalFrames;
-          projectFrame++) {
-        observeEditorLine(
-          projectFrame,
-          editorRawLineAtFrame[projectFrame],
-        );
-      }
+      observeEditorFrameMap(editorRawLineAtFrame);
     } else if (useEditorLineMap) {
       // runEditorSimulation records line ownership AFTER each scene tick. Do
-      // exactly the same thing here. Using SceneProjectEvaluation(frame: N)
-      // samples the state before the editor's Nth recorded tick and therefore
-      // creates a second, shifted timeline.
+      // exactly the same thing here, then normalize structural event spans
+      // from their authored durations. Raw-line dwell is navigation metadata;
+      // parser separator ticks must not stretch STRUCT time.
+      final List<int> lineMap = <int>[];
       for (int projectFrame = 0;
           projectFrame < totalFrames;
           projectFrame++) {
@@ -317,11 +315,9 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
           );
         }
         scene.tick();
-        observeEditorLine(
-          projectFrame,
-          scene.terminal.currentRawLine,
-        );
+        lineMap.add(scene.terminal.currentRawLine);
       }
+      observeEditorFrameMap(lineMap);
     } else {
       for (int projectFrame = 0;
           projectFrame < totalFrames;
