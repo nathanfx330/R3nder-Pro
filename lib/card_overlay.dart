@@ -1015,6 +1015,63 @@ RRect _presentationCardFaceRRect(Rect rect, double scale) {
   );
 }
 
+enum PresentationCardFaceFocusTarget {
+  kicker,
+  heading,
+  body,
+}
+
+PresentationCardFaceFocusTarget? presentationCardFaceFocusTargetAt(
+  Rect rect,
+  double scale,
+  CardRequest card,
+  ui.Image? image,
+  String inheritedFontFamily,
+  Offset position,
+) {
+  if (rect.width <= 0.0 ||
+      rect.height <= 0.0 ||
+      scale <= 0.0 ||
+      !rect.contains(position)) {
+    return null;
+  }
+
+  const double cardPadFrac = 0.055;
+  final PresentationPanelContent content = parsePresentationPanelContent(
+    heading: card.heading,
+    body: card.body,
+  );
+  if (content.preset != PresentationPanelPreset.editorial) return null;
+
+  final double cardImageFrac = content.imageFraction ??
+      presentationPanelDefaultImageFraction(content.preset);
+  final double imageBottom = image == null
+      ? rect.top
+      : rect.top + rect.height * cardImageFrac;
+  final double pad = rect.width * cardPadFrac;
+  final PresentationPanelFocusRegions regions =
+      presentationEditorialPanelFocusRegions(
+    cardRect: rect,
+    contentTop: imageBottom,
+    content: content,
+    pad: pad,
+    scale: scale,
+    inheritedFontFamily: inheritedFontFamily,
+    showKicker: true,
+  );
+
+  switch (regions.targetAt(position)) {
+    case PresentationPanelFocusTarget.kicker:
+      return PresentationCardFaceFocusTarget.kicker;
+    case PresentationPanelFocusTarget.heading:
+      return PresentationCardFaceFocusTarget.heading;
+    case PresentationPanelFocusTarget.body:
+      return PresentationCardFaceFocusTarget.body;
+    case null:
+      return null;
+  }
+}
+
 /// Paints the intrinsic CARD-family face inside [rect].
 ///
 /// Placement, motion, pivot transforms, and the environmental drop shadow are

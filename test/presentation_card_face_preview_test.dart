@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/card_overlay.dart';
 import 'package:r3nder/presentation_card_face_preview.dart';
+import 'package:r3nder/presentation_panel_content.dart';
+import 'package:r3nder/presentation_panel_painter.dart';
 import 'package:r3nder/presentation_requests.dart';
 
 const Size _slot = Size(500, 230);
@@ -154,4 +156,116 @@ void main() {
       direct.dispose();
     }
   });
+  testWidgets('interactive preview routes editorial regions to callbacks',
+      (WidgetTester tester) async {
+    final CardRequest card = _card();
+    int kickerTaps = 0;
+    int headingTaps = 0;
+    int bodyTaps = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: _slot.width,
+            child: PresentationCardFacePreview(
+              card: card,
+              height: _slot.height,
+              onKickerTap: () => kickerTaps++,
+              onHeadingTap: () => headingTaps++,
+              onBodyTap: () => bodyTaps++,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final Finder hitSurface = find.byKey(
+      const ValueKey<String>('presentation-card-face-preview-hit-surface'),
+    );
+    expect(hitSurface, findsOneWidget);
+
+    final Rect cardRect = presentationCardFacePreviewRect(_slot);
+    final double scale = presentationCardFacePreviewScale(_slot);
+    final PresentationPanelContent content = parsePresentationPanelContent(
+      heading: card.heading,
+      body: card.body,
+    );
+    final PresentationPanelFocusRegions regions =
+        presentationEditorialPanelFocusRegions(
+      cardRect: cardRect,
+      contentTop: cardRect.top,
+      content: content,
+      pad: cardRect.width * 0.055,
+      scale: scale,
+      inheritedFontFamily: 'monospace',
+      showKicker: true,
+    );
+    final Offset origin = tester.getTopLeft(hitSurface);
+
+    await tester.tapAt(origin + regions.kicker!.center);
+    await tester.pump();
+    expect(kickerTaps, 1);
+    expect(headingTaps, 0);
+    expect(bodyTaps, 0);
+
+    await tester.tapAt(origin + regions.heading!.center);
+    await tester.pump();
+    expect(headingTaps, 1);
+
+    await tester.tapAt(origin + regions.body!.center);
+    await tester.pump();
+    expect(bodyTaps, 1);
+
+    await tester.tapAt(origin + Offset(cardRect.center.dx, cardRect.bottom - 2));
+    await tester.pump();
+    expect(kickerTaps, 1);
+    expect(headingTaps, 1);
+    expect(bodyTaps, 1);
+  });
+
+  test('editorial focus regions follow authored heading size', () {
+    CardRequest cardWithHeadingSize(double size) => CardRequest(
+          image: '',
+          holdFrames: 90,
+          panelColor: const Color(0xFF1E1E26),
+          heading: 'A heading that wraps across multiple lines in the card',
+          body: '''[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+HEADING_SIZE: $size
+BODY_SIZE: 18
+[/PANEL]
+Body copy.''',
+        );
+
+    PresentationPanelFocusRegions regionsFor(CardRequest card) {
+      final Rect cardRect = presentationCardFacePreviewRect(_slot);
+      final double scale = presentationCardFacePreviewScale(_slot);
+      final PresentationPanelContent content = parsePresentationPanelContent(
+        heading: card.heading,
+        body: card.body,
+      );
+      return presentationEditorialPanelFocusRegions(
+        cardRect: cardRect,
+        contentTop: cardRect.top,
+        content: content,
+        pad: cardRect.width * 0.055,
+        scale: scale,
+        inheritedFontFamily: 'monospace',
+        showKicker: true,
+      );
+    }
+
+    final PresentationPanelFocusRegions small =
+        regionsFor(cardWithHeadingSize(28));
+    final PresentationPanelFocusRegions large =
+        regionsFor(cardWithHeadingSize(56));
+
+    expect(large.heading!.height, greaterThan(small.heading!.height));
+    expect(large.body!.top, greaterThan(small.body!.top));
+  });
+
+
 }

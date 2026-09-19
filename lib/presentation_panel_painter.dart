@@ -272,6 +272,184 @@ void paintPresentationPanelContent({
   }
 }
 
+enum PresentationPanelFocusTarget {
+  kicker,
+  heading,
+  body,
+}
+
+class PresentationPanelFocusRegions {
+  const PresentationPanelFocusRegions({
+    this.kicker,
+    this.heading,
+    this.body,
+  });
+
+  final Rect? kicker;
+  final Rect? heading;
+  final Rect? body;
+
+  PresentationPanelFocusTarget? targetAt(Offset point) {
+    if (kicker?.contains(point) ?? false) {
+      return PresentationPanelFocusTarget.kicker;
+    }
+    if (heading?.contains(point) ?? false) {
+      return PresentationPanelFocusTarget.heading;
+    }
+    if (body?.contains(point) ?? false) {
+      return PresentationPanelFocusTarget.body;
+    }
+    return null;
+  }
+}
+
+TextPainter _editorialKickerPainter({
+  required PresentationPanelContent content,
+  required String fontFamily,
+  required double scale,
+  required double maxWidth,
+  required Color color,
+}) {
+  return TextPainter(
+    text: TextSpan(
+      text: presentationPanelKickerText(content).toUpperCase(),
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: kPresentationPanelFontFallback,
+        fontSize: 10.5 * scale,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.65 * scale,
+        color: color,
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+}
+
+TextPainter _editorialHeadingPainter({
+  required PresentationPanelContent content,
+  required String fontFamily,
+  required double scale,
+  required double maxWidth,
+  required Color color,
+}) {
+  return TextPainter(
+    text: TextSpan(
+      text: content.heading,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: kPresentationPanelFontFallback,
+        fontSize:
+            (content.headingSize ??
+                    presentationPanelDefaultHeadingSize(content.preset)) *
+                scale,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.0,
+        height: 1.08,
+        color: color,
+      ),
+    ),
+    maxLines: 3,
+    ellipsis: '…',
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+}
+
+TextPainter _editorialBodyPainter({
+  required PresentationPanelContent content,
+  required String fontFamily,
+  required double scale,
+  required double maxWidth,
+  required Color color,
+}) {
+  return TextPainter(
+    text: TextSpan(
+      text: content.body,
+      style: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: kPresentationPanelFontFallback,
+        fontSize:
+            (content.bodySize ??
+                    presentationPanelDefaultBodySize(content.preset)) *
+                scale,
+        fontWeight: FontWeight.w400,
+        height: 1.50,
+        color: color,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+}
+
+PresentationPanelFocusRegions presentationEditorialPanelFocusRegions({
+  required Rect cardRect,
+  required double contentTop,
+  required PresentationPanelContent content,
+  required double pad,
+  required double scale,
+  required String inheritedFontFamily,
+  required bool showKicker,
+}) {
+  final String fontFamily =
+      presentationPanelFontFamily(content, inheritedFontFamily);
+  final double left = cardRect.left + pad;
+  final double right = cardRect.right - pad;
+  final double textW = math.max(0.0, right - left);
+  double cursorY = contentTop + pad * 0.78;
+
+  Rect? kickerRect;
+  Rect? headingRect;
+  Rect? bodyRect;
+
+  final String kickerText = presentationPanelKickerText(content);
+  if (showKicker && kickerText.isNotEmpty) {
+    final TextPainter kicker = _editorialKickerPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: Colors.white,
+    );
+    kickerRect = Rect.fromLTWH(left, cursorY, textW, kicker.height);
+    cursorY += kicker.height + pad * 0.34;
+  }
+
+  if (content.heading.isNotEmpty) {
+    final TextPainter heading = _editorialHeadingPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: Colors.white,
+    );
+    headingRect = Rect.fromLTWH(left, cursorY, textW, heading.height);
+    cursorY += heading.height + pad * 0.52;
+  }
+
+  if (content.body.isNotEmpty && cursorY < cardRect.bottom - pad) {
+    final TextPainter body = _editorialBodyPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: Colors.white,
+    );
+    final double visibleHeight =
+        math.max(0.0, math.min(body.height, cardRect.bottom - pad - cursorY));
+    if (visibleHeight > 0.0) {
+      bodyRect = Rect.fromLTWH(left, cursorY, textW, visibleHeight);
+    }
+  }
+
+  return PresentationPanelFocusRegions(
+    kicker: kickerRect,
+    heading: headingRect,
+    body: bodyRect,
+  );
+}
+
 void _paintEditorialPanelContent({
   required Canvas canvas,
   required Rect cardRect,
@@ -285,76 +463,54 @@ void _paintEditorialPanelContent({
   required Color bodyColor,
   required bool showKicker,
 }) {
-  final double left = cardRect.left + pad;
-  final double right = cardRect.right - pad;
-  final double textW = math.max(0.0, right - left);
-  double cursorY = contentTop + pad * 0.78;
+  final PresentationPanelFocusRegions regions =
+      presentationEditorialPanelFocusRegions(
+    cardRect: cardRect,
+    contentTop: contentTop,
+    content: content,
+    pad: pad,
+    scale: scale,
+    inheritedFontFamily: fontFamily,
+    showKicker: showKicker,
+  );
+  final double textW = math.max(0.0, cardRect.width - pad * 2.0);
 
-  final String kickerText = presentationPanelKickerText(content);
-  if (showKicker && kickerText.isNotEmpty) {
-    final TextPainter kicker = TextPainter(
-      text: TextSpan(
-        text: kickerText.toUpperCase(),
-        style: TextStyle(
-          fontFamily: fontFamily,
-          fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: 10.5 * scale,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 1.65 * scale,
-          color: accent.withValues(alpha: 0.94),
-        ),
-      ),
-      maxLines: 1,
-      ellipsis: '…',
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: textW);
-    kicker.paint(canvas, Offset(left, cursorY));
-    cursorY += kicker.height + pad * 0.34;
-  }
-
-  if (content.heading.isNotEmpty) {
-    final TextPainter heading = TextPainter(
-      text: TextSpan(
-        text: content.heading,
-        style: TextStyle(
-          fontFamily: fontFamily,
-          fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.headingSize ?? presentationPanelDefaultHeadingSize(content.preset)) * scale,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.0,
-          height: 1.08,
-          color: headColor,
-        ),
-      ),
-      maxLines: 3,
-      ellipsis: '…',
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: textW);
-    heading.paint(canvas, Offset(left, cursorY));
-    cursorY += heading.height + pad * 0.52;
-  }
-
-  if (content.body.isNotEmpty && cursorY < cardRect.bottom - pad) {
-    final TextPainter body = TextPainter(
-      text: TextSpan(
-        text: content.body,
-        style: TextStyle(
-          fontFamily: fontFamily,
-          fontFamilyFallback: kPresentationPanelFontFallback,
-          fontSize: (content.bodySize ?? presentationPanelDefaultBodySize(content.preset)) * scale,
-          fontWeight: FontWeight.w400,
-          height: 1.50,
-          color: bodyColor.withValues(alpha: 0.96),
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: textW);
-
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTRB(left, cursorY, right, cardRect.bottom - pad),
+  final Rect? kickerRect = regions.kicker;
+  if (kickerRect != null) {
+    final TextPainter kicker = _editorialKickerPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: accent.withValues(alpha: 0.94),
     );
-    body.paint(canvas, Offset(left, cursorY));
+    kicker.paint(canvas, kickerRect.topLeft);
+  }
+
+  final Rect? headingRect = regions.heading;
+  if (headingRect != null) {
+    final TextPainter heading = _editorialHeadingPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: headColor,
+    );
+    heading.paint(canvas, headingRect.topLeft);
+  }
+
+  final Rect? bodyRect = regions.body;
+  if (bodyRect != null) {
+    final TextPainter body = _editorialBodyPainter(
+      content: content,
+      fontFamily: fontFamily,
+      scale: scale,
+      maxWidth: textW,
+      color: bodyColor.withValues(alpha: 0.96),
+    );
+    canvas.save();
+    canvas.clipRect(bodyRect);
+    body.paint(canvas, bodyRect.topLeft);
     canvas.restore();
   }
 }

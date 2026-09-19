@@ -143,6 +143,15 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
         TextEditingController(text: bodySizeDraft);
     final TextEditingController imagePercentController =
         TextEditingController(text: imagePercentDraft);
+    final FocusNode kickerFocus = FocusNode(
+      debugLabel: 'edit-card-cue-kicker-focus',
+    );
+    final FocusNode headingFocus = FocusNode(
+      debugLabel: 'edit-card-cue-heading-focus',
+    );
+    final FocusNode bodyFocus = FocusNode(
+      debugLabel: 'edit-card-cue-body-focus',
+    );
 
     ModalRoute<dynamic>? dialogRoute;
     final CardRequest? result = await showDialog<CardRequest>(
@@ -423,6 +432,18 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             card: preview,
                             resolveSource: widget.resolveImageSource,
                             height: sc(230),
+                            onKickerTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? kickerFocus.requestFocus
+                                    : null,
+                            onHeadingTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? headingFocus.requestFocus
+                                    : null,
+                            onBodyTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? bodyFocus.requestFocus
+                                    : null,
                           ),
                         ),
                       ],
@@ -527,6 +548,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                           'edit-card-cue-kicker-field',
                         ),
                         controller: kickerController,
+                        focusNode: kickerFocus,
                           enabled: !panel.hasErrors,
                           decoration: const InputDecoration(
                             labelText: 'Kicker / category',
@@ -551,6 +573,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         key: const ValueKey<String>(
                           'edit-card-cue-heading-field',
                         ),
+                        focusNode: headingFocus,
                         initialValue: headingDraft,
                         decoration: const InputDecoration(
                           labelText: 'Heading',
@@ -568,6 +591,7 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                         key: const ValueKey<String>(
                           'edit-card-cue-body-field',
                         ),
+                        focusNode: bodyFocus,
                         initialValue: bodyDraft,
                         enabled: !panel.hasErrors,
                         minLines: 3,
@@ -1117,6 +1141,9 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
     headingSizeController.dispose();
     bodySizeController.dispose();
     imagePercentController.dispose();
+    kickerFocus.dispose();
+    headingFocus.dispose();
+    bodyFocus.dispose();
     return result;
   }
 
