@@ -318,16 +318,20 @@ With:
 
 compatible placements keep the structural presentation shell alive.
 
-Same-mode transitions can switch directly.
+In live Preview, same-mode STRUCT clients now use the same visual language as the existing APP page pan: outgoing content moves left while incoming content enters from the right, eased with `easeInOutCubic`. The nominal budget is `kStructuralSwitchSlideFrames`, deliberately matched to the APP pan budget. Those frames overlap the beginning of the incoming source's authored showing span; they are not added to program duration.
 
-Mixed windowed/fullscreen transitions use one deterministic window-animation budget for geometry morphing.
+Mixed windowed/fullscreen transitions still use their deterministic window-geometry morph. The client pan and shell geometry are separate ownership concerns.
 
 Important invariants:
 
 - no fullscreen terminal flash between adjacent STRUCT placements;
-- no extra project frames inserted for decode readiness;
+- no extra project frames inserted for decode readiness or slide motion;
 - incoming local source frame does not restart after preload;
+- readiness may unlock exposure, but authored incoming source time determines slide progress;
+- editor and top-level Program Preview both implement the live handoff;
 - Preview and BAKE use the same planned event budget.
+
+**Current parity boundary:** the literal two-client pan added at main checkpoint `cd5ad51` is implemented in live Preview paths. `ProgramStructuralFrameRenderer` still renders the single active placement in BAKE. Timing, placement, and audio boundaries remain shared, but final BAKE pixel parity for this new pan is not yet proved and must not be inferred from the Preview tests.
 
 ---
 
