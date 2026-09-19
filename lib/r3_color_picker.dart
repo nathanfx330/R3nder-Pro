@@ -160,10 +160,11 @@ class _R3ColorPickerDialogState extends State<_R3ColorPickerDialog> {
       title: Text(widget.title, style: widget.theme.value),
       content: SizedBox(
         width: sc(420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             _SaturationValueSquare(
               hsv: _hsv,
               onChanged: _setSv,
@@ -246,7 +247,8 @@ class _R3ColorPickerDialogState extends State<_R3ColorPickerDialog> {
                 },
               ),
             ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
