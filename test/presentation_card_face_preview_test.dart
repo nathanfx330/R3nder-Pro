@@ -225,4 +225,47 @@ void main() {
     expect(bodyTaps, 1);
   });
 
+  test('editorial focus regions follow authored heading size', () {
+    CardRequest cardWithHeadingSize(double size) => CardRequest(
+          image: '',
+          holdFrames: 90,
+          panelColor: const Color(0xFF1E1E26),
+          heading: 'A heading that wraps across multiple lines in the card',
+          body: '''[PANEL]
+PRESET: EDITORIAL
+KICKER: WILDLIFE
+HEADING_SIZE: $size
+BODY_SIZE: 18
+[/PANEL]
+Body copy.''',
+        );
+
+    PresentationPanelFocusRegions regionsFor(CardRequest card) {
+      final Rect cardRect = presentationCardFacePreviewRect(_slot);
+      final double scale = presentationCardFacePreviewScale(_slot);
+      final PresentationPanelContent content = parsePresentationPanelContent(
+        heading: card.heading,
+        body: card.body,
+      );
+      return presentationEditorialPanelFocusRegions(
+        cardRect: cardRect,
+        contentTop: cardRect.top,
+        content: content,
+        pad: cardRect.width * 0.055,
+        scale: scale,
+        inheritedFontFamily: 'monospace',
+        showKicker: true,
+      );
+    }
+
+    final PresentationPanelFocusRegions small =
+        regionsFor(cardWithHeadingSize(28));
+    final PresentationPanelFocusRegions large =
+        regionsFor(cardWithHeadingSize(56));
+
+    expect(large.heading!.height, greaterThan(small.heading!.height));
+    expect(large.body!.top, greaterThan(small.body!.top));
+  });
+
+
 }
