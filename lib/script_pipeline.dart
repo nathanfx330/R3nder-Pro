@@ -130,8 +130,19 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
     rawText,
     runtimeMarkers: !lineMarkers,
   );
-  final String marked =
-      lineMarkers ? injectLineMarkers(projected) : projected;
+  final Set<int> authoredBlankLines = lineMarkers
+      ? <int>{
+          for (final (int index, String line)
+              in rawText.split('\\n').indexed)
+            if (line.trim().isEmpty) index,
+        }
+      : const <int>{};
+  final String marked = lineMarkers
+      ? injectLineMarkers(
+          projected,
+          preserveBlankLines: authoredBlankLines,
+        )
+      : projected;
 
   final TemplateData data = ScriptParser.parseTemplateData(marked);
 
@@ -222,7 +233,20 @@ String _engineProjectionSource(
   );
 }
 
-/// Prefixes each line with `[LINE:n]`, n being its 0-based index.
+/// Prefixes each executable/editor-addressable line with `[LINE:n]`, n
+/// being its 0-based source index.
+///
+/// Genuinely blank authored lines may be listed in [preserveBlankLines]. They
+/// must remain literal newlines because TerminalEngine uses newline characters
+/// to advance vertical layout. Turning a blank line into a control-only
+/// `[LINE:n]` line makes ScriptParser fold that line into the following text,
+/// silently deleting the author's requested vertical space.
+///
+/// Projection-generated blank lines are different. Structural roots and other
+/// zero-time metadata preserve source line coordinates by becoming empty
+/// projected lines, but their ORIGINAL authored lines were not blank. Those
+/// lines still receive `[LINE:n]` markers and are therefore folded away as
+/// control-only metadata instead of consuming terminal layout.
 ///
 /// SKIPS THE INTERIOR OF COMMENTS, which is not a nicety. The comment
 /// pattern is lazy to the first `]`, so a marker planted at the start of
@@ -235,7 +259,10 @@ String _engineProjectionSource(
 /// A comment's interior never needs a marker anyway, since it does not
 /// type. A line where a comment BEGINS still gets one, because there may
 /// be real content ahead of it on that line.
-String injectLineMarkers(String rawText) {
+String injectLineMarkers(
+  String rawText, {
+  Set<int> preserveBlankLines = const <int>{},
+}) {
   final List<(int, int)> commentSpans = [];
   for (final m in RegExp(r'\[#.*?\]', dotAll: true).allMatches(rawText)) {
     commentSpans.add((m.start, m.end));
@@ -258,7 +285,11 @@ String injectLineMarkers(String rawText) {
         break;
       }
     }
-    if (!insideComment) lines[i] = '[LINE:$i]${lines[i]}';
+    final bool preserveAuthoredBlank =
+        preserveBlankLines.contains(i) && lines[i].trim().isEmpty;
+    if (!insideComment && !preserveAuthoredBlank) {
+      lines[i] = '[LINE:$i]${lines[i]}';
+    }
 
     lineStart += originalLength + 1;
   }
