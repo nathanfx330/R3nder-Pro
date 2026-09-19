@@ -132,7 +132,7 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
   );
   final Set<int> authoredBlankLines = <int>{};
   if (lineMarkers) {
-    final List<String> authoredLines = rawText.split('\\n');
+    final List<String> authoredLines = rawText.split('\n');
     for (int i = 0; i < authoredLines.length; i++) {
       if (authoredLines[i].trim().isEmpty) authoredBlankLines.add(i);
     }
