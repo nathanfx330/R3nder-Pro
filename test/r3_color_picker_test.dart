@@ -60,15 +60,18 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('r3-color-hex-field')),
-      '#336699',
-    );
+    final Finder hexField =
+        find.byKey(const ValueKey<String>('r3-color-hex-field'));
+    await tester.ensureVisible(hexField);
+    await tester.enterText(hexField, '#336699');
     await tester.pump();
 
     expect(find.text('RGB  51, 102, 153'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey<String>('r3-color-apply')));
+    final Finder apply =
+        find.byKey(const ValueKey<String>('r3-color-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
     await tester.pumpAndSettle();
 
     expect(picked, isNotNull);
