@@ -56,6 +56,14 @@ const int kStructuralEntryFrames =
 const int kStructuralExitFrames =
     kStructuralWindowFrames + kStructuralZoomFrames;
 
+/// Visual pan budget when APPSWITCH:SLIDE hands one compatible STRUCT client
+/// directly to the next. Deliberately matches the APP MOSAIC page pan so the
+/// two forms of application switching read as the same desktop gesture.
+///
+/// These frames are not added to the placement duration. They overlap the
+/// beginning of the incoming source's showing span.
+const int kStructuralSwitchSlideFrames = kAppPanFrames;
+
 /// A standalone `[PAUSE:N]` line occupies two scene ticks beyond N in the
 /// editor line-map execution path: entering the pause and advancing past the
 /// line. STRUCT owns an exact presentation budget, so its projected PAUSE
