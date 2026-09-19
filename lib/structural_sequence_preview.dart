@@ -1024,7 +1024,6 @@ class _StructuralWindow extends StatelessWidget {
     required StructuralOverlayMode previewOverlayMode,
     required String previewBottomOverlay,
     required VoidCallback? onReady,
-    String keySuffix = '',
   }) {
     final bool showOverlay =
         previewOverlayMode == StructuralOverlayMode.defaultOverlay ||
@@ -1039,7 +1038,7 @@ class _StructuralWindow extends StatelessWidget {
             : null;
 
     return EditVideoPreview(
-      key: ValueKey<String>('sequence-preview:$previewSource$keySuffix'),
+      key: ValueKey<String>('sequence-preview:$previewSource'),
       source: previewDocument,
       structuralSource: previewSource,
       currentFrame: previewFrame,
@@ -1255,7 +1254,6 @@ class _StructuralWindow extends StatelessWidget {
                               previewOverlayMode: overlayMode,
                               previewBottomOverlay: bottomOverlay,
                               onReady: onFirstFrameReady,
-                              keySuffix: ':incoming',
                             ),
                           ),
                           if (showingCover)
@@ -1272,7 +1270,6 @@ class _StructuralWindow extends StatelessWidget {
                                 previewOverlayMode: outgoingOverlayMode,
                                 previewBottomOverlay: outgoingBottomOverlay,
                                 onReady: null,
-                                keySuffix: ':outgoing',
                               ),
                             ),
                         ],
