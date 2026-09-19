@@ -383,7 +383,9 @@ void main() {
           endRgba,
           outputWidth,
           outputHeight,
-          outgoingColor,
+          red: 255,
+          green: 0,
+          blue: 0,
         ),
         isNull,
       );
