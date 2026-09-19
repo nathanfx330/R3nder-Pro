@@ -87,6 +87,12 @@ import 'structural_sequence.dart';
 import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
+enum StructuralSequenceHandoffRole {
+  none,
+  incoming,
+  outgoing,
+}
+
 class StructuralSequencePreview extends StatefulWidget {
   final String rawDocument;
   final StructuralSequencePlacement placement;
@@ -119,6 +125,14 @@ class StructuralSequencePreview extends StatefulWidget {
   /// late, without changing project time or the incoming source-frame mapping.
   final VoidCallback? onFirstFrameReady;
 
+  /// Parent-coordinated handoff mode used by ProgramPreviewSurface, which
+  /// preserves adjacent STRUCTs as separately keyed preload instances.
+  ///
+  /// The editor leaves this at [StructuralSequenceHandoffRole.none] and uses
+  /// the internal same-State handoff path instead.
+  final StructuralSequenceHandoffRole handoffRole;
+  final double handoffSlideT;
+
   const StructuralSequencePreview({
     super.key,
     required this.rawDocument,
@@ -133,6 +147,8 @@ class StructuralSequencePreview extends StatefulWidget {
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
+    this.handoffRole = StructuralSequenceHandoffRole.none,
+    this.handoffSlideT = 0.0,
   });
 
   @override
@@ -394,8 +410,11 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
+    final bool externalOutgoing =
+        widget.handoffRole == StructuralSequenceHandoffRole.outgoing;
+
     return ColoredBox(
-      color: Colors.black,
+      color: externalOutgoing ? Colors.transparent : Colors.black,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           final double width = constraints.maxWidth.isFinite
@@ -603,7 +622,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              if (useNativeTerminal)
+              if (!externalOutgoing && useNativeTerminal)
                 Positioned.fill(
                   key: const ValueKey<String>(
                     'structural-native-terminal-positioned',
@@ -622,7 +641,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     ),
                   ),
                 )
-              else ...[
+              else if (!externalOutgoing) ...[
                 Positioned.fromRect(
                   key: const ValueKey<String>('structural-desktop-positioned'),
                   rect: renderFrame,
@@ -694,7 +713,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       outgoingWindowTitle: _handoffOutgoingWindowTitle,
                       outgoingTopOverlay: _handoffOutgoingTopOverlay,
                       outgoingBottomOverlay: _handoffOutgoingBottomOverlay,
-                      handoffSlideT: handoffSlideT,
+                      handoffSlideT: widget.handoffRole ==
+                                  StructuralSequenceHandoffRole.none
+                              ? handoffSlideT
+                              : widget.handoffSlideT
+                                  .clamp(0.0, 1.0)
+                                  .toDouble(),
+                      handoffRole: widget.handoffRole,
                     ),
                   ),
                 ),
@@ -963,6 +988,7 @@ class _StructuralWindow extends StatelessWidget {
   final String outgoingTopOverlay;
   final String outgoingBottomOverlay;
   final double handoffSlideT;
+  final StructuralSequenceHandoffRole handoffRole;
 
   const _StructuralWindow({
     super.key,
@@ -992,6 +1018,7 @@ class _StructuralWindow extends StatelessWidget {
     this.outgoingTopOverlay = '',
     this.outgoingBottomOverlay = '',
     this.handoffSlideT = 0.0,
+    this.handoffRole = StructuralSequenceHandoffRole.none,
   });
 
   Widget _videoPreview({
@@ -1043,6 +1070,11 @@ class _StructuralWindow extends StatelessWidget {
     final String? coverSource = outgoingSource;
     final String? coverDocument = outgoingRawDocument;
     final bool showingCover = coverSource != null && coverDocument != null;
+    final bool externalIncoming =
+        handoffRole == StructuralSequenceHandoffRole.incoming;
+    final bool externalOutgoing =
+        handoffRole == StructuralSequenceHandoffRole.outgoing;
+    final bool overlayOnly = externalOutgoing;
 
     final StructuralOverlayMode visibleOverlayMode =
         showingCover ? outgoingOverlayMode : overlayMode;
@@ -1082,15 +1114,15 @@ class _StructuralWindow extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF171717),
+        color: overlayOnly ? Colors.transparent : const Color(0xFF171717),
         borderRadius: BorderRadius.circular(outerRadius),
-        border: c > 0.001
+        border: !overlayOnly && c > 0.001
             ? Border.all(
                 color: const Color(0xFF3B3938).withValues(alpha: c),
                 width: math.max(0.5, s) * c,
               )
             : null,
-        boxShadow: c > 0.001
+        boxShadow: !overlayOnly && c > 0.001
             ? [
                 BoxShadow(
                   color: const Color(0x8A000000).withValues(alpha: c),
@@ -1114,67 +1146,86 @@ class _StructuralWindow extends StatelessWidget {
                     child: Container(
                       padding: EdgeInsets.symmetric(horizontal: 14 * s * c),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF222222),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: const Color(0xFF383838),
-                            width: math.max(0.5, s) * c,
-                          ),
-                        ),
+                        color: overlayOnly
+                            ? Colors.transparent
+                            : const Color(0xFF222222),
+                        border: overlayOnly
+                            ? null
+                            : Border(
+                                bottom: BorderSide(
+                                  color: const Color(0xFF383838),
+                                  width: math.max(0.5, s) * c,
+                                ),
+                              ),
                       ),
                       child: Row(
                         children: [
                           Expanded(
-                            child: crossfadeTitle
-                                ? Stack(
-                                    children: [
-                                      Opacity(
-                                        opacity: 1.0 - handoffSlideT,
-                                        child: Text(
-                                          outgoingVisibleTitle,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.value.copyWith(
-                                            color: const Color(0xFFC7C3C0),
-                                            fontSize: 12 * s,
+                            child: Opacity(
+                              opacity: externalIncoming
+                                  ? handoffSlideT
+                                  : externalOutgoing
+                                      ? 1.0 - handoffSlideT
+                                      : 1.0,
+                              child: crossfadeTitle
+                                  ? Stack(
+                                      children: [
+                                        Opacity(
+                                          opacity: 1.0 - handoffSlideT,
+                                          child: Text(
+                                            outgoingVisibleTitle,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: theme.value.copyWith(
+                                              color: const Color(0xFFC7C3C0),
+                                              fontSize: 12 * s,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      Opacity(
-                                        opacity: handoffSlideT,
-                                        child: Text(
-                                          incomingVisibleTitle,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.value.copyWith(
-                                            color: const Color(0xFFC7C3C0),
-                                            fontSize: 12 * s,
+                                        Opacity(
+                                          opacity: handoffSlideT,
+                                          child: Text(
+                                            incomingVisibleTitle,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: theme.value.copyWith(
+                                              color: const Color(0xFFC7C3C0),
+                                              fontSize: 12 * s,
+                                            ),
                                           ),
                                         ),
+                                      ],
+                                    )
+                                  : Text(
+                                      showingCover
+                                          ? outgoingVisibleTitle
+                                          : incomingVisibleTitle,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.value.copyWith(
+                                        color: const Color(0xFFC7C3C0),
+                                        fontSize: 12 * s,
                                       ),
-                                    ],
-                                  )
-                                : Text(
-                                    showingCover
-                                        ? outgoingVisibleTitle
-                                        : incomingVisibleTitle,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.value.copyWith(
-                                      color: const Color(0xFFC7C3C0),
-                                      fontSize: 12 * s,
                                     ),
-                                  ),
+                            ),
                           ),
                           if (topText != null)
-                            Text(
-                              topText,
-                              key: const ValueKey<String>(
-                                'structural-top-overlay',
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.micro.copyWith(
-                                color: const Color(0xFF8E8884),
-                                fontSize: (theme.micro.fontSize ?? 10.5) * s,
-                                letterSpacing:
-                                    (theme.micro.letterSpacing ?? 0.0) * s,
+                            Opacity(
+                              opacity: externalIncoming
+                                  ? handoffSlideT
+                                  : externalOutgoing
+                                      ? 1.0 - handoffSlideT
+                                      : 1.0,
+                              child: Text(
+                                topText,
+                                key: const ValueKey<String>(
+                                  'structural-top-overlay',
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.micro.copyWith(
+                                  color: const Color(0xFF8E8884),
+                                  fontSize:
+                                      (theme.micro.fontSize ?? 10.5) * s,
+                                  letterSpacing:
+                                      (theme.micro.letterSpacing ?? 0.0) * s,
+                                ),
                               ),
                             ),
                         ],
@@ -1185,7 +1236,7 @@ class _StructuralWindow extends StatelessWidget {
               ),
             Expanded(
               child: ColoredBox(
-                color: Colors.black,
+                color: overlayOnly ? Colors.transparent : Colors.black,
                 child: showVideo
                     ? Stack(
                         fit: StackFit.expand,
@@ -1195,9 +1246,11 @@ class _StructuralWindow extends StatelessWidget {
                             key: const ValueKey<String>(
                               'structural-handoff-incoming',
                             ),
-                            translation: showingCover
+                            translation: showingCover || externalIncoming
                                 ? Offset(1.0 - handoffSlideT, 0.0)
-                                : Offset.zero,
+                                : externalOutgoing
+                                    ? Offset(-handoffSlideT, 0.0)
+                                    : Offset.zero,
                             child: _videoPreview(
                               previewSource: source,
                               previewDocument: rawDocument,
