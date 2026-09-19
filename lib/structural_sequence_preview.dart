@@ -418,9 +418,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
     final bool externalOutgoing =
         widget.handoffRole == StructuralSequenceHandoffRole.outgoing;
+    final bool externalPlaceholder = widget.handoffRole ==
+        StructuralSequenceHandoffRole.placeholderIncoming;
+    final bool externalOverlayOnly =
+        externalOutgoing || externalPlaceholder;
 
     return ColoredBox(
-      color: externalOutgoing ? Colors.transparent : Colors.black,
+      color: externalOverlayOnly ? Colors.transparent : Colors.black,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           final double width = constraints.maxWidth.isFinite
@@ -621,7 +625,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              if (!externalOutgoing && useNativeTerminal)
+              if (!externalOverlayOnly && useNativeTerminal)
                 Positioned.fill(
                   key: const ValueKey<String>(
                     'structural-native-terminal-positioned',
@@ -640,7 +644,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     ),
                   ),
                 )
-              else if (!externalOutgoing) ...[
+              else if (!externalOverlayOnly) ...[
                 Positioned.fromRect(
                   key: const ValueKey<String>('structural-desktop-positioned'),
                   rect: renderFrame,
