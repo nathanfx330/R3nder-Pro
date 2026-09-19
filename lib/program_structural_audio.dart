@@ -200,7 +200,6 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
   final Map<int, _RuntimeOccurrenceTrace> traces =
       <int, _RuntimeOccurrenceTrace>{};
 
-  final bool editorMode = useEditorLineMap || editorRawLineAtFrame != null;
 
   void observePlacement({
     required int placementIndex,
