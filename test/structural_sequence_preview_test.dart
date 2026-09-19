@@ -58,19 +58,37 @@ const String _source = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall]
 ''';
 
+const String _slideSource = '''[CONFIG:APPSWITCH:SLIDE]
+[EDIT:a]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:b]
+[TRACK:V1]
+[CLIP:b:video/b.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.a]
+[STRUCT:EDIT.b]
+''';
+
 String _resolveTestSource(String value) => '/workspace/$value';
 
 Widget _buildPreview({
   required StructuralSequencePlacement placement,
   required _FakeBackend backend,
   required int localFrame,
+  String rawDocument = _source,
 }) {
   return MaterialApp(
     home: SizedBox(
       width: 800,
       height: 500,
       child: StructuralSequencePreview(
-        rawDocument: _source,
+        rawDocument: rawDocument,
         placement: placement,
         localFrame: localFrame,
         isPlaying: false,
@@ -423,4 +441,101 @@ void main() {
       findsNothing,
     );
   });
+  testWidgets('APPSWITCH SLIDE pans between adjacent STRUCT clients',
+      (WidgetTester tester) async {
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_slideSource);
+    expect(placements, hasLength(2));
+    expect(placements.first.seamlessToNext, isTrue);
+    expect(placements.last.seamlessFromPrevious, isTrue);
+
+    final _FakeBackend backend = _FakeBackend();
+    final StructuralSequencePlacement outgoing = placements.first;
+    final StructuralSequencePlacement incoming = placements.last;
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: outgoing,
+        backend: backend,
+        localFrame: outgoing.contentEndFrameExclusive - 1,
+        rawDocument: _slideSource,
+      ),
+    );
+
+    final Finder ready = find.byKey(
+      const ValueKey<String>('structural-first-frame-ready'),
+    );
+    for (int attempt = 0; attempt < 50 && ready.evaluate().isEmpty; attempt++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pump();
+    }
+    expect(ready, findsOneWidget);
+
+    final int midFrame = kAppPanFrames ~/ 2;
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: incoming,
+        backend: backend,
+        localFrame: midFrame,
+        rawDocument: _slideSource,
+      ),
+    );
+
+    final Finder outgoingSlide = find.byKey(
+      const ValueKey<String>('structural-handoff-outgoing'),
+    );
+    final Finder incomingSlide = find.byKey(
+      const ValueKey<String>('structural-handoff-incoming'),
+    );
+
+    for (int attempt = 0; attempt < 50; attempt++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pump();
+      if (outgoingSlide.evaluate().isNotEmpty &&
+          incomingSlide.evaluate().isNotEmpty) {
+        final FractionalTranslation movingIn =
+            tester.widget<FractionalTranslation>(incomingSlide);
+        if (movingIn.translation.dx < 0.999) break;
+      }
+    }
+
+    expect(outgoingSlide, findsOneWidget);
+    expect(incomingSlide, findsOneWidget);
+
+    final FractionalTranslation movingOut =
+        tester.widget<FractionalTranslation>(outgoingSlide);
+    final FractionalTranslation movingIn =
+        tester.widget<FractionalTranslation>(incomingSlide);
+
+    expect(movingOut.translation.dx, lessThan(0.0));
+    expect(movingOut.translation.dx, greaterThan(-1.0));
+    expect(movingIn.translation.dx, greaterThan(0.0));
+    expect(movingIn.translation.dx, lessThan(1.0));
+    expect(
+      movingIn.translation.dx - movingOut.translation.dx,
+      closeTo(1.0, 0.0001),
+    );
+
+    await tester.pumpWidget(
+      _buildPreview(
+        placement: incoming,
+        backend: backend,
+        localFrame: kAppPanFrames - 1,
+        rawDocument: _slideSource,
+      ),
+    );
+    await tester.pump();
+
+    expect(outgoingSlide, findsNothing);
+    expect(incomingSlide, findsOneWidget);
+    final FractionalTranslation seated =
+        tester.widget<FractionalTranslation>(incomingSlide);
+    expect(seated.translation, Offset.zero);
+  });
+
+
 }
