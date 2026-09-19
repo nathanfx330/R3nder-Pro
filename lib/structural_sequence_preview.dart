@@ -93,10 +93,6 @@ enum StructuralSequenceHandoffRole {
   none,
   incoming,
   outgoing,
-
-  /// Transparent-shell copy of the outgoing client positioned in the incoming
-  /// slot while the real incoming client is not paint-ready yet.
-  placeholderIncoming,
 }
 
 class StructuralSequencePreview extends StatefulWidget {
@@ -418,13 +414,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
     final bool externalOutgoing =
         widget.handoffRole == StructuralSequenceHandoffRole.outgoing;
-    final bool externalPlaceholder = widget.handoffRole ==
-        StructuralSequenceHandoffRole.placeholderIncoming;
-    final bool externalOverlayOnly =
-        externalOutgoing || externalPlaceholder;
 
     return ColoredBox(
-      color: externalOverlayOnly ? Colors.transparent : Colors.black,
+      color: externalOutgoing ? Colors.transparent : Colors.black,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           final double width = constraints.maxWidth.isFinite
@@ -625,7 +617,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           return Stack(
             fit: StackFit.expand,
             children: [
-              if (!externalOverlayOnly && useNativeTerminal)
+              if (!externalOutgoing && useNativeTerminal)
                 Positioned.fill(
                   key: const ValueKey<String>(
                     'structural-native-terminal-positioned',
@@ -644,7 +636,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     ),
                   ),
                 )
-              else if (!externalOverlayOnly) ...[
+              else if (!externalOutgoing) ...[
                 Positioned.fromRect(
                   key: const ValueKey<String>('structural-desktop-positioned'),
                   rect: renderFrame,
@@ -716,7 +708,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       outgoingWindowTitle: _handoffOutgoingWindowTitle,
                       outgoingTopOverlay: _handoffOutgoingTopOverlay,
                       outgoingBottomOverlay: _handoffOutgoingBottomOverlay,
-                      handoffIncomingReady: _handoffIncomingReady,
                       handoffSlideT: widget.handoffRole ==
                                   StructuralSequenceHandoffRole.none
                               ? handoffSlideT
@@ -991,7 +982,6 @@ class _StructuralWindow extends StatelessWidget {
   final String outgoingWindowTitle;
   final String outgoingTopOverlay;
   final String outgoingBottomOverlay;
-  final bool handoffIncomingReady;
   final double handoffSlideT;
   final StructuralSequenceHandoffRole handoffRole;
 
@@ -1022,7 +1012,6 @@ class _StructuralWindow extends StatelessWidget {
     this.outgoingWindowTitle = '',
     this.outgoingTopOverlay = '',
     this.outgoingBottomOverlay = '',
-    this.handoffIncomingReady = true,
     this.handoffSlideT = 0.0,
     this.handoffRole = StructuralSequenceHandoffRole.none,
   });
@@ -1081,9 +1070,7 @@ class _StructuralWindow extends StatelessWidget {
         handoffRole == StructuralSequenceHandoffRole.incoming;
     final bool externalOutgoing =
         handoffRole == StructuralSequenceHandoffRole.outgoing;
-    final bool externalPlaceholder =
-        handoffRole == StructuralSequenceHandoffRole.placeholderIncoming;
-    final bool overlayOnly = externalOutgoing || externalPlaceholder;
+    final bool overlayOnly = externalOutgoing;
 
     final StructuralOverlayMode visibleOverlayMode =
         showingCover ? outgoingOverlayMode : overlayMode;
@@ -1171,13 +1158,11 @@ class _StructuralWindow extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Opacity(
-                              opacity: externalPlaceholder
-                                  ? 0.0
-                                  : externalIncoming
-                                      ? handoffSlideT
-                                      : externalOutgoing
-                                          ? 1.0 - handoffSlideT
-                                          : 1.0,
+                              opacity: externalIncoming
+                                  ? handoffSlideT
+                                  : externalOutgoing
+                                      ? 1.0 - handoffSlideT
+                                      : 1.0,
                               child: crossfadeTitle
                                   ? Stack(
                                       children: [
@@ -1219,13 +1204,11 @@ class _StructuralWindow extends StatelessWidget {
                           ),
                           if (topText != null)
                             Opacity(
-                              opacity: externalPlaceholder
-                                  ? 0.0
-                                  : externalIncoming
-                                      ? handoffSlideT
-                                      : externalOutgoing
-                                          ? 1.0 - handoffSlideT
-                                          : 1.0,
+                              opacity: externalIncoming
+                                  ? handoffSlideT
+                                  : externalOutgoing
+                                      ? 1.0 - handoffSlideT
+                                      : 1.0,
                               child: Text(
                                 topText,
                                 key: const ValueKey<String>(
@@ -1259,9 +1242,7 @@ class _StructuralWindow extends StatelessWidget {
                             key: const ValueKey<String>(
                               'structural-handoff-incoming',
                             ),
-                            translation: showingCover ||
-                                    externalIncoming ||
-                                    externalPlaceholder
+                            translation: showingCover || externalIncoming
                                 ? Offset(1.0 - handoffSlideT, 0.0)
                                 : externalOutgoing
                                     ? Offset(-handoffSlideT, 0.0)
@@ -1277,24 +1258,6 @@ class _StructuralWindow extends StatelessWidget {
                               keySuffix: ':incoming',
                             ),
                           ),
-                          if (showingCover && !handoffIncomingReady)
-                            FractionalTranslation(
-                              key: const ValueKey<String>(
-                                'structural-handoff-placeholder',
-                              ),
-                              translation:
-                                  Offset(1.0 - handoffSlideT, 0.0),
-                              child: _videoPreview(
-                                previewSource: coverSource,
-                                previewDocument: coverDocument,
-                                previewFrame: outgoingSourceFrame,
-                                playing: false,
-                                previewOverlayMode: outgoingOverlayMode,
-                                previewBottomOverlay: outgoingBottomOverlay,
-                                onReady: null,
-                                keySuffix: ':placeholder',
-                              ),
-                            ),
                           if (showingCover)
                             FractionalTranslation(
                               key: const ValueKey<String>(
