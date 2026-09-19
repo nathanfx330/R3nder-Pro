@@ -174,6 +174,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     required StructuralSequencePlacement placement,
     required int localFrame,
     required bool visible,
+    StructuralSequenceHandoffRole handoffRole =
+        StructuralSequenceHandoffRole.none,
+    double handoffSlideT = 0.0,
   }) {
     final Widget preview = StructuralSequencePreview(
       key: ValueKey<String>(
@@ -191,6 +194,8 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
       onFirstFrameReady: () => _markPlacementReady(placementIndex),
+      handoffRole: handoffRole,
+      handoffSlideT: handoffSlideT,
     );
 
     return Positioned.fill(
@@ -255,14 +260,37 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             );
           }
 
+          final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
           final bool activeReadyPainted =
               _readyPaintedPlacements.contains(activeIndex);
 
+          final int handoffFrames = placement.seamlessFromPrevious
+              ? (placement.sourceDurationFrames < kStructuralSwitchSlideFrames
+                  ? placement.sourceDurationFrames
+                  : kStructuralSwitchSlideFrames)
+              : 0;
+          final int activeSourceFrame =
+              placement.sourceFrameAt(activeLocalFrame);
+          final bool handoffWindowOpen = placement.seamlessFromPrevious &&
+              handoffFrames > 1 &&
+              activeSourceFrame < handoffFrames - 1;
+          final double handoffRaw =
+              handoffWindowOpen && activeReadyPainted
+                  ? (activeSourceFrame / (handoffFrames - 1))
+                      .clamp(0.0, 1.0)
+                      .toDouble()
+                  : 0.0;
+          final double handoffSlideT =
+              Curves.easeInOutCubic.transform(handoffRaw);
+          final bool visualHandoff =
+              handoffWindowOpen && activeReadyPainted;
+
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
-          if (placement.seamlessFromPrevious && !activeReadyPainted) {
+          if (placement.seamlessFromPrevious &&
+              (!activeReadyPainted || handoffWindowOpen)) {
             final int previousIndex = activeIndex - 1;
             final StructuralSequencePlacement? previous =
                 _placementAt(previousIndex);
@@ -283,8 +311,12 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             _structuralLayer(
               placementIndex: activeIndex,
               placement: placement,
-              localFrame: _localFrame(marker),
+              localFrame: activeLocalFrame,
               visible: true,
+              handoffRole: visualHandoff
+                  ? StructuralSequenceHandoffRole.incoming
+                  : StructuralSequenceHandoffRole.none,
+              handoffSlideT: handoffSlideT,
             ),
           );
 
@@ -296,6 +328,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
                 placement: fallbackPlacement,
                 localFrame: fallbackPlacement.effectiveDurationFrames - 1,
                 visible: true,
+                handoffRole: visualHandoff
+                    ? StructuralSequenceHandoffRole.outgoing
+                    : StructuralSequenceHandoffRole.none,
+                handoffSlideT: handoffSlideT,
               ),
             );
           }
