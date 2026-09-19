@@ -412,7 +412,7 @@ List<int?> editorStructuralPlacementStarts({
         placements[i - 1].chainedToNext &&
         placement.chainedFromPrevious) {
       starts[i] =
-          starts[i - 1]! + placements[i - 1].effectiveDurationFrames;
+          starts[i - 1]! + placements[i - 1].durationFrames;
     } else {
       starts[i] = rawStart;
     }
@@ -434,7 +434,8 @@ List<int?> editorStructuralPlacementStarts({
     final int? start = placementStarts[i];
     if (start == null || start < 0) continue;
     final StructuralSequencePlacement placement = placements[i];
-    final int end = start + placement.effectiveDurationFrames;
+    if (placement.durationFrames <= 0) continue;
+    final int end = start + placement.durationFrames;
     if (projectFrame >= start && projectFrame < end) {
       return (
         placementIndex: i,
