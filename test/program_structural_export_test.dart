@@ -1,6 +1,7 @@
 // ./test/program_structural_export_test.dart
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -68,25 +69,27 @@ class _SlideColorBackend implements MediaDecoderBackend {
   @override
   MediaDecoder open(String resolvedPath) {
     final bool outgoing = resolvedPath.endsWith('a.mp4');
-    return _SolidColorDecoder(
-      outgoing ? const Color(0xFFFF0000) : const Color(0xFF0000FF),
-    );
+    return outgoing
+        ? _SolidColorDecoder(255, 0, 0)
+        : _SolidColorDecoder(0, 0, 255);
   }
 }
 
 class _SolidColorDecoder implements MediaDecoder {
-  _SolidColorDecoder(this.color);
+  _SolidColorDecoder(this.red, this.green, this.blue);
 
-  final Color color;
+  final int red;
+  final int green;
+  final int blue;
 
   @override
   DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
     final Uint8List rgba = Uint8List(width * height * 4);
     for (int i = 0; i < rgba.length; i += 4) {
-      rgba[i] = color.r;
-      rgba[i + 1] = color.g;
-      rgba[i + 2] = color.b;
-      rgba[i + 3] = color.a;
+      rgba[i] = red;
+      rgba[i + 1] = green;
+      rgba[i + 2] = blue;
+      rgba[i + 3] = 255;
     }
 
     return DecodedMediaFrame(
@@ -150,9 +153,11 @@ Rect? _solidRedBounds(Uint8List rgba, int width, int height) {
 Rect? _solidColorBounds(
   Uint8List rgba,
   int width,
-  int height,
-  Color color,
-) {
+  int height, {
+  required int red,
+  required int green,
+  required int blue,
+}) {
   int minX = width;
   int minY = height;
   int maxX = -1;
@@ -161,10 +166,10 @@ Rect? _solidColorBounds(
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       final int i = (y * width + x) * 4;
-      if (rgba[i] != color.r ||
-          rgba[i + 1] != color.g ||
-          rgba[i + 2] != color.b ||
-          rgba[i + 3] != color.a) {
+      if (rgba[i] != red ||
+          rgba[i + 1] != green ||
+          rgba[i + 2] != blue ||
+          rgba[i + 3] != 255) {
         continue;
       }
       if (x < minX) minX = x;
@@ -207,9 +212,6 @@ void main() {
 
       const int outputWidth = 320;
       const int outputHeight = 180;
-      const Color outgoingColor = Color(0xFFFF0000);
-      const Color incomingColor = Color(0xFF0000FF);
-
       final Directory root = await Directory.systemTemp
           .createTemp('r3nder_program_struct_slide_bake_');
       final Directory images = Directory('${root.path}/images')
@@ -306,13 +308,17 @@ void main() {
         middleRgba,
         outputWidth,
         outputHeight,
-        outgoingColor,
+        red: 255,
+        green: 0,
+        blue: 0,
       );
       final Rect? incomingBounds = _solidColorBounds(
         middleRgba,
         outputWidth,
         outputHeight,
-        incomingColor,
+        red: 0,
+        green: 0,
+        blue: 255,
       );
       expect(outgoingBounds, isNotNull);
       expect(incomingBounds, isNotNull);
@@ -385,7 +391,9 @@ void main() {
         endRgba,
         outputWidth,
         outputHeight,
-        incomingColor,
+        red: 0,
+        green: 0,
+        blue: 255,
       );
       expect(seatedIncoming, isNotNull);
       expect(seatedIncoming!.left, closeTo(client.left, 2.0));
