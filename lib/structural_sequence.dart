@@ -670,7 +670,8 @@ String appendStructuralSequencePlacement({
 /// Editor line-map compilation uses a plain compensated PAUSE so its authored
 /// line continues to own exactly the STRUCT event budget. Real Preview/Bake
 /// compilation can request [runtimeMarkers], which writes an internal REGION
-/// immediately before the same compensated PAUSE.
+/// before its PAUSE. The two projections therefore have different framing
+/// costs: editor = PAUSE entry only, runtime = REGION entry + PAUSE entry.
 ///
 /// Durations come from [parseStructuralSequencePlacements], not from a second
 /// local formula. This is load-bearing now that adjacent structural apps can
