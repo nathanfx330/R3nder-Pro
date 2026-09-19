@@ -473,7 +473,7 @@ void main() {
     }
     expect(ready, findsOneWidget);
 
-    final int midFrame = kAppPanFrames ~/ 2;
+    final int midFrame = kStructuralSwitchSlideFrames ~/ 2;
     await tester.pumpWidget(
       _buildPreview(
         placement: incoming,
@@ -524,7 +524,7 @@ void main() {
       _buildPreview(
         placement: incoming,
         backend: backend,
-        localFrame: kAppPanFrames - 1,
+        localFrame: kStructuralSwitchSlideFrames - 1,
         rawDocument: _slideSource,
       ),
     );
