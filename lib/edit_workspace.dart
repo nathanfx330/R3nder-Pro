@@ -1096,7 +1096,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
   }
 
   Future<void> _renameSelectedSource(
-    EditDocumentModel model,
     StructuralSourceRef selected,
   ) async {
     if (_importing || _playing || _startingPlayback || _exporting) return;
@@ -1815,7 +1814,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                   _startingPlayback ||
                   _exporting
               ? null
-              : () => _renameSelectedSource(model, selected),
+              : () => _renameSelectedSource(selected),
         ),
       R3Button(
         'NEW EDIT',
