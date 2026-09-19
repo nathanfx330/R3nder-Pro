@@ -309,4 +309,46 @@ After
     expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
     expect(compiled.engineText, contains('[PAUSE:1]'));
   });
+
+  test('window title authoring changes one STRUCT placement only', () {
+    const String titled = '''[EDIT:main]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:20:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+  [STRUCT:EDIT.main:AUDIO]
+[STRUCT:EDIT.main:TITLE="Second"]
+''';
+
+    final String next = setStructuralSequencePlacementWindowTitle(
+      rawDocument: titled,
+      placementIndex: 0,
+      windowTitle: 'Interview Monitor',
+    );
+
+    expect(
+      next,
+      contains(
+        '  [STRUCT:EDIT.main:AUDIO:TITLE="Interview Monitor"]',
+      ),
+    );
+    expect(next, contains('[STRUCT:EDIT.main:TITLE="Second"]'));
+
+    final placements = parseStructuralSequencePlacements(next);
+    expect(placements, hasLength(2));
+    expect(placements.first.windowTitle, 'Interview Monitor');
+    expect(placements.last.windowTitle, 'Second');
+
+    final String cleared = setStructuralSequencePlacementWindowTitle(
+      rawDocument: next,
+      placementIndex: 0,
+      windowTitle: '',
+    );
+    expect(cleared, contains('  [STRUCT:EDIT.main:AUDIO]'));
+    expect(
+      parseStructuralSequencePlacements(cleared).first.effectiveWindowTitle,
+      'EDIT.main',
+    );
+  });
 }

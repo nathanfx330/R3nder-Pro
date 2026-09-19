@@ -655,6 +655,63 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
 /// only a lightweight reference and derives its duration from the selected
 /// EDIT/MOSAIC definition. Presentation mode, clip-audio intent, and chrome
 /// belong to this placement rather than to the reusable source.
+String setStructuralSequencePlacementWindowTitle({
+  required String rawDocument,
+  required int placementIndex,
+  required String windowTitle,
+}) {
+  final List<StructuralSequencePlacement> placements =
+      parseStructuralSequencePlacements(rawDocument);
+  if (placementIndex < 0 || placementIndex >= placements.length) {
+    throw RangeError.index(
+      placementIndex,
+      placements,
+      'placementIndex',
+    );
+  }
+
+  final StructuralSequencePlacement placement = placements[placementIndex];
+  final String line =
+      rawDocument.substring(placement.startOffset, placement.endOffset);
+  final int tagStart = line.indexOf('[STRUCT:');
+  final int tagEnd = line.lastIndexOf(']');
+  if (tagStart < 0 || tagEnd <= tagStart) {
+    throw StateError('Parsed STRUCT placement no longer has a complete tag.');
+  }
+
+  final String tag = line.substring(tagStart, tagEnd + 1);
+  final StructuralChromeSpec? current = parseStructuralChromeTag(tag);
+  if (current == null) {
+    throw StateError('Parsed STRUCT placement chrome could not be reopened.');
+  }
+
+  final String renamed = formatStructuralChromeTag(
+    current.copyWith(windowTitle: windowTitle),
+  );
+  final String replacement =
+      line.replaceRange(tagStart, tagEnd + 1, renamed);
+  final String next = rawDocument.replaceRange(
+    placement.startOffset,
+    placement.endOffset,
+    replacement,
+  );
+
+  final List<StructuralSequencePlacement> reparsed =
+      parseStructuralSequencePlacements(next);
+  if (placementIndex >= reparsed.length ||
+      reparsed[placementIndex].sourceRef != placement.sourceRef ||
+      reparsed[placementIndex].windowTitle != windowTitle) {
+    throw StateError('STRUCT window-title update did not round-trip.');
+  }
+  return next;
+}
+
+/// Appends one structural source as the next event in the main TEXT sequence.
+///
+/// Source definitions remain where they already live. The sequence receives
+/// only a lightweight reference and derives its duration from the selected
+/// EDIT/MOSAIC definition. Presentation mode, clip-audio intent, and chrome
+/// belong to this placement rather than to the reusable source.
 String appendStructuralSequencePlacement({
   required String rawDocument,
   required StructuralSourceRef sourceRef,

@@ -56,6 +56,7 @@ import 'project_media_bin_view.dart';
 import 'project_media_references.dart';
 import 'session_store.dart';
 import 'structural_sequence.dart';
+import 'structural_source_authoring.dart';
 import 'structural_source_export.dart';
 import 'ui_theme.dart';
 
@@ -1094,6 +1095,260 @@ class _EditWorkspaceState extends State<EditWorkspace>
     }
   }
 
+  Future<void> _renameSelectedSource(
+    StructuralSourceRef selected,
+  ) async {
+    if (_importing || _playing || _startingPlayback || _exporting) return;
+
+    final String kind = selected.kind == StructuralSourceKind.edit
+        ? 'EDIT'
+        : 'MOSAIC';
+    String draftId = selected.id;
+
+    final String? picked = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text(
+            kind == 'EDIT' ? 'Rename EDIT timeline' : 'Rename MOSAIC',
+            style: widget.theme.value,
+          ),
+          content: SizedBox(
+            width: sc(420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                R3MicroLabel('SOURCE ID', theme: widget.theme),
+                SizedBox(height: sc(6)),
+                TextFormField(
+                  key: const ValueKey<String>(
+                    'structural-source-rename-field',
+                  ),
+                  initialValue: selected.id,
+                  autofocus: true,
+                  style: widget.theme.value,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'letters, numbers, underscore, or hyphen',
+                  ),
+                  onChanged: (String value) => draftId = value,
+                  onFieldSubmitted: (String value) {
+                    if (value.trim().isNotEmpty) {
+                      Navigator.of(context).pop(value);
+                    }
+                  },
+                ),
+                SizedBox(height: sc(10)),
+                Text(
+                  'Renaming changes the source identity and updates every '
+                  'STRUCT and structural CLIP reference to it. Window titles '
+                  'are separate and are not rewritten.',
+                  style: widget.theme.fine,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              key: const ValueKey<String>('structural-source-rename-commit'),
+              onPressed: () {
+                final String value = draftId.trim();
+                if (value.isEmpty) return;
+                Navigator.of(context).pop(value);
+              },
+              child: const Text('RENAME'),
+            ),
+          ],
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    try {
+      final String next = renameStructuralSource(
+        source: _workingSource,
+        sourceRef: selected,
+        newId: picked,
+      );
+      final String prefix = selected.kind == StructuralSourceKind.edit
+          ? 'EDIT'
+          : 'MOSAIC';
+      final StructuralSourceRef renamed =
+          StructuralSourceRef.tryParse('$prefix.${picked.trim()}')!;
+      _applySourceChange(
+        next,
+        selectSource: renamed.canonicalSource,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '$error');
+    }
+  }
+
+  List<(int, StructuralSequencePlacement)> _placementsForSource(
+    StructuralSourceRef source,
+  ) {
+    final List<StructuralSequencePlacement> all =
+        parseStructuralSequencePlacements(_workingSource);
+    return <(int, StructuralSequencePlacement)>[
+      for (int i = 0; i < all.length; i++)
+        if (all[i].sourceRef == source) (i, all[i]),
+    ];
+  }
+
+  Future<void> _editSelectedWindowTitle(
+    StructuralSourceRef selected,
+  ) async {
+    if (_importing || _playing || _startingPlayback || _exporting) return;
+
+    final List<(int, StructuralSequencePlacement)> placements =
+        _placementsForSource(selected);
+    if (placements.isEmpty) {
+      setState(() {
+        _error =
+            '${selected.canonicalSource} is not in the sequence yet. '
+            'Use ADD TO SEQUENCE first.';
+      });
+      return;
+    }
+
+    int placementIndex = placements.first.$1;
+    StructuralSequencePlacement current = placements.first.$2;
+    String draftTitle = current.windowTitle;
+
+    final MapEntry<int, String>? result =
+        await showDialog<MapEntry<int, String>>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Window title', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(460),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (placements.length > 1) ...[
+                      R3MicroLabel('PLACEMENT', theme: widget.theme),
+                      SizedBox(height: sc(6)),
+                      DropdownButton<int>(
+                        key: const ValueKey<String>(
+                          'structural-window-title-placement',
+                        ),
+                        value: placementIndex,
+                        isExpanded: true,
+                        dropdownColor: R3Theme.panel,
+                        style: widget.theme.value,
+                        items: [
+                          for (int ordinal = 0;
+                              ordinal < placements.length;
+                              ordinal++)
+                            DropdownMenuItem<int>(
+                              value: placements[ordinal].$1,
+                              child: Text(
+                                'PLACEMENT ${ordinal + 1}   '
+                                'LINE ${placements[ordinal].$2.lineIndex + 1}',
+                              ),
+                            ),
+                        ],
+                        onChanged: (int? value) {
+                          if (value == null) return;
+                          final (int, StructuralSequencePlacement) chosen =
+                              placements.firstWhere(
+                            ((int, StructuralSequencePlacement) pair) =>
+                                pair.$1 == value,
+                          );
+                          setDialogState(() {
+                            placementIndex = chosen.$1;
+                            current = chosen.$2;
+                            draftTitle = current.windowTitle;
+                          });
+                        },
+                      ),
+                      SizedBox(height: sc(14)),
+                    ],
+                    R3MicroLabel('WINDOW TITLE', theme: widget.theme),
+                    SizedBox(height: sc(6)),
+                    TextFormField(
+                      key: ValueKey<String>(
+                        'structural-window-title-field-$placementIndex',
+                      ),
+                      initialValue: draftTitle,
+                      autofocus: placements.length == 1,
+                      style: widget.theme.value,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText:
+                            'Blank uses ${selected.canonicalSource}',
+                      ),
+                      onChanged: (String value) => draftTitle = value,
+                      onFieldSubmitted: (String value) {
+                        Navigator.of(context).pop(
+                          MapEntry<int, String>(placementIndex, value),
+                        );
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    Text(
+                      'This is presentation chrome for this STRUCT placement. '
+                      'It does not rename ${selected.canonicalSource}. The '
+                      'same source can use a different title each time it is '
+                      'placed in the sequence.',
+                      style: widget.theme.fine,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  key: const ValueKey<String>(
+                    'structural-window-title-commit',
+                  ),
+                  onPressed: () => Navigator.of(context).pop(
+                    MapEntry<int, String>(
+                      placementIndex,
+                      draftTitle,
+                    ),
+                  ),
+                  child: const Text('APPLY'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      final String next = setStructuralSequencePlacementWindowTitle(
+        rawDocument: _workingSource,
+        placementIndex: result.key,
+        windowTitle: result.value,
+      );
+      _applySourceChange(
+        next,
+        selectSource: selected.canonicalSource,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '$error');
+    }
+  }
+
   void _addSelectedToSequence(
     EditDocumentModel model,
     StructuralSourceRef selected,
@@ -1504,6 +1759,9 @@ class _EditWorkspaceState extends State<EditWorkspace>
         : model.structuralSourceFrameCount(selected);
     final List<StructuralSourceRef> refs =
         model == null ? const <StructuralSourceRef>[] : _structuralSources(model);
+    final int selectedPlacementCount = selected == null
+        ? 0
+        : _placementsForSource(selected).length;
     final bool mediaMode = selected == null || edit != null;
 
     final List<Widget> controls = <Widget>[
@@ -1534,6 +1792,20 @@ class _EditWorkspaceState extends State<EditWorkspace>
                     if (value != null) _selectSource(model, value);
                   },
           ),
+        ),
+      if (selected != null)
+        R3Button(
+          'RENAME',
+          key: const ValueKey<String>('rename-structural-source'),
+          theme: widget.theme,
+          compact: true,
+          onPressed: model == null ||
+                  _importing ||
+                  _playing ||
+                  _startingPlayback ||
+                  _exporting
+              ? null
+              : () => _renameSelectedSource(selected),
         ),
       R3Button(
         'NEW EDIT',
@@ -1574,6 +1846,21 @@ class _EditWorkspaceState extends State<EditWorkspace>
                 _exporting
             ? null
             : () => _addSelectedToSequence(model, selected),
+      ),
+      R3Button(
+        selectedPlacementCount > 1
+            ? 'WINDOW TITLE ($selectedPlacementCount)'
+            : 'WINDOW TITLE',
+        key: const ValueKey<String>('edit-structural-window-title'),
+        theme: widget.theme,
+        compact: true,
+        onPressed: selected == null ||
+                _importing ||
+                _playing ||
+                _startingPlayback ||
+                _exporting
+            ? null
+            : () => _editSelectedWindowTitle(selected),
       ),
       if (mediaMode) ...[
         SizedBox(width: sc(5)),
