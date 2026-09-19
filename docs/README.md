@@ -226,6 +226,10 @@ ProjectClock through structural video, Preview, and BAKE parity.
 
 Two of the hardest structural milestones: executable adjacency, seamless application switching, outgoing-shell readiness ownership, fullscreen/windowed presentation, and first-class STRUCT authoring.
 
+## `STRUCT_APPSWITCH_SLIDE_JOURNEY.md`
+
+The later follow-up that made `APPSWITCH:SLIDE` literally pan between adjacent STRUCT clients in live Preview, uncovered the stale structural raster probe, and exposed/fixed the one-frame-short editor STRUCT projection that truncated AUDIO-enabled seamless placements. It also records the remaining BAKE visual-parity boundary rather than claiming it is already solved.
+
 ## `M20_M21_PRESENTATION_AND_RENDER_IDENTITY_JOURNEY.md`
 
 Player chrome, DEFAULT/CUSTOM/NONE, `[frame]`, missing custom overlays in final BAKE, runtime placement-index alignment, source export versus final BAKE, `RENDERNAME`, monotonic versions, and no-overwrite output.
