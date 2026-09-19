@@ -1,6 +1,7 @@
 // ./test/program_structural_export_test.dart
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -64,6 +65,47 @@ class _RecordingDecoder implements MediaDecoder {
   void dispose() {}
 }
 
+class _SlideColorBackend implements MediaDecoderBackend {
+  @override
+  MediaDecoder open(String resolvedPath) {
+    final bool outgoing = resolvedPath.endsWith('a.mp4');
+    return outgoing
+        ? _SolidColorDecoder(255, 0, 0)
+        : _SolidColorDecoder(0, 0, 255);
+  }
+}
+
+class _SolidColorDecoder implements MediaDecoder {
+  _SolidColorDecoder(this.red, this.green, this.blue);
+
+  final int red;
+  final int green;
+  final int blue;
+
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    final Uint8List rgba = Uint8List(width * height * 4);
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = red;
+      rgba[i + 1] = green;
+      rgba[i + 2] = blue;
+      rgba[i + 3] = 255;
+    }
+
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
   final terminal = scene.terminal;
   final bool awaitingPauseTag = terminal.activePause == null &&
@@ -108,7 +150,259 @@ Rect? _solidRedBounds(Uint8List rgba, int width, int height) {
   );
 }
 
+Rect? _solidColorBounds(
+  Uint8List rgba,
+  int width,
+  int height, {
+  required int red,
+  required int green,
+  required int blue,
+}) {
+  int minX = width;
+  int minY = height;
+  int maxX = -1;
+  int maxY = -1;
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final int i = (y * width + x) * 4;
+      if (rgba[i] != red ||
+          rgba[i + 1] != green ||
+          rgba[i + 2] != blue ||
+          rgba[i + 3] != 255) {
+        continue;
+      }
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return Rect.fromLTRB(
+    minX.toDouble(),
+    minY.toDouble(),
+    (maxX + 1).toDouble(),
+    (maxY + 1).toDouble(),
+  );
+}
+
 void main() {
+  test(
+    'BAKE pans between seamless STRUCT clients on authored source time',
+    () async {
+      const String source = '''[SPEED:MAX]
+[CONFIG:APPSWITCH:SLIDE]
+[EDIT:a]
+[TRACK:V1]
+[CLIP:a:a.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:b]
+[TRACK:V1]
+[CLIP:b:b.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.a]
+[STRUCT:EDIT.b]
+''';
+
+      const int outputWidth = 320;
+      const int outputHeight = 180;
+      final Directory root = await Directory.systemTemp
+          .createTemp('r3nder_program_struct_slide_bake_');
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final SceneEngine scene = SceneEngine();
+      final ProgramStructuralFrameRenderer renderer =
+          ProgramStructuralFrameRenderer(
+        rawDocument: source,
+        width: outputWidth,
+        height: outputHeight,
+        backend: _SlideColorBackend(),
+        resolveSource: (String value) => value,
+      );
+
+      addTearDown(() {
+        renderer.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(source);
+      expect(placements, hasLength(2));
+      expect(placements.first.seamlessToNext, isTrue);
+      expect(placements.last.seamlessFromPrevious, isTrue);
+
+      final CompiledScript compiled = compileScript(source, lineMarkers: false);
+      await scene.setup(
+        templateText: compiled.engineText,
+        fontColor: Colors.green,
+        bgColor: Colors.black,
+        width: 1920,
+        height: 1080,
+        scale: 1,
+        fontPath: 'monospace',
+        fontSize: 12,
+        lineSpacing: 16,
+        tracking: 0,
+        marginTop: 10,
+        marginSide: 10,
+        imagesDir: images.path,
+        spritesDir: sprites.path,
+        paneLifeConfig: compiled.paneLife,
+        captionConfig: compiled.caption,
+        appSwitchConfig: compiled.appSwitch,
+      );
+
+      int? projectFrameForSourceFrame(int wantedSourceFrame) {
+        for (int projectFrame = 0; projectFrame < 500; projectFrame++) {
+          scene.evaluate(
+            ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+          );
+          final StructuralRuntimeMarker? marker =
+              parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+          if (marker == null || marker.placementIndex != 1) continue;
+          final int localFrame = _runtimeLocalFrame(scene, marker);
+          if (placements.last.sourceFrameAt(localFrame) == wantedSourceFrame) {
+            return projectFrame;
+          }
+        }
+        return null;
+      }
+
+      const int middleSourceFrame = 10;
+      final int? middleProjectFrame =
+          projectFrameForSourceFrame(middleSourceFrame);
+      expect(middleProjectFrame, isNotNull);
+
+      scene.evaluate(
+        ProjectTime(
+          frame: middleProjectFrame!,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+      final ui.Image? middleImage = await renderer.renderIfActive(
+        scene: scene,
+        fontFamily: 'monospace',
+      );
+      expect(middleImage, isNotNull);
+
+      final ByteData? middleData =
+          await middleImage!.toByteData(format: ui.ImageByteFormat.rawRgba);
+      middleImage.dispose();
+      expect(middleData, isNotNull);
+      final Uint8List middleRgba = middleData!.buffer.asUint8List(
+        middleData.offsetInBytes,
+        middleData.lengthInBytes,
+      );
+
+      final Rect? outgoingBounds = _solidColorBounds(
+        middleRgba,
+        outputWidth,
+        outputHeight,
+        red: 255,
+        green: 0,
+        blue: 0,
+      );
+      final Rect? incomingBounds = _solidColorBounds(
+        middleRgba,
+        outputWidth,
+        outputHeight,
+        red: 0,
+        green: 0,
+        blue: 255,
+      );
+      expect(outgoingBounds, isNotNull);
+      expect(incomingBounds, isNotNull);
+
+      final double chromeScale =
+          scene.terminal.scale * outputWidth / scene.width;
+      final Rect normalizedWindow = structuralProgramPresentationRectForOutput(
+        mode: placements.last.presentationMode,
+        outputWidth: outputWidth,
+        outputHeight: outputHeight,
+        titleHeight: 38.0 * chromeScale,
+      );
+      final Rect window = Rect.fromLTRB(
+        normalizedWindow.left * outputWidth,
+        normalizedWindow.top * outputHeight,
+        normalizedWindow.right * outputWidth,
+        normalizedWindow.bottom * outputHeight,
+      );
+      final double barHeight = math.min(38.0 * chromeScale, window.height);
+      final Rect client = Rect.fromLTRB(
+        window.left,
+        window.top + barHeight,
+        window.right,
+        window.bottom,
+      );
+      final double raw =
+          middleSourceFrame / (kStructuralSwitchSlideFrames - 1);
+      final double slideT = Curves.easeInOutCubic.transform(raw);
+      final double splitX = client.right - client.width * slideT;
+
+      expect(outgoingBounds!.left, closeTo(client.left, 2.0));
+      expect(outgoingBounds.right, closeTo(splitX, 2.0));
+      expect(incomingBounds!.left, closeTo(splitX, 2.0));
+      expect(incomingBounds.right, closeTo(client.right, 2.0));
+
+      final int? endProjectFrame =
+          projectFrameForSourceFrame(kStructuralSwitchSlideFrames - 1);
+      expect(endProjectFrame, isNotNull);
+
+      scene.evaluate(
+        ProjectTime(
+          frame: endProjectFrame!,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+      final ui.Image? endImage = await renderer.renderIfActive(
+        scene: scene,
+        fontFamily: 'monospace',
+      );
+      expect(endImage, isNotNull);
+      final ByteData? endData =
+          await endImage!.toByteData(format: ui.ImageByteFormat.rawRgba);
+      endImage.dispose();
+      expect(endData, isNotNull);
+      final Uint8List endRgba = endData!.buffer.asUint8List(
+        endData.offsetInBytes,
+        endData.lengthInBytes,
+      );
+
+      expect(
+        _solidColorBounds(
+          endRgba,
+          outputWidth,
+          outputHeight,
+          red: 255,
+          green: 0,
+          blue: 0,
+        ),
+        isNull,
+      );
+      final Rect? seatedIncoming = _solidColorBounds(
+        endRgba,
+        outputWidth,
+        outputHeight,
+        red: 0,
+        green: 0,
+        blue: 255,
+      );
+      expect(seatedIncoming, isNotNull);
+      expect(seatedIncoming!.left, closeTo(client.left, 2.0));
+      expect(seatedIncoming.right, closeTo(client.right, 2.0));
+    },
+  );
+
   test(
     'whole-program STRUCT runtime selects exact authored media frames for bake',
     () async {
