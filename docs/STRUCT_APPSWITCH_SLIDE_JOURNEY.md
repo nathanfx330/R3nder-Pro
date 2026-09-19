@@ -52,9 +52,11 @@ live verification confirms both SLIDE and ordinary desktop switching
 PR #15 → main cd5ad51
 ```
 
-The final result is simple to describe:
+The live Preview result is simple to describe:
 
 > Under `APPSWITCH:SLIDE`, compatible adjacent STRUCT applications now visibly pan from one client to the next, inside a fixed structural shell, without adding project time or disturbing the existing desktop APP switching language.
+
+This session did **not** add the equivalent two-source pan to `ProgramStructuralFrameRenderer`. Whole-program BAKE still renders the single active STRUCT placement. The journey therefore records live Preview motion as complete, while final BAKE pixel parity for that motion remains open.
 
 Getting there required understanding exactly what “slide” owned.
 
@@ -643,9 +645,9 @@ The user verified both in the same main build.
 
 ---
 
-# 12. What changed in the current contract
+# 12. What changed in the current live Preview contract
 
-After this work, `[CONFIG:APPSWITCH:SLIDE]` means more than it did at the end of M18.
+After this work, `[CONFIG:APPSWITCH:SLIDE]` means more in live Preview than it did at the end of M18.
 
 For compatible adjacent STRUCT placements:
 
@@ -663,7 +665,7 @@ For compatible adjacent STRUCT placements:
 - editor line-map projection exposes the complete structural source duration;
 - AUDIO-enabled seamless placements retain their final source frame.
 
-That is the current meaning of SLIDE for STRUCT.
+Those statements are proven for the live Preview paths and for shared timing/audio ownership. They do **not** yet prove that final BAKE paints the same two-client pan. That visual export parity remains a separate task.
 
 ---
 
@@ -681,7 +683,7 @@ Protects structural planning and the distinct editor/runtime projection framing 
 test/structural_sequence_preview_test.dart
 ```
 
-Protects the actual client translation in the reused editor preview path, including midpoint geometry and authored heading/source-state independence from fixed bands.
+Protects the actual client translation in the reused editor preview path, including midpoint geometry, opposite outgoing/incoming offsets, and authored slide progress rather than fixed visual bands.
 
 ```text
 test/program_preview_structural_raster_handoff_test.dart
@@ -867,4 +869,4 @@ That is a recurring pattern in r3nder Pro.
 
 A media feature is not finished when the parser understands it, when the planner schedules it, or when one preview path looks right.
 
-It is finished when authored language, deterministic time, decoder lifetime, visible motion, audio span, tests, and the real application all describe the same event.
+For this session, the live Preview slice was complete when authored language, deterministic time, decoder lifetime, visible motion, audio span, tests, and the real application all described the same event. Final BAKE still has one explicit piece of parity work left: paint the same two-client slide rather than only the active STRUCT.
