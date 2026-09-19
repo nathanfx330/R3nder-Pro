@@ -378,6 +378,75 @@ class StructuralSequencePlacement {
   }
 }
 
+/// Resolves editor frame-map starts for structural placements.
+///
+/// The editor's raw-line map is a navigation/read-head map, not an authored
+/// presentation clock. Around a control-only boundary the terminal parser may
+/// spend one or more ticks consuming separators before it reports the next raw
+/// line. Runtime Preview/BAKE collapse those separators for chained STRUCT
+/// applications, so using raw-line dwell length as STRUCT duration can create
+/// an editor-only extra frame or terminal flash.
+///
+/// The first placement in a run is anchored by the line map. Every later
+/// placement that the structural planner marked as chained starts exactly at
+/// the previous authored event end. Non-chained placements still anchor to
+/// their own first raw-line occurrence because real executable content may
+/// exist between them.
+List<int?> editorStructuralPlacementStarts({
+  required List<StructuralSequencePlacement> placements,
+  required List<int> rawLineAtFrame,
+}) {
+  final Map<int, int> firstFrameByLine = <int, int>{};
+  for (int frame = 0; frame < rawLineAtFrame.length; frame++) {
+    firstFrameByLine.putIfAbsent(rawLineAtFrame[frame], () => frame);
+  }
+
+  final List<int?> starts = List<int?>.filled(placements.length, null);
+  for (int i = 0; i < placements.length; i++) {
+    final StructuralSequencePlacement placement = placements[i];
+    final int? rawStart = firstFrameByLine[placement.lineIndex];
+    if (rawStart == null) continue;
+
+    if (i > 0 &&
+        starts[i - 1] != null &&
+        placements[i - 1].chainedToNext &&
+        placement.chainedFromPrevious) {
+      starts[i] =
+          starts[i - 1]! + placements[i - 1].durationFrames;
+    } else {
+      starts[i] = rawStart;
+    }
+  }
+  return List<int?>.unmodifiable(starts);
+}
+
+/// Finds the structural placement and authored local frame active at one editor
+/// project frame. Returns null when ordinary terminal content owns the frame.
+({int placementIndex, StructuralSequencePlacement placement, int localFrame})?
+    editorStructuralPlacementAtFrame({
+  required List<StructuralSequencePlacement> placements,
+  required List<int?> placementStarts,
+  required int projectFrame,
+}) {
+  if (projectFrame < 0) return null;
+
+  for (int i = 0; i < placements.length; i++) {
+    final int? start = placementStarts[i];
+    if (start == null || start < 0) continue;
+    final StructuralSequencePlacement placement = placements[i];
+    if (placement.durationFrames <= 0) continue;
+    final int end = start + placement.durationFrames;
+    if (projectFrame >= start && projectFrame < end) {
+      return (
+        placementIndex: i,
+        placement: placement,
+        localFrame: projectFrame - start,
+      );
+    }
+  }
+  return null;
+}
+
 class _StructuralPlacementSeed {
   final RegExpMatch match;
   final StructuralSourceRef sourceRef;

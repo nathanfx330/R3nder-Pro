@@ -415,6 +415,63 @@ void main() {
     );
   });
 
+  testWidgets(
+      'editor AUDIO ignores one stale raw-line tick at chained STRUCT seam',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_text_struct_audio_stale_line_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      images,
+      sprites,
+      lineMarkers: true,
+      source: _slideAudioSource,
+    );
+    final int totalFrames = _programDuration(scene);
+    final List<int> lineMap = _editorLineMap(scene);
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_slideAudioSource);
+
+    expect(placements, hasLength(2));
+    final int firstStart =
+        lineMap.indexOf(placements.first.lineIndex);
+    expect(firstStart, greaterThanOrEqualTo(0));
+
+    final int seam = firstStart + placements.first.durationFrames;
+    expect(seam, lessThan(lineMap.length));
+
+    // Reproduce the Rocky failure deterministically: after the authored first
+    // event has ended, the editor read head still reports its STRUCT line for
+    // one parser tick. Raw-line ownership may lag, but STRUCT authored time
+    // must not stretch with it.
+    lineMap[seam] = placements.first.lineIndex;
+
+    final ProgramStructuralAudioTimeline timeline =
+        traceProgramStructuralAudioTimeline(
+      scene: scene,
+      rawDocument: _slideAudioSource,
+      totalFrames: totalFrames,
+      editorRawLineAtFrame: lineMap,
+    );
+
+    expect(timeline.occurrences, hasLength(2));
+    expect(
+      timeline.occurrences.first.programEndFrameExclusive,
+      timeline.occurrences.last.programStartFrame,
+    );
+  });
+
   testWidgets('editor frame-map length mismatch is rejected',
       (WidgetTester tester) async {
     final Directory root =
