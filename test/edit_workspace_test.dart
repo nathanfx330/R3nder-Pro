@@ -936,7 +936,7 @@ void main() {
       findsOneWidget,
     );
     await tester.enterText(
-      find.byKey(const ValueKey<String>('structural-window-title-field')),
+      find.byKey(const ValueKey<String>('structural-window-title-field-0')),
       'Interview Monitor',
     );
     await tester.tap(
