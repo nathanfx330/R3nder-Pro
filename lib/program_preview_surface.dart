@@ -19,10 +19,8 @@
 // at alpha zero. For that reason readiness alone cannot begin the visual switch.
 // On every seamless marker hand-off the horizontal pan is a pure function of
 // authored incoming source time: outgoing client left, incoming client from the
-// right, fixed shell. Decoder readiness never changes that position. If the
-// incoming client is not paint-ready yet, a frozen copy of the outgoing client
-// occupies the authored incoming slot until the real pixels can replace it.
-// Project time never pauses and the incoming source never restarts.
+// right, fixed shell. Decoder readiness never changes that position. Project
+// time never pauses and the incoming source never restarts.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -188,12 +186,11 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     StructuralSequenceHandoffRole handoffRole =
         StructuralSequenceHandoffRole.none,
     double handoffSlideT = 0.0,
-    String instanceSuffix = '',
   }) {
     final Widget preview = StructuralSequencePreview(
       key: ValueKey<String>(
         'program-struct-$placementIndex-'
-        '${placement.sourceRef.canonicalSource}$instanceSuffix',
+        '${placement.sourceRef.canonicalSource}',
       ),
       rawDocument: widget.rawDocument,
       placement: placement,
@@ -221,9 +218,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     );
 
     return Positioned.fill(
-      key: ValueKey<String>(
-        'program-struct-layer-$placementIndex$instanceSuffix',
-      ),
+      key: ValueKey<String>('program-struct-layer-$placementIndex'),
       child: IgnorePointer(
         ignoring: !visible,
         child: Opacity(
@@ -307,7 +302,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
           if (placement.seamlessFromPrevious &&
-              (!activeReadyPainted || handoffWindowOpen)) {
+              handoffWindowOpen) {
             final int previousIndex = activeIndex - 1;
             final StructuralSequencePlacement? previous =
                 _placementAt(previousIndex);
@@ -319,10 +314,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             }
           }
 
-          // B always occupies its authored position, even before it is ready.
-          // A frozen duplicate fills that same incoming slot until B completes
-          // one active ready paint. The duplicate affects pixels only; it never
-          // changes authored transition position.
+          // A and B always occupy their authored positions. Readiness may
+          // determine whether B has presentable pixels, but it never changes
+          // the transition geometry or restarts the authored pan.
           nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
@@ -339,34 +333,16 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           if (fallbackPlacement != null && fallbackIndex != null) {
             nextMounted.add(fallbackIndex);
-
-            if (!activeReadyPainted) {
-              layers.add(
-                _structuralLayer(
-                  placementIndex: fallbackIndex,
-                  placement: fallbackPlacement,
-                  localFrame: fallbackPlacement.effectiveDurationFrames - 1,
-                  visible: true,
-                  handoffRole:
-                      StructuralSequenceHandoffRole.placeholderIncoming,
-                  handoffSlideT: handoffSlideT,
-                  instanceSuffix: '-placeholder',
-                ),
-              );
-            }
-
-            if (handoffWindowOpen) {
-              layers.add(
-                _structuralLayer(
-                  placementIndex: fallbackIndex,
-                  placement: fallbackPlacement,
-                  localFrame: fallbackPlacement.effectiveDurationFrames - 1,
-                  visible: true,
-                  handoffRole: StructuralSequenceHandoffRole.outgoing,
-                  handoffSlideT: handoffSlideT,
-                ),
-              );
-            }
+            layers.add(
+              _structuralLayer(
+                placementIndex: fallbackIndex,
+                placement: fallbackPlacement,
+                localFrame: fallbackPlacement.effectiveDurationFrames - 1,
+                visible: true,
+                handoffRole: StructuralSequenceHandoffRole.outgoing,
+                handoffSlideT: handoffSlideT,
+              ),
+            );
           }
 
           if (placement.seamlessFromPrevious && activeReady) {
