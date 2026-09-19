@@ -224,6 +224,16 @@ void main() {
         placementIndex: 1,
         localFrame: 0,
       );
+      final int secondMiddleProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: 1,
+      );
+      final int secondSlideEndProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: 2,
+      );
 
       final _OfflineBackend backend = _OfflineBackend();
       final ChangeNotifier repaint = ChangeNotifier();
@@ -294,8 +304,86 @@ void main() {
         reason: 'The first B frame must still rasterize a structural shell.',
       );
 
-      // Following frame: B has completed an active paint and A may be released.
+      // A second pump at the same authored frame may unlock the visual pan,
+      // but it must not consume it. Readiness is a gate, not a timing source.
       await tester.pump();
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      // Source frame 1 is the midpoint of this three-frame clamped switch.
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondMiddleProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      final Finder outgoingMotion = find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('program-struct-layer-0'),
+        ),
+        matching: find.byKey(
+          const ValueKey<String>('structural-handoff-incoming'),
+        ),
+      );
+      final Finder incomingMotion = find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('program-struct-layer-1'),
+        ),
+        matching: find.byKey(
+          const ValueKey<String>('structural-handoff-incoming'),
+        ),
+      );
+      expect(outgoingMotion, findsOneWidget);
+      expect(incomingMotion, findsOneWidget);
+
+      final FractionalTranslation movingOut =
+          tester.widget<FractionalTranslation>(outgoingMotion);
+      final FractionalTranslation movingIn =
+          tester.widget<FractionalTranslation>(incomingMotion);
+      expect(movingOut.translation.dx, lessThan(0.0));
+      expect(movingIn.translation.dx, greaterThan(0.0));
+
+      final Uint8List middleFrame = await _captureRgba(tester);
+      expect(
+        _structuralTitlePixelCount(middleFrame),
+        greaterThan(1000),
+        reason: 'The midpoint slide must keep the structural shell rasterized.',
+      );
+
+      // The last source frame completes this short clamped pan and releases A.
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondSlideEndProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,
