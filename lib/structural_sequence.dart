@@ -425,14 +425,14 @@ List<int?> editorStructuralPlacementStarts({
 ({int placementIndex, StructuralSequencePlacement placement, int localFrame})?
     editorStructuralPlacementAtFrame({
   required List<StructuralSequencePlacement> placements,
-  required List<int> placementStarts,
+  required List<int?> placementStarts,
   required int projectFrame,
 }) {
   if (projectFrame < 0) return null;
 
   for (int i = 0; i < placements.length; i++) {
-    final int start = placementStarts[i];
-    if (start < 0) continue;
+    final int? start = placementStarts[i];
+    if (start == null || start < 0) continue;
     final StructuralSequencePlacement placement = placements[i];
     final int end = start + placement.effectiveDurationFrames;
     if (projectFrame >= start && projectFrame < end) {
