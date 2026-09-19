@@ -1015,10 +1015,104 @@ RRect _presentationCardFaceRRect(Rect rect, double scale) {
   );
 }
 
+const double kPresentationCardFacePadFraction = 0.055;
+
+/// Canonical intrinsic CARD-face layout shared by painting and semantic hit
+/// testing.
+///
+/// This object deliberately stops at geometry/content facts. Motion, shell
+/// placement, colors, and text painting stay with their existing owners.
+@immutable
+class PresentationCardFaceLayout {
+  const PresentationCardFaceLayout({
+    required this.content,
+    required this.rich,
+    required this.editorial,
+    required this.photoRich,
+    required this.imageFraction,
+    required this.imageBottom,
+    required this.imageRect,
+    required this.pad,
+  });
+
+  final PresentationPanelContent content;
+  final bool rich;
+  final bool editorial;
+  final bool photoRich;
+  final double imageFraction;
+  final double imageBottom;
+  final Rect? imageRect;
+  final double pad;
+}
+
+PresentationCardFaceLayout presentationCardFaceLayout(
+  Rect rect,
+  CardRequest card,
+  ui.Image? image,
+) {
+  final PresentationPanelContent content = parsePresentationPanelContent(
+    heading: card.heading,
+    body: card.body,
+  );
+  final bool rich = content.preset != PresentationPanelPreset.simple;
+  final bool editorial =
+      content.preset == PresentationPanelPreset.editorial;
+  final bool photoRich =
+      content.preset == PresentationPanelPreset.documentary ||
+      content.preset == PresentationPanelPreset.dossier;
+  final double imageFraction = content.imageFraction ??
+      presentationPanelDefaultImageFraction(content.preset);
+  final Rect? imageRect = image == null
+      ? null
+      : Rect.fromLTWH(
+          rect.left,
+          rect.top,
+          rect.width,
+          rect.height * imageFraction,
+        );
+
+  return PresentationCardFaceLayout(
+    content: content,
+    rich: rich,
+    editorial: editorial,
+    photoRich: photoRich,
+    imageFraction: imageFraction,
+    imageBottom: imageRect?.bottom ?? rect.top,
+    imageRect: imageRect,
+    pad: rect.width * kPresentationCardFacePadFraction,
+  );
+}
+
 enum PresentationCardFaceFocusTarget {
   kicker,
   heading,
   body,
+}
+
+PresentationPanelFocusRegions? presentationCardFaceFocusRegions({
+  required Rect rect,
+  required double scale,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+}) {
+  if (rect.width <= 0.0 || rect.height <= 0.0 || scale <= 0.0) {
+    return null;
+  }
+
+  final PresentationCardFaceLayout layout =
+      presentationCardFaceLayout(rect, card, image);
+  if (!layout.editorial) return null;
+
+  return presentationEditorialPanelFocusRegions(
+    cardRect: rect,
+    contentTop: layout.imageBottom,
+    content: layout.content,
+    pad: layout.pad,
+    scale: scale,
+    inheritedFontFamily: inheritedFontFamily,
+    showKicker: true,
+  );
 }
 
 PresentationCardFaceFocusTarget? presentationCardFaceFocusTargetAt(
@@ -1029,36 +1123,17 @@ PresentationCardFaceFocusTarget? presentationCardFaceFocusTargetAt(
   String inheritedFontFamily,
   Offset position,
 ) {
-  if (rect.width <= 0.0 ||
-      rect.height <= 0.0 ||
-      scale <= 0.0 ||
-      !rect.contains(position)) {
-    return null;
-  }
+  if (!rect.contains(position)) return null;
 
-  const double cardPadFrac = 0.055;
-  final PresentationPanelContent content = parsePresentationPanelContent(
-    heading: card.heading,
-    body: card.body,
-  );
-  if (content.preset != PresentationPanelPreset.editorial) return null;
-
-  final double cardImageFrac = content.imageFraction ??
-      presentationPanelDefaultImageFraction(content.preset);
-  final double imageBottom = image == null
-      ? rect.top
-      : rect.top + rect.height * cardImageFrac;
-  final double pad = rect.width * cardPadFrac;
-  final PresentationPanelFocusRegions regions =
-      presentationEditorialPanelFocusRegions(
-    cardRect: rect,
-    contentTop: imageBottom,
-    content: content,
-    pad: pad,
+  final PresentationPanelFocusRegions? regions =
+      presentationCardFaceFocusRegions(
+    rect: rect,
     scale: scale,
+    card: card,
+    image: image,
     inheritedFontFamily: inheritedFontFamily,
-    showKicker: true,
   );
+  if (regions == null) return null;
 
   switch (regions.targetAt(position)) {
     case PresentationPanelFocusTarget.kicker:
@@ -1090,20 +1165,12 @@ void paintPresentationCardFace(
 ) {
   if (rect.width <= 0.0 || rect.height <= 0.0 || scale <= 0.0) return;
 
-  const double cardPadFrac = 0.055;
-
-  final PresentationPanelContent content = parsePresentationPanelContent(
-    heading: card.heading,
-    body: card.body,
-  );
-  final bool rich = content.preset != PresentationPanelPreset.simple;
-  final bool editorial =
-      content.preset == PresentationPanelPreset.editorial;
-  final bool photoRich =
-      content.preset == PresentationPanelPreset.documentary ||
-      content.preset == PresentationPanelPreset.dossier;
-  final double cardImageFrac = content.imageFraction ??
-      presentationPanelDefaultImageFraction(content.preset);
+  final PresentationCardFaceLayout layout =
+      presentationCardFaceLayout(rect, card, image);
+  final PresentationPanelContent content = layout.content;
+  final bool rich = layout.rich;
+  final bool editorial = layout.editorial;
+  final bool photoRich = layout.photoRich;
   final RRect rrect = _presentationCardFaceRRect(rect, scale);
 
   final Color panelColor = card.panelColor;
@@ -1144,17 +1211,9 @@ void paintPresentationCardFace(
   canvas.save();
   canvas.clipRRect(rrect);
 
-  double imageBottom = rect.top;
-  Rect? imageRect;
-  if (image != null) {
-    final double imageH = rect.height * cardImageFrac;
-    imageBottom = rect.top + imageH;
-    imageRect = Rect.fromLTWH(
-      rect.left,
-      rect.top,
-      rect.width,
-      imageH,
-    );
+  final double imageBottom = layout.imageBottom;
+  final Rect? imageRect = layout.imageRect;
+  if (image != null && imageRect != null) {
     _drawImageCover(canvas, image, imageRect);
   }
 
@@ -1170,7 +1229,7 @@ void paintPresentationCardFace(
     );
   }
 
-  final double pad = rect.width * cardPadFrac;
+  final double pad = layout.pad;
 
   if (rich) {
     paintPresentationPanelContent(
