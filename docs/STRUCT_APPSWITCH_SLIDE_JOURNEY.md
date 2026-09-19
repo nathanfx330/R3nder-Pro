@@ -50,13 +50,32 @@ all focused tests pass
 live verification confirms both SLIDE and ordinary desktop switching
         ↓
 PR #15 → main cd5ad51
+        ↓
+whole-program BAKE still hard-cuts between STRUCT clients
+        ↓
+implement deterministic two-client BAKE slide
+        ↓
+BAKE becomes the readiness-free reference implementation
+        ↓
+late-readiness Preview regression compares against BAKE at source frame 12
+        ↓
+Preview = 0.0 while BAKE = 0.698116...
+        ↓
+extract one shared authored-time slide helper
+        ↓
+Preview, EDIT, and BAKE consume the same function
+        ↓
+13 focused tests pass + live Ubuntu verification is clean
+        ↓
+PR #18 → main 60e76af
+PR #19 → main dff7f1a
 ```
 
 The live Preview result is simple to describe:
 
 > Under `APPSWITCH:SLIDE`, compatible adjacent STRUCT applications now visibly pan from one client to the next, inside a fixed structural shell, without adding project time or disturbing the existing desktop APP switching language.
 
-This session did **not** add the equivalent two-source pan to `ProgramStructuralFrameRenderer`. Whole-program BAKE still renders the single active STRUCT placement. The journey therefore records live Preview motion as complete, while final BAKE pixel parity for that motion remains open.
+A later follow-up completed the equivalent two-source pan in `ProgramStructuralFrameRenderer`, then used that deterministic BAKE implementation to diagnose and fix a readiness-dependent Preview timing bug. The final contract is now shared across Preview, EDIT, and BAKE.
 
 Getting there required understanding exactly what “slide” owned.
 
@@ -323,32 +342,29 @@ No.
 
 That would make project timing depend on machine speed.
 
-The actual contract is:
+The final contract is:
 
 ```text
 authored B source frame
         determines slide progress
 
 decoder readiness
-        determines only whether B may be exposed
+        does not determine slide position
 ```
 
-So readiness can delay *visibility* of the transition, but it cannot create a new private animation clock.
+The first implementation still had readiness inside the progress expression, which meant a late decoder could hold the pan at zero and then jump directly to the authored position on one frame. That looked fine on a fast machine and broke on a slower one.
 
-The transition still derives from the incoming source frame.
+The corrected rule is stricter:
 
-That means:
-
-- if B is ready at incoming source frame 0, the full pan is visible;
-- if B becomes presentable late, the visual handoff may join at the appropriate authored progress;
+- if B is ready at incoming source frame 0, the full authored pan is visible;
+- if B becomes ready late, readiness must not re-anchor, stretch, or restart the pan;
 - no extra frames are inserted;
-- the program clock remains authoritative.
+- the program clock remains authoritative;
+- Preview and BAKE must report the same position for the same authored source frame.
 
-The regression test explicitly protects this idea:
+The regression now protects the stronger statement:
 
-> Readiness is a gate, not a timing source.
-
-That sentence is worth keeping.
+> Readiness is not a timing source.
 
 ---
 
@@ -645,9 +661,9 @@ The user verified both in the same main build.
 
 ---
 
-# 12. What changed in the current live Preview contract
+# 12. What changed in the current Preview and BAKE contract
 
-After this work, `[CONFIG:APPSWITCH:SLIDE]` means more in live Preview than it did at the end of M18.
+After the full follow-up, `[CONFIG:APPSWITCH:SLIDE]` has one authored-time motion contract across Preview, EDIT, and BAKE.
 
 For compatible adjacent STRUCT placements:
 
@@ -659,13 +675,15 @@ For compatible adjacent STRUCT placements:
 - the nominal visual budget matches APP at 22 frames;
 - the pan overlaps incoming authored showing time rather than extending duration;
 - different titles crossfade while the shell plate remains fixed;
-- preload/readiness may gate visibility but cannot retime the transition;
+- readiness cannot retime the transition;
 - the editor reused-State path and top-level Program Preview keyed path both implement the behavior;
+- whole-program BAKE paints the same two-client pan;
+- Preview, EDIT, and BAKE call the same authored-time slide-progress helper;
 - the existing desktop APP switching implementation remains independent;
 - editor line-map projection exposes the complete structural source duration;
 - AUDIO-enabled seamless placements retain their final source frame.
 
-Those statements are proven for the live Preview paths and for shared timing/audio ownership. They do **not** yet prove that final BAKE paints the same two-client pan. That visual export parity remains a separate task.
+These statements are now covered by focused tests and live Ubuntu verification.
 
 ---
 
@@ -689,13 +707,19 @@ Protects the actual client translation in the reused editor preview path, includ
 test/program_preview_structural_raster_handoff_test.dart
 ```
 
-Protects the top-level keyed Program Preview handoff, including the no-desktop-flash raster contract and the fact that A remains alive through the slide window rather than disappearing after B's first active paint.
+Protects the top-level keyed Program Preview handoff and the no-desktop-flash raster contract. It also contains the deterministic late-readiness parity regression: readiness can be held deliberately while Preview's outgoing and incoming translations are compared with the authored BAKE slide position at the same source frame.
 
 ```text
 test/program_structural_audio_test.dart
 ```
 
 Protects complete source-frame exposure under AUDIO + APPSWITCH:SLIDE and the exact outgoing/incoming audio boundary.
+
+```text
+test/program_structural_export_test.dart
+```
+
+Protects the deterministic BAKE two-client pan, including complementary outgoing/incoming coverage and the authored end of the slide window.
 
 The live visual gate remains essential because this feature is fundamentally about continuity in motion.
 
@@ -764,31 +788,64 @@ Decode completion may control exposure.
 
 It may not create a private transition timeline.
 
-## 4. Two preview paths are two implementations until proven otherwise
+## 4. Build the deterministic path first when possible
+
+The eventual diagnosis did not need the planned instrumentation pass.
+
+Once BAKE had the correct readiness-free slide, it became a reference implementation. A platform-specific black flash could then be restated as a deterministic parity question:
+
+```text
+same authored source frame
+        ↓
+what slide position does BAKE produce?
+        ↓
+what slide position does Preview produce while readiness is held?
+```
+
+At incoming source frame 12, BAKE produced:
+
+```text
+t = 0.6981161097809672
+```
+
+while the old Preview stayed at:
+
+```text
+outgoing = 0.0
+incoming = 0.0
+```
+
+That converted a machine-dependent symptom into a CI-reproducible invariant violation.
+
+The general lesson is:
+
+> A deterministic implementation can diagnose a non-deterministic one.
+
+## 5. Two preview paths are two implementations until proven otherwise
 
 Shared classes do not guarantee shared lifecycle behavior.
 
 The editor and Program Preview needed separate handoff coordination.
 
-## 5. Zero exit budget is an excellent boundary test
+## 6. Zero exit budget is an excellent boundary test
 
 Removing close/zoom frames exposed a one-frame editor projection bug that ordinary STRUCTs had hidden.
 
 Transitions that collapse framing are valuable tests of timeline arithmetic.
 
-## 6. Projection framing must describe the projection actually emitted
+## 7. Projection framing must describe the projection actually emitted
 
 `REGION + PAUSE` and `PAUSE` do not have the same framing cost.
 
 A shared helper was only correct while nobody exercised the boundary sharply enough.
 
-## 7. Audio can be the best detector of picture-timing bugs
+## 8. Audio can be the best detector of picture-timing bugs
 
 A retained image can conceal a missing frame.
 
 A strict audio span cannot.
 
-## 8. Preserve mode separation
+## 9. Preserve mode separation
 
 Shared authoring vocabulary does not imply one renderer.
 
@@ -796,7 +853,76 @@ APP switching and STRUCT switching can consume the same APPSWITCH mode while rem
 
 ---
 
-# 16. Checkpoints
+# 16. The BAKE-first follow-up: a deterministic path diagnosed the live one
+
+The original journey ended with live Preview working and whole-program BAKE still painting only the active STRUCT.
+
+That changed in two follow-up merges.
+
+First, BAKE gained the literal two-client slide. Unlike live Preview, BAKE has no decoder-readiness race: it renders frames synchronously. Its motion therefore had the clean form the contract always wanted:
+
+```text
+raw = incomingSourceFrame / (slideFrames - 1)
+t = easeInOutCubic(raw)
+
+outgoing x = -t
+incoming x = 1 - t
+```
+
+The two translations are complementary by construction. Their separation remains exactly one client width for every `t`, so the client region has no geometric uncovered band.
+
+That implementation produced something more useful than export parity: a reference implementation.
+
+The next test added a `structuralReadinessInterceptor` to Program Preview. The seam captures the callback that would normally accept decoder readiness and deliberately withholds it. The test can therefore put Preview into a late-readiness state deterministically on any machine.
+
+At incoming source frame 12, the regression observed:
+
+```text
+expectedT=0.6981161097809672
+outgoingDx=0.0
+incomingDx=0.0
+```
+
+The failure no longer said “Rocky flashes black sometimes.”
+
+It said:
+
+> For the same authored frame, BAKE is 69.8% through the slide while Preview is still at zero because readiness is late.
+
+That closed the diagnosis without depending on platform timing or the planned instrumentation pass.
+
+The final architectural move was to stop “matching BAKE” with another copied formula. The authored-time calculation was extracted into `structural_sequence.dart`:
+
+```dart
+structuralSwitchSlideT(...)
+```
+
+and consumed by:
+
+```text
+ProgramStructuralFrameRenderer
+StructuralSequencePreview
+ProgramPreviewSurface
+```
+
+The fixed regression then produced:
+
+```text
+sourceFrame=12
+expectedT=0.6981161097809672
+outgoingDx=-0.6981161097809672
+incomingDx=0.30188389021903284
+```
+
+It also releases the delayed readiness callback afterward and verifies that the translations do not change. That final assertion protects the exact state boundary that caused the original bug.
+
+The important general lesson is broader than STRUCT:
+
+> When one path can be made deterministic, implement and test it first. It can become the oracle for a path whose behavior is contaminated by asynchronous readiness, scheduling, hardware, or wall-clock timing.
+
+---
+
+# 17. Checkpoints
 
 The feature branch was:
 
@@ -824,18 +950,32 @@ PR:
 #15  Slide between seamless STRUCT applications
 ```
 
-Squash-merged main checkpoint:
+Squash-merged checkpoints:
 
 ```text
 cd5ad5168f6b2fc52b3605754548251927856ab8
 short: cd5ad51
+    original live STRUCT slide + audio timing repair
+
+60e76af410eac0edf7496ac07c1bd8a14545f945
+short: 60e76af
+    deterministic two-client BAKE parity
+
+dff7f1a231535c6ccbd5ccd45fe2b81bfc2f64bc
+short: dff7f1a
+    readiness-independent shared slide timing
 ```
 
-The live acceptance on that main build confirmed:
+The final Ubuntu acceptance on `dff7f1a` confirmed:
 
 ```text
 STRUCT APPSWITCH:SLIDE
-    works
+    Preview works
+    EDIT works
+    BAKE works
+
+late readiness
+    does not retime slide geometry
 
 AUDIO structural timing
     clean
@@ -869,4 +1009,8 @@ That is a recurring pattern in r3nder Pro.
 
 A media feature is not finished when the parser understands it, when the planner schedules it, or when one preview path looks right.
 
-For this session, the live Preview slice was complete when authored language, deterministic time, decoder lifetime, visible motion, audio span, tests, and the real application all described the same event. Final BAKE still has one explicit piece of parity work left: paint the same two-client slide rather than only the active STRUCT.
+The final version went one step further. BAKE was implemented first as a deterministic, readiness-free two-client compositor. That gave the investigation an exact reference. The late-readiness Preview bug could then be reproduced in CI by freezing readiness and comparing positions at the same authored frame.
+
+The durable result is not merely that all three paths happen to match today. `structuralSwitchSlideT` now owns the authored slide position for Preview, EDIT, and BAKE, so the three paths cannot silently drift into separate timing formulas.
+
+For this work, the feature was complete when authored language, deterministic time, decoder lifetime, visible motion, audio span, Preview, EDIT, BAKE, tests, and the real Ubuntu application all described the same event.
