@@ -16,11 +16,12 @@
 // APPSWITCH:SLIDE preloads the next structural source while the current source
 // is still playing. A zero-opacity preload can decode and become logically ready
 // without ever painting: Flutter's opacity render object skips painting a child
-// at alpha zero. For that reason readiness alone is not enough to release the
-// outgoing shell. On every seamless marker hand-off the incoming shell paints
-// at opacity one underneath the outgoing shell. Only after the incoming source
-// is ready and has completed one active paint does PREVIEW remove the outgoing
-// cover. Project time never pauses and the incoming source never restarts.
+// at alpha zero. For that reason readiness alone cannot begin the visual switch.
+// On every seamless marker hand-off the incoming shell first earns one active
+// ready paint underneath the outgoing cover. That paint unlocks the deterministic
+// horizontal pan: outgoing client left, incoming client from the right, fixed
+// shell. The overlap ends from incoming source time, never from wall-clock
+// readiness, so project time never pauses and the incoming source never restarts.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
