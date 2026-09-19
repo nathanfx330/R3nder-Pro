@@ -210,12 +210,15 @@ void main() {
     await tester.ensureVisible(colorPicker);
     await tester.tap(colorPicker);
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('r3-color-hex-field')),
-      '#182028',
-    );
+    final Finder hexField =
+        find.byKey(const ValueKey<String>('r3-color-hex-field'));
+    await tester.ensureVisible(hexField);
+    await tester.enterText(hexField, '#182028');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey<String>('r3-color-apply')));
+    final Finder colorApply =
+        find.byKey(const ValueKey<String>('r3-color-apply'));
+    await tester.ensureVisible(colorApply);
+    await tester.tap(colorApply);
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
