@@ -15,6 +15,7 @@ import 'package:r3nder/edit_workspace.dart';
 import 'package:r3nder/exporter.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/project_clock.dart';
+import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/ui_theme.dart';
 
 class _FakePlaybackClock implements EditPlaybackClock {
@@ -822,4 +823,137 @@ void main() {
     },
     timeout: const Timeout(Duration(seconds: 15)),
   );
+
+  testWidgets('RENAME refactors selected EDIT identity and its references',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    String latest = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/a.mp4:0:0:20:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+  [PANE:pane1]
+    [CLIP:a:EDIT.main:0:0:20:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+[STRUCT:EDIT.main]
+''';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1400,
+          height: 900,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 0,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('rename-structural-source')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('structural-source-rename-field')),
+      'interview',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('structural-source-rename-commit')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(latest, contains('[EDIT:interview]'));
+    expect(latest, contains('[CLIP:a:EDIT.interview:0:0:20:1]'));
+    expect(latest, contains('[STRUCT:EDIT.interview]'));
+    expect(latest, isNot(contains('[EDIT:main]')));
+
+    final EditDocumentModel model = EditDocumentModel.parse(latest);
+    expect(model.edit('interview').id, 'interview');
+  });
+
+  testWidgets('WINDOW TITLE authors placement chrome without renaming source',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    String latest = '''[EDIT:main]
+  [TRACK:V1]
+    [CLIP:a:video/a.mp4:0:0:20:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[STRUCT:EDIT.main]
+[STRUCT:EDIT.main]
+''';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 1400,
+          height: 900,
+          child: EditWorkspace(
+            source: latest,
+            currentFrame: 0,
+            theme: R3Theme.of(Colors.green),
+            onSourceChanged: (String value) => latest = value,
+            onSeek: (_) {},
+            backend: _PreviewBackend(),
+            resolveSource: _previewResolve,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('edit-structural-window-title')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(
+        const ValueKey<String>('structural-window-title-placement'),
+      ),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('structural-window-title-field')),
+      'Interview Monitor',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('structural-window-title-commit')),
+    );
+    await tester.pumpAndSettle();
+
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(latest);
+    expect(placements, hasLength(2));
+    expect(placements.first.sourceRef.canonicalSource, 'EDIT.main');
+    expect(placements.first.windowTitle, 'Interview Monitor');
+    expect(placements.last.windowTitle, '');
+    expect(latest, contains('[EDIT:main]'));
+    expect(
+      latest,
+      contains('[STRUCT:EDIT.main:TITLE="Interview Monitor"]'),
+    );
+  });
 }
