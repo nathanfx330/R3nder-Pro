@@ -191,11 +191,10 @@ class ProgramStructuralFrameRenderer {
     final StructuralSequencePlacement outgoing = _placements[previousIndex];
     if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
 
-    final int slideFrames = math.min(
-      kStructuralSwitchSlideFrames,
-      incoming.sourceDurationFrames,
-    );
-    if (slideFrames <= 1 || incomingSourceFrame >= slideFrames - 1) {
+    if (!structuralSwitchSlideWindowOpen(
+      sourceFrame: incomingSourceFrame,
+      sourceDurationFrames: incoming.sourceDurationFrames,
+    )) {
       return null;
     }
 
@@ -203,15 +202,14 @@ class ProgramStructuralFrameRenderer {
         math.max(0, outgoing.effectiveDurationFrames - 1);
     final int outgoingSourceFrame =
         outgoing.sourceFrameAt(outgoingLocalFrame);
-    final double raw =
-        (incomingSourceFrame / (slideFrames - 1))
-            .clamp(0.0, 1.0)
-            .toDouble();
 
     return _StructuralBakeHandoff(
       outgoingPlacement: outgoing,
       outgoingSourceFrame: outgoingSourceFrame,
-      slideT: Curves.easeInOutCubic.transform(raw),
+      slideT: structuralSwitchSlideT(
+        sourceFrame: incomingSourceFrame,
+        sourceDurationFrames: incoming.sourceDurationFrames,
+      ),
     );
   }
 
