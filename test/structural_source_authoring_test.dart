@@ -87,6 +87,116 @@ void main() {
         'MOSAIC.evidence_wall');
   });
 
+  test('nested EDIT to MOSAIC to EDIT chain survives both rename directions', () {
+    const String source = '''[EDIT:inner]
+  [TRACK:V1]
+    [CLIP:shot:video/shot.mp4:0:0:10:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[EDIT:inner_2]
+  [TRACK:V1]
+    [CLIP:shot:video/other.mp4:0:0:10:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+  [PANE:pane1]
+    [CLIP:inner:EDIT.inner:0:0:10:1]
+    [/CLIP]
+    [CLIP:inner_2:EDIT.inner_2:10:0:10:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+[EDIT:outer]
+  [TRACK:V1]
+    [CLIP:wall:MOSAIC.wall:0:0:20:1]
+    [/CLIP]
+  [/TRACK]
+  [TRACK:V2]
+    [CLIP:direct:EDIT.inner:0:0:10:1]
+    [/CLIP]
+  [/TRACK]
+[/EDIT]
+[STRUCT:EDIT.outer]
+[STRUCT:MOSAIC.wall]
+[STRUCT:EDIT.inner]
+[STRUCT:EDIT.inner_2]
+''';
+
+    final String renamedMosaic = renameStructuralSource(
+      source: source,
+      sourceRef: StructuralSourceRef.tryParse('MOSAIC.wall')!,
+      newId: 'evidence_wall',
+    );
+
+    final EditDocumentModel afterMosaic =
+        EditDocumentModel.parse(renamedMosaic);
+    expect(
+      afterMosaic.edit('outer').track('V1').clip('wall').source,
+      'MOSAIC.evidence_wall',
+    );
+    expect(
+      afterMosaic
+          .mosaic('evidence_wall')
+          .pane('pane1')
+          .clip('inner')
+          .source,
+      'EDIT.inner',
+    );
+    expect(
+      afterMosaic.edit('outer').track('V2').clip('direct').source,
+      'EDIT.inner',
+    );
+    expect(renamedMosaic, contains('[STRUCT:MOSAIC.evidence_wall]'));
+
+    final String renamedInner = renameStructuralSource(
+      source: renamedMosaic,
+      sourceRef: StructuralSourceRef.tryParse('EDIT.inner')!,
+      newId: 'interview',
+    );
+
+    final EditDocumentModel finalModel =
+        EditDocumentModel.parse(renamedInner);
+    expect(
+      finalModel.edit('outer').track('V1').clip('wall').source,
+      'MOSAIC.evidence_wall',
+    );
+    expect(
+      finalModel
+          .mosaic('evidence_wall')
+          .pane('pane1')
+          .clip('inner')
+          .source,
+      'EDIT.interview',
+    );
+    expect(
+      finalModel.edit('outer').track('V2').clip('direct').source,
+      'EDIT.interview',
+    );
+    expect(
+      finalModel
+          .mosaic('evidence_wall')
+          .pane('pane1')
+          .clip('inner_2')
+          .source,
+      'EDIT.inner_2',
+    );
+
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(renamedInner);
+    expect(
+      placements.map((StructuralSequencePlacement p) =>
+          p.sourceRef.canonicalSource),
+      <String>[
+        'EDIT.outer',
+        'MOSAIC.evidence_wall',
+        'EDIT.interview',
+        'EDIT.inner_2',
+      ],
+    );
+  });
+
   test('rename rejects invalid ids and same-namespace collisions', () {
     const String source = '''[EDIT:main]
 [/EDIT]
