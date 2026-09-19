@@ -606,20 +606,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             fullTerminal.height * cursorFraction.height * terminalScale,
           );
 
-          final int handoffSlideFrames = math.min(
-            kStructuralSwitchSlideFrames,
-            placement.sourceDurationFrames,
-          );
-          final double handoffSlideRaw =
-              _handoffOutgoingSource != null &&
-                      _handoffIncomingReady &&
-                      handoffSlideFrames > 1
-                  ? (sourceFrame / (handoffSlideFrames - 1))
-                      .clamp(0.0, 1.0)
-                      .toDouble()
-                  : 0.0;
           final double handoffSlideT =
-              Curves.easeInOutCubic.transform(handoffSlideRaw);
+              _handoffOutgoingSource == null
+                  ? 0.0
+                  : structuralSwitchSlideT(
+                      sourceFrame: sourceFrame,
+                      sourceDurationFrames: placement.sourceDurationFrames,
+                    );
 
           return Stack(
             fit: StackFit.expand,

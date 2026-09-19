@@ -69,6 +69,23 @@ const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 [STRUCT:MOSAIC.second]
 ''';
 
+const String _paritySource = '''[CONFIG:APPSWITCH:SLIDE]
+[EDIT:a]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:b]
+[TRACK:V1]
+[CLIP:b:video/b.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.a]
+[STRUCT:EDIT.b]
+''';
+
 String _resolveSource(String source) => '/workspace/$source';
 
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
@@ -124,6 +141,29 @@ Future<void> _waitForReady(WidgetTester tester, int placementIndex) async {
     await tester.pump();
   }
   expect(ready, findsOneWidget);
+}
+
+FractionalTranslation _handoffMotionInside(
+  WidgetTester tester,
+  int placementIndex,
+) {
+  final Finder motion = find.descendant(
+    of: find.byKey(
+      ValueKey<String>('program-struct-layer-$placementIndex'),
+    ),
+    matching: find.byKey(
+      const ValueKey<String>('structural-handoff-incoming'),
+    ),
+  );
+  expect(motion, findsOneWidget);
+  return tester.widget<FractionalTranslation>(motion);
+}
+
+double _bakeSlideTAt(int sourceFrame, int sourceDurationFrames) {
+  return structuralSwitchSlideT(
+    sourceFrame: sourceFrame,
+    sourceDurationFrames: sourceDurationFrames,
+  );
 }
 
 Future<Uint8List> _captureRgba(WidgetTester tester) async {
@@ -402,6 +442,175 @@ void main() {
         greaterThan(1000),
         reason: 'Releasing A must not expose a desktop-only raster frame.',
       );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'Program Preview slide position matches BAKE authored time when readiness is late',
+    (WidgetTester tester) async {
+      final Directory root = Directory.systemTemp.createTempSync(
+        'r3nder_struct_preview_bake_parity_',
+      );
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final CompiledScript compiled = compileScript(_paritySource);
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(_paritySource);
+      expect(placements, hasLength(2));
+      expect(placements.first.seamlessToNext, isTrue);
+      expect(placements.last.seamlessFromPrevious, isTrue);
+
+      final SceneEngine scene = SceneEngine();
+      await tester.runAsync(() async {
+        await scene.setup(
+          templateText: compiled.engineText,
+          fontColor: Colors.green,
+          bgColor: Colors.black,
+          width: 320,
+          height: 180,
+          scale: 1,
+          fontPath: 'monospace',
+          fontSize: 12,
+          lineSpacing: 16,
+          tracking: 0,
+          marginTop: 10,
+          marginSide: 10,
+          imagesDir: images.path,
+          spritesDir: sprites.path,
+          paneLifeConfig: compiled.paneLife,
+          captionConfig: compiled.caption,
+          appSwitchConfig: compiled.appSwitch,
+        );
+      });
+
+      final int firstProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: 0,
+      );
+      const int sourceFrame = 12;
+      final int lateProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: sourceFrame,
+      );
+      final double expectedSlideT = _bakeSlideTAt(
+        sourceFrame,
+        placements.last.sourceDurationFrames,
+      );
+
+      final _OfflineBackend backend = _OfflineBackend();
+      final ChangeNotifier repaint = ChangeNotifier();
+      VoidCallback? acceptIncomingReadiness;
+
+      addTearDown(() {
+        repaint.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: firstProjectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: RepaintBoundary(
+              key: _boundaryKey,
+              child: SizedBox(
+                width: 320,
+                height: 180,
+                child: ProgramPreviewSurface(
+                  repaint: repaint,
+                  scene: scene,
+                  rawDocument: _paritySource,
+                  fontFamily: 'monospace',
+                  theme: R3Theme.of(Colors.green),
+                  structuralBackend: backend,
+                  structuralResolveSource: _resolveSource,
+                  structuralReadinessInterceptor: (
+                    int placementIndex,
+                    VoidCallback accept,
+                  ) {
+                    if (placementIndex == 1) {
+                      acceptIncomingReadiness ??= accept;
+                    } else {
+                      accept();
+                    }
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0;
+          attempt < 20 && acceptIncomingReadiness == null;
+          attempt++) {
+        await tester.pump();
+      }
+      expect(acceptIncomingReadiness, isNotNull);
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: lateProjectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      final double outgoingDx =
+          _handoffMotionInside(tester, 0).translation.dx;
+      final double incomingDx =
+          _handoffMotionInside(tester, 1).translation.dx;
+
+      debugPrint(
+        'STRUCT preview/BAKE parity: sourceFrame=$sourceFrame '
+        'expectedT=$expectedSlideT '
+        'outgoingDx=$outgoingDx incomingDx=$incomingDx',
+      );
+
+      expect(
+        outgoingDx,
+        closeTo(-expectedSlideT, 0.0001),
+        reason:
+            'Preview outgoing position must match BAKE at the same authored frame.',
+      );
+      expect(
+        incomingDx,
+        closeTo(1.0 - expectedSlideT, 0.0001),
+        reason:
+            'Preview incoming position must match BAKE at the same authored frame.',
+      );
+      expect(
+        incomingDx - outgoingDx,
+        closeTo(1.0, 0.0001),
+        reason: 'Complementary translations must cover the client width.',
+      );
+
+      acceptIncomingReadiness!();
+      await tester.pump();
+      await tester.pump();
+
+      final double outgoingAfterReady =
+          _handoffMotionInside(tester, 0).translation.dx;
+      final double incomingAfterReady =
+          _handoffMotionInside(tester, 1).translation.dx;
+      expect(outgoingAfterReady, closeTo(outgoingDx, 0.0001));
+      expect(incomingAfterReady, closeTo(incomingDx, 0.0001));
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

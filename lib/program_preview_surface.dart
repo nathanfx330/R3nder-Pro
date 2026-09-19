@@ -17,11 +17,10 @@
 // is still playing. A zero-opacity preload can decode and become logically ready
 // without ever painting: Flutter's opacity render object skips painting a child
 // at alpha zero. For that reason readiness alone cannot begin the visual switch.
-// On every seamless marker hand-off the incoming shell first earns one active
-// ready paint underneath the outgoing cover. That paint unlocks the deterministic
-// horizontal pan: outgoing client left, incoming client from the right, fixed
-// shell. The overlap ends from incoming source time, never from wall-clock
-// readiness, so project time never pauses and the incoming source never restarts.
+// On every seamless marker hand-off the horizontal pan is a pure function of
+// authored incoming source time: outgoing client left, incoming client from the
+// right, fixed shell. Decoder readiness never changes that position. Project
+// time never pauses and the incoming source never restarts.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -45,6 +44,12 @@ class ProgramPreviewSurface extends StatefulWidget {
   final MediaDecoderBackend? structuralBackend;
   final String Function(String source)? structuralResolveSource;
 
+  /// Focused-test seam for delaying parent acceptance of a decoder readiness
+  /// notification without changing decoder behavior. Production leaves null.
+  @visibleForTesting
+  final void Function(int placementIndex, VoidCallback accept)?
+      structuralReadinessInterceptor;
+
   const ProgramPreviewSurface({
     super.key,
     required this.repaint,
@@ -54,6 +59,7 @@ class ProgramPreviewSurface extends StatefulWidget {
     required this.theme,
     this.structuralBackend,
     this.structuralResolveSource,
+    this.structuralReadinessInterceptor,
   });
 
   @override
@@ -68,9 +74,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
 
-  /// A seamless incoming placement may displace its outgoing cover only after
-  /// it has completed one active paint while ready. Hidden preload paints do
-  /// not count because an opacity-zero subtree is not painted by Flutter.
+  /// Tracks whether an incoming placement has completed one active paint after
+  /// readiness. This remains diagnostic/state information only; authored slide
+  /// geometry must never depend on it.
   final Set<int> _readyPaintedPlacements = <int>{};
   final Set<int> _readyPaintCommitScheduled = <int>{};
 
@@ -86,7 +92,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     final bool previewIdentityChanged =
         oldWidget.rawDocument != widget.rawDocument ||
             oldWidget.structuralBackend != widget.structuralBackend ||
-            oldWidget.structuralResolveSource != widget.structuralResolveSource;
+            oldWidget.structuralResolveSource != widget.structuralResolveSource ||
+            oldWidget.structuralReadinessInterceptor !=
+                widget.structuralReadinessInterceptor;
     if (oldWidget.rawDocument != widget.rawDocument) {
       _placements = parseStructuralSequencePlacements(widget.rawDocument);
     }
@@ -194,7 +202,17 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       terminalFontFamily: widget.fontFamily,
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
-      onFirstFrameReady: () => _markPlacementReady(placementIndex),
+      onFirstFrameReady: () {
+        final interceptor = widget.structuralReadinessInterceptor;
+        if (interceptor == null) {
+          _markPlacementReady(placementIndex);
+          return;
+        }
+        interceptor(
+          placementIndex,
+          () => _markPlacementReady(placementIndex),
+        );
+      },
       handoffRole: handoffRole,
       handoffSlideT: handoffSlideT,
     );
@@ -264,34 +282,24 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
-          final bool activeReadyPainted =
-              _readyPaintedPlacements.contains(activeIndex);
-
-          final int handoffFrames = placement.seamlessFromPrevious
-              ? (placement.sourceDurationFrames < kStructuralSwitchSlideFrames
-                  ? placement.sourceDurationFrames
-                  : kStructuralSwitchSlideFrames)
-              : 0;
           final int activeSourceFrame =
               placement.sourceFrameAt(activeLocalFrame);
           final bool handoffWindowOpen = placement.seamlessFromPrevious &&
-              handoffFrames > 1 &&
-              activeSourceFrame < handoffFrames - 1;
-          final double handoffRaw =
-              handoffWindowOpen && activeReadyPainted
-                  ? (activeSourceFrame / (handoffFrames - 1))
-                      .clamp(0.0, 1.0)
-                      .toDouble()
-                  : 0.0;
-          final double handoffSlideT =
-              Curves.easeInOutCubic.transform(handoffRaw);
-          final bool visualHandoff =
-              handoffWindowOpen && activeReadyPainted;
+              structuralSwitchSlideWindowOpen(
+                sourceFrame: activeSourceFrame,
+                sourceDurationFrames: placement.sourceDurationFrames,
+              );
+          final double handoffSlideT = placement.seamlessFromPrevious
+              ? structuralSwitchSlideT(
+                  sourceFrame: activeSourceFrame,
+                  sourceDurationFrames: placement.sourceDurationFrames,
+                )
+              : 0.0;
 
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
           if (placement.seamlessFromPrevious &&
-              (!activeReadyPainted || handoffWindowOpen)) {
+              handoffWindowOpen) {
             final int previousIndex = activeIndex - 1;
             final StructuralSequencePlacement? previous =
                 _placementAt(previousIndex);
@@ -303,10 +311,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             }
           }
 
-          // B is always fully paintable once it becomes active. Until it has
-          // completed one active ready paint, A is added afterwards and remains
-          // the topmost visual cover. This is unconditional for seamless
-          // handoffs, including the common case where B decoded while hidden.
+          // A and B always occupy their authored positions. Readiness may
+          // determine whether B has presentable pixels, but it never changes
+          // the transition geometry or restarts the authored pan.
           nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
@@ -314,7 +321,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
               placement: placement,
               localFrame: activeLocalFrame,
               visible: true,
-              handoffRole: visualHandoff
+              handoffRole: handoffWindowOpen
                   ? StructuralSequenceHandoffRole.incoming
                   : StructuralSequenceHandoffRole.none,
               handoffSlideT: handoffSlideT,
@@ -329,9 +336,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
                 placement: fallbackPlacement,
                 localFrame: fallbackPlacement.effectiveDurationFrames - 1,
                 visible: true,
-                handoffRole: visualHandoff
-                    ? StructuralSequenceHandoffRole.outgoing
-                    : StructuralSequenceHandoffRole.none,
+                handoffRole: StructuralSequenceHandoffRole.outgoing,
                 handoffSlideT: handoffSlideT,
               ),
             );
