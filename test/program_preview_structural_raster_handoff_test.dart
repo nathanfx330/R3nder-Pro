@@ -160,14 +160,10 @@ FractionalTranslation _handoffMotionInside(
 }
 
 double _bakeSlideTAt(int sourceFrame, int sourceDurationFrames) {
-  final int slideFrames =
-      sourceDurationFrames < kStructuralSwitchSlideFrames
-          ? sourceDurationFrames
-          : kStructuralSwitchSlideFrames;
-  if (slideFrames <= 1) return 1.0;
-  final double raw =
-      (sourceFrame / (slideFrames - 1)).clamp(0.0, 1.0).toDouble();
-  return Curves.easeInOutCubic.transform(raw);
+  return structuralSwitchSlideT(
+    sourceFrame: sourceFrame,
+    sourceDurationFrames: sourceDurationFrames,
+  );
 }
 
 Future<Uint8List> _captureRgba(WidgetTester tester) async {
@@ -576,6 +572,15 @@ void main() {
       repaint.notifyListeners();
       await tester.pump();
 
+      expect(
+        find.byKey(
+          const ValueKey<String>('program-struct-layer-0-placeholder'),
+        ),
+        findsOneWidget,
+        reason:
+            'Late B readiness must be covered by a frozen A placeholder.',
+      );
+
       final double outgoingDx =
           _handoffMotionInside(tester, 0).translation.dx;
       final double incomingDx =
@@ -604,6 +609,26 @@ void main() {
         closeTo(1.0, 0.0001),
         reason: 'Complementary translations must cover the client width.',
       );
+
+      acceptIncomingReadiness!();
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(
+          const ValueKey<String>('program-struct-layer-0-placeholder'),
+        ),
+        findsNothing,
+        reason:
+            'Readiness should replace the placeholder, not retime the slide.',
+      );
+
+      final double outgoingAfterReady =
+          _handoffMotionInside(tester, 0).translation.dx;
+      final double incomingAfterReady =
+          _handoffMotionInside(tester, 1).translation.dx;
+      expect(outgoingAfterReady, closeTo(outgoingDx, 0.0001));
+      expect(incomingAfterReady, closeTo(incomingDx, 0.0001));
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
