@@ -156,6 +156,50 @@ Outro
     expect(second.sourceFrameAt(0), 0);
   });
 
+  test('editor chained STRUCT spans ignore parser dwell between raw lines', () {
+    final String slide = '[CONFIG:APPSWITCH:SLIDE]\n$adjacent';
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(slide);
+    expect(placements, hasLength(2));
+    expect(placements.first.durationFrames, 50);
+    expect(placements.last.durationFrames, 50);
+
+    // Simulate an editor read head that reports the outgoing STRUCT line for
+    // one tick too long, then spends another parser tick before announcing the
+    // incoming line. Authored chained time must still switch at frame 57.
+    final List<int> lineMap = List<int>.filled(120, -1);
+    for (int frame = 7; frame <= 57; frame++) {
+      lineMap[frame] = placements.first.lineIndex;
+    }
+    for (int frame = 59; frame < 109; frame++) {
+      lineMap[frame] = placements.last.lineIndex;
+    }
+
+    final List<int?> starts = editorStructuralPlacementStarts(
+      placements: placements,
+      rawLineAtFrame: lineMap,
+    );
+    expect(starts, <int?>[7, 57]);
+
+    final outgoing = editorStructuralPlacementAtFrame(
+      placements: placements,
+      placementStarts: starts,
+      projectFrame: 56,
+    );
+    expect(outgoing, isNotNull);
+    expect(outgoing!.placementIndex, 0);
+    expect(outgoing.localFrame, 49);
+
+    final incoming = editorStructuralPlacementAtFrame(
+      placements: placements,
+      placementStarts: starts,
+      projectFrame: 57,
+    );
+    expect(incoming, isNotNull);
+    expect(incoming!.placementIndex, 1);
+    expect(incoming.localFrame, 0);
+  });
+
   test('seamless window to fullscreen gives incoming STRUCT a morph budget', () {
     final String mixed = '''[CONFIG:APPSWITCH:SLIDE]
 [EDIT:main]
