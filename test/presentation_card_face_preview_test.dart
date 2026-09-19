@@ -89,7 +89,7 @@ Future<ui.Image> _solidImage(Color color) async {
   final ui.PictureRecorder recorder = ui.PictureRecorder();
   final Canvas canvas = Canvas(recorder);
   canvas.drawRect(
-    const Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+    Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
     Paint()..color = color,
   );
   final ui.Picture picture = recorder.endRecording();
