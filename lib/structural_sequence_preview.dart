@@ -589,7 +589,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             kAppPanFrames,
             placement.sourceDurationFrames,
           );
-          final double handoffSlideT =
+          final double handoffSlideRaw =
               _handoffOutgoingSource != null &&
                       _handoffIncomingReady &&
                       handoffSlideFrames > 1
@@ -597,6 +597,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       .clamp(0.0, 1.0)
                       .toDouble()
                   : 0.0;
+          final double handoffSlideT =
+              Curves.easeInOutCubic.transform(handoffSlideRaw);
 
           return Stack(
             fit: StackFit.expand,
@@ -1049,13 +1051,20 @@ class _StructuralWindow extends StatelessWidget {
     final int visibleDuration = showingCover
         ? outgoingSourceDurationFrames
         : sourceDurationFrames;
-    final String authoredVisibleTitle = showingCover
+    final String outgoingAuthoredTitle = showingCover
         ? (outgoingWindowTitle.isEmpty ? coverSource : outgoingWindowTitle)
         : windowTitle;
-    final String visibleTitle = expandStructuralChromeExpressions(
-      authoredVisibleTitle,
+    final String outgoingVisibleTitle = expandStructuralChromeExpressions(
+      outgoingAuthoredTitle,
       frame: visibleFrame,
     );
+    final String incomingVisibleTitle = expandStructuralChromeExpressions(
+      windowTitle,
+      frame: sourceFrame,
+    );
+    final bool crossfadeTitle = showingCover &&
+        outgoingVisibleTitle != incomingVisibleTitle &&
+        handoffSlideT > 0.0;
     final String visibleTop =
         showingCover ? outgoingTopOverlay : topOverlay;
 
@@ -1116,14 +1125,43 @@ class _StructuralWindow extends StatelessWidget {
                       child: Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              visibleTitle,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.value.copyWith(
-                                color: const Color(0xFFC7C3C0),
-                                fontSize: 12 * s,
-                              ),
-                            ),
+                            child: crossfadeTitle
+                                ? Stack(
+                                    children: [
+                                      Opacity(
+                                        opacity: 1.0 - handoffSlideT,
+                                        child: Text(
+                                          outgoingVisibleTitle,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.value.copyWith(
+                                            color: const Color(0xFFC7C3C0),
+                                            fontSize: 12 * s,
+                                          ),
+                                        ),
+                                      ),
+                                      Opacity(
+                                        opacity: handoffSlideT,
+                                        child: Text(
+                                          incomingVisibleTitle,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.value.copyWith(
+                                            color: const Color(0xFFC7C3C0),
+                                            fontSize: 12 * s,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    showingCover
+                                        ? outgoingVisibleTitle
+                                        : incomingVisibleTitle,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.value.copyWith(
+                                      color: const Color(0xFFC7C3C0),
+                                      fontSize: 12 * s,
+                                    ),
+                                  ),
                           ),
                           if (topText != null)
                             Text(
