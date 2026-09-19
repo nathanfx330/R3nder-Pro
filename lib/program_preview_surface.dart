@@ -74,9 +74,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
 
-  /// A seamless incoming placement may displace its outgoing cover only after
-  /// it has completed one active paint while ready. Hidden preload paints do
-  /// not count because an opacity-zero subtree is not painted by Flutter.
+  /// Tracks whether an incoming placement has completed one active paint after
+  /// readiness. This remains diagnostic/state information only; authored slide
+  /// geometry must never depend on it.
   final Set<int> _readyPaintedPlacements = <int>{};
   final Set<int> _readyPaintCommitScheduled = <int>{};
 
@@ -282,9 +282,6 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
-          final bool activeReadyPainted =
-              _readyPaintedPlacements.contains(activeIndex);
-
           final int activeSourceFrame =
               placement.sourceFrameAt(activeLocalFrame);
           final bool handoffWindowOpen = placement.seamlessFromPrevious &&
