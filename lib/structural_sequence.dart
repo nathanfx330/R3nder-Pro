@@ -29,6 +29,8 @@
 // the incoming placement owns one deterministic window-animation budget to
 // morph between those geometries.
 
+import 'package:flutter/animation.dart';
+
 import 'edit_model.dart';
 import 'scene_engine.dart';
 import 'script_cst.dart';
@@ -63,6 +65,40 @@ const int kStructuralExitFrames =
 /// These frames are not added to the placement duration. They overlap the
 /// beginning of the incoming source's showing span.
 const int kStructuralSwitchSlideFrames = kAppPanFrames;
+
+/// Authored-time budget for one STRUCT APPSWITCH:SLIDE handoff.
+///
+/// This is presentation time, not decoder time. Preview and BAKE must derive
+/// their horizontal position from these helpers so readiness can affect only
+/// which pixels are available, never where the authored transition sits.
+int structuralSwitchSlideFramesForSource(int sourceDurationFrames) {
+  if (sourceDurationFrames <= 0) return 0;
+  return sourceDurationFrames < kStructuralSwitchSlideFrames
+      ? sourceDurationFrames
+      : kStructuralSwitchSlideFrames;
+}
+
+bool structuralSwitchSlideWindowOpen({
+  required int sourceFrame,
+  required int sourceDurationFrames,
+}) {
+  final int slideFrames =
+      structuralSwitchSlideFramesForSource(sourceDurationFrames);
+  return slideFrames > 1 && sourceFrame < slideFrames - 1;
+}
+
+double structuralSwitchSlideT({
+  required int sourceFrame,
+  required int sourceDurationFrames,
+}) {
+  final int slideFrames =
+      structuralSwitchSlideFramesForSource(sourceDurationFrames);
+  if (slideFrames <= 1) return 1.0;
+
+  final double raw =
+      (sourceFrame / (slideFrames - 1)).clamp(0.0, 1.0).toDouble();
+  return Curves.easeInOutCubic.transform(raw);
+}
 
 /// Runtime-marked STRUCT projection owns two non-pause-age frames:
 /// one frame for the reserved REGION marker and one for PAUSE entry.
