@@ -1103,12 +1103,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
     final String kind = selected.kind == StructuralSourceKind.edit
         ? 'EDIT'
         : 'MOSAIC';
-    final TextEditingController controller =
-        TextEditingController(text: selected.id);
-    controller.selection = TextSelection(
-      baseOffset: 0,
-      extentOffset: selected.id.length,
-    );
+    String draftId = selected.id;
 
     final String? picked = await showDialog<String>(
       context: context,
@@ -1127,18 +1122,19 @@ class _EditWorkspaceState extends State<EditWorkspace>
               children: [
                 R3MicroLabel('SOURCE ID', theme: widget.theme),
                 SizedBox(height: sc(6)),
-                TextField(
+                TextFormField(
                   key: const ValueKey<String>(
                     'structural-source-rename-field',
                   ),
-                  controller: controller,
+                  initialValue: selected.id,
                   autofocus: true,
                   style: widget.theme.value,
                   decoration: const InputDecoration(
                     isDense: true,
                     hintText: 'letters, numbers, underscore, or hyphen',
                   ),
-                  onSubmitted: (String value) {
+                  onChanged: (String value) => draftId = value,
+                  onFieldSubmitted: (String value) {
                     if (value.trim().isNotEmpty) {
                       Navigator.of(context).pop(value);
                     }
@@ -1162,7 +1158,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
             TextButton(
               key: const ValueKey<String>('structural-source-rename-commit'),
               onPressed: () {
-                final String value = controller.text.trim();
+                final String value = draftId.trim();
                 if (value.isEmpty) return;
                 Navigator.of(context).pop(value);
               },
@@ -1172,7 +1168,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         );
       },
     );
-    controller.dispose();
     if (picked == null || !mounted) return;
 
     try {
@@ -1225,8 +1220,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
 
     int placementIndex = placements.first.$1;
     StructuralSequencePlacement current = placements.first.$2;
-    final TextEditingController controller =
-        TextEditingController(text: current.windowTitle);
+    String draftTitle = current.windowTitle;
 
     final MapEntry<int, String>? result =
         await showDialog<MapEntry<int, String>>(
@@ -1276,10 +1270,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                           setDialogState(() {
                             placementIndex = chosen.$1;
                             current = chosen.$2;
-                            controller.text = current.windowTitle;
-                            controller.selection = TextSelection.collapsed(
-                              offset: controller.text.length,
-                            );
+                            draftTitle = current.windowTitle;
                           });
                         },
                       ),
@@ -1287,11 +1278,11 @@ class _EditWorkspaceState extends State<EditWorkspace>
                     ],
                     R3MicroLabel('WINDOW TITLE', theme: widget.theme),
                     SizedBox(height: sc(6)),
-                    TextField(
-                      key: const ValueKey<String>(
-                        'structural-window-title-field',
+                    TextFormField(
+                      key: ValueKey<String>(
+                        'structural-window-title-field-$placementIndex',
                       ),
-                      controller: controller,
+                      initialValue: draftTitle,
                       autofocus: placements.length == 1,
                       style: widget.theme.value,
                       decoration: InputDecoration(
@@ -1299,7 +1290,8 @@ class _EditWorkspaceState extends State<EditWorkspace>
                         hintText:
                             'Blank uses ${selected.canonicalSource}',
                       ),
-                      onSubmitted: (String value) {
+                      onChanged: (String value) => draftTitle = value,
+                      onFieldSubmitted: (String value) {
                         Navigator.of(context).pop(
                           MapEntry<int, String>(placementIndex, value),
                         );
@@ -1328,7 +1320,7 @@ class _EditWorkspaceState extends State<EditWorkspace>
                   onPressed: () => Navigator.of(context).pop(
                     MapEntry<int, String>(
                       placementIndex,
-                      controller.text,
+                      draftTitle,
                     ),
                   ),
                   child: const Text('APPLY'),
@@ -1339,7 +1331,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         );
       },
     );
-    controller.dispose();
     if (result == null || !mounted) return;
 
     try {
