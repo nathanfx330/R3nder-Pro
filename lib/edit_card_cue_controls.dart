@@ -432,9 +432,18 @@ class _EditCardCueControlsState extends State<EditCardCueControls> {
                             card: preview,
                             resolveSource: widget.resolveImageSource,
                             height: sc(230),
-                            onKickerTap: kickerFocus.requestFocus,
-                            onHeadingTap: headingFocus.requestFocus,
-                            onBodyTap: bodyFocus.requestFocus,
+                            onKickerTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? kickerFocus.requestFocus
+                                    : null,
+                            onHeadingTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? headingFocus.requestFocus
+                                    : null,
+                            onBodyTap:
+                                presetDraft == PresentationPanelPreset.editorial
+                                    ? bodyFocus.requestFocus
+                                    : null,
                           ),
                         ),
                       ],
