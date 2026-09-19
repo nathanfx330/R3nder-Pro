@@ -1849,38 +1849,33 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
-  StructuralSequencePlacement? _activeStructuralPlacement() {
+  ({
+    StructuralSequencePlacement placement,
+    int localFrame,
+  })? _activeStructuralFrame() {
     if (_rawLineAtFrame.isEmpty ||
         _currentFrame < 0 ||
         _currentFrame >= _rawLineAtFrame.length) {
       return null;
     }
 
-    final int line = _rawLineAtFrame[_currentFrame];
     final List<StructuralSequencePlacement> placements =
         parseStructuralSequencePlacements(_textController.text);
-    for (final StructuralSequencePlacement placement in placements) {
-      if (placement.lineIndex == line && placement.resolves) {
-        return placement;
-      }
-    }
-    return null;
-  }
+    final List<int?> starts = editorStructuralPlacementStarts(
+      placements: placements,
+      rawLineAtFrame: _rawLineAtFrame,
+    );
+    final active = editorStructuralPlacementAtFrame(
+      placements: placements,
+      placementStarts: starts,
+      projectFrame: _currentFrame,
+    );
+    if (active == null || !active.placement.resolves) return null;
 
-  int _structuralLocalFrame(StructuralSequencePlacement placement) {
-    if (_rawLineAtFrame.isEmpty || _currentFrame >= _rawLineAtFrame.length) {
-      return 0;
-    }
-
-    int first = _currentFrame;
-    while (first > 0 &&
-        _rawLineAtFrame[first - 1] == placement.lineIndex) {
-      first--;
-    }
-
-    return (_currentFrame - first)
-        .clamp(0, placement.durationFrames - 1)
-        .toInt();
+    return (
+      placement: active.placement,
+      localFrame: active.localFrame,
+    );
   }
 
   Size _terminalCursorFraction() {
@@ -1921,13 +1916,12 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Widget _buildPreviewPane() {
-    final StructuralSequencePlacement? placement =
-        _activeStructuralPlacement();
-    if (placement != null) {
+    final active = _activeStructuralFrame();
+    if (active != null) {
       return StructuralSequencePreview(
         rawDocument: _textController.text,
-        placement: placement,
-        localFrame: _structuralLocalFrame(placement),
+        placement: active.placement,
+        localFrame: active.localFrame,
         isPlaying: _isPlaying,
         theme: _t,
         wallpaper: _scene.wallpaper,
