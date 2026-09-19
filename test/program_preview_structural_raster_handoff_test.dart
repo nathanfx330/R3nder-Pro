@@ -147,9 +147,12 @@ Future<Uint8List> _captureRgba(WidgetTester tester) async {
 }
 
 int _structuralTitlePixelCount(Uint8List rgba) {
-  // Windowed STRUCT at 320x180 has a broad #33302F title bar near the top
+  // Windowed STRUCT at 320x180 has a broad #222222 title bar near the top
   // center. Count only that region so a desktop-only frame cannot pass merely
   // because the same color appears somewhere unrelated in the program image.
+  //
+  // This must track the production _StructuralWindow/Yaru plate. The older
+  // #33302F probe was stale and had become a permanent false failure on main.
   const int width = 320;
   const int left = 70;
   const int right = 250;
@@ -161,9 +164,9 @@ int _structuralTitlePixelCount(Uint8List rgba) {
     for (int x = left; x < right; x++) {
       final int offset = (y * width + x) * 4;
       if (offset + 3 >= rgba.length) continue;
-      if (rgba[offset] == 0x33 &&
-          rgba[offset + 1] == 0x30 &&
-          rgba[offset + 2] == 0x2F &&
+      if (rgba[offset] == 0x22 &&
+          rgba[offset + 1] == 0x22 &&
+          rgba[offset + 2] == 0x22 &&
           rgba[offset + 3] == 0xFF) {
         count++;
       }
