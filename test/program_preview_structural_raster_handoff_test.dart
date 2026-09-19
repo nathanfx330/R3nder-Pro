@@ -147,9 +147,12 @@ Future<Uint8List> _captureRgba(WidgetTester tester) async {
 }
 
 int _structuralTitlePixelCount(Uint8List rgba) {
-  // Windowed STRUCT at 320x180 has a broad #33302F title bar near the top
+  // Windowed STRUCT at 320x180 has a broad #222222 title bar near the top
   // center. Count only that region so a desktop-only frame cannot pass merely
   // because the same color appears somewhere unrelated in the program image.
+  //
+  // This must track the production _StructuralWindow/Yaru plate. The older
+  // #33302F probe was stale and had become a permanent false failure on main.
   const int width = 320;
   const int left = 70;
   const int right = 250;
@@ -161,9 +164,9 @@ int _structuralTitlePixelCount(Uint8List rgba) {
     for (int x = left; x < right; x++) {
       final int offset = (y * width + x) * 4;
       if (offset + 3 >= rgba.length) continue;
-      if (rgba[offset] == 0x33 &&
-          rgba[offset + 1] == 0x30 &&
-          rgba[offset + 2] == 0x2F &&
+      if (rgba[offset] == 0x22 &&
+          rgba[offset + 1] == 0x22 &&
+          rgba[offset + 2] == 0x22 &&
           rgba[offset + 3] == 0xFF) {
         count++;
       }
@@ -223,6 +226,16 @@ void main() {
         scene,
         placementIndex: 1,
         localFrame: 0,
+      );
+      final int secondMiddleProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: 1,
+      );
+      final int secondSlideEndProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: 2,
       );
 
       final _OfflineBackend backend = _OfflineBackend();
@@ -294,8 +307,86 @@ void main() {
         reason: 'The first B frame must still rasterize a structural shell.',
       );
 
-      // Following frame: B has completed an active paint and A may be released.
+      // A second pump at the same authored frame may unlock the visual pan,
+      // but it must not consume it. Readiness is a gate, not a timing source.
       await tester.pump();
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      // Source frame 1 is the midpoint of this three-frame clamped switch.
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondMiddleProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      final Finder outgoingMotion = find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('program-struct-layer-0'),
+        ),
+        matching: find.byKey(
+          const ValueKey<String>('structural-handoff-incoming'),
+        ),
+      );
+      final Finder incomingMotion = find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('program-struct-layer-1'),
+        ),
+        matching: find.byKey(
+          const ValueKey<String>('structural-handoff-incoming'),
+        ),
+      );
+      expect(outgoingMotion, findsOneWidget);
+      expect(incomingMotion, findsOneWidget);
+
+      final FractionalTranslation movingOut =
+          tester.widget<FractionalTranslation>(outgoingMotion);
+      final FractionalTranslation movingIn =
+          tester.widget<FractionalTranslation>(incomingMotion);
+      expect(movingOut.translation.dx, lessThan(0.0));
+      expect(movingIn.translation.dx, greaterThan(0.0));
+
+      final Uint8List middleFrame = await _captureRgba(tester);
+      expect(
+        _structuralTitlePixelCount(middleFrame),
+        greaterThan(1000),
+        reason: 'The midpoint slide must keep the structural shell rasterized.',
+      );
+
+      // The last source frame completes this short clamped pan and releases A.
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondSlideEndProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,

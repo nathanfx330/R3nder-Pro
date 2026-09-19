@@ -270,13 +270,13 @@ Outro
     expect(compiled.engineText, contains('[REGION:STRUCTSEQ_0_80]'));
   });
 
-  test('editor line map keeps plain compensated STRUCT projection', () {
+  test('editor line map keeps full STRUCT event budget', () {
     final compiled = compileScript(source, lineMarkers: true);
     expect(compiled.engineText, isNot(contains('STRUCTSEQ_')));
     expect(
       compiled.engineText,
       contains(
-        '[LINE:13][PAUSE:${80 - kStructuralProjectionFramingFrames}]',
+        '[LINE:13][PAUSE:${80 - kStructuralEditorProjectionFramingFrames}]',
       ),
     );
   });

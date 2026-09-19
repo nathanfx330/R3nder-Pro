@@ -66,15 +66,34 @@ const String _runtimeSource = '''[SPEED:MAX]
 [STRUCT:EDIT.main:AUDIO]
 ''';
 
+const String _slideAudioSource = '''[SPEED:MAX]
+[CONFIG:APPSWITCH:SLIDE]
+[EDIT:a]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:5:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:b]
+[TRACK:V1]
+[CLIP:b:video/b.mp4:0:0:5:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.a:AUDIO]
+[STRUCT:EDIT.b:AUDIO]
+''';
+
 Future<void> _setupScene(
   WidgetTester tester,
   SceneEngine scene,
   Directory images,
   Directory sprites, {
   bool lineMarkers = false,
+  String source = _runtimeSource,
 }) async {
   final CompiledScript compiled =
-      compileScript(_runtimeSource, lineMarkers: lineMarkers);
+      compileScript(source, lineMarkers: lineMarkers);
   await tester.runAsync(() async {
     await scene.setup(
       templateText: compiled.engineText,
@@ -338,6 +357,62 @@ void main() {
     );
     expect(scene.frameCount, 0,
         reason: 'Editor tracing must leave the caller scene reset.');
+  });
+
+  testWidgets(
+      'editor AUDIO trace keeps final source frame across APPSWITCH SLIDE',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_text_struct_audio_slide_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      images,
+      sprites,
+      lineMarkers: true,
+      source: _slideAudioSource,
+    );
+    final int totalFrames = _programDuration(scene);
+    final List<int> lineMap = _editorLineMap(scene);
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(_slideAudioSource);
+
+    expect(placements, hasLength(2));
+    expect(placements.first.seamlessToNext, isTrue);
+    expect(placements.last.seamlessFromPrevious, isTrue);
+    expect(placements.first.sourceDurationFrames, 5);
+    expect(placements.last.sourceDurationFrames, 5);
+
+    final ProgramStructuralAudioTimeline timeline =
+        traceProgramStructuralAudioTimeline(
+      scene: scene,
+      rawDocument: _slideAudioSource,
+      totalFrames: totalFrames,
+      editorRawLineAtFrame: lineMap,
+    );
+
+    expect(timeline.occurrences, hasLength(2));
+    expect(
+      timeline.occurrences
+          .map((ProgramStructuralAudioOccurrence o) => o.sourceDurationFrames),
+      <int>[5, 5],
+    );
+    expect(
+      timeline.occurrences.first.programEndFrameExclusive,
+      timeline.occurrences.last.programStartFrame,
+      reason: 'The outgoing source must own its final audio frame before the '
+          'incoming seamless source begins.',
+    );
   });
 
   testWidgets('editor frame-map length mismatch is rejected',

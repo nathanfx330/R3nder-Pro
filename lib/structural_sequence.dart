@@ -56,12 +56,26 @@ const int kStructuralEntryFrames =
 const int kStructuralExitFrames =
     kStructuralWindowFrames + kStructuralZoomFrames;
 
-/// A standalone `[PAUSE:N]` line occupies two scene ticks beyond N in the
-/// editor line-map execution path: entering the pause and advancing past the
-/// line. STRUCT owns an exact presentation budget, so its projected PAUSE
-/// argument compensates for those framing ticks instead of silently stretching
-/// every structural call by two frames.
-const int kStructuralProjectionFramingFrames = 2;
+/// Visual pan budget when APPSWITCH:SLIDE hands one compatible STRUCT client
+/// directly to the next. Deliberately matches the APP MOSAIC page pan so the
+/// two forms of application switching read as the same desktop gesture.
+///
+/// These frames are not added to the placement duration. They overlap the
+/// beginning of the incoming source's showing span.
+const int kStructuralSwitchSlideFrames = kAppPanFrames;
+
+/// Runtime-marked STRUCT projection owns two non-pause-age frames:
+/// one frame for the reserved REGION marker and one for PAUSE entry.
+const int kStructuralRuntimeProjectionFramingFrames = 2;
+
+/// Editor line-map projection has no reserved REGION marker. Its authored
+/// STRUCT line becomes visible on PAUSE entry, so only one framing frame sits
+/// outside the explicit pause age.
+const int kStructuralEditorProjectionFramingFrames = 1;
+
+/// Back-compatible name for the Preview/BAKE runtime-marker budget.
+const int kStructuralProjectionFramingFrames =
+    kStructuralRuntimeProjectionFramingFrames;
 
 /// Prefix reserved for the engine-internal region used by real Preview/Bake.
 /// It fits the existing REGION grammar, so no author-visible tag is added.
@@ -85,9 +99,15 @@ int structuralSequenceDurationForSource(int sourceFrames) {
   return kStructuralEntryFrames + sourceFrames + kStructuralExitFrames;
 }
 
-int _projectedPauseFramesForEvent(int eventFrames) {
+int _projectedPauseFramesForEvent(
+  int eventFrames, {
+  required bool runtimeMarkers,
+}) {
   if (eventFrames <= 0) return 1;
-  final int pauseFrames = eventFrames - kStructuralProjectionFramingFrames;
+  final int framingFrames = runtimeMarkers
+      ? kStructuralRuntimeProjectionFramingFrames
+      : kStructuralEditorProjectionFramingFrames;
+  final int pauseFrames = eventFrames - framingFrames;
   return pauseFrames > 0 ? pauseFrames : 1;
 }
 
@@ -151,7 +171,10 @@ int structuralRuntimeLocalFrame({
   if (awaitingPauseTag) return 0;
 
   if (pauseFramesRemaining > 0) {
-    final int pauseBudget = _projectedPauseFramesForEvent(duration);
+    final int pauseBudget = _projectedPauseFramesForEvent(
+      duration,
+      runtimeMarkers: true,
+    );
     return (1 + (pauseBudget - pauseFramesRemaining))
         .clamp(0, duration - 1)
         .toInt();
@@ -647,7 +670,8 @@ String appendStructuralSequencePlacement({
 /// Editor line-map compilation uses a plain compensated PAUSE so its authored
 /// line continues to own exactly the STRUCT event budget. Real Preview/Bake
 /// compilation can request [runtimeMarkers], which writes an internal REGION
-/// immediately before the same compensated PAUSE.
+/// before its PAUSE. The two projections therefore have different framing
+/// costs: editor = PAUSE entry only, runtime = REGION entry + PAUSE entry.
 ///
 /// Durations come from [parseStructuralSequencePlacements], not from a second
 /// local formula. This is load-bearing now that adjacent structural apps can
@@ -695,7 +719,10 @@ String projectStructuralSequencePlacements({
     }
 
     final int eventDuration = placement?.durationFrames ?? 0;
-    final int pauseFrames = _projectedPauseFramesForEvent(eventDuration);
+    final int pauseFrames = _projectedPauseFramesForEvent(
+      eventDuration,
+      runtimeMarkers: runtimeMarkers,
+    );
 
     if (runtimeMarkers && eventDuration > 0) {
       final StructuralRuntimeMarker runtime = StructuralRuntimeMarker(
