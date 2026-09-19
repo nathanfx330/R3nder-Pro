@@ -130,13 +130,13 @@ CompiledScript compileScript(String rawText, {bool lineMarkers = false}) {
     rawText,
     runtimeMarkers: !lineMarkers,
   );
-  final Set<int> authoredBlankLines = lineMarkers
-      ? <int>{
-          for (final (int index, String line)
-              in rawText.split('\\n').indexed)
-            if (line.trim().isEmpty) index,
-        }
-      : const <int>{};
+  final Set<int> authoredBlankLines = <int>{};
+  if (lineMarkers) {
+    final List<String> authoredLines = rawText.split('\\n');
+    for (int i = 0; i < authoredLines.length; i++) {
+      if (authoredLines[i].trim().isEmpty) authoredBlankLines.add(i);
+    }
+  }
   final String marked = lineMarkers
       ? injectLineMarkers(
           projected,
