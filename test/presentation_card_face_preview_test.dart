@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/card_overlay.dart';
 import 'package:r3nder/presentation_card_face_preview.dart';
-import 'package:r3nder/presentation_panel_content.dart';
 import 'package:r3nder/presentation_panel_painter.dart';
 import 'package:r3nder/presentation_requests.dart';
 
@@ -58,7 +57,10 @@ Future<ui.Image> _renderPreviewHelper(CardRequest card) async {
   }
 }
 
-Future<ui.Image> _renderDirectFace(CardRequest card) async {
+Future<ui.Image> _renderDirectFace(
+  CardRequest card, {
+  ui.Image? image,
+}) async {
   final ui.PictureRecorder recorder = ui.PictureRecorder();
   final Canvas canvas = Canvas(recorder);
   final Rect rect = presentationCardFacePreviewRect(_slot);
@@ -68,7 +70,7 @@ Future<ui.Image> _renderDirectFace(CardRequest card) async {
     rect,
     scale,
     card,
-    null,
+    image,
     'monospace',
   );
   final ui.Picture picture = recorder.endRecording();
@@ -80,6 +82,32 @@ Future<ui.Image> _renderDirectFace(CardRequest card) async {
   } finally {
     picture.dispose();
   }
+}
+
+Future<ui.Image> _solidImage(Color color) async {
+  const int size = 16;
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final Canvas canvas = Canvas(recorder);
+  canvas.drawRect(
+    const Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+    Paint()..color = color,
+  );
+  final ui.Picture picture = recorder.endRecording();
+  try {
+    return await picture.toImage(size, size);
+  } finally {
+    picture.dispose();
+  }
+}
+
+Color _pixel(Uint8List rgba, int width, int x, int y) {
+  final int offset = (y * width + x) * 4;
+  return Color.fromARGB(
+    rgba[offset + 3],
+    rgba[offset],
+    rgba[offset + 1],
+    rgba[offset + 2],
+  );
 }
 
 void main() {
@@ -156,6 +184,60 @@ void main() {
       direct.dispose();
     }
   });
+  test('shared face layout owns painter image boundary and focus origin',
+      () async {
+    final CardRequest card = _card();
+    const Color heroColor = Color(0xFFEC407A);
+    final ui.Image hero = await _solidImage(heroColor);
+    final Rect cardRect = presentationCardFacePreviewRect(_slot);
+    final double scale = presentationCardFacePreviewScale(_slot);
+    final PresentationCardFaceLayout layout =
+        presentationCardFaceLayout(cardRect, card, hero);
+    final ui.Image rendered = await _renderDirectFace(card, image: hero);
+
+    try {
+      expect(layout.imageFraction, closeTo(0.44, 0.0001));
+      expect(
+        layout.imageBottom,
+        closeTo(cardRect.top + cardRect.height * 0.44, 0.0001),
+      );
+      expect(
+        layout.pad,
+        closeTo(
+          cardRect.width * kPresentationCardFacePadFraction,
+          0.0001,
+        ),
+      );
+
+      final PresentationPanelFocusRegions regions =
+          presentationCardFaceFocusRegions(
+        rect: cardRect,
+        scale: scale,
+        card: card,
+        image: hero,
+        inheritedFontFamily: 'monospace',
+      )!;
+      expect(
+        regions.kicker!.top,
+        closeTo(layout.imageBottom + layout.pad * 0.78, 0.0001),
+      );
+
+      final Uint8List rgba = await _rgba(rendered);
+      final int x = cardRect.center.dx.round();
+      final int imageY = (layout.imageBottom - 3.0).floor();
+      final int panelY = (layout.imageBottom + 3.0).ceil();
+
+      expect(_pixel(rgba, _slot.width.toInt(), x, imageY), heroColor);
+      expect(
+        _pixel(rgba, _slot.width.toInt(), x, panelY),
+        card.panelColor,
+      );
+    } finally {
+      rendered.dispose();
+      hero.dispose();
+    }
+  });
+
   testWidgets('interactive preview routes editorial regions to callbacks',
       (WidgetTester tester) async {
     final CardRequest card = _card();
@@ -188,20 +270,14 @@ void main() {
 
     final Rect cardRect = presentationCardFacePreviewRect(_slot);
     final double scale = presentationCardFacePreviewScale(_slot);
-    final PresentationPanelContent content = parsePresentationPanelContent(
-      heading: card.heading,
-      body: card.body,
-    );
     final PresentationPanelFocusRegions regions =
-        presentationEditorialPanelFocusRegions(
-      cardRect: cardRect,
-      contentTop: cardRect.top,
-      content: content,
-      pad: cardRect.width * 0.055,
+        presentationCardFaceFocusRegions(
+      rect: cardRect,
       scale: scale,
+      card: card,
+      image: null,
       inheritedFontFamily: 'monospace',
-      showKicker: true,
-    );
+    )!;
     final Offset origin = tester.getTopLeft(hitSurface);
 
     await tester.tapAt(origin + regions.kicker!.center);
@@ -243,19 +319,13 @@ Body copy.''',
     PresentationPanelFocusRegions regionsFor(CardRequest card) {
       final Rect cardRect = presentationCardFacePreviewRect(_slot);
       final double scale = presentationCardFacePreviewScale(_slot);
-      final PresentationPanelContent content = parsePresentationPanelContent(
-        heading: card.heading,
-        body: card.body,
-      );
-      return presentationEditorialPanelFocusRegions(
-        cardRect: cardRect,
-        contentTop: cardRect.top,
-        content: content,
-        pad: cardRect.width * 0.055,
+      return presentationCardFaceFocusRegions(
+        rect: cardRect,
         scale: scale,
+        card: card,
+        image: null,
         inheritedFontFamily: 'monospace',
-        showKicker: true,
-      );
+      )!;
     }
 
     final PresentationPanelFocusRegions small =
