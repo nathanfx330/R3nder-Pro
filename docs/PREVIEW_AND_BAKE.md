@@ -108,20 +108,22 @@ A live native decoder may not have the incoming frame ready immediately.
 
 Program Preview handles this as visual ownership.
 
-Under seamless handoff:
+Under seamless `APPSWITCH:SLIDE` handoff:
 
 1. the next structural source may be preloaded while the current one remains active;
 2. a zero-opacity preload can decode without painting;
-3. when the incoming placement becomes active it paints at full opacity underneath the outgoing cover;
-4. the outgoing cover is removed only after the incoming source is ready **and has completed one active paint**.
+3. when the incoming placement becomes active it paints underneath the outgoing cover;
+4. the first active paint proves the incoming client is presentable and **unlocks** the visual pan;
+5. the outgoing cover then remains alive through the authored slide window while A moves left and B enters from the right;
+6. slide progress comes from incoming authored source time, not from the moment readiness happened.
 
 Why require an active paint after readiness?
 
 Because Flutter can skip painting a subtree at opacity zero. Logical readiness alone does not prove any incoming pixels have actually appeared in the composition.
 
-This was the source of the M18 one-frame wallpaper flash.
+This distinction first solved the M18 one-frame wallpaper flash. The later literal-slide work made the rule stricter: readiness no longer means “remove A”; it means “B may participate in the authored handoff.”
 
-The fix was not to pause project time. It was to keep visual ownership with the outgoing shell until the incoming shell had truly painted.
+The fix is still not to pause project time. Visual ownership may wait; project time does not.
 
 ---
 
@@ -134,6 +136,10 @@ Activation must still use the authored local frame derived from the runtime mark
 Do not reset the incoming source to frame zero merely because the widget switches from hidden preload to visible active state.
 
 Preload affects decoder readiness only.
+
+The live pan follows the same rule. `kStructuralSwitchSlideFrames` describes the nominal authored motion budget, but readiness does not start a new 22-frame wall-clock animation. Incoming source time determines the progress that should be visible.
+
+**Current parity boundary:** as of main checkpoint `cd5ad51`, the literal two-client pan exists in the editor and top-level Program Preview paths. Whole-program BAKE still renders the single active STRUCT placement through `ProgramStructuralFrameRenderer`. The shared event budget and source/audio timing remain deterministic, but final BAKE pixel parity for the new pan is still open work.
 
 ---
 
