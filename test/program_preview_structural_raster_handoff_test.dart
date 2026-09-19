@@ -69,6 +69,23 @@ const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 [STRUCT:MOSAIC.second]
 ''';
 
+const String _lateReadinessSource = '''[CONFIG:APPSWITCH:SLIDE]
+[EDIT:a]
+[TRACK:V1]
+[CLIP:a:video/a.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:b]
+[TRACK:V1]
+[CLIP:b:video/b.mp4:0:0:30:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:EDIT.a]
+[STRUCT:EDIT.b]
+''';
+
 String _resolveSource(String source) => '/workspace/$source';
 
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
@@ -124,6 +141,22 @@ Future<void> _waitForReady(WidgetTester tester, int placementIndex) async {
     await tester.pump();
   }
   expect(ready, findsOneWidget);
+}
+
+FractionalTranslation _handoffMotionInside(
+  WidgetTester tester,
+  int placementIndex,
+) {
+  final Finder motion = find.descendant(
+    of: find.byKey(
+      ValueKey<String>('program-struct-layer-$placementIndex'),
+    ),
+    matching: find.byKey(
+      const ValueKey<String>('structural-handoff-incoming'),
+    ),
+  );
+  expect(motion, findsOneWidget);
+  return tester.widget<FractionalTranslation>(motion);
 }
 
 Future<Uint8List> _captureRgba(WidgetTester tester) async {
@@ -401,6 +434,188 @@ void main() {
         _structuralTitlePixelCount(releasedFrame),
         greaterThan(1000),
         reason: 'Releasing A must not expose a desktop-only raster frame.',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'late readiness cannot change STRUCT slide position at a fixed project frame',
+    (WidgetTester tester) async {
+      final Directory root = Directory.systemTemp.createTempSync(
+        'r3nder_struct_late_readiness_',
+      );
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final CompiledScript compiled = compileScript(_lateReadinessSource);
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(_lateReadinessSource);
+      expect(placements, hasLength(2));
+      expect(placements.first.seamlessToNext, isTrue);
+      expect(placements.last.seamlessFromPrevious, isTrue);
+      expect(
+        placements.last.sourceDurationFrames,
+        greaterThan(kStructuralSwitchSlideFrames),
+      );
+
+      final SceneEngine scene = SceneEngine();
+      await tester.runAsync(() async {
+        await scene.setup(
+          templateText: compiled.engineText,
+          fontColor: Colors.green,
+          bgColor: Colors.black,
+          width: 320,
+          height: 180,
+          scale: 1,
+          fontPath: 'monospace',
+          fontSize: 12,
+          lineSpacing: 16,
+          tracking: 0,
+          marginTop: 10,
+          marginSide: 10,
+          imagesDir: images.path,
+          spritesDir: sprites.path,
+          paneLifeConfig: compiled.paneLife,
+          captionConfig: compiled.caption,
+          appSwitchConfig: compiled.appSwitch,
+        );
+      });
+
+      final int firstProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: 0,
+      );
+      const int delayedSourceFrame = 12;
+      final int lateProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: delayedSourceFrame,
+      );
+
+      final _OfflineBackend backend = _OfflineBackend();
+      final ChangeNotifier repaint = ChangeNotifier();
+      VoidCallback? acceptIncomingReadiness;
+
+      addTearDown(() {
+        repaint.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: firstProjectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            alignment: Alignment.topLeft,
+            child: RepaintBoundary(
+              key: _boundaryKey,
+              child: SizedBox(
+                width: 320,
+                height: 180,
+                child: ProgramPreviewSurface(
+                  repaint: repaint,
+                  scene: scene,
+                  rawDocument: _lateReadinessSource,
+                  fontFamily: 'monospace',
+                  theme: R3Theme.of(Colors.green),
+                  structuralBackend: backend,
+                  structuralResolveSource: _resolveSource,
+                  structuralReadinessInterceptor: (
+                    int placementIndex,
+                    VoidCallback accept,
+                  ) {
+                    if (placementIndex == 1) {
+                      acceptIncomingReadiness ??= accept;
+                    } else {
+                      accept();
+                    }
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0;
+          attempt < 20 && acceptIncomingReadiness == null;
+          attempt++) {
+        await tester.pump();
+      }
+      expect(
+        acceptIncomingReadiness,
+        isNotNull,
+        reason: 'The hidden incoming preload must reach decoder readiness.',
+      );
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: lateProjectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      final StructuralRuntimeMarker? marker =
+          parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+      expect(marker, isNotNull);
+      expect(marker!.placementIndex, 1);
+      expect(_runtimeLocalFrame(scene, marker), delayedSourceFrame);
+
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      final double outgoingBefore =
+          _handoffMotionInside(tester, 0).translation.dx;
+      final double incomingBefore =
+          _handoffMotionInside(tester, 1).translation.dx;
+
+      acceptIncomingReadiness!();
+      await tester.pump();
+      await tester.pump();
+
+      final double outgoingAfter =
+          _handoffMotionInside(tester, 0).translation.dx;
+      final double incomingAfter =
+          _handoffMotionInside(tester, 1).translation.dx;
+
+      debugPrint(
+        'STRUCT late-readiness diagnostic: '
+        'sourceFrame=$delayedSourceFrame '
+        'outgoing $outgoingBefore -> $outgoingAfter, '
+        'incoming $incomingBefore -> $incomingAfter',
+      );
+
+      expect(
+        outgoingAfter,
+        closeTo(outgoingBefore, 0.0001),
+        reason:
+            'Accepting readiness without advancing project time must not move A.',
+      );
+      expect(
+        incomingAfter,
+        closeTo(incomingBefore, 0.0001),
+        reason:
+            'Accepting readiness without advancing project time must not move B.',
       );
 
       await tester.pumpWidget(const SizedBox.shrink());
