@@ -1864,7 +1864,6 @@ class _EditWorkspaceState extends State<EditWorkspace>
         theme: widget.theme,
         compact: true,
         onPressed: selected == null ||
-                selectedPlacementCount == 0 ||
                 _importing ||
                 _playing ||
                 _startingPlayback ||
