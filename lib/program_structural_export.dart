@@ -705,19 +705,19 @@ class ProgramStructuralFrameRenderer {
         handoffSlideT.clamp(0.0, 1.0).toDouble();
     final String outgoingRenderedTitle = handoffActive
         ? expandStructuralChromeExpressions(
-            outgoingPlacement.effectiveWindowTitle,
+            outgoingPlacement!.effectiveWindowTitle,
             frame: outgoingSourceFrame,
           )
         : '';
     final String outgoingRenderedTop = handoffActive
         ? expandStructuralChromeExpressions(
-            outgoingPlacement.topOverlay,
+            outgoingPlacement!.topOverlay,
             frame: outgoingSourceFrame,
           )
         : '';
     final String outgoingRenderedBottom = handoffActive
         ? expandStructuralChromeExpressions(
-            outgoingPlacement.bottomOverlay,
+            outgoingPlacement!.bottomOverlay,
             frame: outgoingSourceFrame,
           )
         : '';
@@ -786,7 +786,7 @@ class ProgramStructuralFrameRenderer {
     };
     final String? outgoingBottomText = !handoffActive
         ? null
-        : switch (outgoingPlacement.overlayMode) {
+        : switch (outgoingPlacement!.overlayMode) {
             StructuralOverlayMode.defaultOverlay =>
               outgoingDefaultBottomOverlay.isEmpty
                   ? null
@@ -814,7 +814,7 @@ class ProgramStructuralFrameRenderer {
 
       canvas.save();
       canvas.translate(-client.width * slideT, 0.0);
-      _drawImageContain(canvas, outgoingSourceImage, client);
+      _drawImageContain(canvas, outgoingSourceImage!, client);
       _paintStructuralBottomOverlay(
         canvas: canvas,
         client: client,
@@ -861,10 +861,10 @@ class ProgramStructuralFrameRenderer {
       };
       final String? outgoingTopText = !handoffActive
           ? null
-          : switch (outgoingPlacement.overlayMode) {
+          : switch (outgoingPlacement!.overlayMode) {
               StructuralOverlayMode.defaultOverlay =>
                 'F$outgoingSourceFrame / '
-                    '${outgoingPlacement.sourceDurationFrames}',
+                    '${outgoingPlacement!.sourceDurationFrames}',
               StructuralOverlayMode.custom =>
                 outgoingRenderedTop.isEmpty ? null : outgoingRenderedTop,
               StructuralOverlayMode.none => null,
