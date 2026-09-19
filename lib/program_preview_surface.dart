@@ -159,6 +159,31 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         _readyPlacements.contains(placementIndex)) {
       return;
     }
+
+    assert(() {
+      final StructuralRuntimeMarker? marker =
+          parseStructuralRuntimeRegion(widget.scene.terminal.currentRegion);
+      if (marker != null && marker.placementIndex == placementIndex) {
+        final StructuralSequencePlacement? placement =
+            _placementAt(placementIndex);
+        final int localFrame = _localFrame(marker);
+        final int sourceFrame =
+            placement?.sourceFrameAt(localFrame) ?? -1;
+        debugPrint(
+          'STRUCT readiness decoder-ready: '
+          'placement=$placementIndex '
+          'localFrame=$localFrame '
+          'sourceFrame=$sourceFrame',
+        );
+      } else {
+        debugPrint(
+          'STRUCT readiness decoder-ready: '
+          'placement=$placementIndex activeMarker=${marker?.placementIndex}',
+        );
+      }
+      return true;
+    }());
+
     setState(() => _readyPlacements.add(placementIndex));
   }
 
@@ -178,6 +203,21 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       if (marker == null || marker.placementIndex != placementIndex) return;
       if (!_mountedPlacements.contains(placementIndex)) return;
       if (_readyPaintedPlacements.contains(placementIndex)) return;
+
+      assert(() {
+        final StructuralSequencePlacement? placement =
+            _placementAt(placementIndex);
+        final int localFrame = _localFrame(marker);
+        final int sourceFrame =
+            placement?.sourceFrameAt(localFrame) ?? -1;
+        debugPrint(
+          'STRUCT readiness active-painted: '
+          'placement=$placementIndex '
+          'localFrame=$localFrame '
+          'sourceFrame=$sourceFrame',
+        );
+        return true;
+      }());
 
       setState(() => _readyPaintedPlacements.add(placementIndex));
     });
