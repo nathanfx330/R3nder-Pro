@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_card_cue_controls.dart';
 import 'package:r3nder/edit_cue.dart';
 import 'package:r3nder/edit_surface_model.dart';
+import 'package:r3nder/presentation_card_face_preview.dart';
 import 'package:r3nder/presentation_panel_content.dart';
+import 'package:r3nder/presentation_panel_painter.dart';
 import 'package:r3nder/presentation_requests.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -790,6 +792,83 @@ void main() {
       find.byKey(const ValueKey<String>('edit-card-cue-image-percent-field')),
       '4',
       '44',
+    );
+  });
+
+
+  testWidgets('clicking editorial preview focuses kicker heading and body',
+      (WidgetTester tester) async {
+    final EditSurfaceClip clip = EditSurfaceDocument.parse(
+      _sourceWithEditorialGeometry,
+      'main',
+    ).clip('V1', 'shot');
+    final List<EditCardCue> cues = parseClipCardCues(clip.clip);
+
+    await tester.pumpWidget(
+      _host(
+        clip: clip,
+        cues: cues,
+        playheadFrame: 0,
+        onChanged: (int index, CardRequest card) {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('edit-card-cue-edit-0')));
+    await tester.pumpAndSettle();
+
+    final Finder hitSurface = find.byKey(
+      const ValueKey<String>('presentation-card-face-preview-hit-surface'),
+    );
+    final CardRequest card = cues.first.card;
+    final PresentationPanelContent content = parsePresentationPanelContent(
+      heading: card.heading,
+      body: card.body,
+    );
+
+    Future<void> tapRegionAndExpectFocus(
+      Rect? Function(PresentationPanelFocusRegions regions) selectRegion,
+      Finder field,
+    ) async {
+      await tester.ensureVisible(hitSurface);
+      await tester.pumpAndSettle();
+
+      final Size slotSize = tester.getSize(hitSurface);
+      final Rect cardRect = presentationCardFacePreviewRect(slotSize);
+      final double scale = presentationCardFacePreviewScale(slotSize);
+      final PresentationPanelFocusRegions regions =
+          presentationEditorialPanelFocusRegions(
+        cardRect: cardRect,
+        contentTop: cardRect.top,
+        content: content,
+        pad: cardRect.width * 0.055,
+        scale: scale,
+        inheritedFontFamily: 'monospace',
+        showKicker: true,
+      );
+      final Rect? region = selectRegion(regions);
+      expect(region, isNotNull);
+
+      final Offset origin = tester.getTopLeft(hitSurface);
+      await tester.tapAt(origin + region!.center);
+      await tester.pumpAndSettle();
+
+      final EditableText editable = tester.widget<EditableText>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      );
+      expect(editable.focusNode.hasFocus, isTrue);
+    }
+
+    await tapRegionAndExpectFocus(
+      (PresentationPanelFocusRegions regions) => regions.kicker,
+      find.byKey(const ValueKey<String>('edit-card-cue-kicker-field')),
+    );
+    await tapRegionAndExpectFocus(
+      (PresentationPanelFocusRegions regions) => regions.heading,
+      find.byKey(const ValueKey<String>('edit-card-cue-heading-field')),
+    );
+    await tapRegionAndExpectFocus(
+      (PresentationPanelFocusRegions regions) => regions.body,
+      find.byKey(const ValueKey<String>('edit-card-cue-body-field')),
     );
   });
 
