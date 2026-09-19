@@ -45,6 +45,12 @@ class ProgramPreviewSurface extends StatefulWidget {
   final MediaDecoderBackend? structuralBackend;
   final String Function(String source)? structuralResolveSource;
 
+  /// Focused-test seam for delaying parent acceptance of a decoder readiness
+  /// notification without changing decoder behavior. Production leaves null.
+  @visibleForTesting
+  final void Function(int placementIndex, VoidCallback accept)?
+      structuralReadinessInterceptor;
+
   const ProgramPreviewSurface({
     super.key,
     required this.repaint,
@@ -54,6 +60,7 @@ class ProgramPreviewSurface extends StatefulWidget {
     required this.theme,
     this.structuralBackend,
     this.structuralResolveSource,
+    this.structuralReadinessInterceptor,
   });
 
   @override
@@ -86,7 +93,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     final bool previewIdentityChanged =
         oldWidget.rawDocument != widget.rawDocument ||
             oldWidget.structuralBackend != widget.structuralBackend ||
-            oldWidget.structuralResolveSource != widget.structuralResolveSource;
+            oldWidget.structuralResolveSource != widget.structuralResolveSource ||
+            oldWidget.structuralReadinessInterceptor !=
+                widget.structuralReadinessInterceptor;
     if (oldWidget.rawDocument != widget.rawDocument) {
       _placements = parseStructuralSequencePlacements(widget.rawDocument);
     }
@@ -194,7 +203,17 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       terminalFontFamily: widget.fontFamily,
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
-      onFirstFrameReady: () => _markPlacementReady(placementIndex),
+      onFirstFrameReady: () {
+        final interceptor = widget.structuralReadinessInterceptor;
+        if (interceptor == null) {
+          _markPlacementReady(placementIndex);
+          return;
+        }
+        interceptor(
+          placementIndex,
+          () => _markPlacementReady(placementIndex),
+        );
+      },
       handoffRole: handoffRole,
       handoffSlideT: handoffSlideT,
     );
