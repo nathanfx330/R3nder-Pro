@@ -88,6 +88,28 @@ Rect structuralProgramPresentationRectForOutput({
   );
 }
 
+class _StructuralBakeHandoff {
+  const _StructuralBakeHandoff({
+    required this.outgoingPlacement,
+    required this.outgoingSourceFrame,
+    required this.slideT,
+  });
+
+  final StructuralSequencePlacement outgoingPlacement;
+  final int outgoingSourceFrame;
+  final double slideT;
+}
+
+class _RenderedStructuralSourceImage {
+  const _RenderedStructuralSourceImage({
+    required this.image,
+    required this.diagnosticLabel,
+  });
+
+  final ui.Image image;
+  final String diagnosticLabel;
+}
+
 class ProgramStructuralFrameRenderer {
   final String rawDocument;
   final int width;
@@ -153,6 +175,43 @@ class ProgramStructuralFrameRenderer {
       marker: marker,
       pauseFramesRemaining: terminal.pauseFrames,
       awaitingPauseTag: awaitingPauseTag,
+    );
+  }
+
+  _StructuralBakeHandoff? _handoffFor(
+    StructuralRuntimeMarker marker,
+    StructuralSequencePlacement incoming,
+    int incomingSourceFrame,
+  ) {
+    if (!incoming.seamlessFromPrevious) return null;
+
+    final int previousIndex = marker.placementIndex - 1;
+    if (previousIndex < 0 || previousIndex >= _placements.length) return null;
+
+    final StructuralSequencePlacement outgoing = _placements[previousIndex];
+    if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
+
+    final int slideFrames = math.min(
+      kStructuralSwitchSlideFrames,
+      incoming.sourceDurationFrames,
+    );
+    if (slideFrames <= 1 || incomingSourceFrame >= slideFrames - 1) {
+      return null;
+    }
+
+    final int outgoingLocalFrame =
+        math.max(0, outgoing.effectiveDurationFrames - 1);
+    final int outgoingSourceFrame =
+        outgoing.sourceFrameAt(outgoingLocalFrame);
+    final double raw =
+        (incomingSourceFrame / (slideFrames - 1))
+            .clamp(0.0, 1.0)
+            .toDouble();
+
+    return _StructuralBakeHandoff(
+      outgoingPlacement: outgoing,
+      outgoingSourceFrame: outgoingSourceFrame,
+      slideT: Curves.easeInOutCubic.transform(raw),
     );
   }
 
@@ -316,6 +375,9 @@ class ProgramStructuralFrameRenderer {
       truncatedMaximizeAmount: truncatedMaximize?.amount,
     );
 
+    final _StructuralBakeHandoff? handoff =
+        _handoffFor(marker, placement, visual.sourceFrame);
+
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
       localFrame,
@@ -338,7 +400,9 @@ class ProgramStructuralFrameRenderer {
             : null;
 
     ui.Image? sourceImage;
+    ui.Image? outgoingSourceImage;
     String defaultBottomOverlay = '';
+    String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
       sourceImage = await _imageForSourceFrame(
         placement.sourceRef.canonicalSource,
@@ -346,6 +410,20 @@ class ProgramStructuralFrameRenderer {
         fontFamily,
       );
       defaultBottomOverlay = _cachedDiagnosticLabel;
+
+      final _StructuralBakeHandoff? activeHandoff = handoff;
+      if (activeHandoff != null) {
+        final StructuralSequencePlacement outgoing =
+            activeHandoff.outgoingPlacement;
+        final _RenderedStructuralSourceImage renderedOutgoing =
+            await _renderSourceFrameImage(
+          outgoing.sourceRef.canonicalSource,
+          activeHandoff.outgoingSourceFrame,
+          fontFamily,
+        );
+        outgoingSourceImage = renderedOutgoing.image;
+        outgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+      }
     }
     if (dossier != null) {
       await _dossierImages.ensure(dossier);
@@ -413,6 +491,11 @@ class ProgramStructuralFrameRenderer {
         defaultBottomOverlay: defaultBottomOverlay,
         rect: _pixelRect(structuralRect),
         sourceImage: sourceImage,
+        outgoingSourceImage: outgoingSourceImage,
+        outgoingPlacement: handoff?.outgoingPlacement,
+        outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
+        outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
+        handoffSlideT: handoff?.slideT ?? 1.0,
         opacity: visual.structuralOpacity,
         windowChrome: structuralChrome,
       );
@@ -441,6 +524,7 @@ class ProgramStructuralFrameRenderer {
       return await picture.toImage(width, height);
     } finally {
       picture.dispose();
+      outgoingSourceImage?.dispose();
     }
   }
 
@@ -470,6 +554,26 @@ class ProgramStructuralFrameRenderer {
       return cached;
     }
 
+    final _RenderedStructuralSourceImage rendered =
+        await _renderSourceFrameImage(
+      source,
+      sourceFrame,
+      fontFamily,
+    );
+
+    _cachedSourceImage?.dispose();
+    _cachedSourceImage = rendered.image;
+    _cachedSource = source;
+    _cachedSourceFrame = sourceFrame;
+    _cachedDiagnosticLabel = rendered.diagnosticLabel;
+    return rendered.image;
+  }
+
+  Future<_RenderedStructuralSourceImage> _renderSourceFrameImage(
+    String source,
+    int sourceFrame,
+    String fontFamily,
+  ) async {
     final StructuralSourceFrameRenderer renderer =
         _sourceRenderers.putIfAbsent(
       source,
@@ -525,12 +629,10 @@ class ProgramStructuralFrameRenderer {
       }
     }
 
-    _cachedSourceImage?.dispose();
-    _cachedSourceImage = finalImage;
-    _cachedSource = source;
-    _cachedSourceFrame = sourceFrame;
-    _cachedDiagnosticLabel = rendered.diagnosticLabel(source);
-    return finalImage;
+    return _RenderedStructuralSourceImage(
+      image: finalImage,
+      diagnosticLabel: rendered.diagnosticLabel(source),
+    );
   }
 
   Future<ui.Image> _decodeRgba(
@@ -563,6 +665,11 @@ class ProgramStructuralFrameRenderer {
     required String defaultBottomOverlay,
     required Rect rect,
     required ui.Image? sourceImage,
+    required ui.Image? outgoingSourceImage,
+    required StructuralSequencePlacement? outgoingPlacement,
+    required int outgoingSourceFrame,
+    required String outgoingDefaultBottomOverlay,
+    required double handoffSlideT,
     required double opacity,
     required double windowChrome,
   }) {
@@ -591,6 +698,29 @@ class ProgramStructuralFrameRenderer {
       bottomOverlay,
       frame: sourceFrame,
     );
+
+    final bool handoffActive =
+        outgoingSourceImage != null && outgoingPlacement != null;
+    final double slideT =
+        handoffSlideT.clamp(0.0, 1.0).toDouble();
+    final String outgoingRenderedTitle = handoffActive
+        ? expandStructuralChromeExpressions(
+            outgoingPlacement.effectiveWindowTitle,
+            frame: outgoingSourceFrame,
+          )
+        : '';
+    final String outgoingRenderedTop = handoffActive
+        ? expandStructuralChromeExpressions(
+            outgoingPlacement.topOverlay,
+            frame: outgoingSourceFrame,
+          )
+        : '';
+    final String outgoingRenderedBottom = handoffActive
+        ? expandStructuralChromeExpressions(
+            outgoingPlacement.bottomOverlay,
+            frame: outgoingSourceFrame,
+          )
+        : '';
 
     final bool faded = opacity < 0.999;
     if (faded) {
@@ -646,51 +776,66 @@ class ProgramStructuralFrameRenderer {
     canvas.clipRRect(window);
     canvas.drawRect(client, Paint()..color = Colors.black);
 
-    if (sourceImage != null && client.width > 0.0 && client.height > 0.0) {
-      _drawImageContain(canvas, sourceImage, client);
-    }
-
     final R3Theme theme = R3Theme.of(scene.terminal.fontColor);
-
-    final String? bottomText = switch (overlayMode) {
+    final String? incomingBottomText = switch (overlayMode) {
       StructuralOverlayMode.defaultOverlay =>
         defaultBottomOverlay.isEmpty ? null : defaultBottomOverlay,
       StructuralOverlayMode.custom =>
         renderedBottom.isEmpty ? null : renderedBottom,
       StructuralOverlayMode.none => null,
     };
+    final String? outgoingBottomText = !handoffActive
+        ? null
+        : switch (outgoingPlacement.overlayMode) {
+            StructuralOverlayMode.defaultOverlay =>
+              outgoingDefaultBottomOverlay.isEmpty
+                  ? null
+                  : outgoingDefaultBottomOverlay,
+            StructuralOverlayMode.custom =>
+              outgoingRenderedBottom.isEmpty ? null : outgoingRenderedBottom,
+            StructuralOverlayMode.none => null,
+          };
 
-    if (bottomText != null &&
-        client.width > 0.0 &&
-        client.height > 0.0) {
-      final TextPainter bottom = TextPainter(
-        text: TextSpan(
-          text: bottomText,
-          style: theme.micro.copyWith(
-            fontFamily: fontFamily,
-            color: R3Theme.textMid,
-            fontSize: (theme.micro.fontSize ?? 10.5) * s,
-            letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
-          ),
-        ),
-        maxLines: 1,
-        ellipsis: '…',
-        textDirection: TextDirection.ltr,
+    if (handoffActive && client.width > 0.0 && client.height > 0.0) {
+      if (sourceImage != null) {
+        canvas.save();
+        canvas.translate(client.width * (1.0 - slideT), 0.0);
+        _drawImageContain(canvas, sourceImage, client);
+        _paintStructuralBottomOverlay(
+          canvas: canvas,
+          client: client,
+          text: incomingBottomText,
+          fontFamily: fontFamily,
+          theme: theme,
+          scale: s,
+        );
+        canvas.restore();
+      }
+
+      canvas.save();
+      canvas.translate(-client.width * slideT, 0.0);
+      _drawImageContain(canvas, outgoingSourceImage, client);
+      _paintStructuralBottomOverlay(
+        canvas: canvas,
+        client: client,
+        text: outgoingBottomText,
+        fontFamily: fontFamily,
+        theme: theme,
+        scale: s,
       );
-      bottom.layout(maxWidth: math.max(0.0, client.width - 28.0 * s));
-      final double padX = 6.0 * s;
-      final double padY = 3.0 * s;
-      final Rect plate = Rect.fromLTWH(
-        client.left + 8.0 * s,
-        client.bottom - 7.0 * s - bottom.height - padY * 2.0,
-        bottom.width + padX * 2.0,
-        bottom.height + padY * 2.0,
+      canvas.restore();
+    } else {
+      if (sourceImage != null && client.width > 0.0 && client.height > 0.0) {
+        _drawImageContain(canvas, sourceImage, client);
+      }
+      _paintStructuralBottomOverlay(
+        canvas: canvas,
+        client: client,
+        text: incomingBottomText,
+        fontFamily: fontFamily,
+        theme: theme,
+        scale: s,
       );
-      canvas.drawRect(
-        plate,
-        Paint()..color = Colors.black.withValues(alpha: 0.72),
-      );
-      bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
     }
 
     if (header.height > 0.01) {
@@ -707,67 +852,152 @@ class ProgramStructuralFrameRenderer {
       );
 
       final double horizontalPad = 14.0 * s * c;
-      final TextPainter left = TextPainter(
-        text: TextSpan(
-          text: renderedTitle,
-          style: theme.value.copyWith(
-            fontFamily: fontFamily,
-            color: const Color(0xFFC7C3C0).withValues(alpha: c),
-            fontSize: 12.0 * s,
-          ),
-        ),
-        maxLines: 1,
-        ellipsis: '…',
-        textDirection: TextDirection.ltr,
-      );
-
-      final String? topText = switch (overlayMode) {
+      final String? incomingTopText = switch (overlayMode) {
         StructuralOverlayMode.defaultOverlay =>
           'F$sourceFrame / $sourceDurationFrames',
         StructuralOverlayMode.custom =>
           renderedTop.isEmpty ? null : renderedTop,
         StructuralOverlayMode.none => null,
       };
+      final String? outgoingTopText = !handoffActive
+          ? null
+          : switch (outgoingPlacement.overlayMode) {
+              StructuralOverlayMode.defaultOverlay =>
+                'F$outgoingSourceFrame / '
+                    '${outgoingPlacement.sourceDurationFrames}',
+              StructuralOverlayMode.custom =>
+                outgoingRenderedTop.isEmpty ? null : outgoingRenderedTop,
+              StructuralOverlayMode.none => null,
+            };
 
-      TextPainter? right;
-      double rightX = header.right - horizontalPad;
-      if (topText != null) {
-        right = TextPainter(
+      void paintHeaderText({
+        required String title,
+        required String? topText,
+        required double alpha,
+      }) {
+        if (alpha <= 0.001) return;
+
+        TextPainter? right;
+        double rightX = header.right - horizontalPad;
+        if (topText != null) {
+          right = TextPainter(
+            text: TextSpan(
+              text: topText,
+              style: theme.micro.copyWith(
+                fontFamily: fontFamily,
+                color: const Color(0xFF8E8884)
+                    .withValues(alpha: c * alpha),
+                fontSize: (theme.micro.fontSize ?? 10.5) * s,
+                letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+              ),
+            ),
+            maxLines: 1,
+            ellipsis: '…',
+            textDirection: TextDirection.ltr,
+          );
+          right.layout(maxWidth: math.max(0.0, header.width * 0.42));
+          rightX -= right.width;
+        }
+
+        final double labelMax = math.max(
+          0.0,
+          rightX -
+              (header.left + horizontalPad) -
+              (right == null ? 0.0 : 10.0 * s),
+        );
+        final TextPainter left = TextPainter(
           text: TextSpan(
-            text: topText,
-            style: theme.micro.copyWith(
+            text: title,
+            style: theme.value.copyWith(
               fontFamily: fontFamily,
-              color: const Color(0xFF8E8884).withValues(alpha: c),
-              fontSize: (theme.micro.fontSize ?? 10.5) * s,
-              letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
+              color: const Color(0xFFC7C3C0)
+                  .withValues(alpha: c * alpha),
+              fontSize: 12.0 * s,
             ),
           ),
           maxLines: 1,
           ellipsis: '…',
           textDirection: TextDirection.ltr,
-        );
-        right.layout(maxWidth: math.max(0.0, header.width * 0.42));
-        rightX -= right.width;
+        )..layout(maxWidth: labelMax);
+
+        final double leftY =
+            header.top + (header.height - left.height) / 2.0;
+        left.paint(canvas, Offset(header.left + horizontalPad, leftY));
+        if (right != null) {
+          final double rightY =
+              header.top + (header.height - right.height) / 2.0;
+          right.paint(canvas, Offset(rightX, rightY));
+        }
       }
 
-      final double labelMax = math.max(
-        0.0,
-        rightX -
-            (header.left + horizontalPad) -
-            (right == null ? 0.0 : 10.0 * s),
-      );
-      left.layout(maxWidth: labelMax);
-
-      final double leftY = header.top + (header.height - left.height) / 2.0;
-      left.paint(canvas, Offset(header.left + horizontalPad, leftY));
-      if (right != null) {
-        final double rightY = header.top + (header.height - right.height) / 2.0;
-        right.paint(canvas, Offset(rightX, rightY));
+      if (handoffActive) {
+        paintHeaderText(
+          title: outgoingRenderedTitle,
+          topText: outgoingTopText,
+          alpha: 1.0 - slideT,
+        );
+        paintHeaderText(
+          title: renderedTitle,
+          topText: incomingTopText,
+          alpha: slideT,
+        );
+      } else {
+        paintHeaderText(
+          title: renderedTitle,
+          topText: incomingTopText,
+          alpha: 1.0,
+        );
       }
     }
     canvas.restore();
 
     if (faded) canvas.restore();
+  }
+
+  void _paintStructuralBottomOverlay({
+    required Canvas canvas,
+    required Rect client,
+    required String? text,
+    required String fontFamily,
+    required R3Theme theme,
+    required double scale,
+  }) {
+    if (text == null ||
+        text.isEmpty ||
+        client.width <= 0.0 ||
+        client.height <= 0.0) {
+      return;
+    }
+
+    final TextPainter bottom = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: theme.micro.copyWith(
+          fontFamily: fontFamily,
+          color: R3Theme.textMid,
+          fontSize: (theme.micro.fontSize ?? 10.5) * scale,
+          letterSpacing: (theme.micro.letterSpacing ?? 0.0) * scale,
+        ),
+      ),
+      maxLines: 1,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    );
+    bottom.layout(maxWidth: math.max(0.0, client.width - 28.0 * scale));
+
+    final double padX = 6.0 * scale;
+    final double padY = 3.0 * scale;
+    final Rect plate = Rect.fromLTWH(
+      client.left + 8.0 * scale,
+      client.bottom - 7.0 * scale - bottom.height - padY * 2.0,
+      bottom.width + padX * 2.0,
+      bottom.height + padY * 2.0,
+    );
+    canvas.drawRect(
+      plate,
+      Paint()..color = Colors.black.withValues(alpha: 0.72),
+    );
+    bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
   }
 
   void _drawImageContain(Canvas canvas, ui.Image image, Rect destination) {
