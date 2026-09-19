@@ -51,12 +51,14 @@
 //
 // For a seamless A -> B update, the shell stays live. B is mounted underneath
 // the already-painted outgoing client, and the outgoing keyed EditVideoPreview
-// remains on top until B reports its first presentable frame. Both clients live
-// in the same Stack before and during the handoff, so Flutter can preserve A's
-// decoder State instead of disposing/reopening it merely to cover the seam.
-// Project time continues to advance; B is evaluated at its authored current
-// frame and is never restarted at frame zero. Placement-owned title/overlay
-// chrome is snapshotted with that cover so labels and picture swap atomically.
+// remains on top until B reports its first presentable frame. Readiness unlocks
+// the visual handoff rather than ending it: A then slides left while B enters
+// from the right over the beginning of B's authored showing span. Both clients
+// live in the same Stack throughout, so Flutter preserves A's decoder State
+// instead of disposing/reopening it merely to cover the seam. Project time
+// continues to advance; B is evaluated at its authored current frame and is
+// never restarted at frame zero. Placement-owned title/overlay chrome moves
+// with the same deterministic slide.
 //
 // When the caller supplies the live SceneEngine + terminal font, the terminal
 // portion of the transition is NOT reconstructed here. ScenePainter's native
