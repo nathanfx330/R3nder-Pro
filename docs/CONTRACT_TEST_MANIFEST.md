@@ -173,15 +173,17 @@ NODES and EDIT are editors over the document. First-class controls must serializ
 
 **Contract**
 
-Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, or create a desktop/wallpaper flash during seamless application handoff.
+Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, or create a desktop/wallpaper flash during seamless application handoff. Under `APPSWITCH:SLIDE`, first active paint unlocks the live client pan but authored incoming source time determines pan progress. The outgoing client remains available through the slide window, and editor projection must expose every authored source frame, including the final frame of an AUDIO-enabled seamless placement.
 
 **Proof**
 
 - `test/structural_sequence_readiness_test.dart`
 - `test/structural_sequence_decode_timing_determinism_test.dart`
+- `test/structural_sequence_preview_test.dart`
 - `test/program_preview_structural_switch_test.dart`
 - `test/program_preview_structural_late_handoff_test.dart`
 - `test/program_preview_structural_raster_handoff_test.dart`
+- `test/program_structural_audio_test.dart`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
 
