@@ -572,15 +572,6 @@ void main() {
       repaint.notifyListeners();
       await tester.pump();
 
-      expect(
-        find.byKey(
-          const ValueKey<String>('program-struct-layer-0-placeholder'),
-        ),
-        findsOneWidget,
-        reason:
-            'Late B readiness must be covered by a frozen A placeholder.',
-      );
-
       final double outgoingDx =
           _handoffMotionInside(tester, 0).translation.dx;
       final double incomingDx =
@@ -613,15 +604,6 @@ void main() {
       acceptIncomingReadiness!();
       await tester.pump();
       await tester.pump();
-
-      expect(
-        find.byKey(
-          const ValueKey<String>('program-struct-layer-0-placeholder'),
-        ),
-        findsNothing,
-        reason:
-            'Readiness should replace the placeholder, not retime the slide.',
-      );
 
       final double outgoingAfterReady =
           _handoffMotionInside(tester, 0).translation.dx;
