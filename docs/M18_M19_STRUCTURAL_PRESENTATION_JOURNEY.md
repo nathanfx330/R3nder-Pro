@@ -86,6 +86,8 @@ The important part was what must *not* happen:
 
 The full visual contract is preserved separately in `M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`.
 
+> **Historical note:** M18 used the word “SLIDE” for seamless shell continuity and geometry planning. At that milestone, same-mode STRUCT clients still hard-swapped once the incoming source had painted. The later work that added a literal horizontal client pan, and the timing/audio bugs it exposed, is recorded in `STRUCT_APPSWITCH_SLIDE_JOURNEY.md`.
+
 ---
 
 ## Battle 1: adjacency was not the same thing as textual adjacency
