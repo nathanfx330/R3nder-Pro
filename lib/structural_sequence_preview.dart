@@ -387,6 +387,18 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
       );
       final int sourceFrame =
           widget.placement.sourceFrameAt(widget.localFrame);
+
+      assert(() {
+        debugPrint(
+          'STRUCT readiness same-state: '
+          'source=${widget.placement.sourceRef.canonicalSource} '
+          'localFrame=${widget.localFrame} '
+          'sourceFrame=$sourceFrame '
+          'slideFrames=$slideFrames',
+        );
+        return true;
+      }());
+
       setState(() {
         _firstFrameReady = true;
         _handoffIncomingReady = true;
