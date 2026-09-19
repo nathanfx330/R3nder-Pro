@@ -29,7 +29,7 @@ String normalizeTemplateDocumentName(String rawName) {
   // Keep names portable between Linux and Windows builds. The dashboard is
   // creating one filename, never a path, so separators and Windows-reserved
   // filename characters have no useful meaning here.
-  final RegExp invalid = RegExp(r'[<>:"/\\\\|?*\\x00-\\x1F]');
+  final RegExp invalid = RegExp(r'[<>:"/\\|?*\x00-\x1F]');
   if (invalid.hasMatch(name)) {
     throw const TemplateDocumentException(
       'Document name contains characters that cannot be used in a filename.',
@@ -54,25 +54,27 @@ String createTemplateDocument({
 }) {
   final String fileName = normalizeTemplateDocumentName(rawName);
   final Directory dir = Directory(templatesDir);
-  if (!dir.existsSync()) {
-    dir.createSync(recursive: true);
-  }
-
-  final String wanted = fileName.toLowerCase();
-  for (final FileSystemEntity entity in dir.listSync()) {
-    final String existing =
-        entity.path.split(Platform.pathSeparator).last.toLowerCase();
-    if (existing == wanted) {
-      throw TemplateDocumentException(
-        'A document named $fileName already exists.',
-      );
-    }
-  }
-
-  final String path = '${dir.path}${Platform.pathSeparator}$fileName';
-  final File file = File(path);
   try {
-    file.writeAsStringSync('', flush: true);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+
+    final String wanted = fileName.toLowerCase();
+    for (final FileSystemEntity entity in dir.listSync()) {
+      final String existing =
+          entity.path.split(Platform.pathSeparator).last.toLowerCase();
+      if (existing == wanted) {
+        throw TemplateDocumentException(
+          'A document named $fileName already exists.',
+        );
+      }
+    }
+
+    final String path =
+        '${dir.path}${Platform.pathSeparator}$fileName';
+    File(path).writeAsStringSync('', flush: true);
+  } on TemplateDocumentException {
+    rethrow;
   } on FileSystemException catch (error) {
     throw TemplateDocumentException(
       'Could not create $fileName: ${error.message}',
