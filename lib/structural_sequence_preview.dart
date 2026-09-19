@@ -343,7 +343,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
         _handoffOutgoingSource != null &&
         _handoffIncomingReady) {
       final int slideFrames = math.min(
-        kAppPanFrames,
+        kStructuralSwitchSlideFrames,
         widget.placement.sourceDurationFrames,
       );
       final int sourceFrame =
@@ -364,7 +364,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
 
     if (_handoffOutgoingSource != null) {
       final int slideFrames = math.min(
-        kAppPanFrames,
+        kStructuralSwitchSlideFrames,
         widget.placement.sourceDurationFrames,
       );
       final int sourceFrame =
@@ -586,7 +586,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           );
 
           final int handoffSlideFrames = math.min(
-            kAppPanFrames,
+            kStructuralSwitchSlideFrames,
             placement.sourceDurationFrames,
           );
           final double handoffSlideRaw =
