@@ -67,6 +67,34 @@ double presentationCardFacePreviewScale(
   return fitted.width / reference.width;
 }
 
+PresentationCardFaceFocusTarget? presentationCardFacePreviewFocusTargetAt({
+  required Size slotSize,
+  required CardRequest card,
+  required ui.Image? image,
+  required String inheritedFontFamily,
+  required Offset position,
+  double inset = 8.0,
+}) {
+  final Rect rect = presentationCardFacePreviewRect(
+    slotSize,
+    inset: inset,
+  );
+  final double scale = presentationCardFacePreviewScale(
+    slotSize,
+    inset: inset,
+  );
+  if (rect.isEmpty || scale <= 0.0) return null;
+
+  return presentationCardFaceFocusTargetAt(
+    rect,
+    scale,
+    card,
+    image,
+    inheritedFontFamily,
+    position,
+  );
+}
+
 void paintPresentationCardFacePreview({
   required Canvas canvas,
   required Size slotSize,
@@ -103,6 +131,9 @@ class PresentationCardFacePreview extends StatefulWidget {
     this.inheritedFontFamily = 'monospace',
     this.height = 240.0,
     this.inset = 8.0,
+    this.onKickerTap,
+    this.onHeadingTap,
+    this.onBodyTap,
   });
 
   final CardRequest card;
@@ -110,6 +141,9 @@ class PresentationCardFacePreview extends StatefulWidget {
   final String inheritedFontFamily;
   final double height;
   final double inset;
+  final VoidCallback? onKickerTap;
+  final VoidCallback? onHeadingTap;
+  final VoidCallback? onBodyTap;
 
   @override
   State<PresentationCardFacePreview> createState() =>
@@ -173,15 +207,60 @@ class _PresentationCardFacePreviewState
             final double width =
                 constraints.maxWidth.isFinite ? constraints.maxWidth : 360.0;
             final Size slotSize = Size(width, widget.height);
-            return CustomPaint(
+            final ui.Image? image = _images?.imageFor(widget.card);
+
+            void handleTap(TapDownDetails details) {
+              final PresentationCardFaceFocusTarget? target =
+                  presentationCardFacePreviewFocusTargetAt(
+                slotSize: slotSize,
+                card: widget.card,
+                image: image,
+                inheritedFontFamily: widget.inheritedFontFamily,
+                position: details.localPosition,
+                inset: widget.inset,
+              );
+              switch (target) {
+                case PresentationCardFaceFocusTarget.kicker:
+                  widget.onKickerTap?.call();
+                  return;
+                case PresentationCardFaceFocusTarget.heading:
+                  widget.onHeadingTap?.call();
+                  return;
+                case PresentationCardFaceFocusTarget.body:
+                  widget.onBodyTap?.call();
+                  return;
+                case null:
+                  return;
+              }
+            }
+
+            final bool interactive =
+                widget.onKickerTap != null ||
+                widget.onHeadingTap != null ||
+                widget.onBodyTap != null;
+
+            final Widget paint = CustomPaint(
               key: const ValueKey<String>('presentation-card-face-preview-paint'),
               size: slotSize,
               painter: _PresentationCardFacePainter(
                 card: widget.card,
-                image: _images?.imageFor(widget.card),
+                image: image,
                 inheritedFontFamily: widget.inheritedFontFamily,
                 slotSize: slotSize,
                 inset: widget.inset,
+              ),
+            );
+
+            if (!interactive) return paint;
+            return MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                key: const ValueKey<String>(
+                  'presentation-card-face-preview-hit-surface',
+                ),
+                behavior: HitTestBehavior.opaque,
+                onTapDown: handleTap,
+                child: paint,
               ),
             );
           },
