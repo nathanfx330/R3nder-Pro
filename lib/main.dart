@@ -25,6 +25,7 @@ import 'session_store.dart';
 import 'diag.dart';
 import 'script_pipeline.dart';
 import 'editor_warmup.dart';
+import 'template_authoring.dart';
 import 'ui_theme.dart';
 
 /// The active phosphor color, lifted to app level so the MaterialApp theme
@@ -992,6 +993,97 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _showCreateDocumentDialog() async {
+    String draftName = '';
+
+    final bool? proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey<String>('new-document-dialog'),
+        title: Text(
+          'NEW DOCUMENT',
+          style: _t.value.copyWith(letterSpacing: 2),
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Creates an empty .txt document in the app's templates/ "
+                'folder, selects it, and opens it in Edit.',
+                style: _t.fine,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                key: const ValueKey<String>('new-document-name-field'),
+                autofocus: true,
+                initialValue: '',
+                onChanged: (value) => draftName = value,
+                textInputAction: TextInputAction.done,
+                style: _t.value,
+                decoration: const InputDecoration(
+                  labelText: 'Document name',
+                  hintText: 'my_sequence',
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          R3Button(
+            'Cancel',
+            theme: _t,
+            compact: true,
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          R3Button(
+            'Create',
+            key: const ValueKey<String>('new-document-create'),
+            theme: _t,
+            compact: true,
+            kind: R3ButtonKind.primary,
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (proceed != true) return;
+
+    final String fileName;
+    try {
+      fileName = createTemplateDocument(
+        templatesDir: '$_baseDir/templates',
+        rawName: draftName,
+      );
+    } on TemplateDocumentException catch (error) {
+      _snack(error.message, Colors.red);
+      return;
+    } catch (error) {
+      _logError('Failed to create document: $error');
+      _snack('Failed to create document: $error', Colors.red);
+      return;
+    }
+
+    setState(() {
+      final List<String> next = _availableTemplates
+          .where((name) => name != kNoTemplates)
+          .toList();
+      next.add(fileName);
+      next.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      _availableTemplates = next;
+      _idxTemplate = next.indexOf(fileName);
+    });
+
+    _rememberTemplate();
+    _applyTemplateText('');
+    _snack('Created $fileName', Colors.green.shade700);
+    _openEditor();
+  }
+
   Future<void> _showOpenWorkspaceDialog() async {
     final pathCtrl = TextEditingController(text: _workspace);
 
@@ -1566,43 +1658,9 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   }
 
   void _openEditor() {
-    String selFile = _activeTemplate;
-
-    // Automatically create a new file if no templates exist
-    if (selFile == kNoTemplates) {
-      String newFileName = "untitled.txt";
-      int counter = 1;
-      File newFile = File('$_baseDir/templates/$newFileName');
-      
-      while (newFile.existsSync()) {
-        newFileName = "untitled_$counter.txt";
-        newFile = File('$_baseDir/templates/$newFileName');
-        counter++;
-      }
-
-      final starterText = "[SPEED:2]SYSTEM INITIALIZED...\n[PAUSE:30]\nREADY.";
-      try {
-        newFile.writeAsStringSync(starterText);
-        setState(() {
-          if (_availableTemplates.length == 1 &&
-              _availableTemplates[0] == kNoTemplates) {
-            _availableTemplates.clear();
-          }
-          _availableTemplates.add(newFileName);
-          // Re-sort rather than append. The list is sorted everywhere else
-          // now, and one appended entry would put the dropdown's order out
-          // of step with the order the next _scanTemplates rebuilds.
-          _availableTemplates
-              .sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-          _idxTemplate = _availableTemplates.indexOf(newFileName);
-          selFile = newFileName;
-        });
-        _rememberTemplate();
-        _applyTemplateText(starterText);
-      } catch (e) {
-        _snack('Failed to create new template: $e', Colors.red);
-        return;
-      }
+    if (_activeTemplate == kNoTemplates) {
+      unawaited(_showCreateDocumentDialog());
+      return;
     }
 
     // OWNERSHIP TRANSFERS HERE, once, on the way in. _warm is nulled in the
@@ -1952,20 +2010,44 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
                   const SizedBox(width: 14),
                   Expanded(
                     flex: 3,
-                    child: R3Dropdown<int>(
-                      theme: t,
-                      label: "Doc",
-                      // Failsafe in case the list is empty/reloading
-                      value: _idxTemplate < _availableTemplates.length ? _idxTemplate : 0,
-                      items: List.generate(_availableTemplates.length, (index) => index),
-                      itemLabel: (index) => _availableTemplates[index],
-                      onChanged: (newIdx) {
-                        if (newIdx != null && newIdx != _idxTemplate) {
-                          setState(() { _idxTemplate = newIdx; });
-                          _rememberTemplate();
-                          _loadActiveTemplate();
-                        }
-                      },
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: R3Dropdown<int>(
+                            theme: t,
+                            label: "Doc",
+                            // Failsafe in case the list is empty/reloading
+                            value: _idxTemplate < _availableTemplates.length
+                                ? _idxTemplate
+                                : 0,
+                            items: List.generate(
+                              _availableTemplates.length,
+                              (index) => index,
+                            ),
+                            itemLabel: (index) => _availableTemplates[index],
+                            onChanged: (newIdx) {
+                              if (newIdx != null && newIdx != _idxTemplate) {
+                                setState(() {
+                                  _idxTemplate = newIdx;
+                                });
+                                _rememberTemplate();
+                                _loadActiveTemplate();
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        R3Button(
+                          "New Doc",
+                          key: const ValueKey<String>(
+                            'dashboard-new-document',
+                          ),
+                          theme: t,
+                          compact: true,
+                          onPressed: _showCreateDocumentDialog,
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 14),
