@@ -156,6 +156,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   String _handoffOutgoingWindowTitle = '';
   String _handoffOutgoingTopOverlay = '';
   String _handoffOutgoingBottomOverlay = '';
+  bool _handoffIncomingReady = false;
 
   void _clearHandoffCover() {
     _handoffOutgoingSource = null;
@@ -166,6 +167,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     _handoffOutgoingWindowTitle = '';
     _handoffOutgoingTopOverlay = '';
     _handoffOutgoingBottomOverlay = '';
+    _handoffIncomingReady = false;
   }
 
   EditDocumentModel? _modelForDocument() {
@@ -333,7 +335,22 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           oldWidget.placement.effectiveWindowTitle;
       _handoffOutgoingTopOverlay = oldWidget.placement.topOverlay;
       _handoffOutgoingBottomOverlay = oldWidget.placement.bottomOverlay;
+      _handoffIncomingReady = false;
       return;
+    }
+
+    if (!sourceRefChanged &&
+        _handoffOutgoingSource != null &&
+        _handoffIncomingReady) {
+      final int slideFrames = math.min(
+        kAppPanFrames,
+        widget.placement.sourceDurationFrames,
+      );
+      final int sourceFrame =
+          widget.placement.sourceFrameAt(widget.localFrame);
+      if (slideFrames <= 1 || sourceFrame >= slideFrames - 1) {
+        _clearHandoffCover();
+      }
     }
 
     if (sourceRefChanged || previewInfrastructureChanged) {
@@ -346,9 +363,18 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     if (!mounted) return;
 
     if (_handoffOutgoingSource != null) {
+      final int slideFrames = math.min(
+        kAppPanFrames,
+        widget.placement.sourceDurationFrames,
+      );
+      final int sourceFrame =
+          widget.placement.sourceFrameAt(widget.localFrame);
       setState(() {
-        _clearHandoffCover();
         _firstFrameReady = true;
+        _handoffIncomingReady = true;
+        if (slideFrames <= 1 || sourceFrame >= slideFrames - 1) {
+          _clearHandoffCover();
+        }
       });
       widget.onFirstFrameReady?.call();
       return;
@@ -559,6 +585,19 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             fullTerminal.height * cursorFraction.height * terminalScale,
           );
 
+          final int handoffSlideFrames = math.min(
+            kAppPanFrames,
+            placement.sourceDurationFrames,
+          );
+          final double handoffSlideT =
+              _handoffOutgoingSource != null &&
+                      _handoffIncomingReady &&
+                      handoffSlideFrames > 1
+                  ? (sourceFrame / (handoffSlideFrames - 1))
+                      .clamp(0.0, 1.0)
+                      .toDouble()
+                  : 0.0;
+
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -653,6 +692,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       outgoingWindowTitle: _handoffOutgoingWindowTitle,
                       outgoingTopOverlay: _handoffOutgoingTopOverlay,
                       outgoingBottomOverlay: _handoffOutgoingBottomOverlay,
+                      handoffSlideT: handoffSlideT,
                     ),
                   ),
                 ),
@@ -920,6 +960,7 @@ class _StructuralWindow extends StatelessWidget {
   final String outgoingWindowTitle;
   final String outgoingTopOverlay;
   final String outgoingBottomOverlay;
+  final double handoffSlideT;
 
   const _StructuralWindow({
     super.key,
@@ -948,6 +989,7 @@ class _StructuralWindow extends StatelessWidget {
     this.outgoingWindowTitle = '',
     this.outgoingTopOverlay = '',
     this.outgoingBottomOverlay = '',
+    this.handoffSlideT = 0.0,
   });
 
   Widget _videoPreview({
@@ -1109,25 +1151,40 @@ class _StructuralWindow extends StatelessWidget {
                 child: showVideo
                     ? Stack(
                         fit: StackFit.expand,
+                        clipBehavior: Clip.hardEdge,
                         children: [
-                          _videoPreview(
-                            previewSource: source,
-                            previewDocument: rawDocument,
-                            previewFrame: sourceFrame,
-                            playing: isPlaying,
-                            previewOverlayMode: overlayMode,
-                            previewBottomOverlay: bottomOverlay,
-                            onReady: onFirstFrameReady,
+                          FractionalTranslation(
+                            key: const ValueKey<String>(
+                              'structural-handoff-incoming',
+                            ),
+                            translation: showingCover
+                                ? Offset(1.0 - handoffSlideT, 0.0)
+                                : Offset.zero,
+                            child: _videoPreview(
+                              previewSource: source,
+                              previewDocument: rawDocument,
+                              previewFrame: sourceFrame,
+                              playing: isPlaying,
+                              previewOverlayMode: overlayMode,
+                              previewBottomOverlay: bottomOverlay,
+                              onReady: onFirstFrameReady,
+                            ),
                           ),
                           if (showingCover)
-                            _videoPreview(
-                              previewSource: coverSource,
-                              previewDocument: coverDocument,
-                              previewFrame: outgoingSourceFrame,
-                              playing: false,
-                              previewOverlayMode: outgoingOverlayMode,
-                              previewBottomOverlay: outgoingBottomOverlay,
-                              onReady: null,
+                            FractionalTranslation(
+                              key: const ValueKey<String>(
+                                'structural-handoff-outgoing',
+                              ),
+                              translation: Offset(-handoffSlideT, 0.0),
+                              child: _videoPreview(
+                                previewSource: coverSource,
+                                previewDocument: coverDocument,
+                                previewFrame: outgoingSourceFrame,
+                                playing: false,
+                                previewOverlayMode: outgoingOverlayMode,
+                                previewBottomOverlay: outgoingBottomOverlay,
+                                onReady: null,
+                              ),
                             ),
                         ],
                       )
