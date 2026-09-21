@@ -130,6 +130,11 @@ frame mapping. Confirmation emits one complete source change; cancellation and
 stale or conflicting confirmations emit none. One MOSAIC undo restores the
 complete authored source, and history clears on external source replacement.
 
+After trimming, structural presentation and AUDIO placement derive the same
+shorter MOSAIC source duration from canonical authored geometry. The final
+showing frame and the exclusive audio end therefore move together without a
+second duration authority or an extra program-time adjustment.
+
 **Proof**
 
 - `test/mosaic_source_test.dart`
@@ -137,6 +142,7 @@ complete authored source, and history clears on external source replacement.
 - `test/mosaic_trim_operation_test.dart`
 - `test/mosaic_trim_impact_test.dart`
 - `test/mosaic_trim_ui_test.dart`
+- `test/mosaic_trim_program_parity_test.dart`
 - `test/mosaic_remove_clip_test.dart`
 - `test/mosaic_surface_model_test.dart`
 - `test/mosaic_timeline_edit_test.dart`
