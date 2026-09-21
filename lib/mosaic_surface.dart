@@ -19,9 +19,12 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
+import 'edit_source_history.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'mosaic_surface_model.dart';
+import 'mosaic_trim.dart';
+import 'mosaic_trim_impact.dart';
 import 'ui_theme.dart';
 
 class MosaicSurface extends StatefulWidget {
@@ -62,6 +65,8 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
   String? _selectedClipId;
   String? _error;
   double _pixelsPerFrame = 2.0;
+  final EditSourceHistory _history = EditSourceHistory();
+  bool _trimDialogOpen = false;
 
   @override
   void initState() {
@@ -72,9 +77,60 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
   @override
   void didUpdateWidget(covariant MosaicSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.source != oldWidget.source && widget.source != _workingSource) {
+    if (widget.mosaicId != oldWidget.mosaicId) {
+      _workingSource = widget.source;
+      _selectedPaneId = null;
+      _selectedClipId = null;
+      _error = null;
+      _history.clear();
+    } else if (widget.source != oldWidget.source &&
+        widget.source != _workingSource) {
       _workingSource = widget.source;
       _error = null;
+      _history.clear();
+      _retainSelection();
+    }
+  }
+
+  EditSourceSnapshot _snapshot() => EditSourceSnapshot(
+        source: _workingSource,
+        selectedTrackId: null,
+        selectedPaneId: _selectedPaneId,
+        selectedClipId: _selectedClipId,
+      );
+
+  void _retainSelection() {
+    final String? paneId = _selectedPaneId;
+    final String? clipId = _selectedClipId;
+    if (paneId != null && clipId != null) {
+      try {
+        MosaicSurfaceDocument.parse(_workingSource, widget.mosaicId)
+            .clip(paneId, clipId);
+        return;
+      } catch (_) {}
+    }
+    _selectedPaneId = null;
+    _selectedClipId = null;
+  }
+
+  void _restoreHistory({required bool redo}) {
+    if (widget.isPlaying || _trimDialogOpen) return;
+    final EditSourceSnapshot? target =
+        redo ? _history.redo(_snapshot()) : _history.undo(_snapshot());
+    if (target == null) return;
+    try {
+      MosaicSurfaceDocument.parse(target.source, widget.mosaicId);
+      setState(() {
+        _workingSource = target.source;
+        _selectedPaneId = target.selectedPaneId;
+        _selectedClipId = target.selectedClipId;
+        _retainSelection();
+        _error = null;
+      });
+      widget.onSourceChanged(target.source);
+    } catch (error) {
+      _history.clear();
+      setState(() => _error = 'Unable to restore MOSAIC history: $error');
     }
   }
 
@@ -95,10 +151,17 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     }
 
     try {
+      final EditSourceSnapshot before = _snapshot();
       final String next = operation(document);
       MosaicSurfaceDocument.parse(next, widget.mosaicId);
+      if (next == _workingSource) {
+        setState(() => _error = null);
+        return true;
+      }
       setState(() {
+        _history.record(before);
         _workingSource = next;
+        _retainSelection();
         _error = null;
       });
       widget.onSourceChanged(next);
@@ -106,6 +169,77 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     } catch (error) {
       setState(() => _error = '$error');
       return false;
+    }
+  }
+
+  Future<void> _showTrimProblem(String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        backgroundColor: R3Theme.panel,
+        title: Text('Cannot trim MOSAIC', style: widget.theme.value),
+        content: SizedBox(
+          width: sc(540),
+          child: SingleChildScrollView(
+            child: Text(message, style: widget.theme.fine),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('CLOSE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _trimToShortest() async {
+    if (widget.isPlaying || _trimDialogOpen) return;
+    final String sourceBefore = _workingSource;
+    final String mosaicId = widget.mosaicId;
+    setState(() => _trimDialogOpen = true);
+    try {
+      final MosaicTrimImpact? impact = previewMosaicTrim(sourceBefore, mosaicId);
+      if (impact == null) return;
+      final bool? confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text('Trim MOSAIC.$mosaicId?', style: widget.theme.value),
+          content: SizedBox(
+            width: sc(540),
+            child: SingleChildScrollView(
+              child: Text(impact.summary, style: widget.theme.fine),
+            ),
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey<String>('mosaic-trim-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              key: const ValueKey<String>('mosaic-trim-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('TRIM'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirmed != true) return;
+      if (_workingSource != sourceBefore || widget.mosaicId != mosaicId ||
+          widget.isPlaying) {
+        await _showTrimProblem(
+          'The MOSAIC changed or playback started. Review the trim again.',
+        );
+        return;
+      }
+      _commit((_) => impact.sourceAfter);
+    } catch (error) {
+      if (mounted) await _showTrimProblem('$error');
+    } finally {
+      if (mounted) setState(() => _trimDialogOpen = false);
     }
   }
 
@@ -453,6 +587,38 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
           Text(
             '${mosaic.projectFrameCount}F COMPOSITION',
             style: widget.theme.micro,
+          ),
+          Tooltip(
+            message: 'End all panes when the first populated pane ends. '
+                'Existing gaps remain.',
+            child: R3Button(
+              'Trim to shortest',
+              key: const ValueKey<String>('mosaic-trim-shortest'),
+              theme: widget.theme,
+              compact: true,
+              onPressed: widget.isPlaying || _trimDialogOpen ||
+                      mosaicCommonEndFrame(mosaic) == null
+                  ? null
+                  : _trimToShortest,
+            ),
+          ),
+          R3Button(
+            'UNDO',
+            key: const ValueKey<String>('mosaic-undo'),
+            theme: widget.theme,
+            compact: true,
+            onPressed: widget.isPlaying || _trimDialogOpen || !_history.canUndo
+                ? null
+                : () => _restoreHistory(redo: false),
+          ),
+          R3Button(
+            'REDO',
+            key: const ValueKey<String>('mosaic-redo'),
+            theme: widget.theme,
+            compact: true,
+            onPressed: widget.isPlaying || _trimDialogOpen || !_history.canRedo
+                ? null
+                : () => _restoreHistory(redo: true),
           ),
         ],
       ),

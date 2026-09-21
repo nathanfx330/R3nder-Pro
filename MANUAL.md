@@ -423,6 +423,30 @@ The pane layout controls spatial composition. The clips inside each pane control
 
 The MOSAIC's total frame count comes from the authored structural sources and their project-time placement. It is not a second editable duration field.
 
+### Trim pane endings together
+
+Choose **Trim to shortest** in the MOSAIC layout bar to end all populated panes
+when the earliest populated pane ends. Its tooltip states the boundary:
+"End all panes when the first populated pane ends. Existing gaps remain."
+
+The confirmation shows frames removed, clips trimmed or removed, pane cues that
+become dormant, cues deleted with removed clips, affected STRUCT placements,
+and consumer clips that would overrun the shorter MOSAIC. Review these effects,
+then choose **TRIM** or **CANCEL**. Referenced EDIT sequences and consumer clips
+are not rewritten. Every STRUCT use of this MOSAIC gets shorter, moving later
+TEXT timing earlier.
+
+A trim that would cut an incoming crossfade short or empty a populated pane is
+rejected with all conflicts listed in authored pane and clip order. Existing
+gaps, empty panes, missing media, and source overruns are separate concerns.
+The button is disabled during playback, with fewer than two populated panes,
+or when populated panes already end together.
+
+Use **UNDO** to restore the entire trim in one step and **REDO** to reapply it.
+MOSAIC history restores exact script snapshots and clip selection. Like EDIT
+history, it is local to the active surface and clears when another source is
+selected or an external document replacement arrives.
+
 When the MOSAIC feels right, it exists as a named source such as:
 
 ```text

@@ -172,8 +172,47 @@ applying a successful trim a second time is a no-op.
 
 `test/mosaic_trim_operation_test.dart` proves the complete operation, exact
 LF/CRLF preservation, half-open boundaries, idempotence, crossfade and empty
-pane rejection, and complete ordered conflict reporting. The button and its
-impact summary remain T3; program presentation/audio parity remains T4.
+pane rejection, and complete ordered conflict reporting. Program
+presentation/audio parity remains T4.
+
+## Trim confirmation and history (T3)
+
+The MOSAIC layout bar exposes **Trim to shortest**, with the tooltip
+"End all panes when the first populated pane ends. Existing gaps remain."
+It is disabled during playback, while its dialog is open, or when the T0 helper
+returns no candidate. Conflicts appear in a scrollable dialog, preserving the
+complete ordered T2 message rather than truncating it into the error banner.
+
+`previewMosaicTrim` in `lib/mosaic_trim_impact.dart` prepares the exact T2 result
+and an impact summary without emitting an edit. It reports composition frames
+removed, clips trimmed and removed, newly dormant pane cues, cues deleted with
+clips, executable STRUCT placements by original document line, and direct
+consumer clips that will overrun. It uses `cueProjectOffset` for CARD, SIDECARD,
+DOSSIER, and MAXIMIZE triggers and the existing STRUCT parser to exclude tags
+inside source definitions. Cue counts follow current pane cue ownership; cues
+inside referenced EDIT definitions are not copied into pane ownership. Cues
+already dormant before trimming are not counted as newly dormant.
+
+Consumer checks use each clip's exact last requested source frame, including
+IN and rational speed. Previously existing overruns are identified separately
+in the message. Consumer clips are reported in authored document order and are
+never automatically repaired.
+
+Confirmation applies the prepared string once through the MOSAIC commit path.
+Cancellation emits no source change and creates no history entry. If the
+source, selected MOSAIC, or playback state changes while the dialog is open,
+confirmation refuses the stale result and asks for a fresh review.
+
+MOSAIC reuses `EditSourceHistory` for exact source snapshots, with optional pane
+selection metadata. UNDO and REDO restore the whole operation in one action.
+All MOSAIC commit operations participate so later edits cannot be silently
+discarded by undoing an older trim. Parent echoes preserve history; unrelated
+external source replacements or a MOSAIC identity change clear it. This is
+transient surface history, not a second authored project model.
+
+Proof: `test/mosaic_trim_impact_test.dart` covers summary semantics and
+`test/mosaic_trim_ui_test.dart` covers confirmation, cancellation, one-step
+undo/redo, disabled states, complete errors, stale dialogs, and history resets.
 
 ---
 
