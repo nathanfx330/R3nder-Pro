@@ -100,7 +100,7 @@ MOSAIC duration is authored geometry: the maximum pane-local CLIP end.
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
-endpoint for the planned **Trim to shortest** operation. It takes the minimum
+endpoint for the **Trim to shortest** operation. It takes the minimum
 `projectFrameCount` among panes containing at least one clip. It returns null
 when fewer than two panes are populated or the candidate already equals the
 MOSAIC duration.
@@ -110,10 +110,10 @@ crossfade overlap. It does not sum clip lengths, inspect source media, close
 gaps, or introduce a separate duration authority. Existing IN and speed values
 do not change authored project duration.
 
-T0 is calculation only, proved by `test/mosaic_trim_test.dart`. It does not yet
-provide a trim operation or button. A candidate is not permission to trim:
-later validation must reject cuts that break incoming crossfades or remove all
-content from a populated pane. Calculation leaves the model unchanged.
+T0 is calculation only, proved by `test/mosaic_trim_test.dart`. A candidate is
+not permission to trim: the T2 operation below validates cuts that break
+incoming crossfades or remove all content from a populated pane. Calculation
+leaves the model unchanged.
 
 ## Single pane clip removal (T1)
 
@@ -127,12 +127,53 @@ removal does not close gaps or shift later clips.
 
 The operation validates the resulting structural graph before returning source.
 Unknown pane or clip IDs throw. Removing a pane's final clip retains the empty
-PANE and its layout position. That is valid for this primitive; the planned
-trim operation must separately reject any trim that empties a populated pane.
+PANE and its layout position. That is valid for this primitive; the T2 trim
+operation separately rejects any trim that empties a populated pane.
 
 `test/mosaic_remove_clip_test.dart` proves exact LF/CRLF preservation, scoped
 removal, incoming crossfade ownership, empty pane retention, derived duration
 after reparsing, and validation failures. T1 provides no new UI control.
+
+## Complete trim operation (T2)
+
+`trimMosaicToShortest(source, mosaicId)` in `lib/mosaic_trim.dart` returns one
+complete script string. It calculates the common endpoint T, validates every
+populated pane, and then chains the existing clip removal and end trim
+operations. Every rewrite reparses the current string to obtain fresh offsets.
+The caller can adopt the final result as one undo entry; T2 itself has no UI or
+undo state.
+
+Half-open clip ranges determine what changes:
+
+- clips ending at or before T remain byte identical;
+- clips starting at or after T are removed;
+- clips crossing T retain their AT, IN, speed, options, and body while their
+  authored duration is shortened to end at T.
+
+Before rewriting, the operation collects all incoming crossfades that would
+exceed the remaining clip duration and all populated panes whose clips would
+be removed completely. It throws one `MosaicTrimException` containing immutable
+conflict details and a combined message naming every affected pane and clip.
+Diagnostics are explicitly sorted by original authored pane index, then clip
+index, with conflict kind as a final tiebreak. They are not sorted by ID or
+timeline position. An incoming crossfade that ends exactly at T is permitted.
+
+On success, the derived MOSAIC duration equals T. No separate duration field or
+render clamp is introduced. Empty panes remain excluded from the calculation;
+existing leading and internal gaps remain authored. Referenced source content
+is not probed, so source overruns remain a separate concern.
+
+Referenced EDIT definitions, consumer clips, and STRUCT text remain unchanged.
+Consumers can consequently overrun the newly shorter source; future UI impact
+reporting must make that visible. Cues inside surviving clips also remain
+authored and may become dormant when their trigger leaves the trimmed window.
+The operation returns the original string when no shortening is available, and
+applying a successful trim a second time is a no-op.
+
+`test/mosaic_trim_operation_test.dart` proves the complete operation, exact
+LF/CRLF preservation, half-open boundaries, idempotence, crossfade and empty
+pane rejection, and complete ordered conflict reporting. The button and its
+impact summary remain T3; program presentation/audio parity remains T4.
 
 ---
 

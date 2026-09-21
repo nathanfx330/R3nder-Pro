@@ -119,10 +119,17 @@ pane and every surrounding byte. It preserves surviving clip timing and
 validates the resulting structural graph before returning source. Higher-level
 trim validation owns the rule against emptying a populated pane.
 
+The complete trim operation validates all blocking crossfades and panes that
+would become empty before rewriting. Conflicts are reported in explicit
+authored pane and clip order. Successful trims align pane endings through
+canonical clip edits, preserve unrelated bytes and referenced sources, and
+return one complete string without introducing a second duration authority.
+
 **Proof**
 
 - `test/mosaic_source_test.dart`
 - `test/mosaic_trim_test.dart`
+- `test/mosaic_trim_operation_test.dart`
 - `test/mosaic_remove_clip_test.dart`
 - `test/mosaic_surface_model_test.dart`
 - `test/mosaic_timeline_edit_test.dart`
