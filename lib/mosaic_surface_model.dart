@@ -366,6 +366,18 @@ class MosaicSurfaceDocument {
     return next;
   }
 
+  /// Removes one complete CLIP block, including its incoming crossfade and cues.
+  ///
+  /// Surrounding source and surviving clip timing remain untouched. Removing
+  /// the last clip leaves the PANE in place; higher-level operations such as
+  /// trim-to-shortest must enforce their own populated-pane requirements.
+  String removeClip(String paneId, String clipId) {
+    final EditClip selected = clip(paneId, clipId);
+    final String next = model.cst.replaceBlock(selected.block, '');
+    _validateRenderable(next);
+    return next;
+  }
+
   String clearPane(String paneId) {
     final MosaicPane target = pane(paneId);
     final String newline = source.contains('\r\n') ? '\r\n' : '\n';

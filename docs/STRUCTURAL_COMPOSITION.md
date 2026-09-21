@@ -115,6 +115,25 @@ provide a trim operation or button. A candidate is not permission to trim:
 later validation must reject cuts that break incoming crossfades or remove all
 content from a populated pane. Calculation leaves the model unchanged.
 
+## Single pane clip removal (T1)
+
+`MosaicSurfaceDocument.removeClip(paneId, clipId)` in
+`lib/mosaic_surface_model.dart` returns source with exactly the selected CLIP
+block removed. Its incoming crossfade, cues, and other body content leave with
+that block. Every byte outside the block remains unchanged, including comments,
+line endings, referenced EDIT definitions, other panes, and STRUCT placements.
+Surviving clips keep their authored positions, source ranges, and transitions;
+removal does not close gaps or shift later clips.
+
+The operation validates the resulting structural graph before returning source.
+Unknown pane or clip IDs throw. Removing a pane's final clip retains the empty
+PANE and its layout position. That is valid for this primitive; the planned
+trim operation must separately reject any trim that empties a populated pane.
+
+`test/mosaic_remove_clip_test.dart` proves exact LF/CRLF preservation, scoped
+removal, incoming crossfade ownership, empty pane retention, derived duration
+after reparsing, and validation failures. T1 provides no new UI control.
+
 ---
 
 # 3. Recursive local time

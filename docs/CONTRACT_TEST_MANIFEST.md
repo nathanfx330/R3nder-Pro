@@ -114,10 +114,16 @@ endings only. Empty panes are excluded; fewer than two populated panes or equal
 endings produce no candidate. This calculation neither mutates authored state
 nor validates whether a trim can be applied safely.
 
+Single pane clip removal deletes only the selected CLIP block, retaining the
+pane and every surrounding byte. It preserves surviving clip timing and
+validates the resulting structural graph before returning source. Higher-level
+trim validation owns the rule against emptying a populated pane.
+
 **Proof**
 
 - `test/mosaic_source_test.dart`
 - `test/mosaic_trim_test.dart`
+- `test/mosaic_remove_clip_test.dart`
 - `test/mosaic_surface_model_test.dart`
 - `test/mosaic_timeline_edit_test.dart`
 - `test/structural_source_export_test.dart`
