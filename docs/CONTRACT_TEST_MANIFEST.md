@@ -109,9 +109,41 @@ Persistent media decoders answer exact source-frame requests. Requested and actu
 
 EDIT may be evaluated as a reusable source, MOSAIC composes structural sources into panes, recursion is bounded, and exact offline structural export rejects pending/offline/wrong-frame leaf decode rather than silently substituting pixels.
 
+The MOSAIC common endpoint helper derives a trim candidate from populated pane
+endings only. Empty panes are excluded; fewer than two populated panes or equal
+endings produce no candidate. This calculation neither mutates authored state
+nor validates whether a trim can be applied safely.
+
+Single pane clip removal deletes only the selected CLIP block, retaining the
+pane and every surrounding byte. It preserves surviving clip timing and
+validates the resulting structural graph before returning source. Higher-level
+trim validation owns the rule against emptying a populated pane.
+
+The complete trim operation validates all blocking crossfades and panes that
+would become empty before rewriting. Conflicts are reported in explicit
+authored pane and clip order. Successful trims align pane endings through
+canonical clip edits, preserve unrelated bytes and referenced sources, and
+return one complete string without introducing a second duration authority.
+
+Trim impact reporting uses existing cue and STRUCT parsers plus exact source
+frame mapping. Confirmation emits one complete source change; cancellation and
+stale or conflicting confirmations emit none. One MOSAIC undo restores the
+complete authored source, and history clears on external source replacement.
+
+After trimming, structural presentation and AUDIO placement derive the same
+shorter MOSAIC source duration from canonical authored geometry. The final
+showing frame and the exclusive audio end therefore move together without a
+second duration authority or an extra program-time adjustment.
+
 **Proof**
 
 - `test/mosaic_source_test.dart`
+- `test/mosaic_trim_test.dart`
+- `test/mosaic_trim_operation_test.dart`
+- `test/mosaic_trim_impact_test.dart`
+- `test/mosaic_trim_ui_test.dart`
+- `test/mosaic_trim_program_parity_test.dart`
+- `test/mosaic_remove_clip_test.dart`
 - `test/mosaic_surface_model_test.dart`
 - `test/mosaic_timeline_edit_test.dart`
 - `test/structural_source_export_test.dart`

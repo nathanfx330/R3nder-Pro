@@ -157,7 +157,7 @@ double _programLayerOpacity(WidgetTester tester, int placementIndex) {
 
 void main() {
   testWidgets(
-    'seamless STRUCT preloads B, overlaps one active paint, and keeps decoder',
+    'seamless STRUCT keeps A through authored B slide and keeps decoder',
     (WidgetTester tester) async {
       final Directory root = Directory.systemTemp.createTempSync(
         'r3nder_struct_switch_preview_',
@@ -202,10 +202,44 @@ void main() {
         placementIndex: 0,
         localFrame: 0,
       );
+      final StructuralSequencePlacement secondPlacement = placements.last;
       final int secondProjectFrame = _findProjectFrame(
         scene,
         placementIndex: 1,
-        localFrame: 0,
+        localFrame: secondPlacement.contentStartFrame,
+      );
+      final int secondMiddleProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: secondPlacement.contentStartFrame + 1,
+      );
+      final int secondFinalProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: secondPlacement.contentStartFrame + 2,
+      );
+
+      expect(secondPlacement.sourceDurationFrames, 3);
+      expect(
+        structuralSwitchSlideWindowOpen(
+          sourceFrame: 0,
+          sourceDurationFrames: secondPlacement.sourceDurationFrames,
+        ),
+        isTrue,
+      );
+      expect(
+        structuralSwitchSlideWindowOpen(
+          sourceFrame: 1,
+          sourceDurationFrames: secondPlacement.sourceDurationFrames,
+        ),
+        isTrue,
+      );
+      expect(
+        structuralSwitchSlideWindowOpen(
+          sourceFrame: 2,
+          sourceDurationFrames: secondPlacement.sourceDurationFrames,
+        ),
+        isFalse,
       );
 
       expect(
@@ -278,8 +312,8 @@ void main() {
       await tester.pump();
 
       // B was logically ready while hidden, but alpha-zero preload never
-      // painted. On B's first active frame both shells therefore remain in the
-      // tree at full opacity, with A above B as the visual cover.
+      // painted. On B source frame zero both clients are present at their
+      // authored slide positions, with A retained as the outgoing client.
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsOneWidget,
@@ -291,10 +325,49 @@ void main() {
       expect(_programLayerOpacity(tester, 0), 1.0);
       expect(_programLayerOpacity(tester, 1), 1.0);
 
-      // The post-frame commit marks B as actually painted. The next build may
-      // now release A without ever exposing the base ScenePainter desktop.
+      // A paint-complete callback must not release A early. Slide lifetime is
+      // authored source time, not decoder readiness or number of Flutter paints.
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondMiddleProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
       await tester.pump();
 
+      // B source frame one is still inside the authored three-frame slide.
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('program-struct-layer-1')),
+        findsOneWidget,
+      );
+
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: secondFinalProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      // B source frame two closes the slide window. A can now leave the tree.
       expect(
         find.byKey(const ValueKey<String>('program-struct-layer-0')),
         findsNothing,
@@ -305,8 +378,8 @@ void main() {
       );
       expect(_programLayerOpacity(tester, 1), 1.0);
 
-      // B's MediaLayer/decoder survived preload, overlap, and release. It must
-      // not be disposed and reopened anywhere in the handoff.
+      // B's MediaLayer/decoder survived preload, the complete authored slide,
+      // and outgoing-client release. It must not be disposed and reopened.
       expect(backend.opens['/workspace/video/b.mp4'], 1);
       expect(backend.disposes['/workspace/video/b.mp4'] ?? 0, 0);
 

@@ -181,6 +181,14 @@ reparse
 
 This is why model-level edit operations are so important. Widgets convert gestures into frame-domain intent, then delegate authored mutation.
 
+MOSAIC uses the same `EditSourceHistory` snapshot mechanism as EDIT, retaining
+optional pane selection alongside the exact source. **Trim to shortest** first
+prepares a result and impact summary, then emits one source change only after
+confirmation. Cancellation and rejected or stale confirmations create no undo
+entry. A source echo from the parent preserves the local history; an external
+source replacement or a change of selected MOSAIC clears it. The snapshot is
+transient view history, never an independent durable representation of clips.
+
 ---
 
 # 7. Gesture coordinates are not durable state

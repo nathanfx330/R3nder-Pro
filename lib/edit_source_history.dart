@@ -1,6 +1,6 @@
 // ./lib/edit_source_history.dart
 //
-// Transient undo/redo history for the source-backed EDIT surface.
+// Transient undo/redo history for the source-backed EDIT and MOSAIC surfaces.
 //
 // History never becomes project state. Each entry restores one exact complete
 // authored script snapshot. It may also retain transient UI restoration
@@ -17,11 +17,13 @@ class EditSourceSnapshot {
   final String source;
   final String? selectedTrackId;
   final String? selectedClipId;
+  final String? selectedPaneId;
 
   const EditSourceSnapshot({
     required this.source,
     required this.selectedTrackId,
     required this.selectedClipId,
+    this.selectedPaneId,
   });
 }
 

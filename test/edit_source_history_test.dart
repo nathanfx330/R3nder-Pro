@@ -16,6 +16,22 @@ EditSourceSnapshot _snapshot(
 }
 
 void main() {
+  test('MOSAIC history restores pane selection beside the exact source', () {
+    final EditSourceHistory history = EditSourceHistory();
+    const EditSourceSnapshot before = EditSourceSnapshot(
+      source: 'before\r\n',
+      selectedTrackId: null,
+      selectedPaneId: 'pane2',
+      selectedClipId: 'tail',
+    );
+    history.record(before);
+    final EditSourceSnapshot restored = history.undo(_snapshot('after'))!;
+    expect(restored.source, 'before\r\n');
+    expect(restored.selectedPaneId, 'pane2');
+    expect(restored.selectedClipId, 'tail');
+    expect(restored.selectedTrackId, isNull);
+  });
+
   test('undo and redo restore exact source and selection snapshots', () {
     final EditSourceHistory history = EditSourceHistory();
     final EditSourceSnapshot before = _snapshot(
