@@ -168,9 +168,17 @@ void main() {
 
   final Map<String, String> disabledSources = <String, String>{
     'empty panes': '[MOSAIC:wall][PANE:a][/PANE][PANE:b][/PANE][/MOSAIC]',
-    'one populated pane': '''[MOSAIC:wall]
-[PANE:a][CLIP:a:video/a.mp4:0:0:100:1][/CLIP][/PANE]
-[PANE:b][/PANE][/MOSAIC]''',
+    'one populated pane': '''[EDIT:source]
+[TRACK:V1]
+[CLIP:media:video/source.mp4:0:0:300:1][/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:a][CLIP:a:EDIT.source:0:0:100:1][/CLIP][/PANE]
+[PANE:b][/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall]
+''',
     'equal pane endings': trimMosaicToShortest(_source, 'wall'),
   };
   for (final MapEntry<String, String> entry in disabledSources.entries) {
@@ -248,7 +256,7 @@ void main() {
     await _confirmTrim(tester);
     await tester.tap(_key('mosaic-undo'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('3 PANES'));
+    await tester.tap(find.text('1 PANE'));
     await tester.pumpAndSettle();
 
     expect(tester.widget<R3Button>(_key('mosaic-redo')).onPressed, isNull);
