@@ -109,9 +109,15 @@ Persistent media decoders answer exact source-frame requests. Requested and actu
 
 EDIT may be evaluated as a reusable source, MOSAIC composes structural sources into panes, recursion is bounded, and exact offline structural export rejects pending/offline/wrong-frame leaf decode rather than silently substituting pixels.
 
+The MOSAIC common endpoint helper derives a trim candidate from populated pane
+endings only. Empty panes are excluded; fewer than two populated panes or equal
+endings produce no candidate. This calculation neither mutates authored state
+nor validates whether a trim can be applied safely.
+
 **Proof**
 
 - `test/mosaic_source_test.dart`
+- `test/mosaic_trim_test.dart`
 - `test/mosaic_surface_model_test.dart`
 - `test/mosaic_timeline_edit_test.dart`
 - `test/structural_source_export_test.dart`

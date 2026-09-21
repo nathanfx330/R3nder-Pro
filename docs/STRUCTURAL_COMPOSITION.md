@@ -97,6 +97,24 @@ The current model supports one composition rather than paged MOSAIC presentation
 
 MOSAIC duration is authored geometry: the maximum pane-local CLIP end.
 
+## Common endpoint calculation (T0)
+
+`mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
+endpoint for the planned **Trim to shortest** operation. It takes the minimum
+`projectFrameCount` among panes containing at least one clip. It returns null
+when fewer than two panes are populated or the candidate already equals the
+MOSAIC duration.
+
+This calculation uses assembled pane endings, including placement offsets and
+crossfade overlap. It does not sum clip lengths, inspect source media, close
+gaps, or introduce a separate duration authority. Existing IN and speed values
+do not change authored project duration.
+
+T0 is calculation only, proved by `test/mosaic_trim_test.dart`. It does not yet
+provide a trim operation or button. A candidate is not permission to trim:
+later validation must reject cuts that break incoming crossfades or remove all
+content from a populated pane. Calculation leaves the model unchanged.
+
 ---
 
 # 3. Recursive local time
