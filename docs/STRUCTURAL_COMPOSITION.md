@@ -172,8 +172,9 @@ applying a successful trim a second time is a no-op.
 
 `test/mosaic_trim_operation_test.dart` proves the complete operation, exact
 LF/CRLF preservation, half-open boundaries, idempotence, crossfade and empty
-pane rejection, and complete ordered conflict reporting. Program
-presentation/audio parity remains T4.
+pane rejection, and complete ordered conflict reporting. T4 below proves that
+the resulting shorter source boundary is consumed identically by structural
+presentation and program audio.
 
 ## Trim confirmation and history (T3)
 
@@ -213,6 +214,28 @@ transient surface history, not a second authored project model.
 Proof: `test/mosaic_trim_impact_test.dart` covers summary semantics and
 `test/mosaic_trim_ui_test.dart` covers confirmation, cancellation, one-step
 undo/redo, disabled states, complete errors, stale dialogs, and history resets.
+
+## Program presentation and audio parity (T4)
+
+A successful trim changes only canonical MOSAIC clip geometry. The structural
+placement parser reparses that geometry and derives the shorter
+`sourceDurationFrames`; there is no separate trim duration cached by Preview,
+BAKE, or audio.
+
+The presentation boundary remains half-open. For a trimmed N-frame MOSAIC,
+source frame N - 1 is the last SHOWING frame and the next local frame belongs to
+the placement's closing stage. Program audio consumes the same placement-owned
+source duration, so its PCM span ends at the same exclusive source boundary.
+
+`test/mosaic_trim_program_parity_test.dart` proves both sides directly. It
+compares the placement before and after trimming, checks the exact final
+showing/first closing frames, traces the AUDIO-enabled STRUCT occurrence through
+the whole-program SceneEngine clock, and verifies that program duration and
+sample count shorten by exactly the removed MOSAIC frames once.
+
+T4 requires no second production mutation path. The existing structural
+placement and program-audio authorities already agree once the canonical
+MOSAIC source is reparsed.
 
 ---
 
