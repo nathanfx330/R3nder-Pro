@@ -719,37 +719,49 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             ),
             child: Row(
               children: [
-                Text(
-                  'PANE $paneNumber',
-                  style: widget.theme.microAccent,
-                ),
-                SizedBox(width: sc(8)),
-                Text(
-                  '${pane.clips.length} SEQUENCE${pane.clips.length == 1 ? '' : 'S'}',
-                  style: widget.theme.micro,
-                ),
-                if (selected != null) ...[
-                  SizedBox(width: sc(10)),
-                  Flexible(
-                    child: Text(
-                      '${selected.source}  AT ${selected.atFrame}  '
-                      'IN ${selected.inFrame}  ${selected.durationFrames}F',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: widget.theme.micro.copyWith(
-                        color: R3Theme.textBright,
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        'PANE $paneNumber',
+                        style: widget.theme.microAccent,
                       ),
-                    ),
+                      SizedBox(width: sc(8)),
+                      Flexible(
+                        child: Text(
+                          '${pane.clips.length} SEQUENCE${pane.clips.length == 1 ? '' : 'S'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: widget.theme.micro,
+                        ),
+                      ),
+                      if (selected != null) ...[
+                        SizedBox(width: sc(10)),
+                        Expanded(
+                          child: Text(
+                            '${selected.source}  AT ${selected.atFrame}  '
+                            'IN ${selected.inFrame}  ${selected.durationFrames}F',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: widget.theme.micro.copyWith(
+                              color: R3Theme.textBright,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-                const Spacer(),
-                if (hasSequences)
+                ),
+                if (hasSequences) ...[
+                  SizedBox(width: sc(6)),
                   R3Button(
                     'CLEAR',
                     theme: widget.theme,
                     compact: true,
                     onPressed: widget.isPlaying ? null : () => _clearPane(pane),
                   ),
+                ],
+                SizedBox(width: sc(6)),
                 R3Button(
                   'ADD SEQUENCE',
                   key: ValueKey<String>('mosaic-pane-add-sequence:${pane.id}'),
