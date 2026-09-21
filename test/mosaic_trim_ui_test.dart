@@ -243,7 +243,9 @@ void main() {
       (WidgetTester tester) async {
     final GlobalKey<_HarnessState> host = await _mount(tester);
     await _confirmTrim(tester);
-    host.currentState!.replaceSource('${host.currentState!.source}\nExternal');
+    host.currentState!.replaceSource(
+      '${host.currentState!.source}\n[#] External replacement\n',
+    );
     await tester.pumpAndSettle();
 
     expect(tester.widget<R3Button>(_key('mosaic-undo')).onPressed, isNull);
