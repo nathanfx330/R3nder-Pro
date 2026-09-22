@@ -218,6 +218,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceFrame,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -232,6 +233,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceDurationFrames,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -292,6 +294,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceFrame,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -306,6 +309,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceDurationFrames,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
