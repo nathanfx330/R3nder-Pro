@@ -45,17 +45,37 @@ TEXT AFTER
         ),
       );
 
-      final List<int> ownedFrames = <int>[
+      final List<int?> starts = editorStructuralPlacementStarts(
+        placements: <StructuralSequencePlacement>[placement],
+        rawLineAtFrame: result.rawLineAtFrame,
+      );
+      final List<int> authoredFrames = <int>[
         for (int frame = 0; frame < result.rawLineAtFrame.length; frame++)
-          if (result.rawLineAtFrame[frame] == placement.lineIndex) frame,
+          if (editorStructuralPlacementAtFrame(
+                placements: <StructuralSequencePlacement>[placement],
+                placementStarts: starts,
+                projectFrame: frame,
+              ) !=
+              null)
+            frame,
       ];
 
       expect(placement.resolves, isTrue);
-      expect(ownedFrames, isNotEmpty);
-      expect(ownedFrames.length, placement.durationFrames);
+      expect(starts.single, isNotNull);
+      expect(authoredFrames, isNotEmpty);
+      expect(authoredFrames.length, placement.durationFrames);
+      expect(authoredFrames.first, starts.single);
 
-      for (int i = 1; i < ownedFrames.length; i++) {
-        expect(ownedFrames[i], ownedFrames[i - 1] + 1);
+      for (int i = 1; i < authoredFrames.length; i++) {
+        expect(authoredFrames[i], authoredFrames[i - 1] + 1);
+      }
+
+      // rawLineAtFrame is a parser/read-head navigation map, not the authored
+      // structural clock. It may dwell on the STRUCT line for an extra
+      // control-only parser frame, but every authored STRUCT frame must still
+      // navigate back to the placement's source line.
+      for (final int frame in authoredFrames) {
+        expect(result.rawLineAtFrame[frame], placement.lineIndex);
       }
     } finally {
       scene.disposeImages();
