@@ -206,7 +206,10 @@ void _appendCardsForStructuralSource(
   Set<StructuralSourceRef> path,
   int depth,
 ) {
-  if (depth >= 8 || projectFrame < 0) return;
+  // The structural compositor and graph linter both allow depth eight.
+  // Process that level, but _appendNestedCardsFromClips will not descend to
+  // a ninth source.
+  if (depth > 8 || projectFrame < 0) return;
 
   switch (root.kind) {
     case StructuralSourceKind.edit:
