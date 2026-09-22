@@ -132,12 +132,14 @@ an edge-marked circular 16:9 fixture through the actual Linux MLT bridge into a
 distinct effective presentation shape for planning even though the legacy
 window/fullscreen mode enum remains intact. Split-to-split, including aspect
 changes, cuts both panes simultaneously with no added timing. A split/non-split
-shape change consumes only the existing incoming window budget: Preview holds
-the previous presentation stationary while the incoming shell remains live
-under it, and BAKE paints the same held previous presentation synchronously.
-Once that budget is over, readiness may delay only the reveal; authored source
-time continues and the eventual cut uses the current source frame. The old
-single-client horizontal APPSWITCH slide is never applied to a split boundary.
+shape change consumes only the existing incoming window budget. W7 spends that
+same budget on visible geometry rather than a stationary hold: the outgoing
+final presentation fades while the incoming first source frame follows the
+standard emergence-to-seated open curve. SPLIT applies the curve independently
+to both windows. Preview and BAKE share the entry/fade helpers. Readiness may
+delay visibility only; authored transition progress and source time never
+restart. The old single-client horizontal APPSWITCH slide is never applied to a
+split boundary.
 
 W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
 the top-level pane to the complete split client before the pane image reaches
@@ -163,6 +165,13 @@ that the CARD proof topology stopped at the PANE CLIP while the real project
 placed CARD inside its nested EDIT. The resolver and the three W6 boundary
 proofs have been strengthened for that topology and are awaiting local
 re-verification.
+
+W7 also makes effective SPLIT support explicitly timing-visible. The planner
+already uses effective presentation shape, so an unsupported SPLIT fallback can
+add or remove the existing 12-frame shape-change budget at a seamless neighbor.
+A middle placement between two SPLIT placements can shift later TEXT timing by
+24 frames when a pane becomes empty. The linter now states this consequence;
+the planner contract remains unchanged.
 
 ## Common endpoint calculation (T0)
 
