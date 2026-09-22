@@ -273,12 +273,57 @@ flutter test \
 dart run tool/check_doc_contracts.dart
 ```
 
-W4 does not begin until that gate passes locally.
+W3 passed locally with 30 tests and the documentation checker at 16 contracts /
+82 proof files.
 
 ### W4 - Preview
 
-Add live split presentation and prove seated pixel parity against BAKE. Run the
-edge-marked circle fixture against the actual media backend.
+W4 adds live seated split presentation without creating a second structural
+rendering stack. `StructuralSplitWindowPreview` owns one shared `MediaLayer`
+and `EditVideoCompositor` for both panes, and each pane enters through the W3
+`renderMosaicPaneAvailable` compositor boundary. Nested EDIT/MOSAIC resolution
+and decoder/cache lifetime therefore remain shared across both desktop windows.
+
+Preview and BAKE now also share `lib/structural_window_painter.dart`. The
+existing BAKE window raster code was extracted into that helper rather than
+reimplemented for Preview, so seated split chrome, shadows, clipping, title
+copy, overlay copy, and image contain fitting have one painter authority. Both
+surfaces consume the W1 split geometry and the W2 stable PANE 1/PANE 2 titles.
+
+Proof added in W4:
+
+- `test/structural_split_window_preview_test.dart` renders a supported split
+  with a nested EDIT in one pane, captures the live seated Preview raster, and
+  compares the opaque window interiors channel-for-channel with whole-program
+  BAKE;
+- `test/structural_source_export_native_test.dart` adds a Linux native probe
+  with a 16:9 edge-marked circular fixture rendered into a 4:3 pane request. All
+  four edge marks must survive and the white circle must remain circular. This
+  gate is intended to expose a real MLT sizing/crop/stretch defect rather than
+  weaken the assertion if the backend disagrees with the authored contain
+  contract.
+
+W4 intentionally stops at the seated surface. Entry/exit choreography,
+split-to-split cuts, aspect-change cuts, and delayed-readiness timing remain W5
+work; CARD routing and SIDECARD/MAXIMIZE suppression remain W6 work.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/mosaic_split_pane_compositor_test.dart \
+  test/program_preview_structural_chrome_runtime_test.dart \
+  test/program_preview_structural_switch_test.dart \
+  test/program_preview_structural_fullscreen_test.dart
+
+flutter test test/structural_source_export_native_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+W5 does not begin until that gate passes locally.
 
 ### W5 - transitions and readiness
 
