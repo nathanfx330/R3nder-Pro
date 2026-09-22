@@ -318,10 +318,13 @@ flutter test \
   test/structural_split_window_preview_test.dart \
   test/program_structural_split_bake_test.dart \
   test/mosaic_split_pane_compositor_test.dart \
+  test/structural_sequence_preview_test.dart \
   test/program_preview_structural_split_test.dart \
   test/program_preview_structural_chrome_runtime_test.dart \
   test/program_preview_structural_switch_test.dart \
-  test/program_preview_structural_fullscreen_test.dart
+  test/program_preview_structural_fullscreen_test.dart \
+  test/program_structural_export_test.dart \
+  test/program_structural_chrome_text_bake_test.dart
 
 flutter test test/structural_source_export_native_test.dart
 
