@@ -266,13 +266,19 @@ String _coldSplitOpeningSource({required bool maximized}) {
 }
 
 String _coldSameSourceSplitOpeningSource() => '''[SPEED:MAX]
+[EDIT:shared]
+[TRACK:V1]
+[CLIP:shared_leaf:video/shared.mp4:0:0:12:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
 [MOSAIC:wall]
 [PANE:left]
-[CLIP:left_leaf:video/shared.mp4:0:0:12:1]
+[CLIP:left_edit:EDIT.shared:0:0:12:1]
 [/CLIP]
 [/PANE]
 [PANE:right]
-[CLIP:right_leaf:video/shared.mp4:0:0:12:1]
+[CLIP:right_edit:EDIT.shared:0:0:12:1]
 [/CLIP]
 [/PANE]
 [/MOSAIC]
@@ -733,7 +739,7 @@ void main() {
   );
 
   testWidgets(
-    'cold SPLIT reuses one decoder when both panes reference the same media',
+    'cold SPLIT reuses one decoder when both panes reference the same nested EDIT',
     (WidgetTester tester) async {
       await _expectColdSameSourceSplitRetries(tester);
     },
