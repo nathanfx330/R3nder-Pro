@@ -1,8 +1,8 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: design locked for v1. W0 and W1 passed their local gates. W2 placement
-grammar/model/authoring/lint is implemented on
-`mosaic-w2-placement-authoring` and awaiting local Flutter verification.
+Status: design locked for v1. W0 through W5 passed their local gates.
+W6 cue routing and unsupported-shell policy is implemented on
+`mosaic-w6-split-cue-routing` and awaiting local Flutter verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -405,8 +405,62 @@ W6 does not begin until that gate passes locally.
 
 ### W6 - cue routing and unsupported shell cues
 
-Route CARD to the owning pane client. Lint SIDECARD and MAXIMIZE in split v1 and
-do not paint them.
+W6 makes cue ownership match the split presentation surface rather than the
+legacy Metro MOSAIC rectangle.
+
+For CARD, `structuralCardOverlayPlacementsForMosaicPane` evaluates one authored
+pane at source time and remaps that pane to a complete 0..1 split client. Both
+live `StructuralSplitWindowPreview` and whole-program BAKE composite the
+result over the decoded pane image before `StructuralSplitWindowPainter`
+receives it. The shared `compositeStructuralCardOverlaysToImage` helper keeps
+the actual CARD face painting identical in Preview and BAKE. A CARD authored in
+PANE 2 therefore cannot paint into PANE 1 merely because the reusable MOSAIC's
+legacy layout rectangle was wider or differently positioned.
+
+SIDECARD and MAXIMIZE remain authored cue types, but an effective SPLIT
+placement does not promote either cue into the outer structural shell. Preview
+and BAKE suppress both active and source-end SIDECARD/MAXIMIZE shell state, so
+they cannot move split geometry, alter close origin, or paint a side panel.
+Unsupported authored SPLIT still falls back to ordinary windowed presentation
+and therefore does not inherit this SPLIT-only cue restriction.
+
+`EditGraphLinter` emits warning-only
+`unsupportedSplitSideCard` and `unsupportedSplitMaximize` findings for those
+cues when the placement is an effective supported SPLIT. Malformed cue syntax
+continues to belong to the cue/script lint layer rather than making graph lint
+throw.
+
+Proof:
+
+- `test/structural_split_cue_policy_test.dart` proves pane-local CARD
+  ownership, full-client remapping, both warning codes, and ordinary-window
+  behavior for unsupported SPLIT fallback;
+- `test/structural_split_card_preview_test.dart` proves live Preview paints a
+  right-pane CARD only into the right split client and does not mount or
+  rasterize SIDECARD;
+- `test/program_structural_split_card_bake_test.dart` proves final BAKE has the
+  same CARD ownership and contains no SIDECARD panel pixels while retaining
+  both underlying pane images.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/structural_split_cue_policy_test.dart \
+  test/structural_split_card_preview_test.dart \
+  test/program_structural_split_card_bake_test.dart \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/card_overlay_test.dart \
+  test/card_overlay_state_test.dart \
+  test/structural_sequence_sidecard_shell_test.dart \
+  test/structural_sequence_maximize_test.dart \
+  test/structural_split_placement_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+W6 is complete only after that local gate passes.
 
 ## Non-goals
 
