@@ -1712,7 +1712,7 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
       final int generation = ++_previewStructuralBufferGeneration;
       final int currentFrame = _scene.frameCount;
       final int holdFrame =
-          (currentFrame - state.openingFrame).clamp(0, currentFrame);
+          (currentFrame - state.openingFrame).clamp(0, currentFrame).toInt();
 
       // Freeze authored time before doing any potentially slow sink work.
       _projectClock.seekScrub(
