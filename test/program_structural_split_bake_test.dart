@@ -111,6 +111,57 @@ Rect? _paneColorBounds(
   );
 }
 
+int _middleLocalFrameForStage(
+  StructuralSequencePlacement placement,
+  StructuralSequenceStage stage,
+) {
+  final List<int> frames = <int>[
+    for (int frame = 0; frame < placement.effectiveDurationFrames; frame++)
+      if (placement.stageAt(frame) == stage) frame,
+  ];
+  expect(frames, isNotEmpty);
+  return frames[frames.length ~/ 2];
+}
+
+int _findProjectFrame(
+  SceneEngine scene, {
+  required int placementIndex,
+  required int localFrame,
+}) {
+  for (int projectFrame = 0; projectFrame < 400; projectFrame++) {
+    expect(
+      scene.evaluate(
+        ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+      ).exact,
+      isTrue,
+    );
+    final StructuralRuntimeMarker? marker =
+        parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (marker == null || marker.placementIndex != placementIndex) continue;
+    if (_runtimeLocalFrame(scene, marker) == localFrame) return projectFrame;
+  }
+  fail('Missing placement $placementIndex local frame $localFrame.');
+}
+
+Future<Uint8List> _renderRgba(
+  ProgramStructuralFrameRenderer renderer,
+  SceneEngine scene,
+) async {
+  final ui.Image? image = await renderer.renderIfActive(
+    scene: scene,
+    fontFamily: 'monospace',
+  );
+  expect(image, isNotNull);
+  final ByteData? data =
+      await image!.toByteData(format: ui.ImageByteFormat.rawRgba);
+  image.dispose();
+  expect(data, isNotNull);
+  return data!.buffer.asUint8List(
+    data.offsetInBytes,
+    data.lengthInBytes,
+  );
+}
+
 void main() {
   test(
     'BAKE paints supported SPLIT MOSAIC panes as independent clients',
@@ -268,6 +319,113 @@ void main() {
       expect(red.right, lessThan(blue.left));
       expect(backend.opens['red.mp4'], 1);
       expect(backend.opens['blue.mp4'], 1);
+    },
+  );
+
+  test(
+    'BAKE gives SPLIT the normal window open and close geometry',
+    () async {
+      const String source = '''[SPEED:MAX]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
+
+      const int outputWidth = 640;
+      const int outputHeight = 360;
+      final Directory root = await Directory.systemTemp
+          .createTemp('r3nder_program_split_motion_bake_');
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final int openingLocal =
+          _middleLocalFrameForStage(placement, StructuralSequenceStage.opening);
+      final int showingLocal = _middleLocalFrameForStage(
+        placement,
+        StructuralSequenceStage.showing,
+      );
+      final int closingLocal =
+          _middleLocalFrameForStage(placement, StructuralSequenceStage.closing);
+
+      final CompiledScript compiled = compileScript(source, lineMarkers: false);
+      final SceneEngine scene = SceneEngine();
+      await scene.setup(
+        templateText: compiled.engineText,
+        fontColor: Colors.green,
+        bgColor: Colors.black,
+        width: 1920,
+        height: 1080,
+        scale: 1,
+        fontPath: 'monospace',
+        fontSize: 12,
+        lineSpacing: 16,
+        tracking: 0,
+        marginTop: 10,
+        marginSide: 10,
+        imagesDir: images.path,
+        spritesDir: sprites.path,
+        paneLifeConfig: compiled.paneLife,
+        captionConfig: compiled.caption,
+        appSwitchConfig: compiled.appSwitch,
+      );
+
+      final ProgramStructuralFrameRenderer renderer =
+          ProgramStructuralFrameRenderer(
+        rawDocument: source,
+        width: outputWidth,
+        height: outputHeight,
+        backend: _PaneColorBackend(),
+        resolveSource: (String value) => value,
+      );
+      addTearDown(() {
+        renderer.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      Future<Rect> renderRedBounds(int localFrame) async {
+        final int projectFrame = _findProjectFrame(
+          scene,
+          placementIndex: 0,
+          localFrame: localFrame,
+        );
+        expect(
+          scene.evaluate(
+            ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+          ).exact,
+          isTrue,
+        );
+        final Uint8List rgba = await _renderRgba(renderer, scene);
+        final Rect? red = _paneColorBounds(
+          rgba,
+          outputWidth,
+          outputHeight,
+          red: true,
+        );
+        expect(red, isNotNull);
+        return red!;
+      }
+
+      final Rect opening = await renderRedBounds(openingLocal);
+      final Rect seated = await renderRedBounds(showingLocal);
+      final Rect closing = await renderRedBounds(closingLocal);
+
+      expect(opening.width, lessThan(seated.width));
+      expect(opening.height, lessThan(seated.height));
+      expect(closing.width, lessThan(seated.width));
+      expect(closing.height, lessThan(seated.height));
     },
   );
 
