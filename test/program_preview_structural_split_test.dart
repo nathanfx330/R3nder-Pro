@@ -12,6 +12,7 @@ import 'package:r3nder/scene_engine.dart';
 import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
+import 'package:r3nder/structural_split_window_painter.dart';
 import 'package:r3nder/ui_theme.dart';
 
 class _SplitBackend implements MediaDecoderBackend {
@@ -80,6 +81,38 @@ int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
     pauseFramesRemaining: terminal.pauseFrames,
     awaitingPauseTag: awaitingPauseTag,
   );
+}
+
+int _findProjectFrame(
+  SceneEngine scene,
+  StructuralSequencePlacement placement,
+  int localFrame,
+) {
+  for (int projectFrame = 0; projectFrame < 400; projectFrame++) {
+    final SceneEvaluationResult result = scene.evaluate(
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+    );
+    expect(result.exact, isTrue);
+
+    final StructuralRuntimeMarker? marker =
+        parseStructuralRuntimeRegion(scene.terminal.currentRegion);
+    if (marker == null || marker.placementIndex != 0) continue;
+    if (_runtimeLocalFrame(scene, marker) == localFrame) return projectFrame;
+  }
+
+  fail('Did not find local frame $localFrame for split STRUCT placement.');
+}
+
+int _middleLocalFrameForStage(
+  StructuralSequencePlacement placement,
+  StructuralSequenceStage stage,
+) {
+  final List<int> frames = <int>[
+    for (int frame = 0; frame < placement.effectiveDurationFrames; frame++)
+      if (placement.stageAt(frame) == stage) frame,
+  ];
+  expect(frames, isNotEmpty);
+  return frames[frames.length ~/ 2];
 }
 
 int _findShowingProjectFrame(
@@ -217,6 +250,129 @@ void main() {
         find.byKey(const ValueKey<String>('structural-first-frame-ready')),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'Program Preview gives SPLIT the normal window open and close motion',
+    (WidgetTester tester) async {
+      final Directory root = Directory.systemTemp.createTempSync(
+        'r3nder_program_split_motion_',
+      );
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(_source).single;
+      final int openingLocal =
+          _middleLocalFrameForStage(placement, StructuralSequenceStage.opening);
+      final int closingLocal =
+          _middleLocalFrameForStage(placement, StructuralSequenceStage.closing);
+
+      final CompiledScript compiled = compileScript(_source);
+      final SceneEngine scene = SceneEngine();
+      final ChangeNotifier repaint = ChangeNotifier();
+      final _SplitBackend backend = _SplitBackend();
+
+      addTearDown(() {
+        repaint.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      await tester.runAsync(() async {
+        await scene.setup(
+          templateText: compiled.engineText,
+          fontColor: Colors.green,
+          bgColor: Colors.black,
+          width: 640,
+          height: 360,
+          scale: 1,
+          fontPath: 'monospace',
+          fontSize: 18,
+          lineSpacing: 22,
+          tracking: 0,
+          marginTop: 20,
+          marginSide: 20,
+          imagesDir: images.path,
+          spritesDir: sprites.path,
+          paneLifeConfig: compiled.paneLife,
+          captionConfig: compiled.caption,
+          appSwitchConfig: compiled.appSwitch,
+        );
+      });
+
+      final int openingProject =
+          _findProjectFrame(scene, placement, openingLocal);
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: openingProject, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 640,
+            height: 360,
+            child: ProgramPreviewSurface(
+              repaint: repaint,
+              scene: scene,
+              rawDocument: _source,
+              fontFamily: 'monospace',
+              theme: R3Theme.of(Colors.green),
+              structuralBackend: backend,
+              structuralResolveSource: (String value) => '/workspace/$value',
+            ),
+          ),
+        ),
+      );
+
+      final Finder ready = find.byKey(
+        const ValueKey<String>('structural-first-frame-ready'),
+      );
+      for (int attempt = 0; attempt < 50 && ready.evaluate().isEmpty; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+      }
+      expect(ready, findsOneWidget);
+      await tester.pump();
+
+      StructuralSplitWindowPainter painter() {
+        final CustomPaint paint = tester.widget<CustomPaint>(
+          find.byKey(
+            const ValueKey<String>('structural-split-window-frame'),
+          ),
+        );
+        return paint.painter! as StructuralSplitWindowPainter;
+      }
+
+      final StructuralSplitWindowPainter opening = painter();
+      expect(opening.entryProgress, greaterThan(0.0));
+      expect(opening.entryProgress, lessThan(1.0));
+      expect(opening.exitProgress, isNull);
+
+      final int closingProject =
+          _findProjectFrame(scene, placement, closingLocal);
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: closingProject, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      final StructuralSplitWindowPainter closing = painter();
+      expect(closing.entryProgress, 1.0);
+      expect(closing.exitProgress, isNotNull);
+      expect(closing.exitProgress!, greaterThan(0.0));
+      expect(closing.exitProgress!, lessThan(1.0));
     },
   );
 }
