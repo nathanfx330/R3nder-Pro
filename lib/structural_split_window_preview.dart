@@ -116,6 +116,7 @@ class _StructuralSplitWindowPreviewState
         oldWidget.sourceFrame != widget.sourceFrame ||
         oldWidget.moving != widget.moving ||
         oldWidget.chromeScale != widget.chromeScale ||
+        oldWidget.fontFamily != widget.fontFamily ||
         oldWidget.placement.splitClientAspect !=
             widget.placement.splitClientAspect) {
       _serial++;
