@@ -128,9 +128,18 @@ RepaintBoundary readback as a parity mechanism while making the production
 painter identity explicit. The W4 native addition to
 `test/structural_source_export_native_test.dart` separately sends
 an edge-marked circular 16:9 fixture through the actual Linux MLT bridge into a
-4:3 pane request to detect crop or stretch. W5 still owns split transition and
-delayed-readiness choreography; W6 owns pane CARD routing and unsupported
-SIDECARD/MAXIMIZE behavior.
+4:3 pane request to detect crop or stretch. W5 now owns split transition and delayed-readiness choreography. SPLIT is a
+distinct effective presentation shape for planning even though the legacy
+window/fullscreen mode enum remains intact. Split-to-split, including aspect
+changes, cuts both panes simultaneously with no added timing. A split/non-split
+shape change consumes only the existing incoming window budget: Preview holds
+the previous presentation stationary while the incoming shell remains live
+under it, and BAKE paints the same held previous presentation synchronously.
+Once that budget is over, readiness may delay only the reveal; authored source
+time continues and the eventual cut uses the current source frame. The old
+single-client horizontal APPSWITCH slide is never applied to a split boundary.
+
+W6 still owns pane CARD routing and unsupported SIDECARD/MAXIMIZE behavior.
 
 ## Common endpoint calculation (T0)
 
