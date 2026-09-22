@@ -235,6 +235,7 @@ void main() {
                 theme: R3Theme.of(Colors.green),
                 fontFamily: 'monospace',
                 chromeScale: chromeScale,
+                moving: false,
                 backend: previewBackend,
                 resolveSource: (String value) => value,
                 onFirstFrameReady: () {
