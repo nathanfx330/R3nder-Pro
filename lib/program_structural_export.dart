@@ -193,6 +193,7 @@ class ProgramStructuralFrameRenderer {
 
     final StructuralSequencePlacement outgoing = _placements[previousIndex];
     if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
+    if (outgoing.splitWindow || incoming.splitWindow) return null;
 
     if (!structuralSwitchSlideWindowOpen(
       sourceFrame: incomingSourceFrame,
@@ -214,6 +215,19 @@ class ProgramStructuralFrameRenderer {
         sourceDurationFrames: incoming.sourceDurationFrames,
       ),
     );
+  }
+
+  StructuralSequencePlacement? _splitBoundaryPrevious(
+    StructuralRuntimeMarker marker,
+    StructuralSequencePlacement incoming,
+  ) {
+    if (!incoming.seamlessFromPrevious) return null;
+    final int previousIndex = marker.placementIndex - 1;
+    if (previousIndex < 0 || previousIndex >= _placements.length) return null;
+    final StructuralSequencePlacement outgoing = _placements[previousIndex];
+    if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
+    if (!outgoing.splitWindow && !incoming.splitWindow) return null;
+    return outgoing;
   }
 
   StructuralSourceRef? _rootFor(StructuralSequencePlacement placement) {
@@ -351,6 +365,21 @@ class ProgramStructuralFrameRenderer {
 
     final int localFrame = _localFrame(scene, marker);
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
+    final StructuralSequencePlacement? splitBoundaryPrevious =
+        _splitBoundaryPrevious(marker, placement);
+    final bool holdPreviousForSplitShapeChange =
+        splitBoundaryPrevious != null &&
+        splitBoundaryPrevious.presentationShape != placement.presentationShape &&
+        stage == StructuralSequenceStage.opening;
+    final StructuralSequencePlacement displayPlacement =
+        holdPreviousForSplitShapeChange
+            ? splitBoundaryPrevious
+            : placement;
+    final int heldOutgoingSourceFrame = holdPreviousForSplitShapeChange
+        ? displayPlacement.sourceFrameAt(
+            math.max(0, displayPlacement.effectiveDurationFrames - 1),
+          )
+        : 0;
     final bool closing = stage == StructuralSequenceStage.closing;
     final StructuralDossierOverlayPlacement? truncatedDossier =
         closing ? _dossierAtSourceEnd(placement) : null;
@@ -378,6 +407,9 @@ class ProgramStructuralFrameRenderer {
 
     final _StructuralBakeHandoff? handoff =
         _handoffFor(marker, placement, visual.sourceFrame);
+    final int displaySourceFrame = holdPreviousForSplitShapeChange
+        ? heldOutgoingSourceFrame
+        : visual.sourceFrame;
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
@@ -407,7 +439,7 @@ class ProgramStructuralFrameRenderer {
     String defaultBottomOverlay = '';
     String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      if (placement.splitWindow) {
+      if (displayPlacement.splitWindow) {
         final double engineWidth =
             scene.width > 0.0 ? scene.width : width.toDouble();
         final double chromeScale =
@@ -420,7 +452,7 @@ class ProgramStructuralFrameRenderer {
             width.toDouble(),
             height.toDouble(),
           ),
-          aspect: placement.splitClientAspect,
+          aspect: displayPlacement.splitClientAspect,
           titleHeight: titleHeight,
         );
         final int paneWidth =
@@ -431,9 +463,9 @@ class ProgramStructuralFrameRenderer {
         for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
           splitPaneImages.add(
             await _renderSplitPaneFrameImage(
-              placement.sourceRef.canonicalSource,
+              displayPlacement.sourceRef.canonicalSource,
               paneIndex,
-              visual.sourceFrame,
+              displaySourceFrame,
               paneWidth,
               paneHeight,
             ),
@@ -441,13 +473,14 @@ class ProgramStructuralFrameRenderer {
         }
       } else {
         sourceImage = await _imageForSourceFrame(
-          placement.sourceRef.canonicalSource,
-          visual.sourceFrame,
+          displayPlacement.sourceRef.canonicalSource,
+          displaySourceFrame,
           fontFamily,
         );
         defaultBottomOverlay = _cachedDiagnosticLabel;
 
-        final _StructuralBakeHandoff? activeHandoff = handoff;
+        final _StructuralBakeHandoff? activeHandoff =
+            holdPreviousForSplitShapeChange ? null : handoff;
         if (activeHandoff != null) {
           final StructuralSequencePlacement outgoing =
               activeHandoff.outgoingPlacement;
@@ -523,11 +556,13 @@ class ProgramStructuralFrameRenderer {
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
       final MosaicSplitWindowGeometry? geometry = splitGeometry;
       final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
-      if (placement.splitWindow && geometry != null && panes != null) {
+      if (displayPlacement.splitWindow &&
+          geometry != null &&
+          panes != null) {
         StructuralSplitWindowPainter(
           geometry: geometry,
-          placement: placement,
-          sourceFrame: visual.sourceFrame,
+          placement: displayPlacement,
+          sourceFrame: displaySourceFrame,
           theme: structuralTheme,
           fontFamily: fontFamily,
           chromeScale: structuralChromeScale,
@@ -545,27 +580,43 @@ class ProgramStructuralFrameRenderer {
           Size(width.toDouble(), height.toDouble()),
         );
       } else {
+        final Rect displayRect = holdPreviousForSplitShapeChange
+            ? structuralProgramPresentationRectForOutput(
+                mode: displayPlacement.presentationMode,
+                outputWidth: width,
+                outputHeight: height,
+                titleHeight: 38.0 * structuralChromeScale,
+              )
+            : structuralRect;
         paintStructuralWindow(
           canvas: canvas,
           theme: structuralTheme,
           chromeScale: structuralChromeScale,
           fontFamily: fontFamily,
-          sourceFrame: visual.sourceFrame,
-          sourceDurationFrames: placement.sourceDurationFrames,
-          windowTitle: placement.effectiveWindowTitle,
-          overlayMode: placement.overlayMode,
-          topOverlay: placement.topOverlay,
-          bottomOverlay: placement.bottomOverlay,
+          sourceFrame: displaySourceFrame,
+          sourceDurationFrames: displayPlacement.sourceDurationFrames,
+          windowTitle: displayPlacement.effectiveWindowTitle,
+          overlayMode: displayPlacement.overlayMode,
+          topOverlay: displayPlacement.topOverlay,
+          bottomOverlay: displayPlacement.bottomOverlay,
           defaultBottomOverlay: defaultBottomOverlay,
-          rect: _pixelRect(structuralRect),
+          rect: _pixelRect(displayRect),
           sourceImage: sourceImage,
-          outgoingSourceImage: outgoingSourceImage,
-          outgoingPlacement: handoff?.outgoingPlacement,
-          outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
-          outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
-          handoffSlideT: handoff?.slideT ?? 1.0,
-          opacity: visual.structuralOpacity,
-          windowChrome: structuralChrome,
+          outgoingSourceImage:
+              holdPreviousForSplitShapeChange ? null : outgoingSourceImage,
+          outgoingPlacement: holdPreviousForSplitShapeChange
+              ? null
+              : handoff?.outgoingPlacement,
+          outgoingSourceFrame:
+              holdPreviousForSplitShapeChange ? 0 : handoff?.outgoingSourceFrame ?? 0,
+          outgoingDefaultBottomOverlay:
+              holdPreviousForSplitShapeChange ? '' : outgoingDefaultBottomOverlay,
+          handoffSlideT:
+              holdPreviousForSplitShapeChange ? 1.0 : handoff?.slideT ?? 1.0,
+          opacity:
+              holdPreviousForSplitShapeChange ? 1.0 : visual.structuralOpacity,
+          windowChrome:
+              holdPreviousForSplitShapeChange ? 1.0 : structuralChrome,
         );
       }
     }
