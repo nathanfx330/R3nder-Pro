@@ -122,8 +122,74 @@ void main() {
     );
     expect(
       maximizeWarnings.single.editPath,
-      <String>['STRUCT', 'MOSAIC.wall', 'PANE.right', 'rightShot'],
+      <String>[
+        'STRUCT',
+        'MOSAIC.wall',
+        'PANE.right',
+        'EDIT.right',
+        'TRACK.V1',
+        'rightShot',
+      ],
     );
+  });
+
+  test('nested EDIT CARD follows parent AT IN and speed mapping', () {
+    const String source = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:leftShot:video/left.mp4:0:0:24:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
+[CLIP:rightShot:video/right.mp4:0:0:24:1]
+[CUE:10]
+[CARD:missing-card.png:8:12,34,56:MAPPED]
+BODY
+[/CARD]
+[/CUE]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:left:EDIT.left:0:0:20:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right:EDIT.right:4:6:10:2]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT]
+''';
+
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final StructuralSourceRef root =
+        StructuralSourceRef.tryParse('MOSAIC.wall')!;
+
+    // At pane frame 5 the parent EDIT clip is at nested frame 8, before CUE 10.
+    expect(
+      structuralCardOverlayPlacementsForMosaicPane(
+        model,
+        root,
+        1,
+        5,
+      ),
+      isEmpty,
+    );
+
+    // At pane frame 6: parent offset 2, IN 6, speed 2 => nested frame 10.
+    final List<StructuralCardOverlayPlacement> active =
+        structuralCardOverlayPlacementsForMosaicPane(
+      model,
+      root,
+      1,
+      6,
+    );
+    expect(active, hasLength(1));
+    expect(active.single.card.heading, 'MAPPED');
+    expect(active.single.normalizedRect, const Rect.fromLTWH(0, 0, 1, 1));
   });
 
   test('unsupported SPLIT fallback does not apply split cue policy', () {
