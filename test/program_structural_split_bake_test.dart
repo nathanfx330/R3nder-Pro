@@ -111,6 +111,69 @@ Rect? _paneColorBounds(
   );
 }
 
+int _maxDominantPaneChannel(
+  Uint8List rgba,
+  int width,
+  int height, {
+  required bool red,
+}) {
+  int strongest = 0;
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final int at = (y * width + x) * 4;
+      final int r = rgba[at];
+      final int g = rgba[at + 1];
+      final int b = rgba[at + 2];
+      final bool dominant = red
+          ? r >= g + 20 && r >= b + 20
+          : b >= r + 20 && b >= g + 20;
+      if (!dominant) continue;
+      final int channel = red ? r : b;
+      if (channel > strongest) strongest = channel;
+    }
+  }
+  return strongest;
+}
+
+({int early, int middle}) _openingProbeFrames(
+  StructuralSequencePlacement placement,
+) {
+  final List<int> frames = <int>[
+    for (int frame = 0; frame < placement.effectiveDurationFrames; frame++)
+      if (placement.stageAt(frame) == StructuralSequenceStage.opening)
+        frame,
+  ];
+  expect(frames.length, greaterThanOrEqualTo(5));
+  final int early = frames[2];
+  final int middle = frames[frames.length ~/ 2];
+  expect(placement.stageProgressAt(early), greaterThan(0.0));
+  expect(
+    placement.stageProgressAt(early),
+    lessThan(placement.stageProgressAt(middle)),
+  );
+  expect(placement.stageProgressAt(middle), lessThan(1.0));
+  expect(placement.sourceFrameAt(early), 0);
+  expect(placement.sourceFrameAt(middle), 0);
+  return (early: early, middle: middle);
+}
+
+String _splitMotionBakeSource({required bool maximized}) {
+  final String max = maximized ? ':MAX' : '';
+  return '''[SPEED:MAX]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT$max:OVERLAY=NONE]
+''';
+}
+
 int _middleLocalFrameForStage(
   StructuralSequencePlacement placement,
   StructuralSequenceStage stage,
@@ -460,109 +523,156 @@ void main() {
   );
 
   test(
-    'BAKE gives SPLIT the normal window open and close geometry',
+    'BAKE animates ordinary and MAX SPLIT entry opacity and geometry',
     () async {
-      const String source = '''[SPEED:MAX]
-[MOSAIC:wall]
-[PANE:left]
-[CLIP:red:red.mp4:0:0:12:1]
-[/CLIP]
-[/PANE]
-[PANE:right]
-[CLIP:blue:blue.mp4:0:0:12:1]
-[/CLIP]
-[/PANE]
-[/MOSAIC]
-[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
-''';
-
-      const int outputWidth = 640;
-      const int outputHeight = 360;
-      final Directory root = await Directory.systemTemp
-          .createTemp('r3nder_program_split_motion_bake_');
-      final Directory images = Directory('${root.path}/images')
-        ..createSync(recursive: true);
-      final Directory sprites = Directory('${root.path}/sprites')
-        ..createSync(recursive: true);
-
-      final StructuralSequencePlacement placement =
-          parseStructuralSequencePlacements(source).single;
-      final int openingLocal =
-          _middleLocalFrameForStage(placement, StructuralSequenceStage.opening);
-      final int showingLocal = _middleLocalFrameForStage(
-        placement,
-        StructuralSequenceStage.showing,
-      );
-      final int closingLocal =
-          _middleLocalFrameForStage(placement, StructuralSequenceStage.closing);
-
-      final CompiledScript compiled = compileScript(source, lineMarkers: false);
-      final SceneEngine scene = SceneEngine();
-      await scene.setup(
-        templateText: compiled.engineText,
-        fontColor: Colors.green,
-        bgColor: Colors.black,
-        width: 1920,
-        height: 1080,
-        scale: 1,
-        fontPath: 'monospace',
-        fontSize: 12,
-        lineSpacing: 16,
-        tracking: 0,
-        marginTop: 10,
-        marginSide: 10,
-        imagesDir: images.path,
-        spritesDir: sprites.path,
-        paneLifeConfig: compiled.paneLife,
-        captionConfig: compiled.caption,
-        appSwitchConfig: compiled.appSwitch,
-      );
-
-      final ProgramStructuralFrameRenderer renderer =
-          ProgramStructuralFrameRenderer(
-        rawDocument: source,
-        width: outputWidth,
-        height: outputHeight,
-        backend: _PaneColorBackend(),
-        resolveSource: (String value) => value,
-      );
-      addTearDown(() {
-        renderer.dispose();
-        scene.disposeImages();
-        if (root.existsSync()) root.deleteSync(recursive: true);
-      });
-
-      Future<Rect> renderRedBounds(int localFrame) async {
-        final int projectFrame = _findProjectFrame(
-          scene,
-          placementIndex: 0,
-          localFrame: localFrame,
+      for (final bool maximized in <bool>[false, true]) {
+        final String source = _splitMotionBakeSource(maximized: maximized);
+        const int outputWidth = 640;
+        const int outputHeight = 360;
+        final Directory root = await Directory.systemTemp.createTemp(
+          maximized
+              ? 'r3nder_program_max_split_motion_bake_'
+              : 'r3nder_program_split_motion_bake_',
         );
-        expect(
-          scene.evaluate(
-            ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
-          ).exact,
-          isTrue,
+        final Directory images = Directory('${root.path}/images')
+          ..createSync(recursive: true);
+        final Directory sprites = Directory('${root.path}/sprites')
+          ..createSync(recursive: true);
+
+        final StructuralSequencePlacement placement =
+            parseStructuralSequencePlacements(source).single;
+        expect(placement.maximizeSplit, maximized);
+
+        final ({int early, int middle}) opening =
+            _openingProbeFrames(placement);
+        final int showingLocal = _middleLocalFrameForStage(
+          placement,
+          StructuralSequenceStage.showing,
         );
-        final Uint8List rgba = await _renderRgba(renderer, scene);
-        final Rect? red = _paneColorBounds(
-          rgba,
-          outputWidth,
-          outputHeight,
-          red: true,
+        final int closingLocal = _middleLocalFrameForStage(
+          placement,
+          StructuralSequenceStage.closing,
         );
-        expect(red, isNotNull);
-        return red!;
+
+        final CompiledScript compiled =
+            compileScript(source, lineMarkers: false);
+        final SceneEngine scene = SceneEngine();
+        await scene.setup(
+          templateText: compiled.engineText,
+          fontColor: Colors.green,
+          bgColor: Colors.black,
+          width: 1920,
+          height: 1080,
+          scale: 1,
+          fontPath: 'monospace',
+          fontSize: 12,
+          lineSpacing: 16,
+          tracking: 0,
+          marginTop: 10,
+          marginSide: 10,
+          imagesDir: images.path,
+          spritesDir: sprites.path,
+          paneLifeConfig: compiled.paneLife,
+          captionConfig: compiled.caption,
+          appSwitchConfig: compiled.appSwitch,
+        );
+
+        final ProgramStructuralFrameRenderer renderer =
+            ProgramStructuralFrameRenderer(
+          rawDocument: source,
+          width: outputWidth,
+          height: outputHeight,
+          backend: _PaneColorBackend(),
+          resolveSource: (String value) => value,
+        );
+
+        try {
+          Future<
+              ({
+                Rect red,
+                Rect blue,
+                int redIntensity,
+                int blueIntensity,
+              })> renderProbe(int localFrame) async {
+            final int projectFrame = _findProjectFrame(
+              scene,
+              placementIndex: 0,
+              localFrame: localFrame,
+            );
+            expect(
+              scene.evaluate(
+                ProjectTime(
+                  frame: projectFrame,
+                  mode: ProjectClockMode.scrub,
+                ),
+              ).exact,
+              isTrue,
+            );
+            final Uint8List rgba = await _renderRgba(renderer, scene);
+            final Rect? red = _paneColorBounds(
+              rgba,
+              outputWidth,
+              outputHeight,
+              red: true,
+            );
+            final Rect? blue = _paneColorBounds(
+              rgba,
+              outputWidth,
+              outputHeight,
+              red: false,
+            );
+            expect(red, isNotNull);
+            expect(blue, isNotNull);
+            return (
+              red: red!,
+              blue: blue!,
+              redIntensity: _maxDominantPaneChannel(
+                rgba,
+                outputWidth,
+                outputHeight,
+                red: true,
+              ),
+              blueIntensity: _maxDominantPaneChannel(
+                rgba,
+                outputWidth,
+                outputHeight,
+                red: false,
+              ),
+            );
+          }
+
+          final early = await renderProbe(opening.early);
+          final middle = await renderProbe(opening.middle);
+          final seated = await renderProbe(showingLocal);
+          final closing = await renderProbe(closingLocal);
+
+          // Both panes visibly grow during the authored opening budget.
+          expect(early.red.width, lessThan(middle.red.width));
+          expect(early.red.height, lessThan(middle.red.height));
+          expect(early.blue.width, lessThan(middle.blue.width));
+          expect(early.blue.height, lessThan(middle.blue.height));
+          expect(middle.red.width, lessThan(seated.red.width));
+          expect(middle.blue.width, lessThan(seated.blue.width));
+
+          // The final program raster is opaque, so alpha cannot prove the
+          // window fade. Dominant pane color must strengthen over the desktop
+          // as opening opacity advances.
+          expect(early.redIntensity, greaterThan(0));
+          expect(early.blueIntensity, greaterThan(0));
+          expect(early.redIntensity, lessThan(middle.redIntensity));
+          expect(early.blueIntensity, lessThan(middle.blueIntensity));
+
+          // Closing reverses the seated geometry for both panes.
+          expect(closing.red.width, lessThan(seated.red.width));
+          expect(closing.red.height, lessThan(seated.red.height));
+          expect(closing.blue.width, lessThan(seated.blue.width));
+          expect(closing.blue.height, lessThan(seated.blue.height));
+        } finally {
+          renderer.dispose();
+          scene.disposeImages();
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        }
       }
-
-      final Rect opening = await renderRedBounds(openingLocal);
-      final Rect seated = await renderRedBounds(showingLocal);
-      final Rect closing = await renderRedBounds(closingLocal);
-
-      expect(opening.width, lessThan(seated.width));
-      expect(opening.height, lessThan(seated.height));
-      expect(closing.width, lessThan(seated.width));
-      expect(closing.height, lessThan(seated.height));
     },
   );
 
