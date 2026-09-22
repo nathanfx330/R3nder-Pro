@@ -230,6 +230,16 @@ class _EditorScreenState extends State<EditorScreen> {
   bool _startingTextPlayback = false;
   bool _structuralAudioOwnsRun = false;
 
+  /// Cold structural video is wall-clock work, not project time. TEXT holds
+  /// the local playback clock at the beginning of a window opening until the
+  /// first structural frame is resident, then resumes from that exact frame.
+  /// This mirrors dashboard PREVIEW without changing authored timing or BAKE.
+  bool _textStructuralBuffering = false;
+  int? _textStructuralBufferingLine;
+  bool _textStructuralBufferSchedulePending = false;
+  Future<void>? _textStructuralBufferAudioStop;
+  final Set<int> _textStructuralReadyLines = <int>{};
+
   int _totalFrames = 0;
   int _currentFrame = 0;
   bool _isPlaying = false;
@@ -1008,6 +1018,11 @@ class _EditorScreenState extends State<EditorScreen> {
     }
 
     final int gen = ++_simGeneration;
+    _textStructuralReadyLines.clear();
+    _textStructuralBuffering = false;
+    _textStructuralBufferingLine = null;
+    _textStructuralBufferSchedulePending = false;
+    _textStructuralBufferAudioStop = null;
     final String docText = _textController.text;
     _refreshDiagnostics(docText);
 
@@ -1160,6 +1175,86 @@ class _EditorScreenState extends State<EditorScreen> {
     );
   }
 
+  void _scheduleTextStructuralBuffering({
+    required StructuralSequencePlacement placement,
+    required int localFrame,
+  }) {
+    final int line = placement.lineIndex;
+    if (!_isPlaying ||
+        _structuralAudioOwnsRun ||
+        _textStructuralReadyLines.contains(line) ||
+        _textStructuralBuffering ||
+        _textStructuralBufferSchedulePending) {
+      return;
+    }
+
+    _textStructuralBufferSchedulePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _textStructuralBufferSchedulePending = false;
+      if (!mounted ||
+          !_isPlaying ||
+          _structuralAudioOwnsRun ||
+          _textStructuralReadyLines.contains(line) ||
+          _textStructuralBuffering) {
+        return;
+      }
+
+      final int openingFrame = placement.stageFrameAt(localFrame);
+      final int current = _currentFrame;
+      final int holdFrame =
+          (current - openingFrame).clamp(0, current).toInt();
+
+      _playClock?.stop();
+      if (holdFrame != current) {
+        _restoreSceneToFrame(holdFrame);
+      }
+
+      final AudioBedPlayer? player = widget.bedPlayer;
+      _textStructuralBufferAudioStop =
+          player != null && player.isPlaying ? player.stop() : null;
+      _textStructuralBuffering = true;
+      _textStructuralBufferingLine = line;
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _handleTextStructuralReady(int line) async {
+    _textStructuralReadyLines.add(line);
+    if (!_textStructuralBuffering || _textStructuralBufferingLine != line) {
+      return;
+    }
+
+    final int generation = _playGeneration;
+    final Future<void>? stopping = _textStructuralBufferAudioStop;
+    _textStructuralBufferAudioStop = null;
+    if (stopping != null) {
+      try {
+        await stopping;
+      } catch (_) {}
+    }
+
+    if (!mounted ||
+        generation != _playGeneration ||
+        !_isPlaying ||
+        _structuralAudioOwnsRun ||
+        _textStructuralBufferingLine != line) {
+      return;
+    }
+
+    final int holdFrame = _currentFrame;
+    _playStartFrame = holdFrame;
+    _playClock = Stopwatch()..start();
+    _textStructuralBuffering = false;
+    _textStructuralBufferingLine = null;
+
+    if (widget.bedPlayer != null &&
+        (widget.bedPath != null || widget.musicPath != null)) {
+      _startBedAt(holdFrame);
+    }
+
+    if (mounted) setState(() {});
+  }
+
   Future<void> _togglePlay() async {
     if (_isPlaying) {
       _stopPlayback();
@@ -1174,6 +1269,13 @@ class _EditorScreenState extends State<EditorScreen> {
     }
 
     final int generation = ++_playGeneration;
+    if (_activeStructuralFrame() == null) {
+      _textStructuralReadyLines.clear();
+    }
+    _textStructuralBuffering = false;
+    _textStructuralBufferingLine = null;
+    _textStructuralBufferSchedulePending = false;
+    _textStructuralBufferAudioStop = null;
     final int startFrame = _currentFrame;
     _startingTextPlayback = true;
     if (mounted) setState(() {});
@@ -1205,7 +1307,7 @@ class _EditorScreenState extends State<EditorScreen> {
     }
 
     _playTimer = Timer.periodic(const Duration(milliseconds: 8), (_) {
-      if (!mounted) return;
+      if (!mounted || _textStructuralBuffering) return;
 
       final Stopwatch? fallbackClock = _playClock;
       final NativeRealtimeProjectClock? projectClock =
@@ -1253,6 +1355,10 @@ class _EditorScreenState extends State<EditorScreen> {
     _playClock = null;
     _isPlaying = false;
     _startingTextPlayback = false;
+    _textStructuralBuffering = false;
+    _textStructuralBufferingLine = null;
+    _textStructuralBufferSchedulePending = false;
+    _textStructuralBufferAudioStop = null;
 
     final int holdFrame = _currentFrame;
     final bool structuralOwned = _structuralAudioOwnsRun;
@@ -1665,7 +1771,10 @@ class _EditorScreenState extends State<EditorScreen> {
                     (_lintFindings.isEmpty && _scene.warnings.isEmpty))
                   const Spacer(),
 
-                if ((_isSimulating || _startingTextPlayback) && _isTextMode)
+                if ((_isSimulating ||
+                        _startingTextPlayback ||
+                        _textStructuralBuffering) &&
+                    _isTextMode)
                   Padding(
                     padding: EdgeInsets.only(right: sc(14)),
                     child: SizedBox(
@@ -1850,6 +1959,7 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   ({
+    int placementIndex,
     StructuralSequencePlacement placement,
     int localFrame,
   })? _activeStructuralFrame() {
@@ -1873,6 +1983,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (active == null || !active.placement.resolves) return null;
 
     return (
+      placementIndex: active.placementIndex,
       placement: active.placement,
       localFrame: active.localFrame,
     );
@@ -1918,6 +2029,16 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget _buildPreviewPane() {
     final active = _activeStructuralFrame();
     if (active != null) {
+      final StructuralSequenceStage stage =
+          active.placement.stageAt(active.localFrame);
+      if (stage == StructuralSequenceStage.opening &&
+          !_textStructuralReadyLines.contains(active.placement.lineIndex)) {
+        _scheduleTextStructuralBuffering(
+          placement: active.placement,
+          localFrame: active.localFrame,
+        );
+      }
+
       return StructuralSequencePreview(
         rawDocument: _textController.text,
         placement: active.placement,
@@ -1928,6 +2049,11 @@ class _EditorScreenState extends State<EditorScreen> {
         terminalScene: _scene,
         terminalFontFamily: widget.fontFamily,
         terminalCursorFraction: _terminalCursorFraction(),
+        onFirstFrameReady: () {
+          unawaited(
+            _handleTextStructuralReady(active.placement.lineIndex),
+          );
+        },
       );
     }
 
