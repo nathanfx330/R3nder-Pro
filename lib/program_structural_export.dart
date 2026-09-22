@@ -457,6 +457,7 @@ class ProgramStructuralFrameRenderer {
           ),
           aspect: displayPlacement.splitClientAspect,
           titleHeight: titleHeight,
+          maximized: displayPlacement.maximizeSplit,
         );
         final int paneWidth =
             math.max(1, splitGeometry.clientSize.width.round());
@@ -520,6 +521,7 @@ class ProgramStructuralFrameRenderer {
           ),
           aspect: outgoingShape.splitClientAspect,
           titleHeight: titleHeight,
+          maximized: outgoingShape.maximizeSplit,
         );
         final int paneWidth = math.max(
           1,
