@@ -286,6 +286,7 @@ class ProgramStructuralFrameRenderer {
     StructuralSequencePlacement placement,
     int sourceFrame,
   ) {
+    if (placement.splitWindow) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
     return structuralSideCardPlacement(_editModel, root, sourceFrame);
@@ -305,6 +306,7 @@ class ProgramStructuralFrameRenderer {
   StructuralCardOverlayPlacement? _sideCardAtSourceEnd(
     StructuralSequencePlacement placement,
   ) {
+    if (placement.splitWindow) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
     return structuralSideCardPlacementAtSourceEnd(
@@ -318,6 +320,7 @@ class ProgramStructuralFrameRenderer {
     StructuralSequencePlacement placement,
     int sourceFrame,
   ) {
+    if (placement.splitWindow) return null;
     if (placement.fullscreen) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
@@ -340,6 +343,7 @@ class ProgramStructuralFrameRenderer {
   StructuralMaximizePlacement? _maximizeAtSourceEnd(
     StructuralSequencePlacement placement,
   ) {
+    if (placement.splitWindow) return null;
     if (placement.fullscreen) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
