@@ -71,6 +71,18 @@ class _StructuralSplitWindowPreviewState
   bool _renderScheduled = false;
   bool _readyReported = false;
 
+  void _reportRenderError(Object error, StackTrace stack, String phase) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'structural split window preview',
+        context: ErrorDescription(phase),
+      ),
+    );
+  }
+
+
   @override
   void initState() {
     super.initState();
@@ -200,8 +212,13 @@ class _StructuralSplitWindowPreviewState
     final EditVideoCompositor compositor;
     try {
       compositor = _ensureCompositor();
-    } catch (_) {
+    } catch (error, stack) {
       if (!mounted || serial != _serial) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while creating the split-window compositor',
+      );
       if (!_readyReported) {
         _readyReported = true;
         widget.onFirstFrameReady?.call();
@@ -237,8 +254,13 @@ class _StructuralSplitWindowPreviewState
                 ),
         );
       }
-    } catch (_) {
+    } catch (error, stack) {
       if (!mounted || serial != _serial) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while compositing split-window panes',
+      );
       if (!_readyReported) {
         _readyReported = true;
         widget.onFirstFrameReady?.call();
@@ -250,6 +272,21 @@ class _StructuralSplitWindowPreviewState
 
     if (results.any((EditVideoCompositeResult result) => result.hasPending)) {
       return;
+    }
+
+    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      final EditVideoCompositeResult result = results[paneIndex];
+      if (result.rgba == null &&
+          result.mediaFrames.any((MediaFrame frame) => frame.isDecoded)) {
+        _reportRenderError(
+          StateError(
+            'Pane ${paneIndex + 1} had decoded media frames but no composed '
+            'RGBA at source frame ${widget.sourceFrame}.',
+          ),
+          StackTrace.current,
+          'while validating split-window compositor output',
+        );
+      }
     }
 
     final List<ui.Image?> decoded = <ui.Image?>[null, null];
@@ -266,11 +303,16 @@ class _StructuralSplitWindowPreviewState
           );
         }
       }
-    } catch (_) {
+    } catch (error, stack) {
       for (final ui.Image? image in decoded) {
         image?.dispose();
       }
       if (!mounted || serial != _serial) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while converting split-window RGBA to ui.Image',
+      );
       if (!_readyReported) {
         _readyReported = true;
         widget.onFirstFrameReady?.call();
