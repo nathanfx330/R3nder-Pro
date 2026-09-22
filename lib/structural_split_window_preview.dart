@@ -337,8 +337,8 @@ class _StructuralSplitWindowPreviewState
           titleHeight: 38.0 * widget.chromeScale,
         );
         final ui.Size nextPaneSize = ui.Size(
-          geometry.clientSize.width.roundToDouble().clamp(1.0, double.infinity),
-          geometry.clientSize.height.roundToDouble().clamp(1.0, double.infinity),
+          geometry.clientSize.width.round().clamp(1, 1 << 30).toDouble(),
+          geometry.clientSize.height.round().clamp(1, 1 << 30).toDouble(),
         );
 
         if (_paneRenderSize != nextPaneSize) {
