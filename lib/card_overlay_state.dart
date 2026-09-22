@@ -84,8 +84,14 @@ List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
 ///
 /// SPLIT presents each authored pane as an independent client. Reusing the
 /// ordinary MOSAIC normalized layout here would shrink a CARD into its old
-/// grid cell a second time, so pane-local presentation deliberately expands
-/// the owning pane to the complete split client.
+/// grid cell a second time, so the top-level pane expands to the complete split
+/// client.
+///
+/// Unlike the legacy root-level overlay lookup, this path follows structural
+/// CLIPs recursively. A normal MOSAIC pane usually points at EDIT.foo, and the
+/// CARD is commonly authored on a media CLIP inside that EDIT. The nested frame
+/// is projected with the parent CLIP's exact AT/IN/speed mapping so presentation
+/// time follows the same source frame the compositor is rendering.
 List<StructuralCardOverlayPlacement>
     structuralCardOverlayPlacementsForMosaicPane(
   EditDocumentModel model,
@@ -108,19 +114,155 @@ List<StructuralCardOverlayPlacement>
   }
 
   final MosaicPane pane = mosaic.panes[paneIndex];
+  if (projectFrame < 0 || projectFrame >= pane.projectFrameCount) {
+    return const <StructuralCardOverlayPlacement>[];
+  }
+
   final List<StructuralCardOverlayPlacement> result =
       <StructuralCardOverlayPlacement>[];
-  for (final ActiveEditCardCue cue
-      in activeCardCuesForPane(pane, projectFrame)) {
-    result.add(
+  const Rect client = Rect.fromLTWH(0, 0, 1, 1);
+
+  _appendActiveCards(
+    result,
+    activeCardCuesForPane(pane, projectFrame),
+    client,
+  );
+  _appendNestedCardsFromClips(
+    model,
+    pane.clips,
+    projectFrame,
+    client,
+    result,
+    <StructuralSourceRef>{root},
+    1,
+  );
+
+  return List<StructuralCardOverlayPlacement>.unmodifiable(result);
+}
+
+void _appendActiveCards(
+  List<StructuralCardOverlayPlacement> output,
+  Iterable<ActiveEditCardCue> active,
+  Rect target,
+) {
+  for (final ActiveEditCardCue cue in active) {
+    output.add(
       StructuralCardOverlayPlacement(
         card: cue.cue.card,
         slide: cue.presentationFrame.slide,
-        normalizedRect: const Rect.fromLTWH(0, 0, 1, 1),
+        normalizedRect: target,
       ),
     );
   }
-  return List<StructuralCardOverlayPlacement>.unmodifiable(result);
+}
+
+void _appendNestedCardsFromClips(
+  EditDocumentModel model,
+  Iterable<EditClip> clips,
+  int projectFrame,
+  Rect target,
+  List<StructuralCardOverlayPlacement> output,
+  Set<StructuralSourceRef> path,
+  int depth,
+) {
+  if (depth >= 8) return;
+
+  for (final EditClip clip in clips) {
+    if (projectFrame < clip.atFrame ||
+        projectFrame >= clip.endFrameExclusive) {
+      continue;
+    }
+
+    final StructuralSourceRef? nested =
+        StructuralSourceRef.tryParse(clip.source);
+    if (nested == null ||
+        nested.id.isEmpty ||
+        !model.containsStructuralSource(nested) ||
+        path.contains(nested)) {
+      continue;
+    }
+
+    final int nestedFrame = clip.sourceFrameAtProjectOffset(
+      projectFrame - clip.atFrame,
+    );
+    _appendCardsForStructuralSource(
+      model,
+      nested,
+      nestedFrame,
+      target,
+      output,
+      <StructuralSourceRef>{...path, nested},
+      depth + 1,
+    );
+  }
+}
+
+void _appendCardsForStructuralSource(
+  EditDocumentModel model,
+  StructuralSourceRef root,
+  int projectFrame,
+  Rect target,
+  List<StructuralCardOverlayPlacement> output,
+  Set<StructuralSourceRef> path,
+  int depth,
+) {
+  if (depth >= 8 || projectFrame < 0) return;
+
+  switch (root.kind) {
+    case StructuralSourceKind.edit:
+      final EditSequence edit = model.edit(root.id);
+      if (projectFrame >= edit.projectFrameCount) return;
+
+      _appendActiveCards(
+        output,
+        activeCardCuesForEdit(edit, projectFrame),
+        target,
+      );
+      _appendNestedCardsFromClips(
+        model,
+        edit.tracks.expand((EditTrack track) => track.clips),
+        projectFrame,
+        target,
+        output,
+        path,
+        depth,
+      );
+      return;
+
+    case StructuralSourceKind.mosaic:
+      final MosaicSequence mosaic = model.mosaic(root.id);
+      if (projectFrame >= mosaic.projectFrameCount) return;
+
+      final List<Rect> layout = mosaicPaneLayout(mosaic.panes.length);
+      for (int i = 0; i < mosaic.panes.length; i++) {
+        final MosaicPane pane = mosaic.panes[i];
+        final Rect paneTarget = _mapRectInto(target, layout[i]);
+        _appendActiveCards(
+          output,
+          activeCardCuesForPane(pane, projectFrame),
+          paneTarget,
+        );
+        _appendNestedCardsFromClips(
+          model,
+          pane.clips,
+          projectFrame,
+          paneTarget,
+          output,
+          path,
+          depth,
+        );
+      }
+      return;
+  }
+}
+
+Rect _mapRectInto(Rect parent, Rect child) {
+  return Rect.fromLTRB(
+    parent.left + child.left * parent.width,
+    parent.top + child.top * parent.height,
+    parent.left + child.right * parent.width,
+    parent.top + child.bottom * parent.height,
+  );
 }
 
 /// The active SIDECARD that owns the outer structural presentation shell.
