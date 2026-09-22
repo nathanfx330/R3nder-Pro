@@ -147,6 +147,27 @@ const String _windowToSplitSource = '''[CONFIG:APPSWITCH:SLIDE]
 [STRUCT:MOSAIC.second:SPLIT]
 ''';
 
+const String _splitToWindowSource = '''[CONFIG:APPSWITCH:SLIDE]
+[MOSAIC:first]
+[PANE:p1]
+[CLIP:a1:video/a1.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:a2:video/a2.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[EDIT:second]
+[TRACK:V1]
+[CLIP:b1:video/b1.mp4:0:0:12:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:MOSAIC.first:SPLIT]
+[STRUCT:EDIT.second]
+''';
+
 String _resolveSource(String source) => '/workspace/$source';
 
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
@@ -259,6 +280,23 @@ double _splitPresentationOpacity(WidgetTester tester, int index) {
     ),
   );
   return opacity.opacity;
+}
+
+Rect _ordinaryWindowRect(WidgetTester tester, int index) {
+  final Positioned positioned = tester.widget<Positioned>(
+    find.descendant(
+      of: _layer(index),
+      matching: find.byKey(
+        const ValueKey<String>('structural-window-positioned'),
+      ),
+    ),
+  );
+  return Rect.fromLTWH(
+    positioned.left ?? 0.0,
+    positioned.top ?? 0.0,
+    positioned.width ?? 0.0,
+    positioned.height ?? 0.0,
+  );
 }
 
 StructuralSequenceHandoffRole _handoffRole(
@@ -425,7 +463,7 @@ void main() {
   );
 
   testWidgets(
-    'window to split holds outgoing for exactly the incoming window budget',
+    'window to split opens both incoming panes over a fading outgoing window',
     (WidgetTester tester) async {
       final List<StructuralSequencePlacement> placements =
           parseStructuralSequencePlacements(_windowToSplitSource);
@@ -450,10 +488,10 @@ void main() {
         placementIndex: 0,
         localFrame: placements[0].contentStartFrame,
       );
-      final int entryLast = _findProjectFrame(
+      final int entryMiddle = _findProjectFrame(
         scene,
         placementIndex: 1,
-        localFrame: kStructuralWindowFrames - 1,
+        localFrame: kStructuralWindowFrames ~/ 2,
       );
       final int showingStart = _findProjectFrame(
         scene,
@@ -488,7 +526,7 @@ void main() {
 
       expect(
         scene.evaluate(
-          ProjectTime(frame: entryLast, mode: ProjectClockMode.scrub),
+          ProjectTime(frame: entryMiddle, mode: ProjectClockMode.scrub),
         ).exact,
         isTrue,
       );
@@ -498,8 +536,22 @@ void main() {
       expect(_layer(0), findsOneWidget);
       expect(_layer(1), findsOneWidget);
       expect(_layerOpacity(tester, 1), 1.0);
-      expect(_splitPresentationOpacity(tester, 1), 0.0);
+      expect(_layerOpacity(tester, 0), inExclusiveRange(0.0, 1.0));
+      expect(_splitPresentationOpacity(tester, 1), greaterThan(0.0));
       expect(_handoffRole(tester, 0), StructuralSequenceHandoffRole.heldOutgoing);
+
+      final CustomPaint entryPaint = tester.widget<CustomPaint>(
+        find.descendant(
+          of: _layer(1),
+          matching: find.byKey(
+            const ValueKey<String>('structural-split-window-frame'),
+          ),
+        ),
+      );
+      final StructuralSplitWindowPainter entryPainter =
+          entryPaint.painter! as StructuralSplitWindowPainter;
+      expect(entryPainter.sourceFrame, 0);
+      expect(entryPainter.entryProgress, inExclusiveRange(0.0, 1.0));
 
       expect(
         scene.evaluate(
@@ -512,8 +564,6 @@ void main() {
 
       expect(_layerOpacity(tester, 1), 1.0);
       expect(_splitPresentationOpacity(tester, 1), 1.0);
-      expect(_layer(0), findsOneWidget);
-      await tester.pump();
       await _pumpUntil(tester, () => _layer(0).evaluate().isEmpty);
 
       final StructuralSplitWindowPreview preview =
@@ -524,6 +574,108 @@ void main() {
         ),
       );
       expect(preview.sourceFrame, 0);
+    },
+  );
+
+  testWidgets(
+    'split to window opens the incoming window over fading split panes',
+    (WidgetTester tester) async {
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(_splitToWindowSource);
+      expect(placements, hasLength(2));
+      final StructuralSequencePlacement second = placements[1];
+      expect(second.entryWindowFrames, kStructuralWindowFrames);
+
+      final SceneEngine scene = SceneEngine();
+      final Directory root =
+          await _setupScene(tester, scene, _splitToWindowSource);
+      final ChangeNotifier repaint = ChangeNotifier();
+      final _TransitionBackend backend = _TransitionBackend()
+        ..releaseSecond = true;
+      addTearDown(() {
+        repaint.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      final int firstShowing = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: placements[0].contentStartFrame,
+      );
+      final int entryMiddle = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: kStructuralWindowFrames ~/ 2,
+      );
+      final int showingStart = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: kStructuralWindowFrames,
+      );
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: firstShowing, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      await tester.pumpWidget(
+        _program(
+          scene: scene,
+          repaint: repaint,
+          source: _splitToWindowSource,
+          backend: backend,
+        ),
+      );
+
+      await _pumpUntil(
+        tester,
+        () => find.descendant(
+          of: _layer(1),
+          matching: find.byKey(
+            const ValueKey<String>('structural-first-frame-ready'),
+          ),
+        ).evaluate().isNotEmpty,
+      );
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: entryMiddle, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+
+      expect(_layer(0), findsOneWidget);
+      expect(_layer(1), findsOneWidget);
+      expect(_layerOpacity(tester, 0), inExclusiveRange(0.0, 1.0));
+      final Rect middleRect = _ordinaryWindowRect(tester, 1);
+      expect(middleRect.width, greaterThan(0.0));
+
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: showingStart, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      repaint.notifyListeners();
+      await tester.pump();
+      await _pumpUntil(tester, () => _layer(0).evaluate().isEmpty);
+
+      final Rect seatedRect = _ordinaryWindowRect(tester, 1);
+      expect(middleRect.width, lessThan(seatedRect.width));
+      expect(middleRect.height, lessThan(seatedRect.height));
+
+      final StructuralSequencePreview preview =
+          tester.widget<StructuralSequencePreview>(
+        find.descendant(
+          of: _layer(1),
+          matching: find.byType(StructuralSequencePreview),
+        ),
+      );
+      expect(preview.localFrame, kStructuralWindowFrames);
     },
   );
 }
