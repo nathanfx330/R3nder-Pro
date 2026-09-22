@@ -1,8 +1,8 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: W0 through W5 are locally verified. W6's nested EDIT CARD fix and
-W7's post-review shape-transition/timing diagnostics are implemented on
-`mosaic-w7-shape-transition-polish` and awaiting local verification.
+Status: W0 through W7 are implemented and locally exercised. W8 adds an
+optional edge-to-edge MAX split presentation on
+`mosaic-w8-maximized-split` and is awaiting local verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -23,6 +23,9 @@ MOSAIC definition.
 - It is valid only for exactly two panes and both panes must be populated.
 - Unsupported sources lint and fall back to ordinary windowed presentation.
 - One authored client aspect belongs to the placement: 16:9, 4:3, or 9:16.
+- Optional SPLIT:MAX snaps the two outer windows edge to edge across the
+  program frame, with no outer margin or center gap. The authored aspect is
+  preserved but dormant while MAX is enabled.
 - The default authored aspect is 16:9.
 - Aspect is fixed for the placement and is never inferred from media.
 - Both windows are equal size, side by side, centered as a group, with a fixed
@@ -543,6 +546,65 @@ dart run tool/check_doc_contracts.dart
 
 W7 does not change the 12-frame authored budget. It changes only how those
 frames are presented and makes fallback-induced timing changes explicit.
+
+### W8 - maximized split screen
+
+W8 adds a placement-owned MAX modifier to the existing two-window SPLIT:
+
+```text
+[STRUCT:MOSAIC.wall:SPLIT]
+[STRUCT:MOSAIC.wall:SPLIT:MAX]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]
+```
+
+MAX is valid only with SPLIT. It does not create another presentation shape and
+therefore does not add timing. A normal SPLIT -> MAX SPLIT or MAX SPLIT ->
+normal SPLIT boundary is the same simultaneous zero-budget geometry cut already
+used by split aspect changes.
+
+The same `mosaicSplitWindowGeometry` helper remains the sole layout authority.
+Normal SPLIT retains its measured margins, gap, and fixed client aspect. MAX
+sets outer margin and center gap to zero, gives each outer window exactly half
+the program width, and uses the full program height including title chrome.
+At 1920 x 1080 with 38 px title chrome this means two 960 x 1080 outer windows
+and two 960 x 1042 clients. Media remains contained within each client.
+
+The Node STRUCT inspector exposes MAXIMIZE SPLIT only while TWO WINDOWS is on.
+The aspect control remains authored and visible; while MAX is active it is
+dormant so turning MAX off restores the previous normal-split aspect rather than
+resetting it.
+
+Proof is carried by the existing split boundary files:
+
+- `test/mosaic_split_geometry_test.dart` pins exact edge-to-edge geometry for
+  every authored aspect and proves aspect is geometrically dormant in MAX;
+- `test/structural_split_placement_test.dart` pins SPLIT-only MAX grammar and
+  placement state;
+- `test/script_node_structural_split_test.dart` pins node round-trip and
+  dormant aspect preservation;
+- `test/editor_structural_split_node_test.dart` pins the MAXIMIZE SPLIT
+  checkbox workflow and FULL/SPLIT/MAX exclusivity;
+- `test/structural_split_window_preview_test.dart` proves live Preview uses
+  edge-to-edge MAX geometry;
+- `test/program_structural_split_bake_test.dart` proves BAKE reaches both
+  program edges with no center gap;
+- `test/structural_split_transition_plan_test.dart` proves normal/MAX split
+  geometry changes add zero frames.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/mosaic_split_geometry_test.dart \
+  test/structural_split_placement_test.dart \
+  test/script_node_structural_split_test.dart \
+  test/editor_structural_split_node_test.dart \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/structural_split_transition_plan_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
 
 ## Non-goals
 
