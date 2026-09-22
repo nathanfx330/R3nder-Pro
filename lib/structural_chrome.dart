@@ -282,11 +282,6 @@ String formatStructuralChromeTag(StructuralChromeSpec spec) {
   if (spec.fullscreen && spec.splitWindows) {
     throw ArgumentError('STRUCT cannot be both FULL and SPLIT.');
   }
-  if (!spec.splitWindows &&
-      spec.splitAspect != MosaicSplitClientAspect.aspect16x9) {
-    throw ArgumentError('STRUCT ASPECT requires SPLIT presentation.');
-  }
-
   final StringBuffer out = StringBuffer('[STRUCT:${spec.source}');
   if (spec.fullscreen) out.write(':FULL');
   if (spec.splitWindows) {
