@@ -118,6 +118,72 @@ class _AsyncColorDecoder implements NonBlockingMediaDecoder {
   void dispose() {}
 }
 
+class _RasterSensitiveBackend implements MediaDecoderBackend {
+  int openCount = 0;
+  final List<_RasterSensitiveDecoder> decoders =
+      <_RasterSensitiveDecoder>[];
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    openCount++;
+    final _RasterSensitiveDecoder decoder = _RasterSensitiveDecoder();
+    decoders.add(decoder);
+    return decoder;
+  }
+}
+
+class _RasterSensitiveDecoder implements NonBlockingMediaDecoder {
+  int? width;
+  int? height;
+  int stableRequests = 0;
+
+  @override
+  void request(int requestedSourceFrame, int nextWidth, int nextHeight) {
+    if (width != nextWidth || height != nextHeight) {
+      width = nextWidth;
+      height = nextHeight;
+      stableRequests = 0;
+    }
+    stableRequests++;
+  }
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int nextWidth,
+    int nextHeight,
+  ) {
+    if (width != nextWidth ||
+        height != nextHeight ||
+        stableRequests < 2) {
+      return null;
+    }
+    return _solidFrame(
+      requestedSourceFrame,
+      nextWidth,
+      nextHeight,
+      const <int>[180, 90, 220, 255],
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int nextWidth,
+    int nextHeight,
+  ) {
+    return _solidFrame(
+      requestedSourceFrame,
+      nextWidth,
+      nextHeight,
+      const <int>[180, 90, 220, 255],
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
 DecodedMediaFrame _solidFrame(
   int requestedSourceFrame,
   int width,
@@ -158,6 +224,80 @@ EditVideoCompositor _compositor(
 }
 
 void main() {
+  test(
+    'live MOSAIC gives same media independent decoders at different pane rasters',
+    () {
+      const String source = '''[EDIT:shared]
+[TRACK:V1]
+[CLIP:leaf:shared.mp4:0:0:6:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:shared_ref:EDIT.shared:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:shared_ref:EDIT.shared:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+      final _RasterSensitiveBackend backend = _RasterSensitiveBackend();
+      final EditDocumentModel model = EditDocumentModel.parse(source);
+      final MediaLayer layer = MediaLayer(
+        editDocument: model,
+        backend: backend,
+        resolveSource: (String value) => value,
+      );
+      final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+        model: model,
+        mediaLayer: layer,
+        backend: backend,
+        resolveSource: (String value) => value,
+      );
+      addTearDown(() {
+        compositor.dispose();
+        layer.dispose();
+      });
+
+      final ProjectTime time =
+          ProjectTime(frame: 0, mode: ProjectClockMode.monotonic);
+
+      final EditVideoCompositeResult first =
+          compositor.renderSourceAvailable(
+        'MOSAIC.wall',
+        time,
+        const ui.Size(10, 4),
+      );
+      expect(first.hasPending, isTrue);
+
+      final EditVideoCompositeResult second =
+          compositor.renderSourceAvailable(
+        'MOSAIC.wall',
+        time,
+        const ui.Size(10, 4),
+      );
+
+      expect(second.hasPending, isFalse);
+      expect(second.rgba, isNotNull);
+      expect(backend.openCount, 2);
+      expect(layer.cachedDecoderCount, 2);
+      expect(
+        backend.decoders.map((_RasterSensitiveDecoder d) => d.width).toSet(),
+        hasLength(2),
+      );
+      expect(
+        backend.decoders.every(
+          (_RasterSensitiveDecoder d) => d.stableRequests >= 2,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   const ui.Size size = ui.Size(2, 1);
 
   test('higher video track composites over lower video track', () {
