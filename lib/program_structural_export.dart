@@ -708,7 +708,12 @@ class ProgramStructuralFrameRenderer {
             panes[1].diagnosticLabel,
           ],
           opacity: incomingOpacity,
-          entryProgress: splitShapeEntry ? shapeEntryLinear : 1.0,
+          entryProgress: stage == StructuralSequenceStage.opening
+              ? placement.stageProgressAt(localFrame)
+              : 1.0,
+          exitProgress: stage == StructuralSequenceStage.closing
+              ? placement.stageProgressAt(localFrame)
+              : null,
         ).paint(
           canvas,
           Size(width.toDouble(), height.toDouble()),
