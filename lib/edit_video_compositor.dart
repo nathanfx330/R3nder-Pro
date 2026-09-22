@@ -29,6 +29,7 @@ import 'edit_linter.dart';
 import 'edit_model.dart';
 import 'edit_surface_model.dart';
 import 'media_layer.dart';
+import 'mosaic_layout.dart';
 import 'project_clock.dart';
 
 class EditVideoCompositeResult {
@@ -69,8 +70,6 @@ class EditVideoCompositeResult {
 }
 
 class EditVideoCompositor {
-  static const double _mosaicHeroFraction = 0.56;
-
   static final RegExp _paneCrossfadeDirective = RegExp(
     r'\[#EDIT_TRANSITION:CROSSFADE:(\d+)\]',
   );
@@ -271,7 +270,7 @@ class EditVideoCompositor {
     }
 
     final MosaicSequence mosaic = model.mosaic(mosaicId);
-    final List<ui.Rect> layout = _mosaicLayout(mosaic.panes.length);
+    final List<ui.Rect> layout = mosaicPaneLayout(mosaic.panes.length);
     final Uint8List output = Uint8List(width * height * 4);
     final List<MediaFrame> mediaFrames = <MediaFrame>[];
     final List<MediaFrame> diagnosticFrames = <MediaFrame>[];
@@ -910,24 +909,6 @@ class EditVideoCompositor {
         _paneCrossfadeOutDirective.firstMatch(clip.block.innerSource);
     if (crossfade == null) return const EditTransition.none();
     return EditTransition.crossfade(int.parse(crossfade.group(1)!));
-  }
-
-  static List<ui.Rect> _mosaicLayout(int count) {
-    if (count <= 0) return const <ui.Rect>[];
-    if (count == 1) {
-      return const <ui.Rect>[ui.Rect.fromLTRB(0, 0, 1, 1)];
-    }
-    if (count == 2) {
-      return const <ui.Rect>[
-        ui.Rect.fromLTRB(0, 0, _mosaicHeroFraction, 1),
-        ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 1),
-      ];
-    }
-    return const <ui.Rect>[
-      ui.Rect.fromLTRB(0, 0, _mosaicHeroFraction, 1),
-      ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 0.5),
-      ui.Rect.fromLTRB(_mosaicHeroFraction, 0.5, 1, 1),
-    ];
   }
 
   static _PixelRect _pixelRect(ui.Rect rect, int width, int height) {
