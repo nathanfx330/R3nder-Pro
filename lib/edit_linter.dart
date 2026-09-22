@@ -12,6 +12,7 @@
 // through an older build without silently pretending an unknown key worked.
 
 import 'edit_model.dart';
+import 'structural_sequence.dart';
 
 enum EditLintSeverity {
   warning,
@@ -24,6 +25,7 @@ enum EditLintCode {
   cycle,
   nestingLimit,
   unknownClipOption,
+  unsupportedSplitPlacement,
 }
 
 class EditLintIssue {
@@ -197,6 +199,43 @@ class EditGraphLinter {
           );
         }
       }
+    }
+
+    for (final StructuralSequencePlacement placement
+        in parseStructuralSequencePlacements(document.source)) {
+      if (!placement.splitWindowRequested || placement.splitWindowSupported) {
+        continue;
+      }
+
+      final StructuralSourceRef ref = placement.sourceRef;
+      String reason;
+      if (!document.containsStructuralSource(ref)) {
+        reason = 'the source does not resolve';
+      } else if (ref.kind != StructuralSourceKind.mosaic) {
+        reason = 'the source is not a MOSAIC';
+      } else {
+        final MosaicSequence mosaic = document.mosaic(ref.id);
+        if (mosaic.panes.length != 2) {
+          reason = 'the MOSAIC has ${mosaic.panes.length} panes instead of 2';
+        } else {
+          final int empty = mosaic.panes
+              .where((MosaicPane pane) => pane.clips.isEmpty)
+              .length;
+          reason = empty == 1
+              ? 'one MOSAIC pane is empty'
+              : '$empty MOSAIC panes are empty';
+        }
+      }
+
+      emit(
+        EditLintIssue(
+          code: EditLintCode.unsupportedSplitPlacement,
+          severity: EditLintSeverity.warning,
+          message: 'STRUCT ${ref.canonicalSource} requests SPLIT, but $reason; '
+              'ordinary windowed presentation will be used.',
+          editPath: <String>['STRUCT', ref.canonicalSource],
+        ),
+      );
     }
 
     return EditLintResult(List<EditLintIssue>.unmodifiable(issues));
