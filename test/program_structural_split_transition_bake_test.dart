@@ -25,6 +25,9 @@ class _ColorBackend implements MediaDecoderBackend {
     if (resolvedPath.endsWith('blue.mp4')) {
       return _ColorDecoder(const <int>[0, 0, 255, 255]);
     }
+    if (resolvedPath.endsWith('purple.mp4')) {
+      return _ColorDecoder(const <int>[255, 0, 255, 255]);
+    }
     return _ColorDecoder(const <int>[255, 0, 0, 255]);
   }
 }
@@ -57,7 +60,7 @@ class _ColorDecoder implements MediaDecoder {
 const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 [EDIT:first]
 [TRACK:V1]
-[CLIP:red:red.mp4:0:0:12:1]
+[CLIP:purple:purple.mp4:0:0:12:1]
 [/CLIP]
 [/TRACK]
 [/EDIT]
@@ -252,11 +255,10 @@ void main() {
 
       // The outgoing ordinary window remains visible in the split gap while
       // it fades, proving this is a transition rather than a desktop flash.
-      final List<int> fadingRed =
+      final List<int> fadingPurple =
           _pixelAt(opening, 640, const Offset(320, 200));
-      expect(fadingRed[0], greaterThan(0));
-      expect(fadingRed[0], greaterThan(fadingRed[1]));
-      expect(fadingRed[0], greaterThan(fadingRed[2]));
+      expect(fadingPurple[0], greaterThan(20));
+      expect(fadingPurple[2], greaterThan(20));
 
       final int showingProjectFrame = _findProjectFrame(
         scene,
