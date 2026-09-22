@@ -1,8 +1,10 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: W0 through W7 are implemented and locally exercised. W8 adds an
-optional edge-to-edge MAX split presentation on
-`mosaic-w8-maximized-split` and is awaiting local verification.
+Status: W0 through W8 are implemented and locally exercised. W8's focused
+gate passed 34 tests before the final horizontal-only MAX refinement; the final
+geometry/render subset then passed 13 tests, and the Linux GUI behavior was
+confirmed. The completed stack is ready to merge from
+`mosaic-w8-maximized-split`.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
