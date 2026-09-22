@@ -9,6 +9,7 @@
 // used by Program BAKE.
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -58,8 +59,7 @@ class _StructuralSplitWindowPreviewState
   EditVideoCompositor? _compositor;
   String? _runtimeDocument;
   String? _runtimeSource;
-  MediaDecoderBackend? _runtimeBackend;
-  String Function(String source)? _runtimeResolver;
+  MediaDecoderBackend? _ownedBackend;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
@@ -121,8 +121,6 @@ class _StructuralSplitWindowPreviewState
     _layer = null;
     _runtimeDocument = null;
     _runtimeSource = null;
-    _runtimeBackend = null;
-    _runtimeResolver = null;
   }
 
   void _replaceImage(int paneIndex, ui.Image? next) {
@@ -135,16 +133,14 @@ class _StructuralSplitWindowPreviewState
   EditVideoCompositor _ensureCompositor() {
     final String source = widget.placement.sourceRef.canonicalSource;
     final MediaDecoderBackend backend =
-        widget.backend ?? NativeMltMediaBackend();
+        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
     final String Function(String source) resolver =
         widget.resolveSource ?? resolveWorkspaceMediaSource;
 
     final EditVideoCompositor? existing = _compositor;
     if (existing != null &&
         _runtimeDocument == widget.rawDocument &&
-        _runtimeSource == source &&
-        identical(_runtimeBackend, backend) &&
-        identical(_runtimeResolver, resolver)) {
+        _runtimeSource == source) {
       return existing;
     }
 
@@ -178,8 +174,6 @@ class _StructuralSplitWindowPreviewState
     _compositor = compositor;
     _runtimeDocument = widget.rawDocument;
     _runtimeSource = source;
-    _runtimeBackend = backend;
-    _runtimeResolver = resolver;
     return compositor;
   }
 
@@ -350,8 +344,6 @@ class _StructuralSplitWindowPreviewState
         if (_paneRenderSize != nextPaneSize) {
           _paneRenderSize = nextPaneSize;
           _serial++;
-          _scheduleRender();
-        } else {
           _scheduleRender();
         }
 
