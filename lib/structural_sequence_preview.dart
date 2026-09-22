@@ -692,6 +692,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                               ? liveFont
                               : 'monospace',
                       chromeScale: chromeScale,
+                      moving: widget.isPlaying &&
+                          (parentOwnsReadiness || _firstFrameReady),
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
