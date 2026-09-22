@@ -139,7 +139,19 @@ Once that budget is over, readiness may delay only the reveal; authored source
 time continues and the eventual cut uses the current source frame. The old
 single-client horizontal APPSWITCH slide is never applied to a split boundary.
 
-W6 still owns pane CARD routing and unsupported SIDECARD/MAXIMIZE behavior.
+W6 completes split cue policy. CARD state is evaluated per authored MOSAIC
+pane and remapped to the complete split client before the pane image reaches the
+shared split-window painter. Preview and BAKE use the same CARD image-composite
+helper, so a pane-local CARD cannot leak into its sibling client. SIDECARD and
+MAXIMIZE remain valid authored cue syntax but are warning-only unsupported
+features for an effective SPLIT placement; neither active cue state nor
+source-end truncation state may alter the split outer shell or paint a
+SIDECARD panel. Unsupported SPLIT requests still use ordinary-window fallback
+semantics rather than these SPLIT-only restrictions.
+
+The W6 boundary proofs are `test/structural_split_cue_policy_test.dart`,
+`test/structural_split_card_preview_test.dart`, and
+`test/program_structural_split_card_bake_test.dart`.
 
 ## Common endpoint calculation (T0)
 
