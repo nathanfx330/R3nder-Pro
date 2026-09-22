@@ -29,6 +29,7 @@ void main() {
     );
     expect(node.toMarkup(), isNot(contains('SPLIT')));
     expect(node.toMarkup(), isNot(contains('ASPECT=')));
+    expect(node.toMarkup(), isNot(contains(':MAX')));
   });
 
   test('node serializes canonical SPLIT and authored non-default aspect', () {
@@ -44,13 +45,40 @@ void main() {
     );
   });
 
+  test('node round-trips MAX split and preserves dormant aspect', () {
+    final ScriptNode node = _structNode(
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]',
+    );
+
+    expect(node.param('split'), 'SPLIT');
+    expect(node.param('maxSplit'), 'MAX');
+    expect(node.param('aspect'), '4X3');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]',
+    );
+
+    node.set('maxSplit', '');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]',
+    );
+
+    node.set('maxSplit', 'MAX');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]',
+    );
+  });
+
   test('turning split off removes presentation syntax without leaking aspect',
       () {
     final ScriptNode node = _structNode(
-      '[STRUCT:MOSAIC.wall:SPLIT:ASPECT=9X16]',
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=9X16]',
     );
 
     node.set('split', '');
+    node.set('maxSplit', '');
     expect(node.toMarkup(), '[STRUCT:MOSAIC.wall]');
     expect(node.toMarkup(), isNot(contains('ASPECT=')));
   });
