@@ -372,17 +372,15 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           const bool activeVisible = true;
 
           nextMounted.add(activeIndex);
-          layers.add(
-            _structuralLayer(
-              placementIndex: activeIndex,
-              placement: placement,
-              localFrame: activeLocalFrame,
-              visible: activeVisible,
-              handoffRole: handoffWindowOpen
-                  ? StructuralSequenceHandoffRole.incoming
-                  : StructuralSequenceHandoffRole.none,
-              handoffSlideT: handoffSlideT,
-            ),
+          final Widget activeLayer = _structuralLayer(
+            placementIndex: activeIndex,
+            placement: placement,
+            localFrame: activeLocalFrame,
+            visible: activeVisible,
+            handoffRole: handoffWindowOpen
+                ? StructuralSequenceHandoffRole.incoming
+                : StructuralSequenceHandoffRole.none,
+            handoffSlideT: handoffSlideT,
           );
 
           if (fallbackPlacement != null && fallbackIndex != null) {
@@ -393,19 +391,33 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
                         placement.stageProgressAt(activeLocalFrame),
                       )
                     : 1.0;
-            layers.add(
-              _structuralLayer(
-                placementIndex: fallbackIndex,
-                placement: fallbackPlacement,
-                localFrame: fallbackPlacement.effectiveDurationFrames - 1,
-                visible: true,
-                layerOpacity: heldOpacity,
-                handoffRole: fallbackIsHeldSplit
-                    ? StructuralSequenceHandoffRole.heldOutgoing
-                    : StructuralSequenceHandoffRole.outgoing,
-                handoffSlideT: handoffSlideT,
-              ),
+            final Widget fallbackLayer = _structuralLayer(
+              placementIndex: fallbackIndex,
+              placement: fallbackPlacement,
+              localFrame: fallbackPlacement.effectiveDurationFrames - 1,
+              visible: true,
+              layerOpacity: heldOpacity,
+              handoffRole: fallbackIsHeldSplit
+                  ? StructuralSequenceHandoffRole.heldOutgoing
+                  : StructuralSequenceHandoffRole.outgoing,
+              handoffSlideT: handoffSlideT,
             );
+
+            // Once the incoming shape is ready during its authored opening
+            // budget, Preview matches BAKE: fading outgoing below, growing
+            // incoming above. Before readiness (and for the old late-ready
+            // cover path) the outgoing layer stays on top.
+            if (fallbackIsHeldSplit && splitEntryBudgetOpen && activeReady) {
+              layers
+                ..add(fallbackLayer)
+                ..add(activeLayer);
+            } else {
+              layers
+                ..add(activeLayer)
+                ..add(fallbackLayer);
+            }
+          } else {
+            layers.add(activeLayer);
           }
 
           if (placement.seamlessFromPrevious && activeReady) {
