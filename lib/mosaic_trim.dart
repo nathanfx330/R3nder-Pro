@@ -140,6 +140,9 @@ String trimMosaicToShortest(String source, String mosaicId) {
     );
   }
 
+  // Validation above is against the original authored model. The rewrite loop
+  // therefore relies on removeClip and trimClipEnd remaining non-rippling:
+  // surviving clip AT positions must not move as earlier blocks are rewritten.
   String next = source;
   for (final MosaicPane pane in panes) {
     for (final EditClip clip in pane.clips) {
