@@ -373,6 +373,101 @@ bool _mostlyRed(List<int> pixel) =>
 bool _mostlyBlue(List<int> pixel) =>
     pixel[2] > 170 && pixel[0] < 90 && pixel[1] < 90;
 
+
+Future<void> _generateEdgeMarkedCircleClip(
+  String directory,
+  String path,
+) async {
+  const int width = 320;
+  const int height = 180;
+  const int radius = 40;
+  final Uint8List rgb = Uint8List(width * height * 3);
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      int r = 18;
+      int g = 30;
+      int b = 42;
+
+      if (y < 6) {
+        r = 255;
+        g = 20;
+        b = 20;
+      } else if (y >= height - 6) {
+        r = 20;
+        g = 40;
+        b = 255;
+      } else if (x < 6) {
+        r = 20;
+        g = 220;
+        b = 40;
+      } else if (x >= width - 6) {
+        r = 245;
+        g = 220;
+        b = 20;
+      } else {
+        final int dx = x - width ~/ 2;
+        final int dy = y - height ~/ 2;
+        if (dx * dx + dy * dy <= radius * radius) {
+          r = 245;
+          g = 245;
+          b = 245;
+        }
+      }
+
+      final int at = (y * width + x) * 3;
+      rgb[at] = r;
+      rgb[at + 1] = g;
+      rgb[at + 2] = b;
+    }
+  }
+
+  final String ppm = '$directory/edge_circle.ppm';
+  final BytesBuilder bytes = BytesBuilder(copy: false)
+    ..add(ascii.encode('P6\n$width $height\n255\n'))
+    ..add(rgb);
+  await File(ppm).writeAsBytes(bytes.takeBytes(), flush: true);
+
+  final ProcessResult result = await Process.run(
+    'ffmpeg',
+    <String>[
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-loop',
+      '1',
+      '-framerate',
+      '30',
+      '-i',
+      ppm,
+      '-t',
+      '1',
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-g',
+      '30',
+      '-keyint_min',
+      '30',
+      '-sc_threshold',
+      '0',
+      '-pix_fmt',
+      'yuv420p',
+      path,
+    ],
+  );
+  expect(
+    result.exitCode,
+    0,
+    reason: 'W4 edge-marked circle generation failed.\n'
+        'stdout:\n${result.stdout}\n'
+        'stderr:\n${result.stderr}',
+  );
+}
+
 void main() {
   test(
     'M13 exports native MOSAIC with structural audio bounded by picture',
@@ -600,4 +695,155 @@ void main() {
         ? false
         : 'M13 native structural export is currently Linux-only.',
   );
+
+  test(
+    'W4 native pane render preserves edge marks and circular aspect in 4:3',
+    () async {
+      final String? mltPkg = await _findMltPkg();
+      if (mltPkg == null) return;
+
+      final ProcessResult ffmpegVersion =
+          await Process.run('ffmpeg', const <String>['-version']);
+      if (ffmpegVersion.exitCode != 0) return;
+
+      final ProcessResult pkg = await Process.run(
+        'pkg-config',
+        <String>['--cflags', '--libs', mltPkg],
+      );
+      expect(pkg.exitCode, 0, reason: '${pkg.stderr}');
+
+      final Directory temp =
+          await Directory.systemTemp.createTemp('r3nder_w4_native_contain_');
+      final String library = '${temp.path}/libw4_media_decoder.so';
+      final String probeClip = '${temp.path}/edge_circle.mp4';
+
+      try {
+        final List<String> pkgArgs = '${pkg.stdout}'
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((String part) => part.isNotEmpty)
+            .toList();
+
+        final ProcessResult compile = await Process.run(
+          'g++',
+          <String>[
+            '-std=c++14',
+            '-O2',
+            '-fPIC',
+            '-shared',
+            '-pthread',
+            '-Wall',
+            '-Wextra',
+            '-Werror',
+            ...pkgArgs.where((String part) => part.startsWith('-I')),
+            'linux/runner/media_decoder.cc',
+            '-o',
+            library,
+            ...pkgArgs.where((String part) => !part.startsWith('-I')),
+          ],
+        );
+        expect(
+          compile.exitCode,
+          0,
+          reason: 'W4 native decoder library failed to compile.\n'
+              'stdout:\n${compile.stdout}\n'
+              'stderr:\n${compile.stderr}',
+        );
+
+        await _generateEdgeMarkedCircleClip(temp.path, probeClip);
+
+        const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:probe:probe.mp4:0:0:30:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:probe2:probe.mp4:0:0:30:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+        final _ProbeNativeBackend backend = _ProbeNativeBackend(library);
+        final StructuralSourceFrameRenderer renderer =
+            StructuralSourceFrameRenderer.create(
+          source: source,
+          structuralSource: 'MOSAIC.wall',
+          width: 320,
+          height: 240,
+          backend: backend,
+          resolveSource: (String value) =>
+              value == 'probe.mp4' ? probeClip : value,
+        );
+        try {
+          final StructuralSourceRenderedFrame rendered =
+              renderer.renderMosaicPaneDetailed(0, 0);
+          final Uint8List rgba = rendered.rgba;
+          expect(rgba.length, 320 * 240 * 4);
+
+          bool redEdge = false;
+          bool blueEdge = false;
+          bool greenEdge = false;
+          bool yellowEdge = false;
+          int minWhiteX = 320;
+          int minWhiteY = 240;
+          int maxWhiteX = -1;
+          int maxWhiteY = -1;
+          int whitePixels = 0;
+
+          for (int y = 0; y < 240; y++) {
+            for (int x = 0; x < 320; x++) {
+              final int at = (y * 320 + x) * 4;
+              final int r = rgba[at];
+              final int g = rgba[at + 1];
+              final int b = rgba[at + 2];
+
+              redEdge |= r > 170 && g < 100 && b < 100;
+              blueEdge |= b > 170 && r < 100 && g < 120;
+              greenEdge |= g > 140 && r < 110 && b < 120;
+              yellowEdge |= r > 150 && g > 140 && b < 120;
+
+              if (r > 190 && g > 190 && b > 190) {
+                whitePixels++;
+                if (x < minWhiteX) minWhiteX = x;
+                if (x > maxWhiteX) maxWhiteX = x;
+                if (y < minWhiteY) minWhiteY = y;
+                if (y > maxWhiteY) maxWhiteY = y;
+              }
+            }
+          }
+
+          expect(redEdge, isTrue, reason: 'Top edge marker was cropped.');
+          expect(blueEdge, isTrue, reason: 'Bottom edge marker was cropped.');
+          expect(greenEdge, isTrue, reason: 'Left edge marker was cropped.');
+          expect(yellowEdge, isTrue, reason: 'Right edge marker was cropped.');
+          expect(whitePixels, greaterThan(2500));
+          expect(maxWhiteX, greaterThanOrEqualTo(minWhiteX));
+          expect(maxWhiteY, greaterThanOrEqualTo(minWhiteY));
+
+          final double whiteWidth = (maxWhiteX - minWhiteX + 1).toDouble();
+          final double whiteHeight = (maxWhiteY - minWhiteY + 1).toDouble();
+          final double ratio = whiteWidth / whiteHeight;
+          expect(
+            ratio,
+            inInclusiveRange(0.92, 1.08),
+            reason:
+                'Native 16:9 -> 4:3 pane decode stretched the circular '
+                'fixture: ${whiteWidth}x${whiteHeight}.',
+          );
+        } finally {
+          renderer.dispose();
+        }
+      } finally {
+        if (temp.existsSync()) {
+          temp.deleteSync(recursive: true);
+        }
+      }
+    },
+    skip: Platform.isLinux
+        ? false
+        : 'W4 native split contain probe is currently Linux-only.',
+  );
+
+
 }
