@@ -101,6 +101,9 @@ The planned two-window STRUCT presentation and its measured geometry are recorde
 [`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). That work
 changes placement presentation, not reusable MOSAIC content geometry.
 
+W1 of that milestone adds `lib/mosaic_split_geometry.dart` as a pure seated
+split-window geometry authority. Grammar/model ownership remains deferred to W2.
+
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
