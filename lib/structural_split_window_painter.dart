@@ -1,0 +1,84 @@
+// ./lib/structural_split_window_painter.dart
+//
+// One seated two-window STRUCT painter shared by live Preview and Program BAKE.
+//
+// W1 owns geometry. W2 owns placement/title/aspect semantics. This class owns
+// only the final two-window raster projection and delegates each individual
+// desktop window to structural_window_painter.dart.
+
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+
+import 'mosaic_split_geometry.dart';
+import 'structural_sequence.dart';
+import 'structural_window_painter.dart';
+import 'ui_theme.dart';
+
+class StructuralSplitWindowPainter extends CustomPainter {
+  final MosaicSplitWindowGeometry geometry;
+  final StructuralSequencePlacement placement;
+  final int sourceFrame;
+  final R3Theme theme;
+  final String fontFamily;
+  final double chromeScale;
+  final List<ui.Image?> images;
+  final List<String> diagnosticLabels;
+  final double opacity;
+
+  const StructuralSplitWindowPainter({
+    required this.geometry,
+    required this.placement,
+    required this.sourceFrame,
+    required this.theme,
+    required this.fontFamily,
+    required this.chromeScale,
+    required this.images,
+    required this.diagnosticLabels,
+    this.opacity = 1.0,
+  })  : assert(images.length == 2),
+        assert(diagnosticLabels.length == 2);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      paintStructuralWindow(
+        canvas: canvas,
+        theme: theme,
+        chromeScale: chromeScale,
+        fontFamily: fontFamily,
+        sourceFrame: sourceFrame,
+        sourceDurationFrames: placement.sourceDurationFrames,
+        windowTitle: placement.splitWindowTitleForPane(paneIndex),
+        overlayMode: placement.overlayMode,
+        topOverlay: placement.topOverlay,
+        bottomOverlay: placement.bottomOverlay,
+        defaultBottomOverlay: diagnosticLabels[paneIndex],
+        rect: geometry.windowRects[paneIndex],
+        sourceImage: images[paneIndex],
+        outgoingSourceImage: null,
+        outgoingPlacement: null,
+        outgoingSourceFrame: 0,
+        outgoingDefaultBottomOverlay: '',
+        handoffSlideT: 1.0,
+        opacity: opacity,
+        windowChrome: 1.0,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant StructuralSplitWindowPainter oldDelegate) {
+    return oldDelegate.geometry != geometry ||
+        oldDelegate.placement != placement ||
+        oldDelegate.sourceFrame != sourceFrame ||
+        oldDelegate.theme != theme ||
+        oldDelegate.fontFamily != fontFamily ||
+        oldDelegate.chromeScale != chromeScale ||
+        oldDelegate.opacity != opacity ||
+        oldDelegate.images[0] != images[0] ||
+        oldDelegate.images[1] != images[1] ||
+        oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
+        oldDelegate.diagnosticLabels[1] != diagnosticLabels[1];
+  }
+}
