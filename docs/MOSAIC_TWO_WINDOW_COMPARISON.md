@@ -1,10 +1,11 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: W0 through W8 are implemented and locally exercised. W8's focused
-gate passed 34 tests before the final horizontal-only MAX refinement; the final
-geometry/render subset then passed 13 tests, and the Linux GUI behavior was
-confirmed. The completed stack is ready to merge from
-`mosaic-w8-maximized-split`.
+Status: W0 through W8 are merged to `main` at
+`c02ae600d5144cb070773655cc4618d9d479f31d` and were run successfully from
+main on Linux. W8's focused gate passed 34 tests before the final
+horizontal-only MAX refinement; the final geometry/render subset then passed
+13 tests. The documentation checker reported 16 contracts / 90 proof files,
+and the final GUI behavior was confirmed before merge.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -475,8 +476,12 @@ dart run tool/check_doc_contracts.dart
 The initial W6 gate passed with 20 tests and the documentation checker reported
 16 contracts / 90 proof files. GUI validation then found that those fixtures
 had authored CARD directly on a PANE CLIP instead of inside the nested EDIT used
-by the real project. The strengthened nested-source proofs and production fix
-must pass locally before W6 is considered complete again.
+by the real project. That was a useful failure of the test topology rather than
+of the basic CARD painter. The production resolver was extended to follow the
+real MOSAIC -> EDIT -> media path with exact parent frame mapping, and the
+strengthened nested-source gate later passed with 5 tests. GUI validation then
+confirmed that a CARD authored inside the nested EDIT fills only its owning
+two-window client.
 
 ### W7 - shape-transition polish and fallback timing visibility
 
@@ -610,6 +615,114 @@ flutter test \
 
 dart run tool/check_doc_contracts.dart
 ```
+
+## Journey and post-merge review
+
+The final feature is simpler than the path that produced it. This section keeps
+the wrong turns because they explain several otherwise surprising contracts.
+
+### The first split design was intentionally conservative
+
+The first question was not "how do we fill the screen?" It was whether two
+independent desktop windows could beat the existing Metro-style MOSAIC without
+breaking the structural composition model. The initial geometry therefore kept
+real desktop margins, a fixed inter-window gap, one authored client aspect, and
+the existing window title/chrome treatment.
+
+That conservative version established the important ownership boundary first:
+MOSAIC remained reusable content, while SPLIT remained presentation metadata on
+STRUCT. It also forced the rendering path to stay compositor-level rather than
+opening pane media directly. That decision is why nested EDIT/MOSAIC sources,
+decoder diagnostics, CARD routing, Preview, and BAKE all still share the same
+structural semantics.
+
+### Green lower-level tests did not mean the product was done
+
+W6 is the clearest example. The first CARD tests were green, but the GUI exposed
+that the fixtures put CARD directly on a MOSAIC pane clip. The real project put
+CARD inside an EDIT referenced by the pane. The product therefore failed even
+though the lower-level proof passed.
+
+The fix was not to weaken the UI expectation. The test topology was made
+realistic and the resolver learned to recurse through structural clips with
+exact AT/IN/speed frame mapping. This is now one of the examples behind the
+repository rule that a production bug with green lower-level tests must gain a
+boundary regression.
+
+### Deterministic timing can still look wrong
+
+W5 got the frame accounting right at split/non-split boundaries. It reused the
+existing 12-frame window budget, kept source time deterministic, and prevented
+decoder readiness from inserting project frames. Visually, however, those same
+12 frames initially held the outgoing final image stationary. The result looked
+like dropped frames even though the timeline was mathematically correct.
+
+Post-implementation review caught that mismatch. W7 kept the exact same authored
+budget and source-time rules but spent those frames on visible intent instead:
+the outgoing final presentation fades while the incoming presentation grows
+through the standard window emergence curve. A later GUI pass found the same
+seated-geometry shortcut on ordinary SPLIT open/close, so that path was corrected
+too. The lesson was that deterministic timing and perceptually legible motion
+are separate contracts and both need proof.
+
+### Effective-shape timing has a real downstream consequence
+
+The same review also exposed a timing consequence that was easy to understate.
+SPLIT timing follows the shape that actually renders, not merely the authored
+request. If a middle SPLIT placement becomes unsupported because one pane is
+emptied, it falls back to ordinary windowed presentation. In a seamless
+`APPSWITCH:SLIDE` chain that changes both neighboring shape boundaries.
+
+The result can be two existing 12-frame window budgets, shifting later TEXT by
+24 frames even though the structural source duration itself did not change.
+Using requested SPLIT timing for a windowed fallback would hide the shift but
+would make timing disagree with the rendered presentation. The implementation
+therefore keeps effective shape as the timing authority and exposes the
+consequence in lint.
+
+### MAX began as full-height snap and was corrected by the GUI
+
+The first W8 interpretation of MAX was literal Windows-style half-screen snap:
+two 960 x 1080 outer windows at 1920 x 1080, with 960 x 1042 clients below the
+title bars. That removed all outside margin and the center gap, but 16:9 footage
+sat inside a very tall client with large black areas.
+
+The GUI made the problem obvious. The actual need was horizontal real estate,
+not vertical expansion. MAX was therefore refined to remove horizontal waste
+only: each client gets half the program width, while authored aspect determines
+height and the pair remains vertically centered. That produced the intended
+16:9 result of 960 x 540 clients and 4:3 at 960 x 720, while preserving the same
+open/close choreography, timing, cue ownership, and BAKE/Preview geometry
+authority.
+
+The final W8 focused gate passed 34 tests before this geometry refinement. The
+refined geometry/render subset then passed 13 tests, and the result was checked
+in the Linux GUI before W0-W8 were merged to main.
+
+### Post-merge review: the remaining portrait MAX question
+
+A second review after merge found one deliberate edge case worth preserving in
+the record. Under the current MAX rule, 9:16 first claims the full 960 px
+half-width. Its authored height would be about 1706.7 px, which cannot fit below
+the title bar, so the vertical cap binds. The current client therefore becomes
+960 x 1042 rather than a true 9:16 rectangle. Contain fitting then places roughly
+586 x 1042 portrait footage inside that wider client.
+
+That behavior is explicitly pinned by the geometry test, so it is not an
+accidental crop/stretch bug. It is a presentation choice created by the
+"half-width first, then cap height" rule.
+
+There is a cleaner alternative for a future revision: preserve the authored
+aspect when the height cap binds by shrinking client width as well. At 1080p
+that would produce roughly 586 x 1042 portrait clients, keep the pair centered,
+and expose desktop at the outside edges. Matching portrait footage would occupy
+the same visible area either way; only the window shape and surrounding desktop
+would change.
+
+No code change has been made for that alternative. The merged W8 contract
+remains the current half-width-first behavior. If portrait MAX is revisited,
+the decision should be made as a visible window-design choice rather than by
+changing contain fitting or decoder behavior.
 
 ## Non-goals
 
