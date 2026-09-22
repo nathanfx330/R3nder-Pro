@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import 'mosaic_split_geometry.dart';
 import 'structural_sequence.dart';
+import 'structural_shell_geometry.dart';
 import 'structural_window_painter.dart';
 import 'ui_theme.dart';
 
@@ -26,6 +27,13 @@ class StructuralSplitWindowPainter extends CustomPainter {
   final List<String> diagnosticLabels;
   final double opacity;
 
+  /// Authored open progress for a split/non-split shape change.
+  ///
+  /// 1.0 is the ordinary seated raster. Values below 1.0 apply the same
+  /// emergence -> target easing used by a standard STRUCT window opening to
+  /// each split window independently.
+  final double entryProgress;
+
   const StructuralSplitWindowPainter({
     required this.geometry,
     required this.placement,
@@ -36,12 +44,22 @@ class StructuralSplitWindowPainter extends CustomPainter {
     required this.images,
     required this.diagnosticLabels,
     this.opacity = 1.0,
+    this.entryProgress = 1.0,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final double progress = entryProgress.clamp(0.0, 1.0).toDouble();
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      final Rect target = geometry.windowRects[paneIndex];
+      final Rect rect = progress >= 0.999999
+          ? target
+          : structuralShapeEntryFrameAt(
+              targetRect: target,
+              linearProgress: progress,
+              contentReady: true,
+            ).rect;
       paintStructuralWindow(
         canvas: canvas,
         theme: theme,
@@ -54,7 +72,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         topOverlay: placement.topOverlay,
         bottomOverlay: placement.bottomOverlay,
         defaultBottomOverlay: diagnosticLabels[paneIndex],
-        rect: geometry.windowRects[paneIndex],
+        rect: rect,
         sourceImage: images[paneIndex],
         outgoingSourceImage: null,
         outgoingPlacement: null,
@@ -76,6 +94,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.fontFamily != fontFamily ||
         oldDelegate.chromeScale != chromeScale ||
         oldDelegate.opacity != opacity ||
+        oldDelegate.entryProgress != entryProgress ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
