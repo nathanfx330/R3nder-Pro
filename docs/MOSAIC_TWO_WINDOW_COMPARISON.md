@@ -790,8 +790,56 @@ flutter test \
 dart run tool/check_doc_contracts.dart
 ```
 
+### Follow-on Ubuntu finding: same-source legacy MOSAIC raster contention
+
+Ubuntu validation then exposed a separate ordinary-windowed MOSAIC failure. A
+fresh two-pane MOSAIC with both panes pointing at the same nested EDIT rendered
+correctly in the structural editor but could remain black when placed as:
+
+```text
+[STRUCT:MOSAIC.mosaic:AUDIO]
+```
+
+This was not a SPLIT parser, pane-id, clip-id, or same-EDIT ownership problem.
+The legacy two-pane MOSAIC layout is intentionally asymmetric: the left pane is
+56% of the client width and the right pane is 44%. Both panes may therefore
+resolve the same leaf media path at the same source frame but at two different
+decode raster sizes.
+
+Dart previously cached one persistent decoder by resolved media path only. The
+native worker, however, owns one active target raster at a time and clears its
+frame cache when width or height changes. A live nonblocking render could
+therefore alternate forever between the left and right pane sizes:
+
+```text
+shared.mp4 @ left-pane raster
+shared.mp4 @ right-pane raster  -> native size reset
+shared.mp4 @ left-pane raster   -> native size reset
+shared.mp4 @ right-pane raster  -> native size reset
+...
+```
+
+Neither request stayed resident long enough for the whole MOSAIC to become
+presentable, so the outer structural window remained black.
+
+`MediaLayer` now keys persistent decoder workers by resolved media path plus
+requested width and height. Stable-size playback still reuses one worker, while
+simultaneous differently-sized consumers receive independent workers. Raster
+variants are bounded by a small per-source LRU so repeatedly resizing Preview
+cannot accumulate an unbounded number of native decoders.
+
+Proof is split across two levels:
+
+- `test/edit_video_compositor_test.dart` uses a nonblocking decoder fake that
+  deliberately loses progress whenever one worker is bounced between raster
+  sizes. The same nested EDIT in both 56/44 panes must resolve after two polls,
+  with two raster-specific workers.
+- `test/structural_sequence_preview_test.dart` reproduces the author-visible
+  ordinary `STRUCT:MOSAIC...:AUDIO` opening path and proves first-frame
+  readiness is reached with the same nested EDIT and same pane CLIP id.
+
 The code and regressions on `fix-split-preview-entry-readiness` remain
-unverified until this gate and a cold Rocky Preview/BAKE visual check pass.
+unverified until the expanded local gate and visual checks pass.
 
 ## Non-goals
 
