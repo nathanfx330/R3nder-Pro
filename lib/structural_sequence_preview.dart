@@ -532,6 +532,13 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final double structuralOpacity = baseShell.structuralOpacity;
           final bool structuralWindowPresent =
               baseShell.structuralWindowPresent;
+          final bool splitShapeEntryHold =
+              placement.splitBoundaryFromPrevious &&
+              placement.effectivePreviousPresentationShape !=
+                  placement.presentationShape &&
+              stage == StructuralSequenceStage.opening;
+          final double presentationOpacity =
+              splitShapeEntryHold ? 0.0 : structuralOpacity;
           double structuralChrome = 1.0;
 
           // If source lifetime truncated MAXIMIZE, the STRUCT close starts from
@@ -680,7 +687,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     key: const ValueKey<String>(
                       'structural-split-window-opacity',
                     ),
-                    opacity: structuralOpacity.clamp(0.0, 1.0),
+                    opacity: presentationOpacity.clamp(0.0, 1.0),
                     child: StructuralSplitWindowPreview(
                       key: ValueKey<String>(
                         'sequence-split-preview:$source',
@@ -708,7 +715,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   rect: structuralRect,
                   child: Opacity(
                     key: const ValueKey<String>('structural-window-opacity'),
-                    opacity: structuralOpacity.clamp(0.0, 1.0),
+                    opacity: presentationOpacity.clamp(0.0, 1.0),
                     child: _StructuralWindow(
                       key: const ValueKey<String>('structural-window-frame'),
                       source: source,
@@ -1106,7 +1113,7 @@ class _StructuralWindow extends StatelessWidget {
         handoffRole == StructuralSequenceHandoffRole.outgoing;
     final bool heldOutgoing =
         handoffRole == StructuralSequenceHandoffRole.heldOutgoing;
-    final bool overlayOnly = externalOutgoing || heldOutgoing;
+    final bool overlayOnly = externalOutgoing;
 
     final StructuralOverlayMode visibleOverlayMode =
         showingCover ? outgoingOverlayMode : overlayMode;
