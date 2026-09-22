@@ -536,13 +536,26 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final double structuralOpacity = baseShell.structuralOpacity;
           final bool structuralWindowPresent =
               baseShell.structuralWindowPresent;
-          final bool splitShapeEntryHold =
+          final bool splitShapeEntry =
               placement.splitBoundaryFromPrevious &&
               placement.effectivePreviousPresentationShape !=
                   placement.presentationShape &&
               stage == StructuralSequenceStage.opening;
-          final double presentationOpacity =
-              splitShapeEntryHold ? 0.0 : structuralOpacity;
+          double presentationOpacity = structuralOpacity;
+          double splitEntryProgress = 1.0;
+          if (splitShapeEntry) {
+            final StructuralShapeEntryFrame entry =
+                structuralShapeEntryFrameAt(
+              targetRect: presentationRect,
+              linearProgress: linear,
+              contentReady: _firstFrameReady,
+            );
+            presentationOpacity = entry.opacity;
+            splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
+            if (!placement.splitWindow) {
+              structuralRect = entry.rect;
+            }
+          }
           double structuralChrome = 1.0;
 
           // If source lifetime truncated MAXIMIZE, the STRUCT close starts from
@@ -705,6 +718,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                               ? liveFont
                               : 'monospace',
                       chromeScale: chromeScale,
+                      entryProgress: splitEntryProgress,
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       backend: widget.backend,
