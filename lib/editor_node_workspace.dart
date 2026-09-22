@@ -3137,6 +3137,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         node.param('mode').trim().toUpperCase() == 'FULL';
     final bool split =
         node.param('split').trim().toUpperCase() == 'SPLIT';
+    final bool maximizeSplit =
+        node.param('maxSplit').trim().toUpperCase() == 'MAX';
 
     final List<String> sources = _nodes
         .where((n) =>
@@ -3193,7 +3195,10 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           'inside a desktop window.',
       onTap: () {
         node.set('mode', fullscreen ? '' : 'FULL');
-        if (!fullscreen) node.set('split', '');
+        if (!fullscreen) {
+          node.set('split', '');
+          node.set('maxSplit', '');
+        }
         _notifyChanged();
       },
     ));
@@ -3208,12 +3213,25 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           'windowed presentation.',
       onTap: () {
         node.set('split', split ? '' : 'SPLIT');
-        if (!split) node.set('mode', '');
+        if (!split) {
+          node.set('mode', '');
+        } else {
+          node.set('maxSplit', '');
+        }
         _notifyChanged();
       },
     ));
 
     if (split) {
+      f.add(_fToggle(
+        node,
+        'Maximize split',
+        'maxSplit',
+        'MAX',
+        'Snap both windows edge to edge across the program frame. The center '
+            'window borders become the divider and each video remains '
+            'contained inside its own client.',
+      ));
       f.add(_fEnum(
         node,
         'Client aspect',
@@ -3222,9 +3240,14 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         '16X9',
       ));
       f.add(_hint(
-        'One aspect applies to both windows. 16X9 is the implicit default. '
-        'Window titles use the placement title followed by PANE 1 or PANE 2, '
-        'so timeline cuts inside a pane never rename its desktop window.',
+        maximizeSplit
+            ? 'Client aspect is preserved but dormant while MAXIMIZE SPLIT '
+                'is on. Turn MAXIMIZE SPLIT off to restore this normal split '
+                'aspect.'
+            : 'One aspect applies to both windows. 16X9 is the implicit '
+                'default. Window titles use the placement title followed by '
+                'PANE 1 or PANE 2, so timeline cuts inside a pane never '
+                'rename its desktop window.',
       ));
     }
 
