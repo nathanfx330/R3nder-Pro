@@ -282,14 +282,35 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
+          final bool activeReadyPainted =
+              _readyPaintedPlacements.contains(activeIndex);
           final int activeSourceFrame =
               placement.sourceFrameAt(activeLocalFrame);
-          final bool handoffWindowOpen = placement.seamlessFromPrevious &&
+
+          final int previousIndex = activeIndex - 1;
+          final StructuralSequencePlacement? previousPlacement =
+              placement.seamlessFromPrevious
+                  ? _placementAt(previousIndex)
+                  : null;
+          final bool previousCanHandoff = previousPlacement != null &&
+              previousPlacement.seamlessToNext &&
+              previouslyMounted.contains(previousIndex);
+          final bool splitBoundary = previousCanHandoff &&
+              (previousPlacement!.splitWindow || placement.splitWindow);
+          final bool splitShapeChange = splitBoundary &&
+              previousPlacement!.presentationShape !=
+                  placement.presentationShape;
+          final bool splitEntryBudgetOpen = splitShapeChange &&
+              placement.stageAt(activeLocalFrame) ==
+                  StructuralSequenceStage.opening;
+
+          final bool handoffWindowOpen = !splitBoundary &&
+              placement.seamlessFromPrevious &&
               structuralSwitchSlideWindowOpen(
                 sourceFrame: activeSourceFrame,
                 sourceDurationFrames: placement.sourceDurationFrames,
               );
-          final double handoffSlideT = placement.seamlessFromPrevious
+          final double handoffSlideT = handoffWindowOpen
               ? structuralSwitchSlideT(
                   sourceFrame: activeSourceFrame,
                   sourceDurationFrames: placement.sourceDurationFrames,
@@ -298,29 +319,33 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
-          if (placement.seamlessFromPrevious &&
-              handoffWindowOpen) {
-            final int previousIndex = activeIndex - 1;
-            final StructuralSequencePlacement? previous =
-                _placementAt(previousIndex);
-            if (previous != null &&
-                previous.seamlessToNext &&
-                previouslyMounted.contains(previousIndex)) {
-              fallbackIndex = previousIndex;
-              fallbackPlacement = previous;
-            }
+          bool fallbackIsHeldSplit = false;
+
+          if (splitBoundary &&
+              (splitEntryBudgetOpen || !activeReadyPainted)) {
+            fallbackIndex = previousIndex;
+            fallbackPlacement = previousPlacement;
+            fallbackIsHeldSplit = true;
+          } else if (handoffWindowOpen && previousCanHandoff) {
+            fallbackIndex = previousIndex;
+            fallbackPlacement = previousPlacement;
           }
 
-          // A and B always occupy their authored positions. Readiness may
-          // determine whether B has presentable pixels, but it never changes
-          // the transition geometry or restarts the authored pan.
+          // Split boundaries never pan one pane independently. The incoming
+          // placement can paint underneath its stationary outgoing cover once
+          // its authored entry budget has elapsed. Readiness controls only the
+          // reveal; source time and geometry continue to follow the runtime
+          // marker.
+          final bool activeVisible =
+              !splitBoundary || !splitEntryBudgetOpen;
+
           nextMounted.add(activeIndex);
           layers.add(
             _structuralLayer(
               placementIndex: activeIndex,
               placement: placement,
               localFrame: activeLocalFrame,
-              visible: true,
+              visible: activeVisible,
               handoffRole: handoffWindowOpen
                   ? StructuralSequenceHandoffRole.incoming
                   : StructuralSequenceHandoffRole.none,
@@ -336,13 +361,17 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
                 placement: fallbackPlacement,
                 localFrame: fallbackPlacement.effectiveDurationFrames - 1,
                 visible: true,
-                handoffRole: StructuralSequenceHandoffRole.outgoing,
+                handoffRole: fallbackIsHeldSplit
+                    ? StructuralSequenceHandoffRole.heldOutgoing
+                    : StructuralSequenceHandoffRole.outgoing,
                 handoffSlideT: handoffSlideT,
               ),
             );
           }
 
-          if (placement.seamlessFromPrevious && activeReady) {
+          if (placement.seamlessFromPrevious &&
+              activeReady &&
+              (!splitBoundary || !splitEntryBudgetOpen)) {
             _scheduleReadyPaintCommit(activeIndex);
           }
         }
