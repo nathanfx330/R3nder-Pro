@@ -103,6 +103,23 @@ class _ColdSplitBackend implements MediaDecoderBackend {
   }
 }
 
+class _ColdSameSourceBackend implements MediaDecoderBackend {
+  bool released = false;
+  int opens = 0;
+  _CountingGateDecoder? decoder;
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    opens++;
+    final _CountingGateDecoder created = _CountingGateDecoder(
+      released: () => released,
+      color: const <int>[180, 90, 220, 255],
+    );
+    decoder = created;
+    return created;
+  }
+}
+
 class _CountingGateDecoder implements NonBlockingMediaDecoder {
   _CountingGateDecoder({
     required this.released,
@@ -247,6 +264,20 @@ String _coldSplitOpeningSource({required bool maximized}) {
 [STRUCT:MOSAIC.wall:SPLIT$max:OVERLAY=NONE]
 ''';
 }
+
+String _coldSameSourceSplitOpeningSource() => '''[SPEED:MAX]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:left_leaf:video/shared.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_leaf:video/shared.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
 
 String _resolveSource(String source) => '/workspace/$source';
 
@@ -587,6 +618,99 @@ Future<void> _expectColdSplitOpeningRetries(
   expect(right.pollFrames.length, rightPollsReady);
 }
 
+Future<void> _expectColdSameSourceSplitRetries(
+  WidgetTester tester,
+) async {
+  final String source = _coldSameSourceSplitOpeningSource();
+  final StructuralSequencePlacement placement =
+      parseStructuralSequencePlacements(source).single;
+  final int openingLocal = _earlyPartialOpeningLocalFrame(placement);
+  final double authoredProgress = placement.stageProgressAt(openingLocal);
+
+  final SceneEngine scene = SceneEngine();
+  final Directory root = await _setupScene(tester, scene, source);
+  final ChangeNotifier repaint = ChangeNotifier();
+  final _ColdSameSourceBackend backend = _ColdSameSourceBackend();
+  addTearDown(() {
+    repaint.dispose();
+    scene.disposeImages();
+    if (root.existsSync()) root.deleteSync(recursive: true);
+  });
+
+  final int openingProject = _findProjectFrame(
+    scene,
+    placementIndex: 0,
+    localFrame: openingLocal,
+  );
+  expect(
+    scene.evaluate(
+      ProjectTime(frame: openingProject, mode: ProjectClockMode.scrub),
+    ).exact,
+    isTrue,
+  );
+
+  await tester.pumpWidget(
+    _program(
+      scene: scene,
+      repaint: repaint,
+      source: source,
+      backend: backend,
+    ),
+  );
+
+  await _pumpUntil(
+    tester,
+    () => backend.decoder != null &&
+        backend.decoder!.pollFrames.isNotEmpty,
+  );
+
+  // Both panes reference the same resolved path, so MediaLayer must reuse one
+  // persistent decoder instead of opening competing workers for the same file.
+  expect(backend.opens, 1);
+  final _CountingGateDecoder decoder = backend.decoder!;
+  expect(
+    find.descendant(
+      of: _layer(0),
+      matching: find.byKey(
+        const ValueKey<String>('structural-first-frame-ready'),
+      ),
+    ),
+    findsNothing,
+  );
+
+  final int pollsBeforeRelease = decoder.pollFrames.length;
+  backend.released = true;
+
+  // No project-frame advance or repaint notification: the pending retry must
+  // discover the shared decoder's resident frame for both panes.
+  await _pumpUntil(
+    tester,
+    () => find.descendant(
+      of: _layer(0),
+      matching: find.byKey(
+        const ValueKey<String>('structural-first-frame-ready'),
+      ),
+    ).evaluate().isNotEmpty,
+  );
+  expect(decoder.pollFrames.length, greaterThan(pollsBeforeRelease));
+
+  final StructuralSplitWindowPainter painter = _splitPainter(tester, 0);
+  expect(painter.sourceFrame, 0);
+  expect(painter.entryProgress, closeTo(authoredProgress, 0.000001));
+  expect(painter.images[0], isNotNull);
+  expect(painter.images[1], isNotNull);
+  expect(backend.opens, 1);
+  expect(decoder.requestFrames.every((int frame) => frame == 0), isTrue);
+  expect(decoder.pollFrames.every((int frame) => frame == 0), isTrue);
+
+  await tester.pump();
+  await tester.pump();
+  final int pollsReady = decoder.pollFrames.length;
+  await tester.pump();
+  await tester.pump();
+  expect(decoder.pollFrames.length, pollsReady);
+}
+
 void main() {
   testWidgets(
     'cold SPLIT opening retries pending panes without advancing source time',
@@ -605,6 +729,13 @@ void main() {
         tester,
         maximized: true,
       );
+    },
+  );
+
+  testWidgets(
+    'cold SPLIT reuses one decoder when both panes reference the same media',
+    (WidgetTester tester) async {
+      await _expectColdSameSourceSplitRetries(tester);
     },
   );
 
