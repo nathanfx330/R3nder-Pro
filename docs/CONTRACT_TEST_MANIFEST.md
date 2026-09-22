@@ -167,6 +167,7 @@ A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen mo
 - `test/script_node_structural_fullscreen_test.dart`
 - `test/editor_structural_fullscreen_node_test.dart`
 - `test/structural_chrome_frame_expression_preview_test.dart`
+- `test/structural_split_placement_test.dart`
 - `test/mosaic_split_geometry_test.dart`
 
 ---
@@ -200,6 +201,8 @@ NODES and EDIT are editors over the document. First-class controls must serializ
 - `test/edit_workspace_test.dart`
 - `test/edit_workspace_resolver_seam_test.dart`
 - `test/edit_workspace_sequence_placement_test.dart`
+- `test/script_node_structural_split_test.dart`
+- `test/editor_structural_split_node_test.dart`
 
 ---
 
