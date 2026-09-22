@@ -143,7 +143,11 @@ void main() {
         titleHeight: 38.0 * chromeScale,
       );
 
-      expect(painter.geometry, expected);
+      expect(painter.geometry.clientSize, expected.clientSize);
+      expect(painter.geometry.leftWindowRect, expected.leftWindowRect);
+      expect(painter.geometry.rightWindowRect, expected.rightWindowRect);
+      expect(painter.geometry.leftClientRect, expected.leftClientRect);
+      expect(painter.geometry.rightClientRect, expected.rightClientRect);
       expect(painter.placement, same(placement));
       expect(painter.sourceFrame, sourceFrame);
       expect(painter.images, hasLength(2));
