@@ -320,9 +320,6 @@ class MediaLayer {
       return existing;
     }
 
-    stderr.writeln(
-      '[RASTER_DECODER_OPEN] $resolvedPath ${width}x$height',
-    );
     final MediaDecoder created = backend.open(resolvedPath);
     _decoders[key] = created;
     _decoderLastUse[key] = ++_decoderUseSerial;
@@ -355,10 +352,6 @@ class MediaLayer {
       if (remaining <= _maxRasterVariantsPerSource) break;
       final MediaDecoder? decoder = _decoders.remove(key);
       _decoderLastUse.remove(key);
-      stderr.writeln(
-        '[RASTER_DECODER_EVICT] ${key.resolvedPath} '
-        '${key.width}x${key.height}',
-      );
       decoder?.dispose();
       remaining--;
     }
