@@ -281,8 +281,13 @@ class MediaLayer {
   // invalidate the other's native cache. Key persistent workers by both media
   // identity and raster size so differently sized MOSAIC consumers can make
   // progress independently while stable-size playback still reuses one worker.
+  static const int _maxRasterVariantsPerSource = 4;
+
   final Map<_MediaDecoderRasterKey, MediaDecoder> _decoders =
       <_MediaDecoderRasterKey, MediaDecoder>{};
+  final Map<_MediaDecoderRasterKey, int> _decoderLastUse =
+      <_MediaDecoderRasterKey, int>{};
+  int _decoderUseSerial = 0;
   bool _disposed = false;
 
   MediaLayer({
@@ -300,6 +305,56 @@ class MediaLayer {
       backend: NativeMltMediaBackend(),
       resolveSource: resolveSource,
     );
+  }
+
+  MediaDecoder _decoderForRaster(
+    String resolvedPath,
+    int width,
+    int height,
+  ) {
+    final _MediaDecoderRasterKey key =
+        _MediaDecoderRasterKey(resolvedPath, width, height);
+    final MediaDecoder? existing = _decoders[key];
+    if (existing != null) {
+      _decoderLastUse[key] = ++_decoderUseSerial;
+      return existing;
+    }
+
+    final MediaDecoder created = backend.open(resolvedPath);
+    _decoders[key] = created;
+    _decoderLastUse[key] = ++_decoderUseSerial;
+    _trimRasterVariants(resolvedPath, keep: key);
+    return created;
+  }
+
+  void _trimRasterVariants(
+    String resolvedPath, {
+    required _MediaDecoderRasterKey keep,
+  }) {
+    final List<_MediaDecoderRasterKey> variants = _decoders.keys
+        .where(
+          (_MediaDecoderRasterKey key) =>
+              key.resolvedPath == resolvedPath,
+        )
+        .toList(growable: false);
+    if (variants.length <= _maxRasterVariantsPerSource) return;
+
+    final List<_MediaDecoderRasterKey> eviction = variants
+        .where((_MediaDecoderRasterKey key) => key != keep)
+        .toList()
+      ..sort(
+        (_MediaDecoderRasterKey a, _MediaDecoderRasterKey b) =>
+            (_decoderLastUse[a] ?? 0).compareTo(_decoderLastUse[b] ?? 0),
+      );
+
+    int remaining = variants.length;
+    for (final _MediaDecoderRasterKey key in eviction) {
+      if (remaining <= _maxRasterVariantsPerSource) break;
+      final MediaDecoder? decoder = _decoders.remove(key);
+      _decoderLastUse.remove(key);
+      decoder?.dispose();
+      remaining--;
+    }
   }
 
   /// Exact EDIT render path used for parked frames, deterministic tests, and
@@ -389,10 +444,8 @@ class MediaLayer {
     }
 
     final String resolved = resolveSource(source);
-    final _MediaDecoderRasterKey key =
-        _MediaDecoderRasterKey(resolved, width, height);
     final MediaDecoder decoder =
-        _decoders.putIfAbsent(key, () => backend.open(resolved));
+        _decoderForRaster(resolved, width, height);
     if (decoder is! TextureMediaDecoder) return null;
 
     final int id = decoder.textureId;
@@ -461,10 +514,8 @@ class MediaLayer {
 
         try {
           final String resolved = resolveSource(clip.source);
-          final _MediaDecoderRasterKey key =
-              _MediaDecoderRasterKey(resolved, width, height);
           final MediaDecoder decoder =
-              _decoders.putIfAbsent(key, () => backend.open(resolved));
+              _decoderForRaster(resolved, width, height);
 
           DecodedMediaFrame? decoded;
           if (nonBlocking && decoder is NonBlockingMediaDecoder) {
@@ -538,6 +589,7 @@ class MediaLayer {
       decoder.dispose();
     }
     _decoders.clear();
+    _decoderLastUse.clear();
   }
 }
 
