@@ -141,6 +141,12 @@ delay visibility only; authored transition progress and source time never
 restart. The old single-client horizontal APPSWITCH slide is never applied to a
 split boundary.
 
+The same rule now applies to ordinary SPLIT lifecycle choreography. On desktop
+entry each split window grows from its own standard 84% emergence rectangle
+while the common shell opacity ramps in; on close each window follows the exact
+reverse seated-to-emergence curve while shell opacity ramps out. The seated
+two-window geometry remains unchanged.
+
 W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
 the top-level pane to the complete split client before the pane image reaches
 the shared split-window painter. The resolver follows nested structural CLIPs,
