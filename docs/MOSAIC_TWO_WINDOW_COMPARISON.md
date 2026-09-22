@@ -1,7 +1,8 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: design locked for v1; W0 shared legacy layout extraction implemented on
-`mosaic-w0-shared-layout` and awaiting local Flutter verification.
+Status: design locked for v1. W0 shared legacy layout extraction passed its
+local gate. W1 pure split geometry is implemented on
+`mosaic-w1-split-geometry` and awaiting local Flutter verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -129,9 +130,37 @@ W1 does not begin until that gate passes locally.
 
 ### W1 - pure split geometry
 
-Add the two-window placement geometry as a pure shared calculation covering all
-three authored aspects, bounds, centering, fixed gap, title/client rectangles,
-and output scaling.
+`lib/mosaic_split_geometry.dart` now owns the seated two-window calculation as
+a pure coordinate-space-independent helper. It accepts the caller's frame
+rectangle, semantic client aspect, and caller-scaled title height. It does not
+know STRUCT grammar or choose chrome scale, so Preview and BAKE can later reuse
+it without locking W2 authoring syntax or creating a second title-bar policy.
+
+The helper exposes outer window, title-bar, and client rectangles for both
+panes, plus the measured edge margin, gap, and maximum client bounds. The three
+semantic aspect choices are 16:9, 4:3, and 9:16.
+
+`test/mosaic_split_geometry_test.dart` proves:
+
+- the exact 1920 x 1080 measurements for all three aspects;
+- the 869.76 px width cap for 16:9 and 4:3;
+- the 804.4 px client-height cap and 452.475 px contracted width for 9:16;
+- equal windows and clients;
+- the exact 46.08 px centered gap;
+- horizontal group centering and vertical outer-window centering;
+- title/client adjacency and frame bounds;
+- coordinate-origin independence;
+- linear 1080p to 4K scaling when caller chrome scales from 38 to 76 px;
+- explicit rejection of invalid frame/title inputs.
+
+Verification gate:
+
+```bash
+flutter test test/mosaic_split_geometry_test.dart test/mosaic_layout_test.dart test/program_structural_geometry_test.dart test/sidecard_geometry_test.dart
+dart run tool/check_doc_contracts.dart
+```
+
+W2 does not begin until that gate passes locally.
 
 ### W2 - grammar, model, authoring, and lint
 
