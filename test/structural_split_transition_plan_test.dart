@@ -218,6 +218,23 @@ void main() {
     );
   });
 
+  test('normal split to MAX split is a zero-budget geometry cut', () {
+    const String source = '''[CONFIG:APPSWITCH:SLIDE]
+$_roots
+[STRUCT:MOSAIC.left:SPLIT:ASPECT=4X3]
+[STRUCT:MOSAIC.right:SPLIT:MAX:ASPECT=9X16]
+''';
+
+    final List<StructuralSequencePlacement> placements =
+        parseStructuralSequencePlacements(source);
+    expect(placements, hasLength(2));
+    expect(placements[0].presentationShape, StructuralPresentationShape.split);
+    expect(placements[1].presentationShape, StructuralPresentationShape.split);
+    expect(placements[0].maximizeSplit, isFalse);
+    expect(placements[1].maximizeSplit, isTrue);
+    expect(placements[1].entryWindowFrames, 0);
+  });
+
   test('split aspect alone never adds project frames', () {
     final List<StructuralSequencePlacement> sameAspect = _placements(
       '''[STRUCT:MOSAIC.left:SPLIT]
