@@ -21,7 +21,7 @@ import 'media_layer.dart';
 import 'mosaic_split_geometry.dart';
 import 'project_clock.dart';
 import 'structural_sequence.dart';
-import 'structural_window_painter.dart';
+import 'structural_split_window_painter.dart';
 import 'ui_theme.dart';
 
 class StructuralSplitWindowPreview extends StatefulWidget {
@@ -364,7 +364,7 @@ class _StructuralSplitWindowPreviewState
           key: const ValueKey<String>('structural-split-raster'),
           child: CustomPaint(
             key: const ValueKey<String>('structural-split-window-frame'),
-            painter: _StructuralSplitWindowPainter(
+            painter: StructuralSplitWindowPainter(
               geometry: geometry,
               placement: widget.placement,
               sourceFrame: widget.sourceFrame,
@@ -383,66 +383,3 @@ class _StructuralSplitWindowPreviewState
   }
 }
 
-class _StructuralSplitWindowPainter extends CustomPainter {
-  final MosaicSplitWindowGeometry geometry;
-  final StructuralSequencePlacement placement;
-  final int sourceFrame;
-  final R3Theme theme;
-  final String fontFamily;
-  final double chromeScale;
-  final List<ui.Image?> images;
-  final List<String> diagnosticLabels;
-
-  const _StructuralSplitWindowPainter({
-    required this.geometry,
-    required this.placement,
-    required this.sourceFrame,
-    required this.theme,
-    required this.fontFamily,
-    required this.chromeScale,
-    required this.images,
-    required this.diagnosticLabels,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-      paintStructuralWindow(
-        canvas: canvas,
-        theme: theme,
-        chromeScale: chromeScale,
-        fontFamily: fontFamily,
-        sourceFrame: sourceFrame,
-        sourceDurationFrames: placement.sourceDurationFrames,
-        windowTitle: placement.splitWindowTitleForPane(paneIndex),
-        overlayMode: placement.overlayMode,
-        topOverlay: placement.topOverlay,
-        bottomOverlay: placement.bottomOverlay,
-        defaultBottomOverlay: diagnosticLabels[paneIndex],
-        rect: geometry.windowRects[paneIndex],
-        sourceImage: images[paneIndex],
-        outgoingSourceImage: null,
-        outgoingPlacement: null,
-        outgoingSourceFrame: 0,
-        outgoingDefaultBottomOverlay: '',
-        handoffSlideT: 1.0,
-        opacity: 1.0,
-        windowChrome: 1.0,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _StructuralSplitWindowPainter oldDelegate) {
-    return oldDelegate.geometry != geometry ||
-        oldDelegate.placement != placement ||
-        oldDelegate.sourceFrame != sourceFrame ||
-        oldDelegate.theme != theme ||
-        oldDelegate.fontFamily != fontFamily ||
-        oldDelegate.chromeScale != chromeScale ||
-        oldDelegate.images[0] != images[0] ||
-        oldDelegate.images[1] != images[1] ||
-        oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
-        oldDelegate.diagnosticLabels[1] != diagnosticLabels[1];
-  }
-}
