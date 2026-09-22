@@ -3228,9 +3228,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         'Maximize split',
         'maxSplit',
         'MAX',
-        'Snap both windows edge to edge across the program frame. The center '
-            'window borders become the divider and each video remains '
-            'contained inside its own client.',
+        'Use the full program width: each window takes one horizontal half '
+            'with no outside margin or center gap. Client aspect still owns '
+            'the window height, so video does not become unnecessarily tall.',
       ));
       f.add(_fEnum(
         node,
@@ -3241,9 +3241,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       ));
       f.add(_hint(
         maximizeSplit
-            ? 'Client aspect is preserved but dormant while MAXIMIZE SPLIT '
-                'is on. Turn MAXIMIZE SPLIT off to restore this normal split '
-                'aspect.'
+            ? 'MAXIMIZE SPLIT fixes each client to half the program width. '
+                'This aspect determines its height; portrait is capped by '
+                'available program height.'
             : 'One aspect applies to both windows. 16X9 is the implicit '
                 'default. Window titles use the placement title followed by '
                 'PANE 1 or PANE 2, so timeline cuts inside a pane never '
