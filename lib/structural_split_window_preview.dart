@@ -9,6 +9,7 @@
 // used by Program BAKE.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -62,6 +63,8 @@ class StructuralSplitWindowPreview extends StatefulWidget {
 
 class _StructuralSplitWindowPreviewState
     extends State<StructuralSplitWindowPreview> {
+  static const int _movingDecodePixelBudget = 480 * 270;
+
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
   String? _runtimeDocument;
@@ -423,6 +426,23 @@ class _StructuralSplitWindowPreviewState
     return source;
   }
 
+  ui.Size _decodePaneSize(
+    ui.Size displaySize, {
+    required bool moving,
+  }) {
+    if (!moving) return displaySize;
+
+    final double pixels = displaySize.width * displaySize.height;
+    if (pixels <= _movingDecodePixelBudget) return displaySize;
+
+    final double scale =
+        math.sqrt(_movingDecodePixelBudget / pixels);
+    return ui.Size(
+      math.max(1, (displaySize.width * scale).round()).toDouble(),
+      math.max(1, (displaySize.height * scale).round()).toDouble(),
+    );
+  }
+
   Future<ui.Image> _decodeRgba(
     Uint8List rgba,
     int width,
@@ -461,10 +481,12 @@ class _StructuralSplitWindowPreviewState
           titleHeight: 38.0 * widget.chromeScale,
           maximized: widget.placement.maximizeSplit,
         );
-        final ui.Size nextPaneSize = ui.Size(
+        final ui.Size displayPaneSize = ui.Size(
           geometry.clientSize.width.round().clamp(1, 1 << 30).toDouble(),
           geometry.clientSize.height.round().clamp(1, 1 << 30).toDouble(),
         );
+        final ui.Size nextPaneSize =
+            _decodePaneSize(displayPaneSize, moving: widget.moving);
 
         if (_paneRenderSize != nextPaneSize) {
           _paneRenderSize = nextPaneSize;
