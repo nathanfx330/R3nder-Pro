@@ -423,7 +423,12 @@ void main() {
       final double chromeScale =
           scene.terminal.scale * outputWidth / scene.width;
       final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
-        frame: const Rect.fromLTWH(0, 0, outputWidth, outputHeight),
+        frame: Rect.fromLTWH(
+          0,
+          0,
+          outputWidth.toDouble(),
+          outputHeight.toDouble(),
+        ),
         aspect: placement.splitClientAspect,
         titleHeight: 38.0 * chromeScale,
         maximized: true,
