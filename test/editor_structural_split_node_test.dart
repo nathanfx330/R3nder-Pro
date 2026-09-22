@@ -90,6 +90,65 @@ void main() {
     expect(changed, isNot(contains('[STRUCT:MOSAIC.wall:FULL]')));
     expect(find.text('MAXIMIZE SPLIT'), findsOneWidget);
     expect(find.text('CLIENT ASPECT'), findsOneWidget);
+    expect(find.text('SHOW PANE NAMES'), findsOneWidget);
+    expect(find.text('NAME 1'), findsNothing);
+    expect(find.text('NAME 2'), findsNothing);
+
+    final Finder showPaneNames = find.text('SHOW PANE NAMES');
+    await tester.ensureVisible(showPaneNames);
+    await tester.tap(showPaneNames);
+    await tester.pump();
+
+    expect(changed, contains('[STRUCT:MOSAIC.wall:SPLIT:PANENAMES]'));
+    expect(find.text('NAME 1'), findsOneWidget);
+    expect(find.text('NAME 2'), findsOneWidget);
+
+    Finder textFieldForLabel(String label) {
+      final Finder labelFinder = find.text(label);
+      final Finder column = find
+          .ancestor(of: labelFinder, matching: find.byType(Column))
+          .first;
+      return find.descendant(of: column, matching: find.byType(TextField));
+    }
+
+    await tester.enterText(textFieldForLabel('NAME 1'), 'Camera A');
+    await tester.pump();
+    await tester.enterText(textFieldForLabel('NAME 2'), 'Witness');
+    await tester.pump();
+
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
+
+    await tester.ensureVisible(showPaneNames);
+    await tester.tap(showPaneNames);
+    await tester.pump();
+
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:SPLIT:NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
+    expect(changed, isNot(contains(':PANENAMES')));
+    expect(find.text('NAME 1'), findsNothing);
+    expect(find.text('NAME 2'), findsNothing);
+
+    await tester.ensureVisible(showPaneNames);
+    await tester.tap(showPaneNames);
+    await tester.pump();
+
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
+    expect(find.text('NAME 1'), findsOneWidget);
+    expect(find.text('NAME 2'), findsOneWidget);
 
     final Finder maximizeSplit = find.text('MAXIMIZE SPLIT');
     await tester.ensureVisible(maximizeSplit);
@@ -134,7 +193,12 @@ void main() {
     await tester.tap(fullScreen);
     await tester.pump();
 
-    expect(changed, contains('[STRUCT:MOSAIC.wall:FULL]'));
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:FULL:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
     expect(changed, isNot(contains(':SPLIT')));
     expect(changed, isNot(contains(':MAX')));
     expect(changed, isNot(contains(':ASPECT=')));

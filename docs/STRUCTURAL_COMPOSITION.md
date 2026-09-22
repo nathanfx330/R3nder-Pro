@@ -108,9 +108,10 @@ W2 locks placement syntax to `:SPLIT` plus optional keyed
 `:ASPECT=4X3` / `:ASPECT=9X16`; 16:9 is the omitted default. FULL and SPLIT
 are exclusive. Unsupported SPLIT requests remain authored, lint as warnings,
 and resolve through the existing ordinary-window presentation until their
-MOSAIC has exactly two populated panes. Stable split titles derive from the
-existing effective STRUCT title as `<title> · PANE 1` and
-`<title> · PANE 2`. Rendering the two separate clients begins in W3.
+MOSAIC has exactly two populated panes. Split windows use the existing
+effective STRUCT title unchanged by default. PANENAMES opts into stable
+placement-owned suffixes, with optional NAME1/NAME2 values and PANE 1/PANE 2
+fallbacks. Rendering the two separate clients begins in W3.
 
 W3 establishes the compositor-level pane boundary for exact BAKE and
 nonblocking Preview so nested structural sources are resolved before a pane is
@@ -423,6 +424,7 @@ Placement-owned facts:
 ```text
 windowed/fullscreen
 window title
+split-window pane-name metadata
 overlay mode
 top/bottom overlay copy
 adjacent application choreography
@@ -436,12 +438,19 @@ specifically. A placement may author:
 ```text
 [STRUCT:MOSAIC.wall:SPLIT]
 [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]
 ```
 
 The reusable MOSAIC still owns pane content. The STRUCT placement owns whether
-those two populated panes are presented as independent windows and which shared
-client aspect is used. Unsupported SPLIT requests remain authored but fall back
-to ordinary windowed presentation with a lint warning.
+those two populated panes are presented as independent windows, which shared
+client aspect is used, and whether stable pane-name suffixes are shown.
+Unsupported SPLIT requests remain authored but fall back to ordinary windowed
+presentation with a lint warning.
+
+Pane-name suffixes are off by default. Without PANENAMES both split windows use
+the same effective STRUCT title. PANENAMES enables `<title> · <pane name>`;
+blank names fall back to PANE 1 / PANE 2. NAME1 and NAME2 remain authored when
+the display switch is off and are dormant whenever SPLIT is not effective.
 
 In BAKE, effective SPLIT does not bypass structural composition. The compositor
 has exact and nonblocking pane entry points that reuse the same recursive
@@ -460,6 +469,7 @@ Examples:
 ```text
 [STRUCT:MOSAIC.wall:TITLE="Archive Viewer"]
 [STRUCT:MOSAIC.wall:OVERLAY=NONE]
+[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]
 [STRUCT:MOSAIC.wall:FULL:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FRAME [frame]":BOTTOM="REEL 4"]
 ```
 
@@ -472,6 +482,12 @@ NONE
 ```
 
 CUSTOM copy is preserved even while mode is switched away from CUSTOM, so temporarily choosing DEFAULT/NONE does not destroy authored strings.
+
+Split pane names follow the same preservation rule. PANENAMES is the visibility
+switch; NAME1 and NAME2 are quoted authored values and remain in the placement
+when the switch is off or the placement is not currently effective SPLIT.
+`StructuralSequencePlacement.splitWindowTitleForPane` is the shared title
+authority used by the split painter in Preview and BAKE.
 
 Unknown keyed segments make the tag invalid rather than being silently ignored.
 

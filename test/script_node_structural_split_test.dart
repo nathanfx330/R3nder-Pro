@@ -16,6 +16,9 @@ void main() {
 
     expect(node.param('split'), isEmpty);
     expect(node.param('aspect'), '16X9');
+    expect(node.param('showPaneNames'), isEmpty);
+    expect(node.param('pane1Name'), isEmpty);
+    expect(node.param('pane2Name'), isEmpty);
     expect(node.toMarkup(), source);
   });
 
@@ -30,6 +33,44 @@ void main() {
     expect(node.toMarkup(), isNot(contains('SPLIT')));
     expect(node.toMarkup(), isNot(contains('ASPECT=')));
     expect(node.toMarkup(), isNot(contains(':MAX')));
+    expect(node.toMarkup(), isNot(contains('PANENAMES')));
+    expect(node.toMarkup(), isNot(contains('NAME1=')));
+    expect(node.toMarkup(), isNot(contains('NAME2=')));
+  });
+
+  test('pane names survive hide/show and remain dormant outside SPLIT', () {
+    final ScriptNode node = _structNode(
+      '[STRUCT:MOSAIC.wall:SPLIT:NAME1="Camera A":NAME2="Witness"]',
+    );
+
+    expect(node.param('showPaneNames'), isEmpty);
+    expect(node.param('pane1Name'), 'Camera A');
+    expect(node.param('pane2Name'), 'Witness');
+
+    node.set('showPaneNames', 'PANENAMES');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+    );
+
+    node.set('showPaneNames', '');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:NAME1="Camera A":NAME2="Witness"]',
+    );
+
+    node.set('split', '');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:NAME1="Camera A":NAME2="Witness"]',
+    );
+
+    node.set('split', 'SPLIT');
+    node.set('showPaneNames', 'PANENAMES');
+    expect(
+      node.toMarkup(),
+      '[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+    );
   });
 
   test('node serializes canonical SPLIT and authored non-default aspect', () {

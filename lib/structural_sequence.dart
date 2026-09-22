@@ -16,6 +16,7 @@
 //   [STRUCT:MOSAIC.wall:AUDIO]
 //   [STRUCT:MOSAIC.wall:SPLIT]
 //   [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+//   [STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]
 //
 // Window title, informational player overlays, and clip-audio intent are
 // placement-owned for the same reason. They are parsed from STRUCT tail
@@ -262,6 +263,12 @@ class StructuralSequencePlacement {
   /// One shared authored client aspect for both split windows.
   final MosaicSplitClientAspect splitClientAspect;
 
+  /// Optional authored suffixes for effective two-window SPLIT titles.
+  /// Custom values remain placement metadata while hidden or unsupported.
+  final bool showPaneNames;
+  final String pane1Name;
+  final String pane2Name;
+
   /// Placement-owned intent to play audio belonging to clips in this source.
   /// Workspace voice and music beds are separate authored systems.
   final bool clipAudio;
@@ -305,6 +312,9 @@ class StructuralSequencePlacement {
     this.splitWindowSupported = false,
     this.maximizeSplit = false,
     this.splitClientAspect = MosaicSplitClientAspect.aspect16x9,
+    this.showPaneNames = false,
+    this.pane1Name = '',
+    this.pane2Name = '',
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
@@ -354,14 +364,22 @@ class StructuralSequencePlacement {
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
 
-  /// Stable split titles follow the existing placement title convention and
-  /// MOSAIC's authored-order PANE 1 / PANE 2 vocabulary. They never follow the
-  /// currently active clip, so a pane timeline cut cannot rename its window.
+  /// Shared title authority for both live Preview and BAKE split windows.
+  ///
+  /// The existing placement title is the complete title by default. PANENAMES
+  /// opts into a stable suffix. Custom names never follow the active clip, so a
+  /// pane timeline cut cannot rename its window. Metadata remains dormant when
+  /// the authored SPLIT cannot currently render as two windows.
   String splitWindowTitleForPane(int paneIndex) {
     if (paneIndex < 0 || paneIndex > 1) {
       throw RangeError.range(paneIndex, 0, 1, 'paneIndex');
     }
-    return '$effectiveWindowTitle · PANE ${paneIndex + 1}';
+    if (!splitWindow || !showPaneNames) return effectiveWindowTitle;
+
+    final String authored = paneIndex == 0 ? pane1Name : pane2Name;
+    final String suffix =
+        authored.trim().isEmpty ? 'PANE ${paneIndex + 1}' : authored;
+    return '$effectiveWindowTitle · $suffix';
   }
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 
@@ -532,6 +550,9 @@ class _StructuralPlacementSeed {
   final bool splitWindowSupported;
   final bool maximizeSplit;
   final MosaicSplitClientAspect splitClientAspect;
+  final bool showPaneNames;
+  final String pane1Name;
+  final String pane2Name;
   final bool clipAudio;
 
   StructuralPresentationShape get presentationShape {
@@ -556,6 +577,9 @@ class _StructuralPlacementSeed {
     required this.splitWindowSupported,
     required this.maximizeSplit,
     required this.splitClientAspect,
+    required this.showPaneNames,
+    required this.pane1Name,
+    required this.pane2Name,
     required this.clipAudio,
     required this.overlayMode,
     required this.windowTitle,
@@ -758,6 +782,9 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
             : false,
         maximizeSplit: chrome.maximizeSplit,
         splitClientAspect: chrome.splitAspect,
+        showPaneNames: chrome.showPaneNames,
+        pane1Name: chrome.pane1Name,
+        pane2Name: chrome.pane2Name,
         clipAudio: chrome.clipAudio,
         overlayMode: chrome.overlayMode,
         windowTitle: chrome.windowTitle,
@@ -824,6 +851,9 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         splitWindowSupported: seed.splitWindowSupported,
         maximizeSplit: seed.maximizeSplit,
         splitClientAspect: seed.splitClientAspect,
+        showPaneNames: seed.showPaneNames,
+        pane1Name: seed.pane1Name,
+        pane2Name: seed.pane2Name,
         clipAudio: seed.clipAudio,
         overlayMode: seed.overlayMode,
         windowTitle: seed.windowTitle,
@@ -913,6 +943,9 @@ String appendStructuralSequencePlacement({
   bool splitWindows = false,
   bool maximizeSplit = false,
   MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9,
+  bool showPaneNames = false,
+  String pane1Name = '',
+  String pane2Name = '',
   bool clipAudio = false,
   StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
   String windowTitle = '',
@@ -945,6 +978,9 @@ String appendStructuralSequencePlacement({
         splitWindows: splitWindows,
         maximizeSplit: maximizeSplit,
         splitAspect: splitAspect,
+        showPaneNames: showPaneNames,
+        pane1Name: pane1Name,
+        pane2Name: pane2Name,
         clipAudio: clipAudio,
         overlayMode: overlayMode,
         windowTitle: windowTitle,
