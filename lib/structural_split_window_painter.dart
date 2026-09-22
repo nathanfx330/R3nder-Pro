@@ -27,11 +27,12 @@ class StructuralSplitWindowPainter extends CustomPainter {
   final List<String> diagnosticLabels;
   final double opacity;
 
-  /// Authored open progress for a split/non-split shape change.
+  /// Authored open progress for the split-window shell.
   ///
   /// 1.0 is the ordinary seated raster. Values below 1.0 apply the same
   /// emergence -> target easing used by a standard STRUCT window opening to
-  /// each split window independently.
+  /// each split window independently. This covers both normal desktop entry
+  /// and split/non-split shape-change entry.
   final double entryProgress;
 
   /// Authored close progress. Null means this is not a closing frame.
