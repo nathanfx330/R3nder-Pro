@@ -125,6 +125,12 @@ enum StructuralPresentationMode {
   fullscreen,
 }
 
+enum StructuralPresentationShape {
+  windowed,
+  fullscreen,
+  split,
+}
+
 enum StructuralSequenceStage {
   zoomOut,
   opening,
@@ -274,8 +280,13 @@ class StructuralSequencePlacement {
   final bool seamlessFromPrevious;
   final bool seamlessToNext;
 
-  /// Needed only for a seamless windowed <-> fullscreen geometry morph.
+  /// Needed by the legacy single-window geometry morph.
   final StructuralPresentationMode? previousPresentationMode;
+
+  /// Placement-shape identity for the previous chained STRUCT. SPLIT is a
+  /// placement presentation shape even though its legacy presentationMode is
+  /// still windowed for compatibility with existing FULL/windowed code.
+  final StructuralPresentationShape? previousPresentationShape;
 
   const StructuralSequencePlacement({
     required this.sourceRef,
@@ -298,6 +309,7 @@ class StructuralSequencePlacement {
     this.seamlessFromPrevious = false,
     this.seamlessToNext = false,
     this.previousPresentationMode,
+    this.previousPresentationShape,
   });
 
   bool get resolves => sourceDurationFrames > 0;
@@ -307,6 +319,31 @@ class StructuralSequencePlacement {
   /// Effective split mode. Unsupported authored requests deliberately render as
   /// the existing ordinary windowed presentation until the source is repaired.
   bool get splitWindow => splitWindowRequested && splitWindowSupported;
+
+  StructuralPresentationShape get presentationShape {
+    if (splitWindow) return StructuralPresentationShape.split;
+    return fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
+
+  StructuralPresentationShape? get effectivePreviousPresentationShape {
+    final StructuralPresentationShape? explicit = previousPresentationShape;
+    if (explicit != null) return explicit;
+    final StructuralPresentationMode? legacy = previousPresentationMode;
+    if (legacy == null) return null;
+    return legacy == StructuralPresentationMode.fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
+
+  bool get splitBoundaryFromPrevious {
+    final StructuralPresentationShape? previous =
+        effectivePreviousPresentationShape;
+    if (!seamlessFromPrevious || previous == null) return false;
+    return previous == StructuralPresentationShape.split ||
+        presentationShape == StructuralPresentationShape.split;
+  }
 
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
@@ -328,8 +365,9 @@ class StructuralSequencePlacement {
   int get entryWindowFrames {
     if (!chainedFromPrevious) return kStructuralWindowFrames;
     if (!seamlessFromPrevious) return kStructuralWindowFrames;
-    if (previousPresentationMode != null &&
-        previousPresentationMode != presentationMode) {
+    final StructuralPresentationShape? previous =
+        effectivePreviousPresentationShape;
+    if (previous != null && previous != presentationShape) {
       return kStructuralWindowFrames;
     }
     return 0;
@@ -488,6 +526,15 @@ class _StructuralPlacementSeed {
   final bool splitWindowSupported;
   final MosaicSplitClientAspect splitClientAspect;
   final bool clipAudio;
+
+  StructuralPresentationShape get presentationShape {
+    if (splitWindowRequested && splitWindowSupported) {
+      return StructuralPresentationShape.split;
+    }
+    return presentationMode == StructuralPresentationMode.fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
   final StructuralOverlayMode overlayMode;
   final String windowTitle;
   final String topOverlay;
@@ -616,8 +663,8 @@ int _plannedDuration({
   required bool chainedToNext,
   required bool seamlessFromPrevious,
   required bool seamlessToNext,
-  required StructuralPresentationMode presentationMode,
-  required StructuralPresentationMode? previousPresentationMode,
+  required StructuralPresentationShape presentationShape,
+  required StructuralPresentationShape? previousPresentationShape,
 }) {
   if (sourceFrames <= 0) return 0;
 
@@ -628,8 +675,8 @@ int _plannedDuration({
     entryWindow = kStructuralWindowFrames;
   } else if (!seamlessFromPrevious) {
     entryWindow = kStructuralWindowFrames;
-  } else if (previousPresentationMode != null &&
-      previousPresentationMode != presentationMode) {
+  } else if (previousPresentationShape != null &&
+      previousPresentationShape != presentationShape) {
     entryWindow = kStructuralWindowFrames;
   } else {
     entryWindow = 0;
@@ -742,6 +789,8 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
     final _StructuralPlacementSeed seed = seeds[i];
     final StructuralPresentationMode? previousMode =
         chainedFrom[i] && i > 0 ? seeds[i - 1].presentationMode : null;
+    final StructuralPresentationShape? previousShape =
+        chainedFrom[i] && i > 0 ? seeds[i - 1].presentationShape : null;
 
     final int duration = _plannedDuration(
       sourceFrames: seed.sourceDurationFrames,
@@ -749,8 +798,8 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
       chainedToNext: chainedTo[i],
       seamlessFromPrevious: seamlessFrom[i],
       seamlessToNext: seamlessTo[i],
-      presentationMode: seed.presentationMode,
-      previousPresentationMode: previousMode,
+      presentationShape: seed.presentationShape,
+      previousPresentationShape: previousShape,
     );
 
     out.add(
@@ -775,6 +824,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         seamlessFromPrevious: seamlessFrom[i],
         seamlessToNext: seamlessTo[i],
         previousPresentationMode: previousMode,
+        previousPresentationShape: previousShape,
       ),
     );
   }
