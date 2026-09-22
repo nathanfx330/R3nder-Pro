@@ -138,6 +138,7 @@ second duration authority or an extra program-time adjustment.
 **Proof**
 
 - `test/mosaic_source_test.dart`
+- `test/mosaic_layout_test.dart`
 - `test/mosaic_trim_test.dart`
 - `test/mosaic_trim_operation_test.dart`
 - `test/mosaic_trim_impact_test.dart`
