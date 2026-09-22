@@ -14,13 +14,15 @@
 //   [STRUCT:EDIT.main:AUDIO]
 //   [STRUCT:MOSAIC.wall:SPLIT]
 //   [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+//   [STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]
 //   [STRUCT:MOSAIC.wall:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:OVERLAY=NONE:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:FULL:AUDIO:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972 · F[frame]":BOTTOM="16MM TRANSFER · REEL 4"]
 //
-// FULL, SPLIT, and AUDIO are bare placement tokens. SPLIT may carry keyed
-// ASPECT=16X9, ASPECT=4X3, or ASPECT=9X16; 16X9 is the omitted default.
-// Text values are quoted. Colons
+// FULL, SPLIT, PANENAMES, and AUDIO are bare placement tokens. SPLIT may carry
+// keyed ASPECT=16X9, ASPECT=4X3, or ASPECT=9X16; 16X9 is the omitted default.
+// NAME1 and NAME2 are placement metadata that remain authored when PANENAMES is
+// off or SPLIT is not currently effective. Text values are quoted. Colons
 // inside quoted text are data, not segment separators. Backslash, quote,
 // newline, carriage return, and tab use the conventional escaped forms.
 // Unknown segments make the tag invalid so an author typo cannot silently
@@ -104,6 +106,14 @@ class StructuralChromeSpec {
   /// determines height after each client takes half of the program width.
   final MosaicSplitClientAspect splitAspect;
 
+  /// Opt-in per-window title suffixes for effective two-window SPLIT.
+  ///
+  /// NAME1/NAME2 stay authored even while this switch is off, and all three
+  /// values stay dormant when SPLIT is not effective.
+  final bool showPaneNames;
+  final String pane1Name;
+  final String pane2Name;
+
   /// Placement-owned intent to play the audio belonging to clips in [source].
   /// This is deliberately independent of workspace voice/music beds.
   final bool clipAudio;
@@ -124,6 +134,9 @@ class StructuralChromeSpec {
     this.splitWindows = false,
     this.maximizeSplit = false,
     this.splitAspect = MosaicSplitClientAspect.aspect16x9,
+    this.showPaneNames = false,
+    this.pane1Name = '',
+    this.pane2Name = '',
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
@@ -140,6 +153,9 @@ class StructuralChromeSpec {
     bool? splitWindows,
     bool? maximizeSplit,
     MosaicSplitClientAspect? splitAspect,
+    bool? showPaneNames,
+    String? pane1Name,
+    String? pane2Name,
     bool? clipAudio,
     StructuralOverlayMode? overlayMode,
     String? windowTitle,
@@ -152,6 +168,9 @@ class StructuralChromeSpec {
       splitWindows: splitWindows ?? this.splitWindows,
       maximizeSplit: maximizeSplit ?? this.maximizeSplit,
       splitAspect: splitAspect ?? this.splitAspect,
+      showPaneNames: showPaneNames ?? this.showPaneNames,
+      pane1Name: pane1Name ?? this.pane1Name,
+      pane2Name: pane2Name ?? this.pane2Name,
       clipAudio: clipAudio ?? this.clipAudio,
       overlayMode: overlayMode ?? this.overlayMode,
       windowTitle: windowTitle ?? this.windowTitle,
@@ -182,6 +201,9 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
   bool splitWindows = false;
   bool maximizeSplit = false;
   MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9;
+  bool showPaneNames = false;
+  String pane1Name = '';
+  String pane2Name = '';
   bool clipAudio = false;
   StructuralOverlayMode overlay = StructuralOverlayMode.defaultOverlay;
   String title = '';
@@ -189,6 +211,8 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
   String bottom = '';
 
   bool sawAspect = false;
+  bool sawName1 = false;
+  bool sawName2 = false;
   bool sawOverlay = false;
   bool sawTitle = false;
   bool sawTop = false;
@@ -214,6 +238,11 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
       maximizeSplit = true;
       continue;
     }
+    if (bare == 'PANENAMES') {
+      if (showPaneNames) return null;
+      showPaneNames = true;
+      continue;
+    }
     if (bare == 'AUDIO') {
       if (clipAudio) return null;
       clipAudio = true;
@@ -233,6 +262,20 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
         if (parsed == null) return null;
         splitAspect = parsed;
         sawAspect = true;
+        break;
+      case 'NAME1':
+        if (sawName1) return null;
+        final String? parsed = _parseQuoted(value);
+        if (parsed == null) return null;
+        pane1Name = parsed;
+        sawName1 = true;
+        break;
+      case 'NAME2':
+        if (sawName2) return null;
+        final String? parsed = _parseQuoted(value);
+        if (parsed == null) return null;
+        pane2Name = parsed;
+        sawName2 = true;
         break;
       case 'OVERLAY':
         if (sawOverlay) return null;
@@ -278,6 +321,9 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
     splitWindows: splitWindows,
     maximizeSplit: maximizeSplit,
     splitAspect: splitAspect,
+    showPaneNames: showPaneNames,
+    pane1Name: pane1Name,
+    pane2Name: pane2Name,
     clipAudio: clipAudio,
     overlayMode: overlay,
     windowTitle: title,
@@ -310,6 +356,13 @@ String formatStructuralChromeTag(StructuralChromeSpec spec) {
     if (spec.splitAspect != MosaicSplitClientAspect.aspect16x9) {
       out.write(':ASPECT=${spec.splitAspect.token}');
     }
+  }
+  if (spec.showPaneNames) out.write(':PANENAMES');
+  if (spec.pane1Name.isNotEmpty) {
+    out.write(':NAME1=${_quote(spec.pane1Name)}');
+  }
+  if (spec.pane2Name.isNotEmpty) {
+    out.write(':NAME2=${_quote(spec.pane2Name)}');
   }
   if (spec.clipAudio) out.write(':AUDIO');
   if (spec.overlayMode != StructuralOverlayMode.defaultOverlay) {

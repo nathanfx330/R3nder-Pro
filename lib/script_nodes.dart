@@ -448,6 +448,10 @@ class ScriptNode {
             maximizeSplit: param('maxSplit').trim().toUpperCase() == 'MAX',
             splitAspect:
                 mosaicSplitClientAspectFromToken(param('aspect', '16X9'))!,
+            showPaneNames:
+                param('showPaneNames').trim().toUpperCase() == 'PANENAMES',
+            pane1Name: param('pane1Name'),
+            pane2Name: param('pane2Name'),
             clipAudio: param('audio').trim().toUpperCase() == 'AUDIO',
             overlayMode: overlayMode,
             windowTitle: param('title'),
@@ -741,6 +745,9 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
       n.params['split'] = chrome.splitWindows ? 'SPLIT' : '';
       n.params['maxSplit'] = chrome.maximizeSplit ? 'MAX' : '';
       n.params['aspect'] = chrome.splitAspect.token;
+      n.params['showPaneNames'] = chrome.showPaneNames ? 'PANENAMES' : '';
+      n.params['pane1Name'] = chrome.pane1Name;
+      n.params['pane2Name'] = chrome.pane2Name;
       n.params['audio'] = chrome.clipAudio ? 'AUDIO' : '';
       n.params['overlay'] = chrome.overlayMode.token;
       n.params['title'] = chrome.windowTitle;

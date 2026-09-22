@@ -43,8 +43,8 @@ MOSAIC definition.
 - CARD maps to the client owned by its source pane.
 - SIDECARD and MAXIMIZE are unsupported in split v1. They lint and do not paint.
 - Grammar is placement-owned: SPLIT is the presentation token, ASPECT carries
-  authored client ratio, and stable PANE 1/PANE 2 titles derive from the
-  effective STRUCT title.
+  authored client ratio, and pane-name suffixes are opt-in placement metadata.
+  Without PANENAMES, both windows use the existing effective STRUCT title.
 
 ## Measured reference geometry
 
@@ -204,16 +204,23 @@ making unrelated edits does not materialize `SPLIT` or default
 `ASPECT=16X9` into legacy tags.
 
 Split window titles follow existing conventions rather than active clip names.
-The existing effective STRUCT title is the base: blank TITLE means the canonical
-source name; a custom TITLE replaces it. The two stable derived titles are:
+The existing effective STRUCT title is the complete title by default: blank
+TITLE means the canonical source name; a custom TITLE replaces it. Both windows
+therefore use the same title unless the placement explicitly opts in with
+PANENAMES.
+
+NAME1 and NAME2 are quoted placement metadata. When PANENAMES is enabled they
+produce:
 
 ```text
-<effective title> · PANE 1
-<effective title> · PANE 2
+<effective title> · <name 1>
+<effective title> · <name 2>
 ```
 
-This matches MOSAIC's existing authored-order PANE 1/PANE 2 UI vocabulary and
-prevents a pane timeline cut from renaming its desktop window.
+A blank enabled name falls back to PANE 1 or PANE 2. Hiding pane names preserves
+NAME1/NAME2, and the metadata is dormant whenever SPLIT is not effective. Names
+never follow the active clip, so a pane timeline cut cannot rename its desktop
+window.
 
 Proof:
 
@@ -249,8 +256,9 @@ adjacent source frame remains a hard export failure.
 
 Whole-program BAKE now uses the W1 geometry whenever a W2 placement has
 effective split support. It renders both panes at the split client raster size,
-paints two independent desktop windows, derives the stable PANE 1/PANE 2 titles,
-and reuses one split-sized structural renderer per source/size so both panes
+paints two independent desktop windows, derives both titles through
+`StructuralSequencePlacement.splitWindowTitleForPane`, and reuses one
+split-sized structural renderer per source/size so both panes
 share decoder state. Unsupported authored SPLIT still reaches the unchanged
 ordinary windowed path because its effective `splitWindow` flag is false.
 
@@ -298,8 +306,8 @@ window chrome and contain fitting to `lib/structural_window_painter.dart`.
 The existing BAKE raster code was extracted rather than reimplemented for
 Preview, so seated split geometry, chrome, shadows, clipping, title copy,
 overlay copy, and image contain fitting have one production painter authority.
-Both surfaces consume the W1 split geometry and the W2 stable PANE 1/PANE 2
-titles.
+Both surfaces consume the W1 split geometry and the same W2 placement-owned
+title authority.
 
 Proof added in W4:
 
@@ -613,6 +621,61 @@ flutter test \
   test/program_structural_split_bake_test.dart \
   test/structural_split_transition_plan_test.dart
 
+dart run tool/check_doc_contracts.dart
+```
+
+### W9 - opt-in split window names
+
+The two-window MOSAIC now keeps pane-name suffixes off by default. A plain
+`[STRUCT:MOSAIC.wall:SPLIT]` gives both desktop windows the same existing
+effective STRUCT title. This leaves naming authority with the placement without
+inventing PANE 1 / PANE 2 copy unless the author asks for it.
+
+The opt-in syntax is:
+
+```text
+[STRUCT:MOSAIC.wall:SPLIT:PANENAMES]
+[STRUCT:MOSAIC.wall:SPLIT:PANENAMES:NAME1="Camera A":NAME2="Witness"]
+```
+
+PANENAMES controls visibility only. NAME1 and NAME2 remain authored when it is
+off, so the inspector can hide names without destroying the saved values. If an
+enabled name is blank, that pane falls back to PANE 1 or PANE 2. The metadata
+also remains dormant outside effective SPLIT, including an authored SPLIT that
+temporarily falls back because its MOSAIC is not currently eligible.
+
+The STRUCT node inspector exposes SHOW PANE NAMES only under TWO WINDOWS.
+Enabling it reveals NAME 1 and NAME 2. The shared
+`StructuralSequencePlacement.splitWindowTitleForPane` method is the sole title
+authority consumed by `StructuralSplitWindowPainter`, so dashboard Preview and
+BAKE use identical naming rules. Geometry, timing, readiness, decoding, and
+audio are unchanged.
+
+Proof:
+
+- `test/structural_split_placement_test.dart` covers default-off titles,
+  custom names, blank fallbacks, and dormant metadata;
+- `test/script_node_structural_split_test.dart` covers lossless hide/show
+  serialization;
+- `test/editor_structural_split_node_test.dart` covers the inspector controls
+  and saved-value restoration;
+- existing split Preview and BAKE tests continue to exercise the shared painter
+  path without a second naming implementation.
+
+Focused verification gate:
+
+```bash
+flutter test \
+  test/structural_split_placement_test.dart \
+  test/script_node_structural_split_test.dart \
+  test/editor_structural_split_node_test.dart \
+  test/structural_chrome_test.dart \
+  test/structural_sequence_chrome_test.dart \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/program_preview_structural_split_transition_test.dart
+
+flutter analyze
 dart run tool/check_doc_contracts.dart
 ```
 

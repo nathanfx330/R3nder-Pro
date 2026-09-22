@@ -3139,6 +3139,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         node.param('split').trim().toUpperCase() == 'SPLIT';
     final bool maximizeSplit =
         node.param('maxSplit').trim().toUpperCase() == 'MAX';
+    final bool showPaneNames =
+        node.param('showPaneNames').trim().toUpperCase() == 'PANENAMES';
 
     final List<String> sources = _nodes
         .where((n) =>
@@ -3239,15 +3241,40 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         const <String>['16X9', '4X3', '9X16'],
         '16X9',
       ));
+      f.add(_fToggle(
+        node,
+        'Show pane names',
+        'showPaneNames',
+        'PANENAMES',
+        'Append a stable name to each split-window title. Off keeps both '
+            'windows on the existing STRUCT placement title.',
+      ));
+      if (showPaneNames) {
+        f.add(_fText(
+          node,
+          'Name 1',
+          'pane1Name',
+          hintText: 'PANE 1',
+        ));
+        f.add(_fText(
+          node,
+          'Name 2',
+          'pane2Name',
+          hintText: 'PANE 2',
+        ));
+        f.add(_hint(
+          'Blank names fall back to PANE 1 / PANE 2. Hiding pane names keeps '
+          'the saved values so they return when this option is enabled again.',
+        ));
+      }
       f.add(_hint(
         maximizeSplit
             ? 'MAXIMIZE SPLIT fixes each client to half the program width. '
                 'This aspect determines its height; portrait is capped by '
                 'available program height.'
             : 'One aspect applies to both windows. 16X9 is the implicit '
-                'default. Window titles use the placement title followed by '
-                'PANE 1 or PANE 2, so timeline cuts inside a pane never '
-                'rename its desktop window.',
+                'default. Pane-name suffixes are opt-in and never follow '
+                'timeline cuts inside a pane.',
       ));
     }
 
