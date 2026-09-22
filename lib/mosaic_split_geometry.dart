@@ -84,10 +84,10 @@ class MosaicSplitWindowGeometry {
 /// Both clients are equal.
 ///
 /// Normal SPLIT keeps the authored edge margins, fixed gap, and authored client
-/// aspect. MAX SPLIT instead snaps the two outer windows edge to edge across
-/// [frame]: zero outer margin, zero gap, half the frame width per window, and
-/// the full frame height including title chrome. Media still contains inside
-/// each client; the authored aspect remains dormant placement state.
+/// aspect. MAX SPLIT removes only the horizontal waste: zero outer margin,
+/// zero gap, and exactly half the frame width per client. The authored aspect
+/// then derives client height, capped only when that height cannot fit inside
+/// the frame below [titleHeight]. The resulting pair stays vertically centered.
 MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
   required Rect frame,
   required MosaicSplitClientAspect aspect,
@@ -131,7 +131,10 @@ MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
   final double clientHeight;
   if (maximized) {
     clientWidth = maximumClientWidth;
-    clientHeight = maximumClientHeight;
+    clientHeight = math.min(
+      clientWidth / aspect.widthOverHeight,
+      maximumClientHeight,
+    );
   } else {
     clientHeight = math.min(
       maximumClientWidth / aspect.widthOverHeight,
@@ -143,9 +146,8 @@ MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
 
   final double groupWidth = clientWidth * 2.0 + gap;
   final double left = frame.left + (frame.width - groupWidth) / 2.0;
-  final double top = maximized
-      ? frame.top
-      : frame.top + (frame.height - windowHeight) / 2.0;
+  final double top =
+      frame.top + (frame.height - windowHeight) / 2.0;
   final double rightLeft = left + clientWidth + gap;
 
   final Rect leftWindow =
