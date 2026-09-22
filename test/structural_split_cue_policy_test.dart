@@ -17,12 +17,12 @@ const String _source = '''[MOSAIC:wall]
 [PANE:right]
 [CLIP:rightShot:video/right.mp4:0:0:40:1]
 [CUE:0]
-[CARD::8:12,34,56:CARD]
+[CARD:missing-card.png:8:12,34,56:CARD]
 CARD BODY
 [/CARD]
 [/CUE]
 [CUE:0]
-[SIDECARD::8:210,30,40:SIDE]
+[SIDECARD:missing-side.png:8:210,30,40:SIDE]
 SIDE BODY
 [/SIDECARD]
 [/CUE]
@@ -112,7 +112,7 @@ void main() {
 [PANE:only]
 [CLIP:shot:video/a.mp4:0:0:20:1]
 [CUE:0]
-[SIDECARD::8:210,30,40:SIDE]
+[SIDECARD:missing-side.png:8:210,30,40:SIDE]
 SIDE
 [/SIDECARD]
 [/CUE]
