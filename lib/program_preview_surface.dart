@@ -30,6 +30,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_sequence.dart';
 import 'structural_sequence_preview.dart';
+import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
 class ProgramPreviewSurface extends StatefulWidget {
@@ -199,6 +200,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     required StructuralSequencePlacement placement,
     required int localFrame,
     required bool visible,
+    double layerOpacity = 1.0,
     StructuralSequenceHandoffRole handoffRole =
         StructuralSequenceHandoffRole.none,
     double handoffSlideT = 0.0,
@@ -241,7 +243,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       child: IgnorePointer(
         ignoring: !visible,
         child: Opacity(
-          opacity: visible ? 1.0 : 0.0,
+          opacity: visible
+              ? layerOpacity.clamp(0.0, 1.0).toDouble()
+              : 0.0,
           child: preview,
         ),
       ),
@@ -383,12 +387,19 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           if (fallbackPlacement != null && fallbackIndex != null) {
             nextMounted.add(fallbackIndex);
+            final double heldOpacity =
+                fallbackIsHeldSplit && splitEntryBudgetOpen && activeReady
+                    ? structuralShapeOutgoingOpacity(
+                        placement.stageProgressAt(activeLocalFrame),
+                      )
+                    : 1.0;
             layers.add(
               _structuralLayer(
                 placementIndex: fallbackIndex,
                 placement: fallbackPlacement,
                 localFrame: fallbackPlacement.effectiveDurationFrames - 1,
                 visible: true,
+                layerOpacity: heldOpacity,
                 handoffRole: fallbackIsHeldSplit
                     ? StructuralSequenceHandoffRole.heldOutgoing
                     : StructuralSequenceHandoffRole.outgoing,
