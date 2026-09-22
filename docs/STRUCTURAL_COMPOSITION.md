@@ -340,6 +340,25 @@ adjacent application choreography
 
 A reconstruction should preserve that boundary.
 
+Two-window MOSAIC presentation is the same ownership rule applied more
+specifically. A placement may author:
+
+```text
+[STRUCT:MOSAIC.wall:SPLIT]
+[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+```
+
+The reusable MOSAIC still owns pane content. The STRUCT placement owns whether
+those two populated panes are presented as independent windows and which shared
+client aspect is used. Unsupported SPLIT requests remain authored but fall back
+to ordinary windowed presentation with a lint warning.
+
+In BAKE, effective SPLIT does not bypass structural composition. The compositor
+has exact and nonblocking pane entry points that reuse the same recursive
+EDIT/MOSAIC resolver and recursive leaf diagnostics as whole-source rendering.
+This is important because MediaLayer pane calls can legitimately return nested
+structural placeholders rather than final pixels.
+
 ---
 
 # 6. STRUCT chrome is keyed placement metadata
@@ -573,6 +592,9 @@ Important proof includes:
 - structural recursion/depth-guard tests;
 - M18 application-switch tests and visual gate;
 - `test/editor_structural_fullscreen_node_test.dart`;
+- `test/structural_split_placement_test.dart`;
+- `test/mosaic_split_pane_compositor_test.dart`;
+- `test/program_structural_split_bake_test.dart`;
 - structural chrome parser/round-trip tests;
 - structural marker alignment tests;
 - Program Preview runtime tests;
