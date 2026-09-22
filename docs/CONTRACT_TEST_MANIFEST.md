@@ -159,7 +159,7 @@ second duration authority or an extra program-time adjustment.
 
 **Contract**
 
-A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. CARD is routed recursively through nested structural sources to its owning split client using exact parent AT/IN/speed frame projection; SIDECARD and MAXIMIZE lint as unsupported, including when nested below a split pane, and do not alter or paint the split shell.
+A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, effective-shape timing, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. A split/non-split seamless boundary spends only the existing window budget on a shared open-scale-and-fade transition, and unsupported SPLIT fallback uses ordinary-window timing with an explicit warning about downstream timing shifts. CARD is routed recursively through nested structural sources to its owning split client using exact parent AT/IN/speed frame projection; SIDECARD and MAXIMIZE lint as unsupported, including when nested below a split pane, and do not alter or paint the split shell.
 
 **Proof**
 
@@ -216,7 +216,7 @@ NODES and EDIT are editors over the document. First-class controls must serializ
 
 **Contract**
 
-Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, or create a desktop/wallpaper flash during seamless application handoff. Under `APPSWITCH:SLIDE`, first active paint unlocks the live client pan but authored incoming source time determines pan progress. The outgoing client remains available through the slide window, and editor projection must expose every authored source frame, including the final frame of an AUDIO-enabled seamless placement.
+Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, alter authored shape-entry geometry, or create a desktop/wallpaper flash during seamless application handoff. Under `APPSWITCH:SLIDE`, first active paint unlocks the live client pan but authored incoming source time determines pan progress. The outgoing client remains available through the slide window, and editor projection must expose every authored source frame, including the final frame of an AUDIO-enabled seamless placement.
 
 **Proof**
 
@@ -253,7 +253,7 @@ Program Preview uses the compiled runtime REGION bridge and the same raw authore
 
 **Contract**
 
-SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, supported two-window MOSAIC split placement, pane-owned split CARD overlays, and split shell-cue suppression without bypassing recursive pane composition.
+SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, supported two-window MOSAIC split placement, deterministic split/non-split entry motion inside the existing window budget, pane-owned split CARD overlays, and split shell-cue suppression without bypassing recursive pane composition.
 
 **Proof**
 
