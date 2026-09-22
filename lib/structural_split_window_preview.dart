@@ -1,0 +1,443 @@
+// ./lib/structural_split_window_preview.dart
+//
+// Live two-window MOSAIC preview surface.
+//
+// This widget owns one MediaLayer/EditVideoCompositor for both authored panes.
+// Each pane therefore uses the compositor-level renderMosaicPaneAvailable path,
+// preserving nested structural resolution and a shared decoder/cache lifetime.
+// Window raster is delegated to structural_window_painter.dart, the same painter
+// used by Program BAKE.
+
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+
+import 'edit_model.dart';
+import 'edit_video_compositor.dart';
+import 'edit_video_preview.dart';
+import 'media_layer.dart';
+import 'mosaic_split_geometry.dart';
+import 'project_clock.dart';
+import 'structural_sequence.dart';
+import 'structural_window_painter.dart';
+import 'ui_theme.dart';
+
+class StructuralSplitWindowPreview extends StatefulWidget {
+  final String rawDocument;
+  final StructuralSequencePlacement placement;
+  final int sourceFrame;
+  final R3Theme theme;
+  final String fontFamily;
+  final double chromeScale;
+  final MediaDecoderBackend? backend;
+  final String Function(String source)? resolveSource;
+  final VoidCallback? onFirstFrameReady;
+
+  const StructuralSplitWindowPreview({
+    super.key,
+    required this.rawDocument,
+    required this.placement,
+    required this.sourceFrame,
+    required this.theme,
+    required this.fontFamily,
+    required this.chromeScale,
+    this.backend,
+    this.resolveSource,
+    this.onFirstFrameReady,
+  });
+
+  @override
+  State<StructuralSplitWindowPreview> createState() =>
+      _StructuralSplitWindowPreviewState();
+}
+
+class _StructuralSplitWindowPreviewState
+    extends State<StructuralSplitWindowPreview> {
+  MediaLayer? _layer;
+  EditVideoCompositor? _compositor;
+  String? _runtimeDocument;
+  String? _runtimeSource;
+  MediaDecoderBackend? _runtimeBackend;
+  String Function(String source)? _runtimeResolver;
+
+  final List<ui.Image?> _images = <ui.Image?>[null, null];
+  final List<String> _diagnosticLabels = <String>['', ''];
+
+  ui.Size? _paneRenderSize;
+  int _serial = 0;
+  bool _renderScheduled = false;
+  bool _readyReported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleRender();
+  }
+
+  @override
+  void didUpdateWidget(covariant StructuralSplitWindowPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final bool runtimeChanged =
+        oldWidget.rawDocument != widget.rawDocument ||
+        oldWidget.placement.sourceRef.canonicalSource !=
+            widget.placement.sourceRef.canonicalSource ||
+        oldWidget.backend != widget.backend ||
+        oldWidget.resolveSource != widget.resolveSource;
+
+    if (runtimeChanged) {
+      _disposeRuntime();
+      _replaceImage(0, null);
+      _replaceImage(1, null);
+      _diagnosticLabels[0] = '';
+      _diagnosticLabels[1] = '';
+      _readyReported = false;
+    }
+
+    if (runtimeChanged ||
+        oldWidget.sourceFrame != widget.sourceFrame ||
+        oldWidget.chromeScale != widget.chromeScale ||
+        oldWidget.placement.splitClientAspect !=
+            widget.placement.splitClientAspect) {
+      _serial++;
+      _scheduleRender();
+    }
+  }
+
+  @override
+  void dispose() {
+    _serial++;
+    _disposeRuntime();
+    _replaceImage(0, null);
+    _replaceImage(1, null);
+    super.dispose();
+  }
+
+  void _disposeRuntime() {
+    _compositor?.dispose();
+    _compositor = null;
+    _layer?.dispose();
+    _layer = null;
+    _runtimeDocument = null;
+    _runtimeSource = null;
+    _runtimeBackend = null;
+    _runtimeResolver = null;
+  }
+
+  void _replaceImage(int paneIndex, ui.Image? next) {
+    final ui.Image? old = _images[paneIndex];
+    if (identical(old, next)) return;
+    _images[paneIndex] = next;
+    old?.dispose();
+  }
+
+  EditVideoCompositor _ensureCompositor() {
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final MediaDecoderBackend backend =
+        widget.backend ?? NativeMltMediaBackend();
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+
+    final EditVideoCompositor? existing = _compositor;
+    if (existing != null &&
+        _runtimeDocument == widget.rawDocument &&
+        _runtimeSource == source &&
+        identical(_runtimeBackend, backend) &&
+        identical(_runtimeResolver, resolver)) {
+      return existing;
+    }
+
+    _disposeRuntime();
+
+    final EditDocumentModel model =
+        EditDocumentModel.parse(widget.rawDocument);
+    final StructuralSourceRef? selected = StructuralSourceRef.tryParse(source);
+    if (selected == null ||
+        selected.kind != StructuralSourceKind.mosaic ||
+        selected.id.isEmpty ||
+        !model.containsStructuralSource(selected)) {
+      throw StateError(
+        'Split preview requires a valid MOSAIC structural source: "$source".',
+      );
+    }
+
+    final MediaLayer layer = MediaLayer(
+      editDocument: model,
+      backend: backend,
+      resolveSource: resolver,
+    );
+    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+      model: model,
+      mediaLayer: layer,
+      backend: backend,
+      resolveSource: resolver,
+    );
+
+    _layer = layer;
+    _compositor = compositor;
+    _runtimeDocument = widget.rawDocument;
+    _runtimeSource = source;
+    _runtimeBackend = backend;
+    _runtimeResolver = resolver;
+    return compositor;
+  }
+
+  void _scheduleRender() {
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _renderScheduled = false;
+      if (!mounted) return;
+      final ui.Size? size = _paneRenderSize;
+      if (size == null || size.width <= 0.0 || size.height <= 0.0) {
+        return;
+      }
+      _render(size);
+    });
+  }
+
+  Future<void> _render(ui.Size paneSize) async {
+    final int serial = ++_serial;
+    final EditVideoCompositor compositor;
+    try {
+      compositor = _ensureCompositor();
+    } catch (_) {
+      if (!mounted || serial != _serial) return;
+      if (!_readyReported) {
+        _readyReported = true;
+        widget.onFirstFrameReady?.call();
+      }
+      return;
+    }
+
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final List<EditVideoCompositeResult> results =
+        <EditVideoCompositeResult>[];
+
+    try {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        results.add(
+          compositor.renderMosaicPaneAvailable(
+            source,
+            paneIndex,
+            ProjectTime(
+              frame: widget.sourceFrame,
+              mode: ProjectClockMode.scrub,
+            ),
+            paneSize,
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted || serial != _serial) return;
+      if (!_readyReported) {
+        _readyReported = true;
+        widget.onFirstFrameReady?.call();
+      }
+      return;
+    }
+
+    if (!mounted || serial != _serial) return;
+
+    if (results.any((EditVideoCompositeResult result) => result.hasPending)) {
+      _scheduleRender();
+      return;
+    }
+
+    final List<ui.Image?> decoded = <ui.Image?>[null, null];
+    try {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final EditVideoCompositeResult result = results[paneIndex];
+        final Uint8List? rgba = result.rgba;
+        if (rgba != null) {
+          decoded[paneIndex] = await _decodeRgba(
+            rgba,
+            result.width,
+            result.height,
+            result.stride,
+          );
+        }
+      }
+    } catch (_) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      if (!mounted || serial != _serial) return;
+      if (!_readyReported) {
+        _readyReported = true;
+        widget.onFirstFrameReady?.call();
+      }
+      return;
+    }
+
+    if (!mounted || serial != _serial) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      return;
+    }
+
+    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      _replaceImage(paneIndex, decoded[paneIndex]);
+      _diagnosticLabels[paneIndex] =
+          _diagnosticLabel(results[paneIndex], paneIndex);
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (!_readyReported) {
+      _readyReported = true;
+      widget.onFirstFrameReady?.call();
+    }
+  }
+
+  String _diagnosticLabel(
+    EditVideoCompositeResult result,
+    int paneIndex,
+  ) {
+    final MediaFrame? frame = result.topFrame;
+    if (frame == null) return '';
+    final String source = frame.source.trim();
+    if (source.isEmpty) return 'PANE ${paneIndex + 1}';
+    return source;
+  }
+
+  Future<ui.Image> _decodeRgba(
+    Uint8List rgba,
+    int width,
+    int height,
+    int stride,
+  ) {
+    final Completer<ui.Image> completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      rgba,
+      width,
+      height,
+      ui.PixelFormat.rgba8888,
+      completer.complete,
+      rowBytes: stride,
+    );
+    return completer.future;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double width =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 0.0;
+        final double height =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 0.0;
+
+        if (width <= 0.0 || height <= 0.0) {
+          return const SizedBox.shrink();
+        }
+
+        final MosaicSplitWindowGeometry geometry =
+            mosaicSplitWindowGeometry(
+          frame: Rect.fromLTWH(0, 0, width, height),
+          aspect: widget.placement.splitClientAspect,
+          titleHeight: 38.0 * widget.chromeScale,
+        );
+        final ui.Size nextPaneSize = ui.Size(
+          geometry.clientSize.width.roundToDouble().clamp(1.0, double.infinity),
+          geometry.clientSize.height.roundToDouble().clamp(1.0, double.infinity),
+        );
+
+        if (_paneRenderSize != nextPaneSize) {
+          _paneRenderSize = nextPaneSize;
+          _serial++;
+          _scheduleRender();
+        } else {
+          _scheduleRender();
+        }
+
+        return RepaintBoundary(
+          key: const ValueKey<String>('structural-split-raster'),
+          child: CustomPaint(
+            key: const ValueKey<String>('structural-split-window-frame'),
+            painter: _StructuralSplitWindowPainter(
+              geometry: geometry,
+              placement: widget.placement,
+              sourceFrame: widget.sourceFrame,
+              theme: widget.theme,
+              fontFamily: widget.fontFamily,
+              chromeScale: widget.chromeScale,
+              images: List<ui.Image?>.unmodifiable(_images),
+              diagnosticLabels:
+                  List<String>.unmodifiable(_diagnosticLabels),
+            ),
+            child: const SizedBox.expand(),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _StructuralSplitWindowPainter extends CustomPainter {
+  final MosaicSplitWindowGeometry geometry;
+  final StructuralSequencePlacement placement;
+  final int sourceFrame;
+  final R3Theme theme;
+  final String fontFamily;
+  final double chromeScale;
+  final List<ui.Image?> images;
+  final List<String> diagnosticLabels;
+
+  const _StructuralSplitWindowPainter({
+    required this.geometry,
+    required this.placement,
+    required this.sourceFrame,
+    required this.theme,
+    required this.fontFamily,
+    required this.chromeScale,
+    required this.images,
+    required this.diagnosticLabels,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      paintStructuralWindow(
+        canvas: canvas,
+        theme: theme,
+        chromeScale: chromeScale,
+        fontFamily: fontFamily,
+        sourceFrame: sourceFrame,
+        sourceDurationFrames: placement.sourceDurationFrames,
+        windowTitle: placement.splitWindowTitleForPane(paneIndex),
+        overlayMode: placement.overlayMode,
+        topOverlay: placement.topOverlay,
+        bottomOverlay: placement.bottomOverlay,
+        defaultBottomOverlay: diagnosticLabels[paneIndex],
+        rect: geometry.windowRects[paneIndex],
+        sourceImage: images[paneIndex],
+        outgoingSourceImage: null,
+        outgoingPlacement: null,
+        outgoingSourceFrame: 0,
+        outgoingDefaultBottomOverlay: '',
+        handoffSlideT: 1.0,
+        opacity: 1.0,
+        windowChrome: 1.0,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _StructuralSplitWindowPainter oldDelegate) {
+    return oldDelegate.geometry != geometry ||
+        oldDelegate.placement != placement ||
+        oldDelegate.sourceFrame != sourceFrame ||
+        oldDelegate.theme != theme ||
+        oldDelegate.fontFamily != fontFamily ||
+        oldDelegate.chromeScale != chromeScale ||
+        oldDelegate.images[0] != images[0] ||
+        oldDelegate.images[1] != images[1] ||
+        oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
+        oldDelegate.diagnosticLabels[1] != diagnosticLabels[1];
+  }
+}
