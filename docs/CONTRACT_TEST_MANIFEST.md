@@ -101,6 +101,7 @@ Persistent media decoders answer exact source-frame requests. Requested and actu
 - `test/edit_video_compositor_test.dart`
 - `test/edit_video_compositor_depth_guard_test.dart`
 - `test/mosaic_split_pane_compositor_test.dart`
+- `test/mosaic_split_pane_compositor_test.dart`
 
 ---
 
