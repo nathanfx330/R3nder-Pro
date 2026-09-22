@@ -536,7 +536,7 @@ void main() {
       expect(_layer(0), findsOneWidget);
       expect(_layer(1), findsOneWidget);
       expect(_layerOpacity(tester, 1), 1.0);
-      expect(_layerOpacity(tester, 0), inExclusiveRange(0.0, 1.0));
+      expect(_layerOpacity(tester, 0), allOf(greaterThan(0.0), lessThan(1.0)));
       expect(_splitPresentationOpacity(tester, 1), greaterThan(0.0));
       expect(_handoffRole(tester, 0), StructuralSequenceHandoffRole.heldOutgoing);
 
@@ -551,7 +551,7 @@ void main() {
       final StructuralSplitWindowPainter entryPainter =
           entryPaint.painter! as StructuralSplitWindowPainter;
       expect(entryPainter.sourceFrame, 0);
-      expect(entryPainter.entryProgress, inExclusiveRange(0.0, 1.0));
+      expect(entryPainter.entryProgress, allOf(greaterThan(0.0), lessThan(1.0)));
 
       expect(
         scene.evaluate(
@@ -650,7 +650,7 @@ void main() {
 
       expect(_layer(0), findsOneWidget);
       expect(_layer(1), findsOneWidget);
-      expect(_layerOpacity(tester, 0), inExclusiveRange(0.0, 1.0));
+      expect(_layerOpacity(tester, 0), allOf(greaterThan(0.0), lessThan(1.0)));
       final Rect middleRect = _ordinaryWindowRect(tester, 1);
       expect(middleRect.width, greaterThan(0.0));
 
