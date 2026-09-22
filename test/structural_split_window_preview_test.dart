@@ -208,7 +208,7 @@ void main() {
           scene.terminal.scale * outputWidth / scene.width;
       final MosaicSplitWindowGeometry geometry =
           mosaicSplitWindowGeometry(
-        frame: const Rect.fromLTWH(
+        frame: Rect.fromLTWH(
           0,
           0,
           outputWidth.toDouble(),
