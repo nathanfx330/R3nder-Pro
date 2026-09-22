@@ -31,6 +31,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final R3Theme theme;
   final String fontFamily;
   final double chromeScale;
+  final bool moving;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -43,6 +44,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     required this.theme,
     required this.fontFamily,
     required this.chromeScale,
+    required this.moving,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -97,6 +99,7 @@ class _StructuralSplitWindowPreviewState
 
     if (runtimeChanged ||
         oldWidget.sourceFrame != widget.sourceFrame ||
+        oldWidget.moving != widget.moving ||
         oldWidget.chromeScale != widget.chromeScale ||
         oldWidget.placement.splitClientAspect !=
             widget.placement.splitClientAspect) {
@@ -189,7 +192,7 @@ class _StructuralSplitWindowPreviewState
       }
       _render(size);
     });
-    WidgetsBinding.instance.scheduleFrame();
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _render(ui.Size paneSize) async {
@@ -212,16 +215,26 @@ class _StructuralSplitWindowPreviewState
 
     try {
       for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final ProjectTime time = ProjectTime(
+          frame: widget.sourceFrame,
+          mode: widget.moving
+              ? ProjectClockMode.monotonic
+              : ProjectClockMode.scrub,
+        );
         results.add(
-          compositor.renderMosaicPaneAvailable(
-            source,
-            paneIndex,
-            ProjectTime(
-              frame: widget.sourceFrame,
-              mode: ProjectClockMode.scrub,
-            ),
-            paneSize,
-          ),
+          widget.moving
+              ? compositor.renderMosaicPaneAvailable(
+                  source,
+                  paneIndex,
+                  time,
+                  paneSize,
+                )
+              : compositor.renderMosaicPane(
+                  source,
+                  paneIndex,
+                  time,
+                  paneSize,
+                ),
         );
       }
     } catch (_) {
@@ -236,7 +249,6 @@ class _StructuralSplitWindowPreviewState
     if (!mounted || serial != _serial) return;
 
     if (results.any((EditVideoCompositeResult result) => result.hasPending)) {
-      _scheduleRender();
       return;
     }
 
