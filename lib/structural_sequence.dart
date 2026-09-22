@@ -254,7 +254,11 @@ class StructuralSequencePlacement {
   /// True only for a MOSAIC with exactly two panes, both populated.
   final bool splitWindowSupported;
 
-  /// One shared authored client aspect for both split windows.
+  /// Edge-to-edge Windows-style snapped split presentation. This is effective
+  /// only when [splitWindow] is true.
+  final bool maximizeSplit;
+
+  /// One shared authored client aspect for both normal split windows.
   final MosaicSplitClientAspect splitClientAspect;
 
   /// Placement-owned intent to play audio belonging to clips in this source.
@@ -298,6 +302,7 @@ class StructuralSequencePlacement {
     this.presentationMode = StructuralPresentationMode.windowed,
     this.splitWindowRequested = false,
     this.splitWindowSupported = false,
+    this.maximizeSplit = false,
     this.splitClientAspect = MosaicSplitClientAspect.aspect16x9,
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
@@ -524,6 +529,7 @@ class _StructuralPlacementSeed {
   final StructuralPresentationMode presentationMode;
   final bool splitWindowRequested;
   final bool splitWindowSupported;
+  final bool maximizeSplit;
   final MosaicSplitClientAspect splitClientAspect;
   final bool clipAudio;
 
@@ -547,6 +553,7 @@ class _StructuralPlacementSeed {
     required this.presentationMode,
     required this.splitWindowRequested,
     required this.splitWindowSupported,
+    required this.maximizeSplit,
     required this.splitClientAspect,
     required this.clipAudio,
     required this.overlayMode,
@@ -748,6 +755,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         splitWindowSupported: chrome.splitWindows
             ? _splitWindowSupported(model, ref)
             : false,
+        maximizeSplit: chrome.maximizeSplit,
         splitClientAspect: chrome.splitAspect,
         clipAudio: chrome.clipAudio,
         overlayMode: chrome.overlayMode,
@@ -813,6 +821,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         presentationMode: seed.presentationMode,
         splitWindowRequested: seed.splitWindowRequested,
         splitWindowSupported: seed.splitWindowSupported,
+        maximizeSplit: seed.maximizeSplit,
         splitClientAspect: seed.splitClientAspect,
         clipAudio: seed.clipAudio,
         overlayMode: seed.overlayMode,
@@ -901,6 +910,7 @@ String appendStructuralSequencePlacement({
   StructuralPresentationMode presentationMode =
       StructuralPresentationMode.windowed,
   bool splitWindows = false,
+  bool maximizeSplit = false,
   MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9,
   bool clipAudio = false,
   StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
@@ -932,6 +942,7 @@ String appendStructuralSequencePlacement({
         fullscreen:
             presentationMode == StructuralPresentationMode.fullscreen,
         splitWindows: splitWindows,
+        maximizeSplit: maximizeSplit,
         splitAspect: splitAspect,
         clipAudio: clipAudio,
         overlayMode: overlayMode,
