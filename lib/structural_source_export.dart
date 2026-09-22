@@ -152,9 +152,45 @@ class StructuralSourceFrameRenderer {
 
   int get totalFrames => model.structuralSourceFrameCount(root);
 
-  Uint8List renderFrame(int projectFrame) => renderFrameDetailed(projectFrame).rgba;
+  Uint8List renderFrame(int projectFrame) =>
+      renderFrameDetailed(projectFrame).rgba;
 
   StructuralSourceRenderedFrame renderFrameDetailed(int projectFrame) {
+    _checkProjectFrame(projectFrame);
+
+    final EditVideoCompositeResult result = _compositor.renderSource(
+      root.canonicalSource,
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+      ui.Size(width.toDouble(), height.toDouble()),
+    );
+    return _exactRenderedFrame(result, projectFrame);
+  }
+
+  /// Exact offline rendering of one authored pane from this renderer's MOSAIC
+  /// root. The result keeps recursive structural resolution and leaf
+  /// diagnostics; it differs from [renderFrameDetailed] only in that the
+  /// legacy MOSAIC pane layout is bypassed.
+  StructuralSourceRenderedFrame renderMosaicPaneDetailed(
+    int paneIndex,
+    int projectFrame,
+  ) {
+    _checkProjectFrame(projectFrame);
+    if (root.kind != StructuralSourceKind.mosaic) {
+      throw StateError(
+        'Pane export requires a MOSAIC root, got ${root.canonicalSource}.',
+      );
+    }
+
+    final EditVideoCompositeResult result = _compositor.renderMosaicPane(
+      root.canonicalSource,
+      paneIndex,
+      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+      ui.Size(width.toDouble(), height.toDouble()),
+    );
+    return _exactRenderedFrame(result, projectFrame);
+  }
+
+  void _checkProjectFrame(int projectFrame) {
     _checkAlive();
     if (projectFrame < 0 || projectFrame >= totalFrames) {
       throw RangeError.range(
@@ -164,13 +200,12 @@ class StructuralSourceFrameRenderer {
         'projectFrame',
       );
     }
+  }
 
-    final EditVideoCompositeResult result = _compositor.renderSource(
-      root.canonicalSource,
-      ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
-      ui.Size(width.toDouble(), height.toDouble()),
-    );
-
+  StructuralSourceRenderedFrame _exactRenderedFrame(
+    EditVideoCompositeResult result,
+    int projectFrame,
+  ) {
     if (result.hasPending) {
       throw StateError(
         'Exact structural export returned a pending frame at '
