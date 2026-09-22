@@ -613,11 +613,85 @@ class ProgramStructuralFrameRenderer {
     ).paint(canvas, Size(width.toDouble(), height.toDouble()));
 
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
+      final StructuralSequencePlacement? outgoingShape =
+          shapeOutgoingPlacement;
+      if (outgoingShape != null) {
+        final double outgoingOpacity =
+            structuralShapeOutgoingOpacity(shapeEntryLinear);
+        final MosaicSplitWindowGeometry? outgoingGeometry =
+            shapeOutgoingSplitGeometry;
+        final List<_RenderedStructuralSourceImage>? outgoingPanes =
+            shapeOutgoingSplitPaneImages;
+
+        if (outgoingShape.splitWindow &&
+            outgoingGeometry != null &&
+            outgoingPanes != null) {
+          StructuralSplitWindowPainter(
+            geometry: outgoingGeometry,
+            placement: outgoingShape,
+            sourceFrame: shapeOutgoingSourceFrame,
+            theme: structuralTheme,
+            fontFamily: fontFamily,
+            chromeScale: structuralChromeScale,
+            images: <ui.Image?>[
+              outgoingPanes[0].image,
+              outgoingPanes[1].image,
+            ],
+            diagnosticLabels: <String>[
+              outgoingPanes[0].diagnosticLabel,
+              outgoingPanes[1].diagnosticLabel,
+            ],
+            opacity: outgoingOpacity,
+          ).paint(
+            canvas,
+            Size(width.toDouble(), height.toDouble()),
+          );
+        } else if (!outgoingShape.splitWindow &&
+            shapeOutgoingSourceImage != null) {
+          final Rect outgoingRect =
+              structuralProgramPresentationRectForOutput(
+            mode: outgoingShape.presentationMode,
+            outputWidth: width,
+            outputHeight: height,
+            titleHeight: 38.0 * structuralChromeScale,
+          );
+          paintStructuralWindow(
+            canvas: canvas,
+            theme: structuralTheme,
+            chromeScale: structuralChromeScale,
+            fontFamily: fontFamily,
+            sourceFrame: shapeOutgoingSourceFrame,
+            sourceDurationFrames: outgoingShape.sourceDurationFrames,
+            windowTitle: outgoingShape.effectiveWindowTitle,
+            overlayMode: outgoingShape.overlayMode,
+            topOverlay: outgoingShape.topOverlay,
+            bottomOverlay: outgoingShape.bottomOverlay,
+            defaultBottomOverlay: shapeOutgoingDefaultBottomOverlay,
+            rect: _pixelRect(outgoingRect),
+            sourceImage: shapeOutgoingSourceImage,
+            outgoingSourceImage: null,
+            outgoingPlacement: null,
+            outgoingSourceFrame: 0,
+            outgoingDefaultBottomOverlay: '',
+            handoffSlideT: 1.0,
+            opacity: outgoingOpacity,
+            windowChrome: 1.0,
+          );
+        }
+      }
+
       final MosaicSplitWindowGeometry? geometry = splitGeometry;
       final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
       if (displayPlacement.splitWindow &&
           geometry != null &&
           panes != null) {
+        final double incomingOpacity = splitShapeEntry
+            ? structuralShapeEntryFrameAt(
+                targetRect: const Rect.fromLTWH(0, 0, 1, 1),
+                linearProgress: shapeEntryLinear,
+                contentReady: true,
+              ).opacity
+            : visual.structuralOpacity;
         StructuralSplitWindowPainter(
           geometry: geometry,
           placement: displayPlacement,
@@ -633,20 +707,33 @@ class ProgramStructuralFrameRenderer {
             panes[0].diagnosticLabel,
             panes[1].diagnosticLabel,
           ],
-          opacity: visual.structuralOpacity,
+          opacity: incomingOpacity,
+          entryProgress: splitShapeEntry ? shapeEntryLinear : 1.0,
         ).paint(
           canvas,
           Size(width.toDouble(), height.toDouble()),
         );
       } else {
-        final Rect displayRect = holdPreviousForSplitShapeChange
-            ? structuralProgramPresentationRectForOutput(
-                mode: displayPlacement.presentationMode,
-                outputWidth: width,
-                outputHeight: height,
-                titleHeight: 38.0 * structuralChromeScale,
-              )
-            : structuralRect;
+        Rect displayRect = structuralRect;
+        double displayOpacity = visual.structuralOpacity;
+        if (splitShapeEntry) {
+          final Rect targetRect =
+              structuralProgramPresentationRectForOutput(
+            mode: displayPlacement.presentationMode,
+            outputWidth: width,
+            outputHeight: height,
+            titleHeight: 38.0 * structuralChromeScale,
+          );
+          final StructuralShapeEntryFrame entry =
+              structuralShapeEntryFrameAt(
+            targetRect: targetRect,
+            linearProgress: shapeEntryLinear,
+            contentReady: true,
+          );
+          displayRect = entry.rect;
+          displayOpacity = entry.opacity;
+        }
+
         paintStructuralWindow(
           canvas: canvas,
           theme: structuralTheme,
@@ -661,21 +748,13 @@ class ProgramStructuralFrameRenderer {
           defaultBottomOverlay: defaultBottomOverlay,
           rect: _pixelRect(displayRect),
           sourceImage: sourceImage,
-          outgoingSourceImage:
-              holdPreviousForSplitShapeChange ? null : outgoingSourceImage,
-          outgoingPlacement: holdPreviousForSplitShapeChange
-              ? null
-              : handoff?.outgoingPlacement,
-          outgoingSourceFrame:
-              holdPreviousForSplitShapeChange ? 0 : handoff?.outgoingSourceFrame ?? 0,
-          outgoingDefaultBottomOverlay:
-              holdPreviousForSplitShapeChange ? '' : outgoingDefaultBottomOverlay,
-          handoffSlideT:
-              holdPreviousForSplitShapeChange ? 1.0 : handoff?.slideT ?? 1.0,
-          opacity:
-              holdPreviousForSplitShapeChange ? 1.0 : visual.structuralOpacity,
-          windowChrome:
-              holdPreviousForSplitShapeChange ? 1.0 : structuralChrome,
+          outgoingSourceImage: outgoingSourceImage,
+          outgoingPlacement: handoff?.outgoingPlacement,
+          outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
+          outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
+          handoffSlideT: handoff?.slideT ?? 1.0,
+          opacity: displayOpacity,
+          windowChrome: structuralChrome,
         );
       }
     }
@@ -704,6 +783,14 @@ class ProgramStructuralFrameRenderer {
     } finally {
       picture.dispose();
       outgoingSourceImage?.dispose();
+      shapeOutgoingSourceImage?.dispose();
+      final List<_RenderedStructuralSourceImage>? outgoingShapePanes =
+          shapeOutgoingSplitPaneImages;
+      if (outgoingShapePanes != null) {
+        for (final _RenderedStructuralSourceImage pane in outgoingShapePanes) {
+          pane.image.dispose();
+        }
+      }
       final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
       if (panes != null) {
         for (final _RenderedStructuralSourceImage pane in panes) {
