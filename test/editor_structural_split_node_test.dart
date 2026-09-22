@@ -88,7 +88,15 @@ void main() {
 
     expect(changed, contains('[STRUCT:MOSAIC.wall:SPLIT]'));
     expect(changed, isNot(contains('[STRUCT:MOSAIC.wall:FULL]')));
+    expect(find.text('MAXIMIZE SPLIT'), findsOneWidget);
     expect(find.text('CLIENT ASPECT'), findsOneWidget);
+
+    final Finder maximizeSplit = find.text('MAXIMIZE SPLIT');
+    await tester.ensureVisible(maximizeSplit);
+    await tester.tap(maximizeSplit);
+    await tester.pump();
+
+    expect(changed, contains('[STRUCT:MOSAIC.wall:SPLIT:MAX]'));
 
     final Finder aspectLabel = find.text('CLIENT ASPECT');
     final Finder aspectRow = find.ancestor(
@@ -108,7 +116,7 @@ void main() {
 
     expect(
       changed,
-      contains('[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]'),
+      contains('[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]'),
     );
 
     // The aspect dropdown sits below the presentation toggles. On the real
@@ -128,6 +136,7 @@ void main() {
 
     expect(changed, contains('[STRUCT:MOSAIC.wall:FULL]'));
     expect(changed, isNot(contains(':SPLIT')));
+    expect(changed, isNot(contains(':MAX')));
     expect(changed, isNot(contains(':ASPECT=')));
     expect(find.text('CLIENT ASPECT'), findsNothing);
   });
