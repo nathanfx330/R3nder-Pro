@@ -724,6 +724,177 @@ remains the current half-width-first behavior. If portrait MAX is revisited,
 the decision should be made as a visible window-design choice rather than by
 changing contain fitting or decoder behavior.
 
+## Rocky Linux cold-entry readiness investigation
+
+After W0-W8 were merged and exercised on Ubuntu, Rocky Linux exposed a
+platform-sensitive Preview failure: a cold two-window placement could skip the
+visible open-scale/fade and appear only after the authored opening budget had
+already elapsed. The geometry itself was correct once resident.
+
+The cause was in live split readiness polling, not authored timing.
+`StructuralSplitWindowPreview._render` uses the compositor's nonblocking pane
+path while playback is moving. When either pane reported a pending leaf decode,
+the method returned immediately. Source frame zero remains clamped throughout a
+normal STRUCT opening, and opening progress alone does not require a pane
+re-render. On a slower native decoder, no later source-frame/widget change was
+guaranteed before showing began, so the pending decoder could simply stop being
+polled during the exact frames in which the window should have become visible.
+
+The fix schedules another render through the widget's existing coalesced
+post-frame scheduler before returning from the pending branch. This is a
+presentation-readiness retry only:
+
+- project time does not advance;
+- source time does not advance;
+- authored entry progress is not restarted or extended;
+- both panes must resolve before the pair is exposed;
+- decoder/compositor instances remain resident and are reused;
+- retries stop after the request resolves;
+- disposal invalidates outstanding work through the existing mounted/serial
+  guards.
+
+The first polling repair deliberately did not retime presentation around decoder
+latency. Rocky visual validation then proved that limitation was still visible
+in the product: BAKE rendered the complete open-scale/fade correctly, but live
+TEXT playback could consume part of the 12-frame opening while native video was
+still becoming resident, and dashboard PREVIEW could consume the entire opening
+before the pair was ready.
+
+That established a second live-only contract. Decode latency is wall-clock work,
+not authored project time. A cold structural opening now reports buffering to
+its transport owner. In the common case, readiness is observed at opening frame
+zero, project time holds there, the existing busy indicator remains visible, and
+playback resumes from that same project frame only after readiness.
+
+Late observation is a bounded exception to strict monotonicity. If readiness is
+first observed k frames into the opening, live playback restores to opening
+frame zero before holding, so up to k frames of picture and workspace bed/music
+can replay once. No project frames are inserted, source time remains frame zero
+during the hold, and BAKE is unchanged.
+
+TEXT applies the same rule to its fallback stopwatch transport. While buffering,
+the stopwatch is stopped and any workspace bed/music transport is stopped. Once
+the structural frame is resident, the stopwatch is re-anchored to the held
+project frame and the workspace mix restarts from that same program time. This
+removes the Rocky-only visible frame skip without changing authored duration.
+
+The current hold is intentionally not applied while STRUCT clip audio owns the
+native AUDIO ProjectClock. That transport requires coordinated sink pause/resume
+rather than a unilateral SCRUB seek; the Rocky script that exposed this issue
+does not author STRUCT clip audio. AUDIO-authority buffering remains a separate
+transport extension rather than risking picture/audio divergence.
+
+Named follow-up: proactive opening-boundary residency hold. Dashboard PREVIEW
+and TEXT should use the same boundary definition and check whether the incoming
+placement is resident at the frame immediately before its opening stage would
+begin. If it is not resident, transport should hold there before any opening
+frame is consumed, then release the same project frame once readiness arrives.
+That removes the late-observation rewind entirely. It is deliberately deferred
+from this branch because both live transports must change together.
+
+The Program Preview regression uses two genuine
+`NonBlockingMediaDecoder` fakes at a partial authored opening frame while
+source frame remains zero. The left pane follows a nested MOSAIC -> EDIT -> media
+path, the right pane is direct media. Releasing the left decoder alone must keep
+the presentation hidden. Releasing the right decoder without changing project
+frame, source frame, repaint state, or widget input must make both pane images
+resident at the already-authored partial entry progress and opacity. The test
+also proves requests remain on source frame zero, decoder instances are reused,
+and polling stops after readiness. The same boundary runs for ordinary SPLIT
+and SPLIT:MAX.
+
+BAKE has no equivalent pending-poll seam. `ProgramStructuralFrameRenderer`
+renders split panes through the blocking exact compositor path, then passes
+authored opening/closing progress and shell opacity into the shared
+`StructuralSplitWindowPainter`. The BAKE regression is nevertheless expanded
+to ordinary SPLIT and SPLIT:MAX so early opening, middle opening, seated, and
+closing frames prove both colored panes grow/shrink correctly. Because final
+program output is opaque, fade is proved by increasing dominant pane color over
+the desktop rather than by output alpha.
+
+Focused verification gate:
+
+```bash
+flutter test \
+  test/program_preview_structural_split_transition_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_transition_bake_test.dart \
+  test/edit_video_compositor_test.dart \
+  test/structural_sequence_preview_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+### Follow-on Ubuntu finding: same-source legacy MOSAIC raster contention
+
+Ubuntu validation then exposed a separate ordinary-windowed MOSAIC failure. A
+fresh two-pane MOSAIC with both panes pointing at the same nested EDIT rendered
+correctly in the structural editor but could remain black when placed as:
+
+```text
+[STRUCT:MOSAIC.mosaic:AUDIO]
+```
+
+This was not a SPLIT parser, pane-id, clip-id, or same-EDIT ownership problem.
+The legacy two-pane MOSAIC layout is intentionally asymmetric: the left pane is
+56% of the client width and the right pane is 44%. Both panes may therefore
+resolve the same leaf media path at the same source frame but at two different
+decode raster sizes.
+
+Dart previously cached one persistent decoder by resolved media path only. The
+native worker, however, owns one active target raster at a time and clears its
+frame cache when width or height changes. A live nonblocking render could
+therefore alternate forever between the left and right pane sizes:
+
+```text
+shared.mp4 @ left-pane raster
+shared.mp4 @ right-pane raster  -> native size reset
+shared.mp4 @ left-pane raster   -> native size reset
+shared.mp4 @ right-pane raster  -> native size reset
+...
+```
+
+Neither request stayed resident long enough for the whole MOSAIC to become
+presentable, so the outer structural window remained black.
+
+`MediaLayer` now keys persistent decoder workers by resolved media path plus
+requested width and height. Stable-size playback still reuses one worker, while
+simultaneous differently-sized consumers receive independent workers. Raster
+variants are bounded by a small per-source LRU so repeatedly resizing Preview
+cannot accumulate an unbounded number of native decoders.
+
+Rocky resize validation checked the remaining exact-raster-key risk directly.
+With playback parked on the two-window presentation, temporary instrumentation
+logged every raster-specific decoder open and LRU eviction during a sustained
+application-window resize drag. The run opened only the stable 384 x 216 raster
+for each media source and produced no evictions; it did not generate a stream
+of new sizes while the drag continued. The exact
+(path, width, height) key therefore remains unchanged for this branch.
+
+Proof is split across two levels:
+
+- `test/edit_video_compositor_test.dart` uses a nonblocking decoder fake that
+  deliberately loses progress whenever one worker is bounced between raster
+  sizes. The same nested EDIT in both 56/44 panes must resolve after two polls,
+  with two raster-specific workers.
+- `test/structural_sequence_preview_test.dart` reproduces the author-visible
+  ordinary `STRUCT:MOSAIC...:AUDIO` opening path and proves first-frame
+  readiness is reached with the same nested EDIT and same pane CLIP id.
+
+Ubuntu previously passed the expanded local gate and visual checks. Rocky then
+confirmed BAKE itself is correct. The updated live path was subsequently
+verified on Rocky: dashboard PREVIEW now shows the complete two-window opening
+smoothly, and TEXT mode also shows the two video windows opening smoothly after
+the moving split decode raster was capped and TEXT playback moved onto Flutter
+vsync. Focused regressions remained green.
+
+One editor-only visual limitation remains: in TEXT mode, the terminal pullback
+immediately before the split windows open can still stutter on Rocky even though
+the window animation that follows is smooth. BAKE is unaffected. That terminal
+cadence issue is accepted for this branch and should be profiled independently
+with Flutter frame timings before changing terminal presentation code.
+
 ## Non-goals
 
 This milestone does not change MOSAIC Trim to shortest. In particular,

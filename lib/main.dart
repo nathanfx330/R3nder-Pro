@@ -239,6 +239,16 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// two independent sinks would compete for the same device and clock.
   bool _structAudioOwnsThisRun = false;
 
+  /// Live structural video buffering is wall-clock work, never authored time.
+  /// When a cold opening reaches PREVIEW before its first frame is resident,
+  /// hold the monotonic project clock at the beginning of that opening, let
+  /// the structural preview finish decoding, then resume from the exact same
+  /// project frame. BAKE never uses this state.
+  bool _previewStructuralBuffering = false;
+  int _previewStructuralBufferHoldFrame = 0;
+  int _previewStructuralBufferGeneration = 0;
+  Future<void>? _previewStructuralBufferAudioStop;
+
   /// Sinks present right now. Re-enumerated on demand, not cached forever:
   /// USB interfaces and Bluetooth sinks come and go while the app is open.
   List<PlaybackDevice> _bedDevices = const [];
@@ -1687,9 +1697,119 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
     setState(() => _currentState = AppState.assets);
   }
 
+  Future<void> _handlePreviewStructuralBuffering(
+    StructuralPreviewBufferingState state,
+  ) async {
+    if (!mounted ||
+        _currentState != AppState.preview ||
+        _structAudioOwnsThisRun) {
+      return;
+    }
+
+    if (state.buffering) {
+      if (_previewStructuralBuffering) return;
+
+      final int generation = ++_previewStructuralBufferGeneration;
+      final int currentFrame = _scene.frameCount;
+      final int holdFrame =
+          (currentFrame - state.openingFrame).clamp(0, currentFrame).toInt();
+
+      // Freeze authored time before doing any potentially slow sink work.
+      _projectClock.seekScrub(
+        ProjectTime(
+          frame: holdFrame,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+
+      // If readiness was first observed a frame or two into the opening,
+      // restore the scene to opening frame zero. Native media decoders live in
+      // the preview subtree, so this deterministic scene replay does not throw
+      // away the decode work that caused the hold.
+      _scene.evaluate(
+        ProjectTime(
+          frame: holdFrame,
+          mode: ProjectClockMode.scrub,
+        ),
+      );
+
+      final AudioBedPlayer? bedPlayer = _bedPlayer;
+      final bool restartWorkspaceMix = _bedStartedThisRun &&
+          bedPlayer != null &&
+          (_usableBedPath != null || _usableMusicPath != null);
+      final Future<void>? stopping =
+          restartWorkspaceMix ? bedPlayer.stop() : null;
+      _previewStructuralBufferAudioStop = stopping;
+      _previewStructuralBufferHoldFrame = holdFrame;
+      _previewStructuralBuffering = true;
+      _projectClock.signalRepaint();
+      if (mounted) setState(() {});
+
+      // Keep the generation live while the asynchronous sink stop completes.
+      if (stopping != null) {
+        try {
+          await stopping;
+        } catch (e) {
+          if (generation == _previewStructuralBufferGeneration) {
+            _logError('Preview buffer audio stop failed: $e');
+          }
+        }
+      }
+      return;
+    }
+
+    if (!_previewStructuralBuffering) return;
+
+    final int generation = ++_previewStructuralBufferGeneration;
+    final int holdFrame = _previewStructuralBufferHoldFrame;
+    final Future<void>? stopping = _previewStructuralBufferAudioStop;
+    _previewStructuralBufferAudioStop = null;
+
+    if (stopping != null) {
+      try {
+        await stopping;
+      } catch (_) {}
+    }
+    if (!mounted ||
+        generation != _previewStructuralBufferGeneration ||
+        _currentState != AppState.preview) {
+      return;
+    }
+
+    final AudioBedPlayer? bedPlayer = _bedPlayer;
+    if (_bedStartedThisRun &&
+        bedPlayer != null &&
+        (_usableBedPath != null || _usableMusicPath != null)) {
+      try {
+        await _playMix(
+          bedPlayer,
+          bed: _usableBedPath,
+          music: _usableMusicPath,
+          startSec: holdFrame / engineFps,
+        );
+      } catch (e) {
+        _logError('Preview buffer audio resume failed: $e');
+      }
+      if (!mounted ||
+          generation != _previewStructuralBufferGeneration ||
+          _currentState != AppState.preview) {
+        return;
+      }
+    }
+
+    _projectClock.seekMonotonic(ProjectTime(frame: holdFrame));
+    _previewStructuralBuffering = false;
+    _projectClock.signalRepaint();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _startPreview({bool withPreroll = false}) async {
     if (_isLoadingScene) return;
 
+    _previewStructuralBufferGeneration++;
+    _previewStructuralBuffering = false;
+    _previewStructuralBufferHoldFrame = 0;
+    _previewStructuralBufferAudioStop = null;
     setState(() => _isLoadingScene = true);
 
     // A previous preview may still be completing its bounded sink shutdown.
@@ -1782,6 +1902,10 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
   /// an empty screen.
   void _endPreview() {
     _ticker.stop();
+    _previewStructuralBufferGeneration++;
+    _previewStructuralBuffering = false;
+    _previewStructuralBufferHoldFrame = 0;
+    _previewStructuralBufferAudioStop = null;
     _bedPlayer?.stop();
     final ProgramStructuralAudioPreviewSession? session = _structPreviewSession;
     if (session != null) {
@@ -2870,8 +2994,38 @@ class _R3nderHomeState extends State<R3nderHome> with SingleTickerProviderStateM
               rawDocument: _docText,
               fontFamily: _activeFont,
               theme: _t,
+              onStructuralBufferingChanged: _structAudioOwnsThisRun
+                  ? null
+                  : (StructuralPreviewBufferingState state) {
+                      unawaited(_handlePreviewStructuralBuffering(state));
+                    },
             ),
           ),
+
+          if (_previewStructuralBuffering)
+            Positioned.fill(
+              key: const ValueKey<String>('preview-structural-buffering'),
+              child: IgnorePointer(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xCC0C0C10),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: R3Theme.hairline),
+                    ),
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _t.accentDim,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
           // HUD overlay
           Positioned(

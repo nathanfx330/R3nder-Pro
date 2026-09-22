@@ -49,6 +49,91 @@ class _FakeDecoder implements MediaDecoder {
   void dispose() {}
 }
 
+class _RasterSensitivePreviewBackend implements MediaDecoderBackend {
+  int openCount = 0;
+  final List<_RasterSensitivePreviewDecoder> decoders =
+      <_RasterSensitivePreviewDecoder>[];
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    openCount++;
+    final _RasterSensitivePreviewDecoder decoder =
+        _RasterSensitivePreviewDecoder();
+    decoders.add(decoder);
+    return decoder;
+  }
+}
+
+class _RasterSensitivePreviewDecoder implements NonBlockingMediaDecoder {
+  int? width;
+  int? height;
+  int stableRequests = 0;
+
+  @override
+  void request(int requestedSourceFrame, int nextWidth, int nextHeight) {
+    if (width != nextWidth || height != nextHeight) {
+      width = nextWidth;
+      height = nextHeight;
+      stableRequests = 0;
+    }
+    stableRequests++;
+  }
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int nextWidth,
+    int nextHeight,
+  ) {
+    if (width != nextWidth ||
+        height != nextHeight ||
+        stableRequests < 2) {
+      return null;
+    }
+    final Uint8List rgba = Uint8List(nextWidth * nextHeight * 4);
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 180;
+      rgba[i + 1] = 90;
+      rgba[i + 2] = 220;
+      rgba[i + 3] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: nextWidth,
+      height: nextHeight,
+      stride: nextWidth * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int nextWidth,
+    int nextHeight,
+  ) {
+    final Uint8List rgba = Uint8List(nextWidth * nextHeight * 4);
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 180;
+      rgba[i + 1] = 90;
+      rgba[i + 2] = 220;
+      rgba[i + 3] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: nextWidth,
+      height: nextHeight,
+      stride: nextWidth * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
 const String _source = '''[MOSAIC:wall]
 [PANE:pane1]
 [CLIP:base:video/base.mp4:0:10:20:1]
@@ -56,6 +141,25 @@ const String _source = '''[MOSAIC:wall]
 [/PANE]
 [/MOSAIC]
 [STRUCT:MOSAIC.wall]
+''';
+
+const String _sameNestedEditMosaicSource = '''[EDIT:test2s]
+[TRACK:V1]
+[CLIP:leaf:video/shared.mp4:0:0:329:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:mosaic]
+[PANE:pane1]
+[CLIP:edit_test2s:EDIT.test2s:0:0:329:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:edit_test2s:EDIT.test2s:0:0:329:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.mosaic:AUDIO]
 ''';
 
 const String _slideSource = '''[CONFIG:APPSWITCH:SLIDE]
@@ -146,6 +250,83 @@ void _expectSameRect(Rect a, Rect b) {
 }
 
 void main() {
+  testWidgets(
+    'windowed live MOSAIC resolves same nested EDIT at both legacy pane rasters',
+    (WidgetTester tester) async {
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(
+        _sameNestedEditMosaicSource,
+      ).single;
+      expect(placement.splitWindow, isFalse);
+
+      final _RasterSensitivePreviewBackend backend =
+          _RasterSensitivePreviewBackend();
+      bool ready = false;
+      final int openingFrame = kStructuralZoomFrames + 1;
+      expect(
+        placement.stageAt(openingFrame),
+        StructuralSequenceStage.opening,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 500,
+            child: StructuralSequencePreview(
+              rawDocument: _sameNestedEditMosaicSource,
+              placement: placement,
+              localFrame: openingFrame,
+              isPlaying: true,
+              theme: R3Theme.of(Colors.green),
+              wallpaper: null,
+              backend: backend,
+              resolveSource: _resolveTestSource,
+              onFirstFrameReady: () {
+                ready = true;
+              },
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0; attempt < 60 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        });
+        await tester.pump();
+      }
+
+      expect(ready, isTrue);
+      await tester.pump();
+
+      expect(backend.openCount, 2);
+      expect(
+        backend.decoders
+            .map((_RasterSensitivePreviewDecoder d) => d.width)
+            .toSet(),
+        hasLength(2),
+      );
+      expect(
+        backend.decoders.every(
+          (_RasterSensitivePreviewDecoder d) => d.stableRequests >= 2,
+        ),
+        isTrue,
+      );
+      expect(
+        find.byKey(
+          const ValueKey<String>('structural-first-frame-ready'),
+        ),
+        findsOneWidget,
+      );
+
+      final Opacity structural = tester.widget<Opacity>(
+        find.byKey(const ValueKey<String>('structural-window-opacity')),
+      );
+      expect(structural.opacity, greaterThan(0.0));
+    },
+  );
+
   testWidgets('zoom-out preloads first frame before structural window is visible',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
