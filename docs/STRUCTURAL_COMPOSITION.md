@@ -153,6 +153,10 @@ The W6 boundary proofs are `test/structural_split_cue_policy_test.dart`,
 `test/structural_split_card_preview_test.dart`, and
 `test/program_structural_split_card_bake_test.dart`.
 
+W6 passed its local regression gate with 20 tests, and the documentation
+contract checker reported 16 contracts / 90 proof files. W0 through W6 of the
+two-window SPLIT milestone are therefore locally verified.
+
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
