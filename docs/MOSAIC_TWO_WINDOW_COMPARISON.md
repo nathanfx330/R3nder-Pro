@@ -864,6 +864,14 @@ simultaneous differently-sized consumers receive independent workers. Raster
 variants are bounded by a small per-source LRU so repeatedly resizing Preview
 cannot accumulate an unbounded number of native decoders.
 
+Rocky resize validation checked the remaining exact-raster-key risk directly.
+With playback parked on the two-window presentation, temporary instrumentation
+logged every raster-specific decoder open and LRU eviction during a sustained
+application-window resize drag. The run opened only the stable 384 x 216 raster
+for each media source and produced no evictions; it did not generate a stream
+of new sizes while the drag continued. The exact
+(path, width, height) key therefore remains unchanged for this branch.
+
 Proof is split across two levels:
 
 - `test/edit_video_compositor_test.dart` uses a nonblocking decoder fake that
