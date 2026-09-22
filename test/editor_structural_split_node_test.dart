@@ -150,8 +150,17 @@ void main() {
     expect(find.text('NAME 1'), findsOneWidget);
     expect(find.text('NAME 2'), findsOneWidget);
 
+    // NAME 1 / NAME 2 extend the inspector enough that Flutter may lazily
+    // unbuild the earlier MAXIMIZE SPLIT row. Return the properties panel
+    // upward before exercising the existing MAX path.
+    await tester.drag(
+      find.byType(Scrollable).last,
+      const Offset(0, 500),
+    );
+    await tester.pumpAndSettle();
+
     final Finder maximizeSplit = find.text('MAXIMIZE SPLIT');
-    await tester.ensureVisible(maximizeSplit);
+    expect(maximizeSplit, findsOneWidget);
     await tester.tap(maximizeSplit);
     await tester.pump();
 
@@ -175,7 +184,10 @@ void main() {
 
     expect(
       changed,
-      contains('[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]'),
+      contains(
+        '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3:PANENAMES:'
+        'NAME1="Camera A":NAME2="Witness"]',
+      ),
     );
 
     // The aspect dropdown sits below the presentation toggles. On the real
