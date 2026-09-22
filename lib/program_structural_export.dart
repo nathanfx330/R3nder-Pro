@@ -468,6 +468,7 @@ class ProgramStructuralFrameRenderer {
               displaySourceFrame,
               paneWidth,
               paneHeight,
+              fontFamily,
             ),
           );
         }
@@ -701,6 +702,7 @@ class ProgramStructuralFrameRenderer {
     int sourceFrame,
     int imageWidth,
     int imageHeight,
+    String fontFamily,
   ) async {
     final String rendererKey =
         '$source|split|${imageWidth}x$imageHeight';
@@ -719,12 +721,44 @@ class ProgramStructuralFrameRenderer {
 
     final StructuralSourceRenderedFrame rendered =
         renderer.renderMosaicPaneDetailed(paneIndex, sourceFrame);
+    ui.Image image = await _decodeRgba(
+      rendered.rgba,
+      imageWidth,
+      imageHeight,
+    );
+
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (root != null &&
+        root.kind == StructuralSourceKind.mosaic &&
+        root.id.isNotEmpty &&
+        _editModel.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacementsForMosaicPane(
+        _editModel,
+        root,
+        paneIndex,
+        sourceFrame,
+      )
+              .where(
+                (StructuralCardOverlayPlacement placement) =>
+                    !placement.isSideCard,
+              )
+              .toList(growable: false);
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: image,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        image.dispose();
+        image = composited;
+      }
+    }
+
     return _RenderedStructuralSourceImage(
-      image: await _decodeRgba(
-        rendered.rgba,
-        imageWidth,
-        imageHeight,
-      ),
+      image: image,
       diagnosticLabel:
           rendered.diagnosticLabel('$source · PANE ${paneIndex + 1}'),
     );
@@ -764,29 +798,16 @@ class ProgramStructuralFrameRenderer {
                     !placement.isSideCard,
               )
               .toList(growable: false);
-      if (overlays.any((StructuralCardOverlayPlacement p) => p.slide > 0.0)) {
-        await _cardImages.ensure(overlays);
-        final ui.PictureRecorder recorder = ui.PictureRecorder();
-        final Canvas canvas = Canvas(
-          recorder,
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-        );
-        canvas.drawImage(decoded, Offset.zero, Paint());
-        paintStructuralCardOverlays(
-          canvas: canvas,
-          size: Size(width.toDouble(), height.toDouble()),
-          placements: overlays,
-          images: _cardImages,
-          structuralImage: decoded,
-          fontFamily: fontFamily,
-        );
-        final ui.Picture picture = recorder.endRecording();
-        try {
-          finalImage = await picture.toImage(width, height);
-        } finally {
-          picture.dispose();
-          decoded.dispose();
-        }
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: decoded,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        finalImage = composited;
+        decoded.dispose();
       }
     }
 
