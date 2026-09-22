@@ -119,6 +119,12 @@ void main() {
       }
 
       expect(ready, isTrue);
+
+      // onFirstFrameReady is emitted after setState() queues the painter
+      // update. Pump once more so the CustomPaint below reflects the resident
+      // pane images rather than the previous null-image painter instance.
+      await tester.pump();
+
       expect(backend.opens['red.mp4'], 1);
       expect(backend.opens['blue.mp4'], 1);
 
