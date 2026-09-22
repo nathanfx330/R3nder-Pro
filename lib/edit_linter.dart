@@ -368,7 +368,12 @@ class EditGraphLinter {
           code: EditLintCode.unsupportedSplitPlacement,
           severity: EditLintSeverity.warning,
           message: 'STRUCT ${ref.canonicalSource} requests SPLIT, but $reason; '
-              'ordinary windowed presentation will be used.',
+              'ordinary windowed presentation will be used. Under '
+              'APPSWITCH:SLIDE, timing follows the effective rendered shape: '
+              'each split/windowed seamless boundary uses the existing '
+              '$kStructuralWindowFrames-frame window budget, so filling or '
+              'emptying a pane can shift later TEXT timing by up to '
+              '${kStructuralWindowFrames * 2} frames across two neighbors.',
           editPath: <String>['STRUCT', ref.canonicalSource],
         ),
       );
