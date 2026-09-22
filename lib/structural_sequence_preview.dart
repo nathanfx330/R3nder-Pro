@@ -1111,8 +1111,6 @@ class _StructuralWindow extends StatelessWidget {
         handoffRole == StructuralSequenceHandoffRole.incoming;
     final bool externalOutgoing =
         handoffRole == StructuralSequenceHandoffRole.outgoing;
-    final bool heldOutgoing =
-        handoffRole == StructuralSequenceHandoffRole.heldOutgoing;
     final bool overlayOnly = externalOutgoing;
 
     final StructuralOverlayMode visibleOverlayMode =
