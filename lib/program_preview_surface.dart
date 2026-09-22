@@ -336,8 +336,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           // its authored entry budget has elapsed. Readiness controls only the
           // reveal; source time and geometry continue to follow the runtime
           // marker.
-          final bool activeVisible =
-              !splitBoundary || !splitEntryBudgetOpen;
+          const bool activeVisible = true;
 
           nextMounted.add(activeIndex);
           layers.add(
