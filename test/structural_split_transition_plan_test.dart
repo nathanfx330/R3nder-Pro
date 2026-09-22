@@ -143,6 +143,81 @@ void main() {
     expect(second.contentStartFrame, 0);
   });
 
+  test('middle fallback can add two existing shape budgets', () {
+    const String middleSupported = '''[MOSAIC:middle]
+[PANE:p1]
+[CLIP:m1:EDIT.a:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:m2:EDIT.b:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+    const String middleFallback = '''[MOSAIC:middle]
+[PANE:p1]
+[CLIP:m1:EDIT.a:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[/PANE]
+[/MOSAIC]
+''';
+    const String sequence = '''[STRUCT:MOSAIC.left:SPLIT]
+[STRUCT:MOSAIC.middle:SPLIT]
+[STRUCT:MOSAIC.right:SPLIT]
+''';
+
+    List<StructuralSequencePlacement> parse(String middle) {
+      return parseStructuralSequencePlacements(
+        '[CONFIG:APPSWITCH:SLIDE]\n$_roots$middle$sequence',
+      );
+    }
+
+    final List<StructuralSequencePlacement> supported =
+        parse(middleSupported);
+    final List<StructuralSequencePlacement> fallback =
+        parse(middleFallback);
+
+    expect(supported, hasLength(3));
+    expect(fallback, hasLength(3));
+    expect(
+      supported.map((StructuralSequencePlacement p) => p.presentationShape),
+      <StructuralPresentationShape>[
+        StructuralPresentationShape.split,
+        StructuralPresentationShape.split,
+        StructuralPresentationShape.split,
+      ],
+    );
+    expect(
+      fallback.map((StructuralSequencePlacement p) => p.presentationShape),
+      <StructuralPresentationShape>[
+        StructuralPresentationShape.split,
+        StructuralPresentationShape.windowed,
+        StructuralPresentationShape.split,
+      ],
+    );
+
+    expect(supported[1].entryWindowFrames, 0);
+    expect(supported[2].entryWindowFrames, 0);
+    expect(fallback[1].entryWindowFrames, kStructuralWindowFrames);
+    expect(fallback[2].entryWindowFrames, kStructuralWindowFrames);
+
+    final int supportedTotal = supported.fold<int>(
+      0,
+      (int sum, StructuralSequencePlacement p) => sum + p.durationFrames,
+    );
+    final int fallbackTotal = fallback.fold<int>(
+      0,
+      (int sum, StructuralSequencePlacement p) => sum + p.durationFrames,
+    );
+    expect(
+      fallbackTotal - supportedTotal,
+      kStructuralWindowFrames * 2,
+    );
+  });
+
   test('split aspect alone never adds project frames', () {
     final List<StructuralSequencePlacement> sameAspect = _placements(
       '''[STRUCT:MOSAIC.left:SPLIT]
