@@ -222,6 +222,7 @@ Decode readiness may delay when an incoming structural source is exposed, but it
 - `test/structural_sequence_preview_test.dart`
 - `test/program_preview_structural_switch_test.dart`
 - `test/program_preview_structural_late_handoff_test.dart`
+- `test/program_preview_structural_split_test.dart`
 - `test/program_preview_structural_raster_handoff_test.dart`
 - `test/program_structural_audio_test.dart`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
