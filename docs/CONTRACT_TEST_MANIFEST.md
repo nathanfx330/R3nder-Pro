@@ -159,7 +159,7 @@ second duration authority or an extra program-time adjustment.
 
 **Contract**
 
-A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. CARD is routed to its owning split client; SIDECARD and MAXIMIZE lint as unsupported and do not alter or paint the split shell.
+A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. CARD is routed recursively through nested structural sources to its owning split client using exact parent AT/IN/speed frame projection; SIDECARD and MAXIMIZE lint as unsupported, including when nested below a split pane, and do not alter or paint the split shell.
 
 **Proof**
 
