@@ -164,7 +164,13 @@ void main() {
     await tester.tap(maximizeSplit);
     await tester.pump();
 
-    expect(changed, contains('[STRUCT:MOSAIC.wall:SPLIT:MAX]'));
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:SPLIT:MAX:PANENAMES:'
+        'NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
 
     final Finder aspectLabel = find.text('CLIENT ASPECT');
     final Finder aspectRow = find.ancestor(
