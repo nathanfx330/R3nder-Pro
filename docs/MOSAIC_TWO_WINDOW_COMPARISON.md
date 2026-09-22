@@ -296,6 +296,10 @@ Proof added in W4:
   with a nested EDIT in one pane, captures the live seated Preview raster, and
   compares the opaque window interiors channel-for-channel with whole-program
   BAKE;
+- `test/program_preview_structural_split_test.dart` proves the compiled runtime
+  REGION selects the SPLIT placement at the top-level Program Preview boundary,
+  mounts the split raster rather than the ordinary single window, and opens both
+  pane sources through the shared compositor;
 - `test/structural_source_export_native_test.dart` adds a Linux native probe
   with a 16:9 edge-marked circular fixture rendered into a 4:3 pane request. All
   four edge marks must survive and the white circle must remain circular. This
@@ -314,6 +318,7 @@ flutter test \
   test/structural_split_window_preview_test.dart \
   test/program_structural_split_bake_test.dart \
   test/mosaic_split_pane_compositor_test.dart \
+  test/program_preview_structural_split_test.dart \
   test/program_preview_structural_chrome_runtime_test.dart \
   test/program_preview_structural_switch_test.dart \
   test/program_preview_structural_fullscreen_test.dart
