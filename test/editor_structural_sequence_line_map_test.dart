@@ -77,6 +77,25 @@ TEXT AFTER
       for (final int frame in authoredFrames) {
         expect(result.rawLineAtFrame[frame], placement.lineIndex);
       }
+
+      final List<int> lineOwnedFrames = <int>[
+        for (int frame = 0; frame < result.rawLineAtFrame.length; frame++)
+          if (result.rawLineAtFrame[frame] == placement.lineIndex) frame,
+      ];
+      final Set<int> authoredSet = authoredFrames.toSet();
+      final List<int> navigationOnlyDwell = <int>[
+        for (final int frame in lineOwnedFrames)
+          if (!authoredSet.contains(frame)) frame,
+      ];
+
+      // The raw parser/read-head may remain on the STRUCT source line for one
+      // control-only frame after authored presentation time ends. Bound that
+      // exception explicitly so navigation and authored timing cannot drift
+      // apart unnoticed.
+      expect(navigationOnlyDwell.length, lessThanOrEqualTo(1));
+      if (navigationOnlyDwell.isNotEmpty) {
+        expect(navigationOnlyDwell.single, authoredFrames.last + 1);
+      }
     } finally {
       scene.disposeImages();
     }
