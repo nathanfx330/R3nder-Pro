@@ -151,8 +151,16 @@ W8 adds optional `SPLIT:MAX`. It remains the same effective SPLIT presentation
 shape and uses the same open/close choreography, cue ownership, and readiness
 rules. Only seated geometry changes: each client takes one exact horizontal
 half of the program frame with zero outer margin and zero center gap, while the
-authored aspect continues to determine client height. The pair remains
-vertically centered unless an over-tall aspect reaches the program-height cap.
+authored aspect determines client height until the program-height cap binds.
+The pair remains vertically centered when it fits.
+
+This wording is intentionally precise because the current 9:16 MAX case is an
+edge condition, not a true aspect-preserving portrait window. At 1920 x 1080,
+half-width-first geometry asks for a 960 x 1706.7 client; the height cap reduces
+that to 960 x 1042, and contain fitting places roughly 586 x 1042 portrait
+footage inside it. A future design may instead shrink client width when the cap
+binds, yielding a true roughly 586 x 1042 portrait window with desktop visible
+beside the pair. That alternative is not implemented in the merged W8 contract.
 
 W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
 the top-level pane to the complete split client before the pane image reaches
@@ -167,6 +175,14 @@ placement; the policy lint also follows nested structural sources. Neither
 active cue state nor source-end truncation state may alter the split outer
 shell or paint a SIDECARD panel. Unsupported SPLIT requests still use ordinary
 window fallback semantics rather than these SPLIT-only restrictions.
+
+The W5-W8 implementation history also established a useful reconstruction
+rule: correct frame accounting is not sufficient if the presentation reads as
+a freeze, and green lower-level tests are not sufficient if they omit the real
+nested ownership topology. W7 therefore kept W5's exact 12-frame budgets while
+replacing stationary holds with visible entry/fade geometry, and W6 replaced a
+direct-pane CARD fixture with the real MOSAIC -> EDIT -> media path after GUI
+validation exposed the gap.
 
 The W6 boundary proofs are `test/structural_split_cue_policy_test.dart`,
 `test/structural_split_card_preview_test.dart`, and
