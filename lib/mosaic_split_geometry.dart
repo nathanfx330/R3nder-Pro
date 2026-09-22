@@ -32,6 +32,7 @@ class MosaicSplitWindowGeometry {
   const MosaicSplitWindowGeometry({
     required this.frame,
     required this.aspect,
+    required this.maximized,
     required this.edgeMargin,
     required this.gap,
     required this.titleHeight,
@@ -48,6 +49,7 @@ class MosaicSplitWindowGeometry {
 
   final Rect frame;
   final MosaicSplitClientAspect aspect;
+  final bool maximized;
   final double edgeMargin;
   final double gap;
   final double titleHeight;
@@ -79,14 +81,18 @@ class MosaicSplitWindowGeometry {
 
 /// Returns the seated two-window geometry inside [frame].
 ///
-/// Both clients are equal. The gap is centered on [frame.center.dx]. Width is
-/// constrained first by the two edge margins and the fixed gap; height is
-/// constrained by the existing 78% outer-window cap minus [titleHeight].
-/// Whichever constraint binds preserves the authored client aspect.
+/// Both clients are equal.
+///
+/// Normal SPLIT keeps the authored edge margins, fixed gap, and authored client
+/// aspect. MAX SPLIT instead snaps the two outer windows edge to edge across
+/// [frame]: zero outer margin, zero gap, half the frame width per window, and
+/// the full frame height including title chrome. Media still contains inside
+/// each client; the authored aspect remains dormant placement state.
 MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
   required Rect frame,
   required MosaicSplitClientAspect aspect,
   required double titleHeight,
+  bool maximized = false,
 }) {
   if (!frame.width.isFinite ||
       !frame.height.isFinite ||
@@ -107,27 +113,39 @@ MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
   }
 
   final double edgeMargin =
-      frame.width * kMosaicSplitEdgeMarginFraction;
-  final double gap = frame.width * kMosaicSplitGapFraction;
+      maximized ? 0.0 : frame.width * kMosaicSplitEdgeMarginFraction;
+  final double gap =
+      maximized ? 0.0 : frame.width * kMosaicSplitGapFraction;
   final double maximumClientWidth = math.max(
     0.0,
     (frame.width - edgeMargin * 2.0 - gap) / 2.0,
   );
   final double maximumClientHeight = math.max(
     0.0,
-    frame.height * kMosaicSplitMaxWindowHeightFraction - titleHeight,
+    maximized
+        ? frame.height - titleHeight
+        : frame.height * kMosaicSplitMaxWindowHeightFraction - titleHeight,
   );
 
-  final double clientHeight = math.min(
-    maximumClientWidth / aspect.widthOverHeight,
-    maximumClientHeight,
-  );
-  final double clientWidth = aspect.widthOverHeight * clientHeight;
+  final double clientWidth;
+  final double clientHeight;
+  if (maximized) {
+    clientWidth = maximumClientWidth;
+    clientHeight = maximumClientHeight;
+  } else {
+    clientHeight = math.min(
+      maximumClientWidth / aspect.widthOverHeight,
+      maximumClientHeight,
+    );
+    clientWidth = aspect.widthOverHeight * clientHeight;
+  }
   final double windowHeight = clientHeight + titleHeight;
 
   final double groupWidth = clientWidth * 2.0 + gap;
   final double left = frame.left + (frame.width - groupWidth) / 2.0;
-  final double top = frame.top + (frame.height - windowHeight) / 2.0;
+  final double top = maximized
+      ? frame.top
+      : frame.top + (frame.height - windowHeight) / 2.0;
   final double rightLeft = left + clientWidth + gap;
 
   final Rect leftWindow =
@@ -156,6 +174,7 @@ MosaicSplitWindowGeometry mosaicSplitWindowGeometry({
   return MosaicSplitWindowGeometry(
     frame: frame,
     aspect: aspect,
+    maximized: maximized,
     edgeMargin: edgeMargin,
     gap: gap,
     titleHeight: titleHeight,
