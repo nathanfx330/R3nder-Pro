@@ -408,9 +408,13 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             );
           }
 
-          if (placement.seamlessFromPrevious &&
-              activeReady &&
-              (!splitBoundary || !splitEntryBudgetOpen)) {
+          if (placement.seamlessFromPrevious && activeReady) {
+            // During a split shape-entry budget the incoming presentation now
+            // paints visibly underneath the authored outgoing cover. It may
+            // therefore earn its one active-ready paint during the budget.
+            // The cover still cannot disappear early because
+            // splitEntryBudgetOpen independently keeps it mounted until the
+            // authored window budget ends.
             _scheduleReadyPaintCommit(activeIndex);
           }
         }
