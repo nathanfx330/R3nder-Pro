@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
+import 'package:r3nder/mosaic_split_geometry.dart';
 import 'package:r3nder/program_structural_export.dart';
 import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
@@ -113,16 +114,20 @@ Future<Uint8List> _rgba(ui.Image image) async {
   return data!.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
 
-bool _hasExactColor(Uint8List rgba, List<int> color) {
-  for (int i = 0; i < rgba.length; i += 4) {
-    if (rgba[i] == color[0] &&
-        rgba[i + 1] == color[1] &&
-        rgba[i + 2] == color[2] &&
-        rgba[i + 3] == color[3]) {
-      return true;
-    }
-  }
-  return false;
+List<int> _pixelAt(
+  Uint8List rgba,
+  int width,
+  Offset point,
+) {
+  final int x = point.dx.round().clamp(0, width - 1);
+  final int y = point.dy.round().clamp(0, (rgba.length ~/ 4 ~/ width) - 1);
+  final int at = (y * width + x) * 4;
+  return <int>[
+    rgba[at],
+    rgba[at + 1],
+    rgba[at + 2],
+    rgba[at + 3],
+  ];
 }
 
 void main() {
@@ -202,9 +207,28 @@ void main() {
       final Uint8List opening = await _rgba(openingImage!);
       openingImage.dispose();
 
-      expect(_hasExactColor(opening, const <int>[255, 0, 0, 255]), isTrue);
-      expect(_hasExactColor(opening, const <int>[0, 255, 0, 255]), isFalse);
-      expect(_hasExactColor(opening, const <int>[0, 0, 255, 255]), isFalse);
+      const double titleHeight = 38.0;
+      final Rect heldWindow = structuralProgramTargetRectForOutput(
+        outputWidth: 640,
+        outputHeight: 360,
+        titleHeight: titleHeight,
+      );
+      final Rect heldWindowPixels = Rect.fromLTRB(
+        heldWindow.left * 640,
+        heldWindow.top * 360,
+        heldWindow.right * 640,
+        heldWindow.bottom * 360,
+      );
+      final Rect heldClient = Rect.fromLTRB(
+        heldWindowPixels.left,
+        heldWindowPixels.top + titleHeight,
+        heldWindowPixels.right,
+        heldWindowPixels.bottom,
+      );
+      expect(
+        _pixelAt(opening, 640, heldClient.center),
+        const <int>[255, 0, 0, 255],
+      );
 
       final int showingProjectFrame = _findProjectFrame(
         scene,
@@ -229,9 +253,20 @@ void main() {
       final Uint8List showing = await _rgba(showingImage!);
       showingImage.dispose();
 
-      expect(_hasExactColor(showing, const <int>[255, 0, 0, 255]), isFalse);
-      expect(_hasExactColor(showing, const <int>[0, 255, 0, 255]), isTrue);
-      expect(_hasExactColor(showing, const <int>[0, 0, 255, 255]), isTrue);
+      final MosaicSplitWindowGeometry splitGeometry =
+          mosaicSplitWindowGeometry(
+        frame: const Rect.fromLTWH(0, 0, 640, 360),
+        aspect: second.splitClientAspect,
+        titleHeight: titleHeight,
+      );
+      expect(
+        _pixelAt(showing, 640, splitGeometry.leftClientRect.center),
+        const <int>[0, 255, 0, 255],
+      );
+      expect(
+        _pixelAt(showing, 640, splitGeometry.rightClientRect.center),
+        const <int>[0, 0, 255, 255],
+      );
     },
   );
 }
