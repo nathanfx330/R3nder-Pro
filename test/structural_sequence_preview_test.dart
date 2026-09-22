@@ -530,6 +530,15 @@ void main() {
     );
     await tester.pump();
 
+    for (int attempt = 0;
+        attempt < 50 && outgoingSlide.evaluate().isNotEmpty;
+        attempt++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pump();
+    }
+
     expect(outgoingSlide, findsNothing);
     expect(incomingSlide, findsOneWidget);
     final FractionalTranslation seated =

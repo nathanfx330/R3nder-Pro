@@ -7,6 +7,7 @@
 
 import 'parser.dart';
 import 'script_cst.dart';
+import 'mosaic_split_geometry.dart';
 import 'structural_chrome.dart';
 
 // =====================================================================
@@ -443,6 +444,10 @@ class ScriptNode {
           StructuralChromeSpec(
             source: param('source'),
             fullscreen: param('mode').trim().toUpperCase() == 'FULL',
+            splitWindows: param('split').trim().toUpperCase() == 'SPLIT',
+            maximizeSplit: param('maxSplit').trim().toUpperCase() == 'MAX',
+            splitAspect:
+                mosaicSplitClientAspectFromToken(param('aspect', '16X9'))!,
             clipAudio: param('audio').trim().toUpperCase() == 'AUDIO',
             overlayMode: overlayMode,
             windowTitle: param('title'),
@@ -733,6 +738,9 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
       n.type = 'STRUCT';
       n.params['source'] = chrome.source;
       n.params['mode'] = chrome.fullscreen ? 'FULL' : '';
+      n.params['split'] = chrome.splitWindows ? 'SPLIT' : '';
+      n.params['maxSplit'] = chrome.maximizeSplit ? 'MAX' : '';
+      n.params['aspect'] = chrome.splitAspect.token;
       n.params['audio'] = chrome.clipAudio ? 'AUDIO' : '';
       n.params['overlay'] = chrome.overlayMode.token;
       n.params['title'] = chrome.windowTitle;

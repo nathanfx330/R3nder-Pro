@@ -30,6 +30,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_sequence.dart';
 import 'structural_sequence_preview.dart';
+import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
 class ProgramPreviewSurface extends StatefulWidget {
@@ -74,11 +75,25 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
 
+  /// Child preview readiness reports, independent of whether a focused test
+  /// interceptor has delayed parent acceptance. This distinguishes a decoder
+  /// that was genuinely late from one that was already paintable during
+  /// preload but whose acceptance callback was intentionally withheld.
+  final Set<int> _reportedReadyPlacements = <int>{};
+
   /// Tracks whether an incoming placement has completed one active paint after
   /// readiness. This remains diagnostic/state information only; authored slide
   /// geometry must never depend on it.
   final Set<int> _readyPaintedPlacements = <int>{};
   final Set<int> _readyPaintCommitScheduled = <int>{};
+
+  /// Placements that became active before their preload had resolved.
+  ///
+  /// Early-ready placements retain the outgoing client for the complete
+  /// authored APPSWITCH slide. Late-ready placements instead retain it only
+  /// until one active-ready paint has completed, then release the cover
+  /// without restarting or delaying authored source time.
+  final Set<int> _lateReadyActivePlacements = <int>{};
 
   @override
   void initState() {
@@ -101,8 +116,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     if (previewIdentityChanged) {
       _readyPlacements.clear();
       _mountedPlacements.clear();
+      _reportedReadyPlacements.clear();
       _readyPaintedPlacements.clear();
       _readyPaintCommitScheduled.clear();
+      _lateReadyActivePlacements.clear();
     }
   }
 
@@ -183,6 +200,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     required StructuralSequencePlacement placement,
     required int localFrame,
     required bool visible,
+    double layerOpacity = 1.0,
     StructuralSequenceHandoffRole handoffRole =
         StructuralSequenceHandoffRole.none,
     double handoffSlideT = 0.0,
@@ -203,6 +221,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
       onFirstFrameReady: () {
+        if (mounted && _mountedPlacements.contains(placementIndex)) {
+          _reportedReadyPlacements.add(placementIndex);
+        }
         final interceptor = widget.structuralReadinessInterceptor;
         if (interceptor == null) {
           _markPlacementReady(placementIndex);
@@ -222,7 +243,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       child: IgnorePointer(
         ignoring: !visible,
         child: Opacity(
-          opacity: visible ? 1.0 : 0.0,
+          opacity: visible
+              ? layerOpacity.clamp(0.0, 1.0).toDouble()
+              : 0.0,
           child: preview,
         ),
       ),
@@ -282,14 +305,43 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
+          final bool readinessReportedBeforeActive =
+              _reportedReadyPlacements.contains(activeIndex);
+          if (placement.seamlessFromPrevious &&
+              !readinessReportedBeforeActive) {
+            _lateReadyActivePlacements.add(activeIndex);
+          }
+          final bool activeReadyPainted =
+              _readyPaintedPlacements.contains(activeIndex);
+          final bool lateReadyActive =
+              _lateReadyActivePlacements.contains(activeIndex);
           final int activeSourceFrame =
               placement.sourceFrameAt(activeLocalFrame);
-          final bool handoffWindowOpen = placement.seamlessFromPrevious &&
+
+          final int previousIndex = activeIndex - 1;
+          final StructuralSequencePlacement? previousPlacement =
+              placement.seamlessFromPrevious
+                  ? _placementAt(previousIndex)
+                  : null;
+          final bool previousCanHandoff = previousPlacement != null &&
+              previousPlacement.seamlessToNext &&
+              previouslyMounted.contains(previousIndex);
+          final bool splitBoundary = previousCanHandoff &&
+              (previousPlacement!.splitWindow || placement.splitWindow);
+          final bool splitShapeChange = splitBoundary &&
+              previousPlacement!.presentationShape !=
+                  placement.presentationShape;
+          final bool splitEntryBudgetOpen = splitShapeChange &&
+              placement.stageAt(activeLocalFrame) ==
+                  StructuralSequenceStage.opening;
+
+          final bool handoffWindowOpen = !splitBoundary &&
+              placement.seamlessFromPrevious &&
               structuralSwitchSlideWindowOpen(
                 sourceFrame: activeSourceFrame,
                 sourceDurationFrames: placement.sourceDurationFrames,
               );
-          final double handoffSlideT = placement.seamlessFromPrevious
+          final double handoffSlideT = handoffWindowOpen
               ? structuralSwitchSlideT(
                   sourceFrame: activeSourceFrame,
                   sourceDurationFrames: placement.sourceDurationFrames,
@@ -298,51 +350,83 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
 
           int? fallbackIndex;
           StructuralSequencePlacement? fallbackPlacement;
-          if (placement.seamlessFromPrevious &&
-              handoffWindowOpen) {
-            final int previousIndex = activeIndex - 1;
-            final StructuralSequencePlacement? previous =
-                _placementAt(previousIndex);
-            if (previous != null &&
-                previous.seamlessToNext &&
-                previouslyMounted.contains(previousIndex)) {
-              fallbackIndex = previousIndex;
-              fallbackPlacement = previous;
-            }
+          bool fallbackIsHeldSplit = false;
+
+          if (splitBoundary &&
+              (splitEntryBudgetOpen || !activeReadyPainted)) {
+            fallbackIndex = previousIndex;
+            fallbackPlacement = previousPlacement;
+            fallbackIsHeldSplit = true;
+          } else if (handoffWindowOpen &&
+              previousCanHandoff &&
+              (!lateReadyActive || !activeReadyPainted)) {
+            fallbackIndex = previousIndex;
+            fallbackPlacement = previousPlacement;
           }
 
-          // A and B always occupy their authored positions. Readiness may
-          // determine whether B has presentable pixels, but it never changes
-          // the transition geometry or restarts the authored pan.
+          // Split boundaries never pan one pane independently. The incoming
+          // placement can paint underneath its stationary outgoing cover once
+          // its authored entry budget has elapsed. Readiness controls only the
+          // reveal; source time and geometry continue to follow the runtime
+          // marker.
+          const bool activeVisible = true;
+
           nextMounted.add(activeIndex);
-          layers.add(
-            _structuralLayer(
-              placementIndex: activeIndex,
-              placement: placement,
-              localFrame: activeLocalFrame,
-              visible: true,
-              handoffRole: handoffWindowOpen
-                  ? StructuralSequenceHandoffRole.incoming
-                  : StructuralSequenceHandoffRole.none,
-              handoffSlideT: handoffSlideT,
-            ),
+          final Widget activeLayer = _structuralLayer(
+            placementIndex: activeIndex,
+            placement: placement,
+            localFrame: activeLocalFrame,
+            visible: activeVisible,
+            handoffRole: handoffWindowOpen
+                ? StructuralSequenceHandoffRole.incoming
+                : StructuralSequenceHandoffRole.none,
+            handoffSlideT: handoffSlideT,
           );
 
           if (fallbackPlacement != null && fallbackIndex != null) {
             nextMounted.add(fallbackIndex);
-            layers.add(
-              _structuralLayer(
-                placementIndex: fallbackIndex,
-                placement: fallbackPlacement,
-                localFrame: fallbackPlacement.effectiveDurationFrames - 1,
-                visible: true,
-                handoffRole: StructuralSequenceHandoffRole.outgoing,
-                handoffSlideT: handoffSlideT,
-              ),
+            final double heldOpacity =
+                fallbackIsHeldSplit && splitEntryBudgetOpen && activeReady
+                    ? structuralShapeOutgoingOpacity(
+                        placement.stageProgressAt(activeLocalFrame),
+                      )
+                    : 1.0;
+            final Widget fallbackLayer = _structuralLayer(
+              placementIndex: fallbackIndex,
+              placement: fallbackPlacement,
+              localFrame: fallbackPlacement.effectiveDurationFrames - 1,
+              visible: true,
+              layerOpacity: heldOpacity,
+              handoffRole: fallbackIsHeldSplit
+                  ? StructuralSequenceHandoffRole.heldOutgoing
+                  : StructuralSequenceHandoffRole.outgoing,
+              handoffSlideT: handoffSlideT,
             );
+
+            // Once the incoming shape is ready during its authored opening
+            // budget, Preview matches BAKE: fading outgoing below, growing
+            // incoming above. Before readiness (and for the old late-ready
+            // cover path) the outgoing layer stays on top.
+            if (fallbackIsHeldSplit && splitEntryBudgetOpen && activeReady) {
+              layers
+                ..add(fallbackLayer)
+                ..add(activeLayer);
+            } else {
+              layers
+                ..add(activeLayer)
+                ..add(fallbackLayer);
+            }
+          } else {
+            layers.add(activeLayer);
           }
 
           if (placement.seamlessFromPrevious && activeReady) {
+            // During a split shape-entry budget the incoming presentation now
+            // paints visibly underneath the authored outgoing cover. It may
+            // therefore earn its one active-ready paint during the budget.
+            // The cover still cannot disappear early because
+            // splitEntryBudgetOpen independently keeps it mounted until the
+            // authored window budget ends.
             _scheduleReadyPaintCommit(activeIndex);
           }
         }
@@ -350,7 +434,13 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         _readyPlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
+        _reportedReadyPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
         _readyPaintedPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _lateReadyActivePlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
         _mountedPlacements

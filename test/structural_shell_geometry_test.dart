@@ -2,6 +2,7 @@
 
 import 'dart:ui';
 
+import 'package:flutter/animation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/structural_shell_geometry.dart';
@@ -35,6 +36,78 @@ void main() {
       contentReady: ready,
     );
   }
+
+  test('shape entry spends the existing budget on visible geometry', () {
+    final Rect emergence = structuralShellEmergenceRect(presentation);
+
+    final StructuralShapeEntryFrame first = structuralShapeEntryFrameAt(
+      targetRect: presentation,
+      linearProgress: 0.0,
+      contentReady: true,
+    );
+    expect(first.rect, emergence);
+    expect(first.opacity, 0.0);
+    expect(structuralShapeOutgoingOpacity(0.0), 1.0);
+
+    final StructuralShapeEntryFrame middle = structuralShapeEntryFrameAt(
+      targetRect: presentation,
+      linearProgress: 0.5,
+      contentReady: true,
+    );
+    expect(middle.rect.width, greaterThan(emergence.width));
+    expect(middle.rect.width, lessThan(presentation.width));
+    expect(middle.opacity, greaterThan(0.0));
+    expect(
+      structuralShapeOutgoingOpacity(0.5),
+      closeTo(1.0 - Curves.easeInOutCubic.transform(0.5), 1e-9),
+    );
+
+    final StructuralShapeEntryFrame last = structuralShapeEntryFrameAt(
+      targetRect: presentation,
+      linearProgress: 1.0,
+      contentReady: true,
+    );
+    expect(last.rect, presentation);
+    expect(last.opacity, 1.0);
+    expect(structuralShapeOutgoingOpacity(1.0), 0.0);
+
+    final StructuralShapeEntryFrame waiting = structuralShapeEntryFrameAt(
+      targetRect: presentation,
+      linearProgress: 0.75,
+      contentReady: false,
+    );
+    expect(waiting.opacity, 0.0);
+    expect(waiting.rect, isNot(emergence));
+  });
+
+  test('split close uses the ordinary seated-to-emergence curve', () {
+    final Rect emergence = structuralShellEmergenceRect(presentation);
+
+    expect(
+      structuralShapeExitRectAt(
+        targetRect: presentation,
+        linearProgress: 0.0,
+      ),
+      presentation,
+    );
+
+    final Rect middle = structuralShapeExitRectAt(
+      targetRect: presentation,
+      linearProgress: 0.5,
+    );
+    expect(middle.width, lessThan(presentation.width));
+    expect(middle.width, greaterThan(emergence.width));
+    expect(middle.top, greaterThan(presentation.top));
+    expect(middle.top, lessThan(emergence.top));
+
+    expect(
+      structuralShapeExitRectAt(
+        targetRect: presentation,
+        linearProgress: 1.0,
+      ),
+      emergence,
+    );
+  });
 
   test('preview readiness is the only opening/showing gate', () {
     final Rect emergence = structuralShellEmergenceRect(parked);

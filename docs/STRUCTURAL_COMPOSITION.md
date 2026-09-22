@@ -97,6 +97,95 @@ The current model supports one composition rather than paged MOSAIC presentation
 
 MOSAIC duration is authored geometry: the maximum pane-local CLIP end.
 
+The planned two-window STRUCT presentation and its measured geometry are recorded in
+[`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). That work
+changes placement presentation, not reusable MOSAIC content geometry.
+
+W1 of that milestone adds `lib/mosaic_split_geometry.dart` as a pure seated
+split-window geometry authority.
+
+W2 locks placement syntax to `:SPLIT` plus optional keyed
+`:ASPECT=4X3` / `:ASPECT=9X16`; 16:9 is the omitted default. FULL and SPLIT
+are exclusive. Unsupported SPLIT requests remain authored, lint as warnings,
+and resolve through the existing ordinary-window presentation until their
+MOSAIC has exactly two populated panes. Stable split titles derive from the
+existing effective STRUCT title as `<title> · PANE 1` and
+`<title> · PANE 2`. Rendering the two separate clients begins in W3.
+
+W3 establishes the compositor-level pane boundary for exact BAKE and
+nonblocking Preview so nested structural sources are resolved before a pane is
+presented. W4 adds `StructuralSplitWindowPreview`, which owns one shared
+MediaLayer/compositor instance for both live panes rather than constructing two
+independent editor previews. The live seated surface and whole-program BAKE
+both call `paintStructuralWindow` from
+`lib/structural_window_painter.dart`, making the W1 geometry plus one shared
+window raster painter the Preview/BAKE parity boundary.
+
+`test/structural_split_window_preview_test.dart` proves the live seated
+surface owns both compositor pane images at the W1 raster size and mounts the
+same `StructuralSplitWindowPainter` that Program BAKE invokes. This avoids
+RepaintBoundary readback as a parity mechanism while making the production
+painter identity explicit. The W4 native addition to
+`test/structural_source_export_native_test.dart` separately sends
+an edge-marked circular 16:9 fixture through the actual Linux MLT bridge into a
+4:3 pane request to detect crop or stretch. W5 now owns split transition and delayed-readiness choreography. SPLIT is a
+distinct effective presentation shape for planning even though the legacy
+window/fullscreen mode enum remains intact. Split-to-split, including aspect
+changes, cuts both panes simultaneously with no added timing. A split/non-split
+shape change consumes only the existing incoming window budget. W7 spends that
+same budget on visible geometry rather than a stationary hold: the outgoing
+final presentation fades while the incoming first source frame follows the
+standard emergence-to-seated open curve. SPLIT applies the curve independently
+to both windows. Preview and BAKE share the entry/fade helpers. Readiness may
+delay visibility only; authored transition progress and source time never
+restart. The old single-client horizontal APPSWITCH slide is never applied to a
+split boundary.
+
+The same rule now applies to ordinary SPLIT lifecycle choreography. On desktop
+entry each split window grows from its own standard 84% emergence rectangle
+while the common shell opacity ramps in; on close each window follows the exact
+reverse seated-to-emergence curve while shell opacity ramps out. The seated
+two-window geometry remains unchanged.
+
+W8 adds optional `SPLIT:MAX`. It remains the same effective SPLIT presentation
+shape and uses the same open/close choreography, cue ownership, and readiness
+rules. Only seated geometry changes: each client takes one exact horizontal
+half of the program frame with zero outer margin and zero center gap, while the
+authored aspect continues to determine client height. The pair remains
+vertically centered unless an over-tall aspect reaches the program-height cap.
+
+W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
+the top-level pane to the complete split client before the pane image reaches
+the shared split-window painter. The resolver follows nested structural CLIPs,
+so the normal MOSAIC -> EDIT -> media topology carries CARD state through the
+same AT/IN/speed source-frame mapping used by the compositor. Nested MOSAIC
+layout remains relative to that owning split client. Preview and BAKE use the
+same CARD image-composite helper, so a pane-local or nested EDIT CARD cannot
+leak into its sibling client. SIDECARD and MAXIMIZE remain valid authored cue
+syntax but are warning-only unsupported features for an effective SPLIT
+placement; the policy lint also follows nested structural sources. Neither
+active cue state nor source-end truncation state may alter the split outer
+shell or paint a SIDECARD panel. Unsupported SPLIT requests still use ordinary
+window fallback semantics rather than these SPLIT-only restrictions.
+
+The W6 boundary proofs are `test/structural_split_cue_policy_test.dart`,
+`test/structural_split_card_preview_test.dart`, and
+`test/program_structural_split_card_bake_test.dart`.
+
+W6's initial regression gate passed with 20 tests and the documentation
+checker reported 16 contracts / 90 proof files. Subsequent GUI validation found
+that the CARD proof topology stopped at the PANE CLIP while the real project
+placed CARD inside its nested EDIT. The resolver and the three W6 boundary
+proofs have been strengthened for that topology and are awaiting local
+re-verification.
+
+W7 also makes effective SPLIT support explicitly timing-visible. The planner
+already uses effective presentation shape, so an unsupported SPLIT fallback can
+add or remove the existing 12-frame shape-change budget at a seamless neighbor.
+A middle placement between two SPLIT placements can shift later TEXT timing by
+24 frames when a pane becomes empty. The linter now states this consequence;
+the planner contract remains unchanged.
+
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
@@ -324,6 +413,25 @@ adjacent application choreography
 ```
 
 A reconstruction should preserve that boundary.
+
+Two-window MOSAIC presentation is the same ownership rule applied more
+specifically. A placement may author:
+
+```text
+[STRUCT:MOSAIC.wall:SPLIT]
+[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+```
+
+The reusable MOSAIC still owns pane content. The STRUCT placement owns whether
+those two populated panes are presented as independent windows and which shared
+client aspect is used. Unsupported SPLIT requests remain authored but fall back
+to ordinary windowed presentation with a lint warning.
+
+In BAKE, effective SPLIT does not bypass structural composition. The compositor
+has exact and nonblocking pane entry points that reuse the same recursive
+EDIT/MOSAIC resolver and recursive leaf diagnostics as whole-source rendering.
+This is important because MediaLayer pane calls can legitimately return nested
+structural placeholders rather than final pixels.
 
 ---
 
@@ -558,6 +666,9 @@ Important proof includes:
 - structural recursion/depth-guard tests;
 - M18 application-switch tests and visual gate;
 - `test/editor_structural_fullscreen_node_test.dart`;
+- `test/structural_split_placement_test.dart`;
+- `test/mosaic_split_pane_compositor_test.dart`;
+- `test/program_structural_split_bake_test.dart`;
 - structural chrome parser/round-trip tests;
 - structural marker alignment tests;
 - Program Preview runtime tests;

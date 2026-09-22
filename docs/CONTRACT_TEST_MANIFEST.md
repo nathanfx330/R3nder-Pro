@@ -100,6 +100,8 @@ Persistent media decoders answer exact source-frame requests. Requested and actu
 - `linux/runner/media_decoder_test.cc`
 - `test/edit_video_compositor_test.dart`
 - `test/edit_video_compositor_depth_guard_test.dart`
+- `test/mosaic_split_pane_compositor_test.dart`
+- `test/mosaic_split_pane_compositor_test.dart`
 
 ---
 
@@ -138,6 +140,7 @@ second duration authority or an extra program-time adjustment.
 **Proof**
 
 - `test/mosaic_source_test.dart`
+- `test/mosaic_layout_test.dart`
 - `test/mosaic_trim_test.dart`
 - `test/mosaic_trim_operation_test.dart`
 - `test/mosaic_trim_impact_test.dart`
@@ -156,7 +159,7 @@ second duration authority or an extra program-time adjustment.
 
 **Contract**
 
-A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen mode, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, and application-switch presentation. The source definition remains reusable and unchanged.
+A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, optional horizontal-edge SPLIT:MAX geometry with aspect-derived height, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, effective-shape timing, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. Every supported SPLIT desktop entry/exit, including SPLIT:MAX, uses the ordinary window-manager emergence/return motion, and a split/non-split seamless boundary spends only the existing window budget on the same shared open-scale-and-fade transition, and unsupported SPLIT fallback uses ordinary-window timing with an explicit warning about downstream timing shifts. CARD is routed recursively through nested structural sources to its owning split client using exact parent AT/IN/speed frame projection; SIDECARD and MAXIMIZE lint as unsupported, including when nested below a split pane, and do not alter or paint the split shell.
 
 **Proof**
 
@@ -166,6 +169,12 @@ A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen mo
 - `test/script_node_structural_fullscreen_test.dart`
 - `test/editor_structural_fullscreen_node_test.dart`
 - `test/structural_chrome_frame_expression_preview_test.dart`
+- `test/structural_split_placement_test.dart`
+- `test/mosaic_split_geometry_test.dart`
+- `test/structural_split_window_preview_test.dart`
+- `test/structural_split_transition_plan_test.dart`
+- `test/structural_split_cue_policy_test.dart`
+- `test/structural_split_card_preview_test.dart`
 
 ---
 
@@ -198,6 +207,8 @@ NODES and EDIT are editors over the document. First-class controls must serializ
 - `test/edit_workspace_test.dart`
 - `test/edit_workspace_resolver_seam_test.dart`
 - `test/edit_workspace_sequence_placement_test.dart`
+- `test/script_node_structural_split_test.dart`
+- `test/editor_structural_split_node_test.dart`
 
 ---
 
@@ -205,7 +216,7 @@ NODES and EDIT are editors over the document. First-class controls must serializ
 
 **Contract**
 
-Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, or create a desktop/wallpaper flash during seamless application handoff. Under `APPSWITCH:SLIDE`, first active paint unlocks the live client pan but authored incoming source time determines pan progress. The outgoing client remains available through the slide window, and editor projection must expose every authored source frame, including the final frame of an AUDIO-enabled seamless placement.
+Decode readiness may delay when an incoming structural source is exposed, but it may not add project frames, restart source-local time, alter authored shape-entry geometry, or create a desktop/wallpaper flash during seamless application handoff. Under `APPSWITCH:SLIDE`, first active paint unlocks the live client pan but authored incoming source time determines pan progress. The outgoing client remains available through the slide window, and editor projection must expose every authored source frame, including the final frame of an AUDIO-enabled seamless placement.
 
 **Proof**
 
@@ -214,7 +225,9 @@ Decode readiness may delay when an incoming structural source is exposed, but it
 - `test/structural_sequence_preview_test.dart`
 - `test/program_preview_structural_switch_test.dart`
 - `test/program_preview_structural_late_handoff_test.dart`
+- `test/program_preview_structural_split_test.dart`
 - `test/program_preview_structural_raster_handoff_test.dart`
+- `test/program_preview_structural_split_transition_test.dart`
 - `test/program_structural_audio_test.dart`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
@@ -240,7 +253,7 @@ Program Preview uses the compiled runtime REGION bridge and the same raw authore
 
 **Contract**
 
-SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, and structural source-local frame identity.
+SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, supported two-window MOSAIC split placement including horizontal-edge SPLIT:MAX with aspect-derived height, ordinary split-window entry/exit motion plus deterministic split/non-split entry motion inside the existing window budget, pane-owned split CARD overlays, and split shell-cue suppression without bypassing recursive pane composition.
 
 **Proof**
 
@@ -250,6 +263,9 @@ SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer 
 - `test/program_structural_chrome_text_bake_test.dart`
 - `test/scene_exporter_structural_chrome_end_to_end_test.dart`
 - `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
+- `test/program_structural_split_bake_test.dart`
+- `test/program_structural_split_transition_bake_test.dart`
+- `test/program_structural_split_card_bake_test.dart`
 
 ---
 

@@ -86,6 +86,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_split_window_preview.dart';
 import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
@@ -93,6 +94,7 @@ enum StructuralSequenceHandoffRole {
   none,
   incoming,
   outgoing,
+  heldOutgoing,
 }
 
 class StructuralSequencePreview extends StatefulWidget {
@@ -216,6 +218,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceFrame,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -230,6 +233,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceDurationFrames,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -290,6 +294,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceFrame,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -304,6 +309,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     String source,
     int sourceDurationFrames,
   ) {
+    if (widget.placement.splitWindow) return null;
     try {
       final EditDocumentModel? model = _modelForDocument();
       final StructuralSourceRef? root = _rootForSource(source);
@@ -413,7 +419,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
     final bool externalOutgoing =
-        widget.handoffRole == StructuralSequenceHandoffRole.outgoing;
+        widget.handoffRole == StructuralSequenceHandoffRole.outgoing ||
+        widget.handoffRole == StructuralSequenceHandoffRole.heldOutgoing;
 
     return ColoredBox(
       color: externalOutgoing ? Colors.transparent : Colors.black,
@@ -529,6 +536,33 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
           final double structuralOpacity = baseShell.structuralOpacity;
           final bool structuralWindowPresent =
               baseShell.structuralWindowPresent;
+          final bool splitShapeEntry =
+              placement.splitBoundaryFromPrevious &&
+              placement.effectivePreviousPresentationShape !=
+                  placement.presentationShape &&
+              stage == StructuralSequenceStage.opening;
+          double presentationOpacity = structuralOpacity;
+          double splitEntryProgress = 1.0;
+          double? splitExitProgress;
+          if (placement.splitWindow) {
+            if (stage == StructuralSequenceStage.opening) {
+              splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
+            } else if (stage == StructuralSequenceStage.closing) {
+              splitExitProgress = linear.clamp(0.0, 1.0).toDouble();
+            }
+          }
+          if (splitShapeEntry) {
+            final StructuralShapeEntryFrame entry =
+                structuralShapeEntryFrameAt(
+              targetRect: presentationRect,
+              linearProgress: linear,
+              contentReady: _firstFrameReady,
+            );
+            presentationOpacity = entry.opacity;
+            if (!placement.splitWindow) {
+              structuralRect = entry.rect;
+            }
+          }
           double structuralChrome = 1.0;
 
           // If source lifetime truncated MAXIMIZE, the STRUCT close starts from
@@ -667,13 +701,47 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   ),
               ],
 
-              if (structuralWindowPresent)
+              if (structuralWindowPresent && placement.splitWindow)
+                Positioned.fromRect(
+                  key: const ValueKey<String>(
+                    'structural-split-window-positioned',
+                  ),
+                  rect: renderFrame,
+                  child: Opacity(
+                    key: const ValueKey<String>(
+                      'structural-split-window-opacity',
+                    ),
+                    opacity: presentationOpacity.clamp(0.0, 1.0),
+                    child: StructuralSplitWindowPreview(
+                      key: ValueKey<String>(
+                        'sequence-split-preview:$source',
+                      ),
+                      rawDocument: widget.rawDocument,
+                      placement: placement,
+                      sourceFrame: sourceFrame,
+                      theme: widget.theme,
+                      fontFamily:
+                          liveFont != null && liveFont.isNotEmpty
+                              ? liveFont
+                              : 'monospace',
+                      chromeScale: chromeScale,
+                      entryProgress: splitEntryProgress,
+                      exitProgress: splitExitProgress,
+                      moving: widget.isPlaying &&
+                          (parentOwnsReadiness || _firstFrameReady),
+                      backend: widget.backend,
+                      resolveSource: widget.resolveSource,
+                      onFirstFrameReady: _handleFirstFrameReady,
+                    ),
+                  ),
+                )
+              else if (structuralWindowPresent)
                 Positioned.fromRect(
                   key: const ValueKey<String>('structural-window-positioned'),
                   rect: structuralRect,
                   child: Opacity(
                     key: const ValueKey<String>('structural-window-opacity'),
-                    opacity: structuralOpacity.clamp(0.0, 1.0),
+                    opacity: presentationOpacity.clamp(0.0, 1.0),
                     child: _StructuralWindow(
                       key: const ValueKey<String>('structural-window-frame'),
                       source: source,

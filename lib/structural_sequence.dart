@@ -14,6 +14,8 @@
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
 //   [STRUCT:MOSAIC.wall:AUDIO]
+//   [STRUCT:MOSAIC.wall:SPLIT]
+//   [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
 //
 // Window title, informational player overlays, and clip-audio intent are
 // placement-owned for the same reason. They are parsed from STRUCT tail
@@ -32,6 +34,7 @@
 import 'package:flutter/animation.dart';
 
 import 'edit_model.dart';
+import 'mosaic_split_geometry.dart';
 import 'scene_engine.dart';
 import 'script_cst.dart';
 import 'structural_chrome.dart';
@@ -120,6 +123,12 @@ const String kStructuralRuntimeRegionPrefix = 'STRUCTSEQ_';
 enum StructuralPresentationMode {
   windowed,
   fullscreen,
+}
+
+enum StructuralPresentationShape {
+  windowed,
+  fullscreen,
+  split,
 }
 
 enum StructuralSequenceStage {
@@ -237,6 +246,22 @@ class StructuralSequencePlacement {
   /// Placement presentation, independent of EDIT/MOSAIC composition.
   final StructuralPresentationMode presentationMode;
 
+  /// Authored request for the two-window MOSAIC presentation. The request is
+  /// preserved even when the current source is unsupported so lint can explain
+  /// the ordinary-window fallback without destroying authored intent.
+  final bool splitWindowRequested;
+
+  /// True only for a MOSAIC with exactly two panes, both populated.
+  final bool splitWindowSupported;
+
+  /// Horizontal Windows-style snapped split presentation. Each client gets
+  /// half the program width; authored aspect still owns height. Effective only
+  /// when [splitWindow] is true.
+  final bool maximizeSplit;
+
+  /// One shared authored client aspect for both split windows.
+  final MosaicSplitClientAspect splitClientAspect;
+
   /// Placement-owned intent to play audio belonging to clips in this source.
   /// Workspace voice and music beds are separate authored systems.
   final bool clipAudio;
@@ -260,8 +285,13 @@ class StructuralSequencePlacement {
   final bool seamlessFromPrevious;
   final bool seamlessToNext;
 
-  /// Needed only for a seamless windowed <-> fullscreen geometry morph.
+  /// Needed by the legacy single-window geometry morph.
   final StructuralPresentationMode? previousPresentationMode;
+
+  /// Placement-shape identity for the previous chained STRUCT. SPLIT is a
+  /// placement presentation shape even though its legacy presentationMode is
+  /// still windowed for compatibility with existing FULL/windowed code.
+  final StructuralPresentationShape? previousPresentationShape;
 
   const StructuralSequencePlacement({
     required this.sourceRef,
@@ -271,6 +301,10 @@ class StructuralSequencePlacement {
     required this.sourceDurationFrames,
     required this.durationFrames,
     this.presentationMode = StructuralPresentationMode.windowed,
+    this.splitWindowRequested = false,
+    this.splitWindowSupported = false,
+    this.maximizeSplit = false,
+    this.splitClientAspect = MosaicSplitClientAspect.aspect16x9,
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
@@ -281,13 +315,54 @@ class StructuralSequencePlacement {
     this.seamlessFromPrevious = false,
     this.seamlessToNext = false,
     this.previousPresentationMode,
+    this.previousPresentationShape,
   });
 
   bool get resolves => sourceDurationFrames > 0;
   bool get fullscreen =>
       presentationMode == StructuralPresentationMode.fullscreen;
+
+  /// Effective split mode. Unsupported authored requests deliberately render as
+  /// the existing ordinary windowed presentation until the source is repaired.
+  bool get splitWindow => splitWindowRequested && splitWindowSupported;
+
+  StructuralPresentationShape get presentationShape {
+    if (splitWindow) return StructuralPresentationShape.split;
+    return fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
+
+  StructuralPresentationShape? get effectivePreviousPresentationShape {
+    final StructuralPresentationShape? explicit = previousPresentationShape;
+    if (explicit != null) return explicit;
+    final StructuralPresentationMode? legacy = previousPresentationMode;
+    if (legacy == null) return null;
+    return legacy == StructuralPresentationMode.fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
+
+  bool get splitBoundaryFromPrevious {
+    final StructuralPresentationShape? previous =
+        effectivePreviousPresentationShape;
+    if (!seamlessFromPrevious || previous == null) return false;
+    return previous == StructuralPresentationShape.split ||
+        presentationShape == StructuralPresentationShape.split;
+  }
+
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
+
+  /// Stable split titles follow the existing placement title convention and
+  /// MOSAIC's authored-order PANE 1 / PANE 2 vocabulary. They never follow the
+  /// currently active clip, so a pane timeline cut cannot rename its window.
+  String splitWindowTitleForPane(int paneIndex) {
+    if (paneIndex < 0 || paneIndex > 1) {
+      throw RangeError.range(paneIndex, 0, 1, 'paneIndex');
+    }
+    return '$effectiveWindowTitle · PANE ${paneIndex + 1}';
+  }
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 
   int get entryZoomFrames =>
@@ -296,8 +371,9 @@ class StructuralSequencePlacement {
   int get entryWindowFrames {
     if (!chainedFromPrevious) return kStructuralWindowFrames;
     if (!seamlessFromPrevious) return kStructuralWindowFrames;
-    if (previousPresentationMode != null &&
-        previousPresentationMode != presentationMode) {
+    final StructuralPresentationShape? previous =
+        effectivePreviousPresentationShape;
+    if (previous != null && previous != presentationShape) {
       return kStructuralWindowFrames;
     }
     return 0;
@@ -452,7 +528,20 @@ class _StructuralPlacementSeed {
   final StructuralSourceRef sourceRef;
   final int sourceDurationFrames;
   final StructuralPresentationMode presentationMode;
+  final bool splitWindowRequested;
+  final bool splitWindowSupported;
+  final bool maximizeSplit;
+  final MosaicSplitClientAspect splitClientAspect;
   final bool clipAudio;
+
+  StructuralPresentationShape get presentationShape {
+    if (splitWindowRequested && splitWindowSupported) {
+      return StructuralPresentationShape.split;
+    }
+    return presentationMode == StructuralPresentationMode.fullscreen
+        ? StructuralPresentationShape.fullscreen
+        : StructuralPresentationShape.windowed;
+  }
   final StructuralOverlayMode overlayMode;
   final String windowTitle;
   final String topOverlay;
@@ -463,6 +552,10 @@ class _StructuralPlacementSeed {
     required this.sourceRef,
     required this.sourceDurationFrames,
     required this.presentationMode,
+    required this.splitWindowRequested,
+    required this.splitWindowSupported,
+    required this.maximizeSplit,
+    required this.splitClientAspect,
     required this.clipAudio,
     required this.overlayMode,
     required this.windowTitle,
@@ -523,6 +616,24 @@ bool _insideStructuralRoot(int offset, List<(int, int)> spans) {
   return false;
 }
 
+bool _splitWindowSupported(
+  EditDocumentModel? model,
+  StructuralSourceRef ref,
+) {
+  if (model == null ||
+      ref.kind != StructuralSourceKind.mosaic ||
+      !model.containsStructuralSource(ref)) {
+    return false;
+  }
+  try {
+    final MosaicSequence mosaic = model.mosaic(ref.id);
+    return mosaic.panes.length == 2 &&
+        mosaic.panes.every((MosaicPane pane) => pane.clips.isNotEmpty);
+  } catch (_) {
+    return false;
+  }
+}
+
 bool _slideAppSwitchEnabled(String rawDocument) {
   final List<RegExpMatch> matches =
       _appSwitchConfig.allMatches(rawDocument).toList(growable: false);
@@ -560,8 +671,8 @@ int _plannedDuration({
   required bool chainedToNext,
   required bool seamlessFromPrevious,
   required bool seamlessToNext,
-  required StructuralPresentationMode presentationMode,
-  required StructuralPresentationMode? previousPresentationMode,
+  required StructuralPresentationShape presentationShape,
+  required StructuralPresentationShape? previousPresentationShape,
 }) {
   if (sourceFrames <= 0) return 0;
 
@@ -572,8 +683,8 @@ int _plannedDuration({
     entryWindow = kStructuralWindowFrames;
   } else if (!seamlessFromPrevious) {
     entryWindow = kStructuralWindowFrames;
-  } else if (previousPresentationMode != null &&
-      previousPresentationMode != presentationMode) {
+  } else if (previousPresentationShape != null &&
+      previousPresentationShape != presentationShape) {
     entryWindow = kStructuralWindowFrames;
   } else {
     entryWindow = 0;
@@ -641,6 +752,12 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         presentationMode: chrome.fullscreen
             ? StructuralPresentationMode.fullscreen
             : StructuralPresentationMode.windowed,
+        splitWindowRequested: chrome.splitWindows,
+        splitWindowSupported: chrome.splitWindows
+            ? _splitWindowSupported(model, ref)
+            : false,
+        maximizeSplit: chrome.maximizeSplit,
+        splitClientAspect: chrome.splitAspect,
         clipAudio: chrome.clipAudio,
         overlayMode: chrome.overlayMode,
         windowTitle: chrome.windowTitle,
@@ -681,6 +798,8 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
     final _StructuralPlacementSeed seed = seeds[i];
     final StructuralPresentationMode? previousMode =
         chainedFrom[i] && i > 0 ? seeds[i - 1].presentationMode : null;
+    final StructuralPresentationShape? previousShape =
+        chainedFrom[i] && i > 0 ? seeds[i - 1].presentationShape : null;
 
     final int duration = _plannedDuration(
       sourceFrames: seed.sourceDurationFrames,
@@ -688,8 +807,8 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
       chainedToNext: chainedTo[i],
       seamlessFromPrevious: seamlessFrom[i],
       seamlessToNext: seamlessTo[i],
-      presentationMode: seed.presentationMode,
-      previousPresentationMode: previousMode,
+      presentationShape: seed.presentationShape,
+      previousPresentationShape: previousShape,
     );
 
     out.add(
@@ -701,6 +820,10 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         sourceDurationFrames: seed.sourceDurationFrames,
         durationFrames: duration,
         presentationMode: seed.presentationMode,
+        splitWindowRequested: seed.splitWindowRequested,
+        splitWindowSupported: seed.splitWindowSupported,
+        maximizeSplit: seed.maximizeSplit,
+        splitClientAspect: seed.splitClientAspect,
         clipAudio: seed.clipAudio,
         overlayMode: seed.overlayMode,
         windowTitle: seed.windowTitle,
@@ -711,6 +834,7 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         seamlessFromPrevious: seamlessFrom[i],
         seamlessToNext: seamlessTo[i],
         previousPresentationMode: previousMode,
+        previousPresentationShape: previousShape,
       ),
     );
   }
@@ -786,6 +910,9 @@ String appendStructuralSequencePlacement({
   required StructuralSourceRef sourceRef,
   StructuralPresentationMode presentationMode =
       StructuralPresentationMode.windowed,
+  bool splitWindows = false,
+  bool maximizeSplit = false,
+  MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9,
   bool clipAudio = false,
   StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
   String windowTitle = '',
@@ -815,6 +942,9 @@ String appendStructuralSequencePlacement({
         source: sourceRef.canonicalSource,
         fullscreen:
             presentationMode == StructuralPresentationMode.fullscreen,
+        splitWindows: splitWindows,
+        maximizeSplit: maximizeSplit,
+        splitAspect: splitAspect,
         clipAudio: clipAudio,
         overlayMode: overlayMode,
         windowTitle: windowTitle,

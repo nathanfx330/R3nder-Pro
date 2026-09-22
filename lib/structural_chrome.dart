@@ -12,11 +12,15 @@
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
 //   [STRUCT:EDIT.main:AUDIO]
+//   [STRUCT:MOSAIC.wall:SPLIT]
+//   [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
 //   [STRUCT:MOSAIC.wall:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:OVERLAY=NONE:TITLE="Archive Viewer"]
 //   [STRUCT:MOSAIC.wall:FULL:AUDIO:OVERLAY=CUSTOM:TITLE="Field Monitor":TOP="FEB 1972 · F[frame]":BOTTOM="16MM TRANSFER · REEL 4"]
 //
-// FULL and AUDIO are bare placement tokens. Text values are quoted. Colons
+// FULL, SPLIT, and AUDIO are bare placement tokens. SPLIT may carry keyed
+// ASPECT=16X9, ASPECT=4X3, or ASPECT=9X16; 16X9 is the omitted default.
+// Text values are quoted. Colons
 // inside quoted text are data, not segment separators. Backslash, quote,
 // newline, carriage return, and tab use the conventional escaped forms.
 // Unknown segments make the tag invalid so an author typo cannot silently
@@ -26,6 +30,8 @@
 // preserved verbatim in script state and expands to the current structural
 // source frame only when chrome is painted. That keeps authored copy dynamic
 // without moving any project-time ownership into the node UI.
+
+import 'mosaic_split_geometry.dart';
 
 enum StructuralOverlayMode {
   defaultOverlay,
@@ -50,6 +56,23 @@ StructuralOverlayMode? structuralOverlayModeFromToken(String raw) {
   };
 }
 
+extension MosaicSplitClientAspectToken on MosaicSplitClientAspect {
+  String get token => switch (this) {
+        MosaicSplitClientAspect.aspect16x9 => '16X9',
+        MosaicSplitClientAspect.aspect4x3 => '4X3',
+        MosaicSplitClientAspect.aspect9x16 => '9X16',
+      };
+}
+
+MosaicSplitClientAspect? mosaicSplitClientAspectFromToken(String raw) {
+  return switch (raw.trim().toUpperCase()) {
+    '16X9' => MosaicSplitClientAspect.aspect16x9,
+    '4X3' => MosaicSplitClientAspect.aspect4x3,
+    '9X16' => MosaicSplitClientAspect.aspect9x16,
+    _ => null,
+  };
+}
+
 /// Expands render-time expressions in authored STRUCT chrome copy.
 ///
 /// Deliberately tiny for now. `[frame]` means the exact structural source frame
@@ -68,6 +91,19 @@ class StructuralChromeSpec {
   final String source;
   final bool fullscreen;
 
+  /// Placement-owned request for two equal MOSAIC desktop windows. Unsupported
+  /// sources remain authored but fall back to ordinary windowed presentation.
+  final bool splitWindows;
+
+  /// Windows-style horizontal snap. This removes split margins/gap and gives
+  /// each window one half of the program width while authored aspect continues
+  /// to own client height. Meaningful only when [splitWindows] is authored.
+  final bool maximizeSplit;
+
+  /// One authored client aspect shared by both split windows. In MAX it still
+  /// determines height after each client takes half of the program width.
+  final MosaicSplitClientAspect splitAspect;
+
   /// Placement-owned intent to play the audio belonging to clips in [source].
   /// This is deliberately independent of workspace voice/music beds.
   final bool clipAudio;
@@ -85,6 +121,9 @@ class StructuralChromeSpec {
   const StructuralChromeSpec({
     required this.source,
     this.fullscreen = false,
+    this.splitWindows = false,
+    this.maximizeSplit = false,
+    this.splitAspect = MosaicSplitClientAspect.aspect16x9,
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
@@ -98,6 +137,9 @@ class StructuralChromeSpec {
   StructuralChromeSpec copyWith({
     String? source,
     bool? fullscreen,
+    bool? splitWindows,
+    bool? maximizeSplit,
+    MosaicSplitClientAspect? splitAspect,
     bool? clipAudio,
     StructuralOverlayMode? overlayMode,
     String? windowTitle,
@@ -107,6 +149,9 @@ class StructuralChromeSpec {
     return StructuralChromeSpec(
       source: source ?? this.source,
       fullscreen: fullscreen ?? this.fullscreen,
+      splitWindows: splitWindows ?? this.splitWindows,
+      maximizeSplit: maximizeSplit ?? this.maximizeSplit,
+      splitAspect: splitAspect ?? this.splitAspect,
       clipAudio: clipAudio ?? this.clipAudio,
       overlayMode: overlayMode ?? this.overlayMode,
       windowTitle: windowTitle ?? this.windowTitle,
@@ -134,12 +179,16 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
   if (!_structuralSource.hasMatch(source)) return null;
 
   bool fullscreen = false;
+  bool splitWindows = false;
+  bool maximizeSplit = false;
+  MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9;
   bool clipAudio = false;
   StructuralOverlayMode overlay = StructuralOverlayMode.defaultOverlay;
   String title = '';
   String top = '';
   String bottom = '';
 
+  bool sawAspect = false;
   bool sawOverlay = false;
   bool sawTitle = false;
   bool sawTop = false;
@@ -155,6 +204,16 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
       fullscreen = true;
       continue;
     }
+    if (bare == 'SPLIT') {
+      if (splitWindows) return null;
+      splitWindows = true;
+      continue;
+    }
+    if (bare == 'MAX') {
+      if (maximizeSplit) return null;
+      maximizeSplit = true;
+      continue;
+    }
     if (bare == 'AUDIO') {
       if (clipAudio) return null;
       clipAudio = true;
@@ -167,6 +226,14 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
     final String value = segment.substring(equals + 1).trim();
 
     switch (key) {
+      case 'ASPECT':
+        if (sawAspect) return null;
+        final MosaicSplitClientAspect? parsed =
+            mosaicSplitClientAspectFromToken(value);
+        if (parsed == null) return null;
+        splitAspect = parsed;
+        sawAspect = true;
+        break;
       case 'OVERLAY':
         if (sawOverlay) return null;
         final StructuralOverlayMode? parsed =
@@ -201,9 +268,16 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
     }
   }
 
+  if (fullscreen && splitWindows) return null;
+  if (sawAspect && !splitWindows) return null;
+  if (maximizeSplit && !splitWindows) return null;
+
   return StructuralChromeSpec(
     source: source,
     fullscreen: fullscreen,
+    splitWindows: splitWindows,
+    maximizeSplit: maximizeSplit,
+    splitAspect: splitAspect,
     clipAudio: clipAudio,
     overlayMode: overlay,
     windowTitle: title,
@@ -222,8 +296,21 @@ String formatStructuralChromeTag(StructuralChromeSpec spec) {
     );
   }
 
+  if (spec.fullscreen && spec.splitWindows) {
+    throw ArgumentError('STRUCT cannot be both FULL and SPLIT.');
+  }
   final StringBuffer out = StringBuffer('[STRUCT:${spec.source}');
   if (spec.fullscreen) out.write(':FULL');
+  if (spec.maximizeSplit && !spec.splitWindows) {
+    throw ArgumentError('STRUCT MAX is valid only with SPLIT.');
+  }
+  if (spec.splitWindows) {
+    out.write(':SPLIT');
+    if (spec.maximizeSplit) out.write(':MAX');
+    if (spec.splitAspect != MosaicSplitClientAspect.aspect16x9) {
+      out.write(':ASPECT=${spec.splitAspect.token}');
+    }
+  }
   if (spec.clipAudio) out.write(':AUDIO');
   if (spec.overlayMode != StructuralOverlayMode.defaultOverlay) {
     out.write(':OVERLAY=${spec.overlayMode.token}');

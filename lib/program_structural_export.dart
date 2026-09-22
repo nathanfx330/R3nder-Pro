@@ -29,12 +29,15 @@ import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'maximize_shell_state.dart';
 import 'media_layer.dart';
+import 'mosaic_split_geometry.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_split_window_painter.dart';
 import 'structural_shell_geometry.dart';
 import 'structural_source_export.dart';
+import 'structural_window_painter.dart';
 import 'ui_theme.dart';
 
 Rect structuralProgramTargetRectForOutput({
@@ -190,6 +193,7 @@ class ProgramStructuralFrameRenderer {
 
     final StructuralSequencePlacement outgoing = _placements[previousIndex];
     if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
+    if (outgoing.splitWindow || incoming.splitWindow) return null;
 
     if (!structuralSwitchSlideWindowOpen(
       sourceFrame: incomingSourceFrame,
@@ -211,6 +215,19 @@ class ProgramStructuralFrameRenderer {
         sourceDurationFrames: incoming.sourceDurationFrames,
       ),
     );
+  }
+
+  StructuralSequencePlacement? _splitBoundaryPrevious(
+    StructuralRuntimeMarker marker,
+    StructuralSequencePlacement incoming,
+  ) {
+    if (!incoming.seamlessFromPrevious) return null;
+    final int previousIndex = marker.placementIndex - 1;
+    if (previousIndex < 0 || previousIndex >= _placements.length) return null;
+    final StructuralSequencePlacement outgoing = _placements[previousIndex];
+    if (!outgoing.resolves || !outgoing.seamlessToNext) return null;
+    if (!outgoing.splitWindow && !incoming.splitWindow) return null;
+    return outgoing;
   }
 
   StructuralSourceRef? _rootFor(StructuralSequencePlacement placement) {
@@ -269,6 +286,7 @@ class ProgramStructuralFrameRenderer {
     StructuralSequencePlacement placement,
     int sourceFrame,
   ) {
+    if (placement.splitWindow) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
     return structuralSideCardPlacement(_editModel, root, sourceFrame);
@@ -288,6 +306,7 @@ class ProgramStructuralFrameRenderer {
   StructuralCardOverlayPlacement? _sideCardAtSourceEnd(
     StructuralSequencePlacement placement,
   ) {
+    if (placement.splitWindow) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
     return structuralSideCardPlacementAtSourceEnd(
@@ -301,6 +320,7 @@ class ProgramStructuralFrameRenderer {
     StructuralSequencePlacement placement,
     int sourceFrame,
   ) {
+    if (placement.splitWindow) return null;
     if (placement.fullscreen) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
@@ -323,6 +343,7 @@ class ProgramStructuralFrameRenderer {
   StructuralMaximizePlacement? _maximizeAtSourceEnd(
     StructuralSequencePlacement placement,
   ) {
+    if (placement.splitWindow) return null;
     if (placement.fullscreen) return null;
     final StructuralSourceRef? root = _rootFor(placement);
     if (root == null) return null;
@@ -348,6 +369,22 @@ class ProgramStructuralFrameRenderer {
 
     final int localFrame = _localFrame(scene, marker);
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
+    final StructuralSequencePlacement? splitBoundaryPrevious =
+        _splitBoundaryPrevious(marker, placement);
+    final bool splitShapeEntry =
+        splitBoundaryPrevious != null &&
+        splitBoundaryPrevious.presentationShape != placement.presentationShape &&
+        stage == StructuralSequenceStage.opening;
+    final StructuralSequencePlacement displayPlacement = placement;
+    final StructuralSequencePlacement? shapeOutgoingPlacement =
+        splitShapeEntry ? splitBoundaryPrevious : null;
+    final int shapeOutgoingSourceFrame = shapeOutgoingPlacement == null
+        ? 0
+        : shapeOutgoingPlacement.sourceFrameAt(
+            math.max(0, shapeOutgoingPlacement.effectiveDurationFrames - 1),
+          );
+    final double shapeEntryLinear =
+        splitShapeEntry ? placement.stageProgressAt(localFrame) : 1.0;
     final bool closing = stage == StructuralSequenceStage.closing;
     final StructuralDossierOverlayPlacement? truncatedDossier =
         closing ? _dossierAtSourceEnd(placement) : null;
@@ -375,6 +412,7 @@ class ProgramStructuralFrameRenderer {
 
     final _StructuralBakeHandoff? handoff =
         _handoffFor(marker, placement, visual.sourceFrame);
+    final int displaySourceFrame = visual.sourceFrame;
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
@@ -399,30 +437,125 @@ class ProgramStructuralFrameRenderer {
 
     ui.Image? sourceImage;
     ui.Image? outgoingSourceImage;
+    MosaicSplitWindowGeometry? splitGeometry;
+    List<_RenderedStructuralSourceImage>? splitPaneImages;
     String defaultBottomOverlay = '';
     String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      sourceImage = await _imageForSourceFrame(
-        placement.sourceRef.canonicalSource,
-        visual.sourceFrame,
-        fontFamily,
-      );
-      defaultBottomOverlay = _cachedDiagnosticLabel;
-
-      final _StructuralBakeHandoff? activeHandoff = handoff;
-      if (activeHandoff != null) {
-        final StructuralSequencePlacement outgoing =
-            activeHandoff.outgoingPlacement;
-        final _RenderedStructuralSourceImage renderedOutgoing =
-            await _renderSourceFrameImage(
-          outgoing.sourceRef.canonicalSource,
-          activeHandoff.outgoingSourceFrame,
+      if (displayPlacement.splitWindow) {
+        final double engineWidth =
+            scene.width > 0.0 ? scene.width : width.toDouble();
+        final double chromeScale =
+            scene.terminal.scale * width.toDouble() / engineWidth;
+        final double titleHeight = 38.0 * chromeScale;
+        splitGeometry = mosaicSplitWindowGeometry(
+          frame: Rect.fromLTWH(
+            0,
+            0,
+            width.toDouble(),
+            height.toDouble(),
+          ),
+          aspect: displayPlacement.splitClientAspect,
+          titleHeight: titleHeight,
+          maximized: displayPlacement.maximizeSplit,
+        );
+        final int paneWidth =
+            math.max(1, splitGeometry.clientSize.width.round());
+        final int paneHeight =
+            math.max(1, splitGeometry.clientSize.height.round());
+        splitPaneImages = <_RenderedStructuralSourceImage>[];
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          splitPaneImages.add(
+            await _renderSplitPaneFrameImage(
+              displayPlacement.sourceRef.canonicalSource,
+              paneIndex,
+              displaySourceFrame,
+              paneWidth,
+              paneHeight,
+              fontFamily,
+            ),
+          );
+        }
+      } else {
+        sourceImage = await _imageForSourceFrame(
+          displayPlacement.sourceRef.canonicalSource,
+          displaySourceFrame,
           fontFamily,
         );
-        outgoingSourceImage = renderedOutgoing.image;
-        outgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+        defaultBottomOverlay = _cachedDiagnosticLabel;
+
+        final _StructuralBakeHandoff? activeHandoff = handoff;
+        if (activeHandoff != null) {
+          final StructuralSequencePlacement outgoing =
+              activeHandoff.outgoingPlacement;
+          final _RenderedStructuralSourceImage renderedOutgoing =
+              await _renderSourceFrameImage(
+            outgoing.sourceRef.canonicalSource,
+            activeHandoff.outgoingSourceFrame,
+            fontFamily,
+          );
+          outgoingSourceImage = renderedOutgoing.image;
+          outgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+        }
       }
     }
+
+    ui.Image? shapeOutgoingSourceImage;
+    MosaicSplitWindowGeometry? shapeOutgoingSplitGeometry;
+    List<_RenderedStructuralSourceImage>? shapeOutgoingSplitPaneImages;
+    String shapeOutgoingDefaultBottomOverlay = '';
+    final StructuralSequencePlacement? outgoingShape = shapeOutgoingPlacement;
+    if (outgoingShape != null) {
+      if (outgoingShape.splitWindow) {
+        final double engineWidth =
+            scene.width > 0.0 ? scene.width : width.toDouble();
+        final double chromeScale =
+            scene.terminal.scale * width.toDouble() / engineWidth;
+        final double titleHeight = 38.0 * chromeScale;
+        shapeOutgoingSplitGeometry = mosaicSplitWindowGeometry(
+          frame: Rect.fromLTWH(
+            0,
+            0,
+            width.toDouble(),
+            height.toDouble(),
+          ),
+          aspect: outgoingShape.splitClientAspect,
+          titleHeight: titleHeight,
+          maximized: outgoingShape.maximizeSplit,
+        );
+        final int paneWidth = math.max(
+          1,
+          shapeOutgoingSplitGeometry.clientSize.width.round(),
+        );
+        final int paneHeight = math.max(
+          1,
+          shapeOutgoingSplitGeometry.clientSize.height.round(),
+        );
+        shapeOutgoingSplitPaneImages = <_RenderedStructuralSourceImage>[];
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          shapeOutgoingSplitPaneImages.add(
+            await _renderSplitPaneFrameImage(
+              outgoingShape.sourceRef.canonicalSource,
+              paneIndex,
+              shapeOutgoingSourceFrame,
+              paneWidth,
+              paneHeight,
+              fontFamily,
+            ),
+          );
+        }
+      } else {
+        final _RenderedStructuralSourceImage renderedOutgoing =
+            await _renderSourceFrameImage(
+          outgoingShape.sourceRef.canonicalSource,
+          shapeOutgoingSourceFrame,
+          fontFamily,
+        );
+        shapeOutgoingSourceImage = renderedOutgoing.image;
+        shapeOutgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+      }
+    }
+
     if (dossier != null) {
       await _dossierImages.ensure(dossier);
     } else if (sideCard != null) {
@@ -460,6 +593,12 @@ class ProgramStructuralFrameRenderer {
       structuralChrome = maximizeGeometry.windowChrome;
     }
 
+    final double structuralEngineWidth =
+        scene.width > 0.0 ? scene.width : width.toDouble();
+    final double structuralChromeScale =
+        scene.terminal.scale * width.toDouble() / structuralEngineWidth;
+    final R3Theme structuralTheme = R3Theme.of(scene.terminal.fontColor);
+
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(
       recorder,
@@ -476,27 +615,155 @@ class ProgramStructuralFrameRenderer {
     ).paint(canvas, Size(width.toDouble(), height.toDouble()));
 
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      _paintStructuralWindow(
-        canvas: canvas,
-        scene: scene,
-        fontFamily: fontFamily,
-        sourceFrame: visual.sourceFrame,
-        sourceDurationFrames: placement.sourceDurationFrames,
-        windowTitle: placement.effectiveWindowTitle,
-        overlayMode: placement.overlayMode,
-        topOverlay: placement.topOverlay,
-        bottomOverlay: placement.bottomOverlay,
-        defaultBottomOverlay: defaultBottomOverlay,
-        rect: _pixelRect(structuralRect),
-        sourceImage: sourceImage,
-        outgoingSourceImage: outgoingSourceImage,
-        outgoingPlacement: handoff?.outgoingPlacement,
-        outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
-        outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
-        handoffSlideT: handoff?.slideT ?? 1.0,
-        opacity: visual.structuralOpacity,
-        windowChrome: structuralChrome,
-      );
+      final StructuralSequencePlacement? outgoingShape =
+          shapeOutgoingPlacement;
+      if (outgoingShape != null) {
+        final double outgoingOpacity =
+            structuralShapeOutgoingOpacity(shapeEntryLinear);
+        final MosaicSplitWindowGeometry? outgoingGeometry =
+            shapeOutgoingSplitGeometry;
+        final List<_RenderedStructuralSourceImage>? outgoingPanes =
+            shapeOutgoingSplitPaneImages;
+
+        if (outgoingShape.splitWindow &&
+            outgoingGeometry != null &&
+            outgoingPanes != null) {
+          StructuralSplitWindowPainter(
+            geometry: outgoingGeometry,
+            placement: outgoingShape,
+            sourceFrame: shapeOutgoingSourceFrame,
+            theme: structuralTheme,
+            fontFamily: fontFamily,
+            chromeScale: structuralChromeScale,
+            images: <ui.Image?>[
+              outgoingPanes[0].image,
+              outgoingPanes[1].image,
+            ],
+            diagnosticLabels: <String>[
+              outgoingPanes[0].diagnosticLabel,
+              outgoingPanes[1].diagnosticLabel,
+            ],
+            opacity: outgoingOpacity,
+          ).paint(
+            canvas,
+            Size(width.toDouble(), height.toDouble()),
+          );
+        } else if (!outgoingShape.splitWindow &&
+            shapeOutgoingSourceImage != null) {
+          final Rect outgoingRect =
+              structuralProgramPresentationRectForOutput(
+            mode: outgoingShape.presentationMode,
+            outputWidth: width,
+            outputHeight: height,
+            titleHeight: 38.0 * structuralChromeScale,
+          );
+          paintStructuralWindow(
+            canvas: canvas,
+            theme: structuralTheme,
+            chromeScale: structuralChromeScale,
+            fontFamily: fontFamily,
+            sourceFrame: shapeOutgoingSourceFrame,
+            sourceDurationFrames: outgoingShape.sourceDurationFrames,
+            windowTitle: outgoingShape.effectiveWindowTitle,
+            overlayMode: outgoingShape.overlayMode,
+            topOverlay: outgoingShape.topOverlay,
+            bottomOverlay: outgoingShape.bottomOverlay,
+            defaultBottomOverlay: shapeOutgoingDefaultBottomOverlay,
+            rect: _pixelRect(outgoingRect),
+            sourceImage: shapeOutgoingSourceImage,
+            outgoingSourceImage: null,
+            outgoingPlacement: null,
+            outgoingSourceFrame: 0,
+            outgoingDefaultBottomOverlay: '',
+            handoffSlideT: 1.0,
+            opacity: outgoingOpacity,
+            windowChrome: 1.0,
+          );
+        }
+      }
+
+      final MosaicSplitWindowGeometry? geometry = splitGeometry;
+      final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
+      if (displayPlacement.splitWindow &&
+          geometry != null &&
+          panes != null) {
+        final double incomingOpacity = splitShapeEntry
+            ? structuralShapeEntryFrameAt(
+                targetRect: const Rect.fromLTWH(0, 0, 1, 1),
+                linearProgress: shapeEntryLinear,
+                contentReady: true,
+              ).opacity
+            : visual.structuralOpacity;
+        StructuralSplitWindowPainter(
+          geometry: geometry,
+          placement: displayPlacement,
+          sourceFrame: displaySourceFrame,
+          theme: structuralTheme,
+          fontFamily: fontFamily,
+          chromeScale: structuralChromeScale,
+          images: <ui.Image?>[
+            panes[0].image,
+            panes[1].image,
+          ],
+          diagnosticLabels: <String>[
+            panes[0].diagnosticLabel,
+            panes[1].diagnosticLabel,
+          ],
+          opacity: incomingOpacity,
+          entryProgress: stage == StructuralSequenceStage.opening
+              ? placement.stageProgressAt(localFrame)
+              : 1.0,
+          exitProgress: stage == StructuralSequenceStage.closing
+              ? placement.stageProgressAt(localFrame)
+              : null,
+        ).paint(
+          canvas,
+          Size(width.toDouble(), height.toDouble()),
+        );
+      } else {
+        Rect displayRect = structuralRect;
+        double displayOpacity = visual.structuralOpacity;
+        if (splitShapeEntry) {
+          final Rect targetRect =
+              structuralProgramPresentationRectForOutput(
+            mode: displayPlacement.presentationMode,
+            outputWidth: width,
+            outputHeight: height,
+            titleHeight: 38.0 * structuralChromeScale,
+          );
+          final StructuralShapeEntryFrame entry =
+              structuralShapeEntryFrameAt(
+            targetRect: targetRect,
+            linearProgress: shapeEntryLinear,
+            contentReady: true,
+          );
+          displayRect = entry.rect;
+          displayOpacity = entry.opacity;
+        }
+
+        paintStructuralWindow(
+          canvas: canvas,
+          theme: structuralTheme,
+          chromeScale: structuralChromeScale,
+          fontFamily: fontFamily,
+          sourceFrame: displaySourceFrame,
+          sourceDurationFrames: displayPlacement.sourceDurationFrames,
+          windowTitle: displayPlacement.effectiveWindowTitle,
+          overlayMode: displayPlacement.overlayMode,
+          topOverlay: displayPlacement.topOverlay,
+          bottomOverlay: displayPlacement.bottomOverlay,
+          defaultBottomOverlay: defaultBottomOverlay,
+          rect: _pixelRect(displayRect),
+          sourceImage: sourceImage,
+          outgoingSourceImage: outgoingSourceImage,
+          outgoingPlacement: handoff?.outgoingPlacement,
+          outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
+          outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
+          handoffSlideT: handoff?.slideT ?? 1.0,
+          opacity: displayOpacity,
+          windowChrome: structuralChrome,
+        );
+      }
     }
 
     if (dossier != null) {
@@ -523,6 +790,20 @@ class ProgramStructuralFrameRenderer {
     } finally {
       picture.dispose();
       outgoingSourceImage?.dispose();
+      shapeOutgoingSourceImage?.dispose();
+      final List<_RenderedStructuralSourceImage>? outgoingShapePanes =
+          shapeOutgoingSplitPaneImages;
+      if (outgoingShapePanes != null) {
+        for (final _RenderedStructuralSourceImage pane in outgoingShapePanes) {
+          pane.image.dispose();
+        }
+      }
+      final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
+      if (panes != null) {
+        for (final _RenderedStructuralSourceImage pane in panes) {
+          pane.image.dispose();
+        }
+      }
     }
   }
 
@@ -567,6 +848,74 @@ class ProgramStructuralFrameRenderer {
     return rendered.image;
   }
 
+  Future<_RenderedStructuralSourceImage> _renderSplitPaneFrameImage(
+    String source,
+    int paneIndex,
+    int sourceFrame,
+    int imageWidth,
+    int imageHeight,
+    String fontFamily,
+  ) async {
+    final String rendererKey =
+        '$source|split|${imageWidth}x$imageHeight';
+    final StructuralSourceFrameRenderer renderer =
+        _sourceRenderers.putIfAbsent(
+      rendererKey,
+      () => StructuralSourceFrameRenderer.create(
+        source: rawDocument,
+        structuralSource: source,
+        width: imageWidth,
+        height: imageHeight,
+        backend: backend,
+        resolveSource: resolveSource,
+      ),
+    );
+
+    final StructuralSourceRenderedFrame rendered =
+        renderer.renderMosaicPaneDetailed(paneIndex, sourceFrame);
+    ui.Image image = await _decodeRgba(
+      rendered.rgba,
+      imageWidth,
+      imageHeight,
+    );
+
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (root != null &&
+        root.kind == StructuralSourceKind.mosaic &&
+        root.id.isNotEmpty &&
+        _editModel.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacementsForMosaicPane(
+        _editModel,
+        root,
+        paneIndex,
+        sourceFrame,
+      )
+              .where(
+                (StructuralCardOverlayPlacement placement) =>
+                    !placement.isSideCard,
+              )
+              .toList(growable: false);
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: image,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        image.dispose();
+        image = composited;
+      }
+    }
+
+    return _RenderedStructuralSourceImage(
+      image: image,
+      diagnosticLabel:
+          rendered.diagnosticLabel('$source · PANE ${paneIndex + 1}'),
+    );
+  }
+
   Future<_RenderedStructuralSourceImage> _renderSourceFrameImage(
     String source,
     int sourceFrame,
@@ -601,29 +950,16 @@ class ProgramStructuralFrameRenderer {
                     !placement.isSideCard,
               )
               .toList(growable: false);
-      if (overlays.any((StructuralCardOverlayPlacement p) => p.slide > 0.0)) {
-        await _cardImages.ensure(overlays);
-        final ui.PictureRecorder recorder = ui.PictureRecorder();
-        final Canvas canvas = Canvas(
-          recorder,
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-        );
-        canvas.drawImage(decoded, Offset.zero, Paint());
-        paintStructuralCardOverlays(
-          canvas: canvas,
-          size: Size(width.toDouble(), height.toDouble()),
-          placements: overlays,
-          images: _cardImages,
-          structuralImage: decoded,
-          fontFamily: fontFamily,
-        );
-        final ui.Picture picture = recorder.endRecording();
-        try {
-          finalImage = await picture.toImage(width, height);
-        } finally {
-          picture.dispose();
-          decoded.dispose();
-        }
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: decoded,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        finalImage = composited;
+        decoded.dispose();
       }
     }
 
@@ -648,380 +984,6 @@ class ProgramStructuralFrameRenderer {
       rowBytes: imageWidth * 4,
     );
     return completer.future;
-  }
-
-  void _paintStructuralWindow({
-    required Canvas canvas,
-    required SceneEngine scene,
-    required String fontFamily,
-    required int sourceFrame,
-    required int sourceDurationFrames,
-    required String windowTitle,
-    required StructuralOverlayMode overlayMode,
-    required String topOverlay,
-    required String bottomOverlay,
-    required String defaultBottomOverlay,
-    required Rect rect,
-    required ui.Image? sourceImage,
-    required ui.Image? outgoingSourceImage,
-    required StructuralSequencePlacement? outgoingPlacement,
-    required int outgoingSourceFrame,
-    required String outgoingDefaultBottomOverlay,
-    required double handoffSlideT,
-    required double opacity,
-    required double windowChrome,
-  }) {
-    if (rect.width <= 0.0 || rect.height <= 0.0 || opacity <= 0.001) {
-      return;
-    }
-
-    final double engineWidth = scene.width > 0.0 ? scene.width : width.toDouble();
-    final double chromeScale =
-        scene.terminal.scale * width.toDouble() / engineWidth;
-    final double s = chromeScale > 0.0 ? chromeScale : 1.0;
-    final double c = windowChrome.clamp(0.0, 1.0).toDouble();
-    final double barH = 38.0 * s * c;
-    final double radius = 5.0 * s * c;
-    final RRect window =
-        RRect.fromRectAndRadius(rect, Radius.circular(radius));
-    final String renderedTitle = expandStructuralChromeExpressions(
-      windowTitle,
-      frame: sourceFrame,
-    );
-    final String renderedTop = expandStructuralChromeExpressions(
-      topOverlay,
-      frame: sourceFrame,
-    );
-    final String renderedBottom = expandStructuralChromeExpressions(
-      bottomOverlay,
-      frame: sourceFrame,
-    );
-
-    final bool handoffActive =
-        outgoingSourceImage != null && outgoingPlacement != null;
-    final double slideT =
-        handoffSlideT.clamp(0.0, 1.0).toDouble();
-    final String outgoingRenderedTitle = handoffActive
-        ? expandStructuralChromeExpressions(
-            outgoingPlacement!.effectiveWindowTitle,
-            frame: outgoingSourceFrame,
-          )
-        : '';
-    final String outgoingRenderedTop = handoffActive
-        ? expandStructuralChromeExpressions(
-            outgoingPlacement!.topOverlay,
-            frame: outgoingSourceFrame,
-          )
-        : '';
-    final String outgoingRenderedBottom = handoffActive
-        ? expandStructuralChromeExpressions(
-            outgoingPlacement!.bottomOverlay,
-            frame: outgoingSourceFrame,
-          )
-        : '';
-
-    final bool faded = opacity < 0.999;
-    if (faded) {
-      canvas.saveLayer(
-        rect.inflate(40.0 * s),
-        Paint()
-          ..color = Color.fromARGB(
-            (opacity.clamp(0.0, 1.0) * 255.0).round(),
-            255,
-            255,
-            255,
-          ),
-      );
-    }
-
-    if (c > 0.001) {
-      canvas.drawRRect(
-        window.shift(Offset(0, 16.0 * s * c)),
-        Paint()
-          ..color = const Color(0x8A000000).withValues(alpha: c)
-          ..maskFilter = MaskFilter.blur(
-            BlurStyle.normal,
-            30.0 * s * c,
-          ),
-      );
-    }
-
-    canvas.drawRRect(window, Paint()..color = const Color(0xFF171717));
-    if (c > 0.001) {
-      canvas.drawRRect(
-        window,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(0.5, s) * c
-          ..color = const Color(0xFF3B3938).withValues(alpha: c),
-      );
-    }
-
-    final Rect header = Rect.fromLTWH(
-      rect.left,
-      rect.top,
-      rect.width,
-      math.min(barH, rect.height),
-    );
-    final Rect client = Rect.fromLTRB(
-      rect.left,
-      header.bottom,
-      rect.right,
-      rect.bottom,
-    );
-
-    canvas.save();
-    canvas.clipRRect(window);
-    canvas.drawRect(client, Paint()..color = Colors.black);
-
-    final R3Theme theme = R3Theme.of(scene.terminal.fontColor);
-    final String? incomingBottomText = switch (overlayMode) {
-      StructuralOverlayMode.defaultOverlay =>
-        defaultBottomOverlay.isEmpty ? null : defaultBottomOverlay,
-      StructuralOverlayMode.custom =>
-        renderedBottom.isEmpty ? null : renderedBottom,
-      StructuralOverlayMode.none => null,
-    };
-    final String? outgoingBottomText = !handoffActive
-        ? null
-        : switch (outgoingPlacement!.overlayMode) {
-            StructuralOverlayMode.defaultOverlay =>
-              outgoingDefaultBottomOverlay.isEmpty
-                  ? null
-                  : outgoingDefaultBottomOverlay,
-            StructuralOverlayMode.custom =>
-              outgoingRenderedBottom.isEmpty ? null : outgoingRenderedBottom,
-            StructuralOverlayMode.none => null,
-          };
-
-    if (handoffActive && client.width > 0.0 && client.height > 0.0) {
-      if (sourceImage != null) {
-        canvas.save();
-        canvas.translate(client.width * (1.0 - slideT), 0.0);
-        _drawImageContain(canvas, sourceImage, client);
-        _paintStructuralBottomOverlay(
-          canvas: canvas,
-          client: client,
-          text: incomingBottomText,
-          fontFamily: fontFamily,
-          theme: theme,
-          scale: s,
-        );
-        canvas.restore();
-      }
-
-      canvas.save();
-      canvas.translate(-client.width * slideT, 0.0);
-      _drawImageContain(canvas, outgoingSourceImage!, client);
-      _paintStructuralBottomOverlay(
-        canvas: canvas,
-        client: client,
-        text: outgoingBottomText,
-        fontFamily: fontFamily,
-        theme: theme,
-        scale: s,
-      );
-      canvas.restore();
-    } else {
-      if (sourceImage != null && client.width > 0.0 && client.height > 0.0) {
-        _drawImageContain(canvas, sourceImage, client);
-      }
-      _paintStructuralBottomOverlay(
-        canvas: canvas,
-        client: client,
-        text: incomingBottomText,
-        fontFamily: fontFamily,
-        theme: theme,
-        scale: s,
-      );
-    }
-
-    if (header.height > 0.01) {
-      canvas.drawRect(
-        header,
-        Paint()..color = const Color(0xFF33302F).withValues(alpha: c),
-      );
-      canvas.drawLine(
-        Offset(header.left, header.bottom),
-        Offset(header.right, header.bottom),
-        Paint()
-          ..strokeWidth = math.max(0.5, s) * c
-          ..color = const Color(0xFF474341).withValues(alpha: c),
-      );
-
-      final double horizontalPad = 14.0 * s * c;
-      final String? incomingTopText = switch (overlayMode) {
-        StructuralOverlayMode.defaultOverlay =>
-          'F$sourceFrame / $sourceDurationFrames',
-        StructuralOverlayMode.custom =>
-          renderedTop.isEmpty ? null : renderedTop,
-        StructuralOverlayMode.none => null,
-      };
-      final String? outgoingTopText = !handoffActive
-          ? null
-          : switch (outgoingPlacement!.overlayMode) {
-              StructuralOverlayMode.defaultOverlay =>
-                'F$outgoingSourceFrame / '
-                    '${outgoingPlacement!.sourceDurationFrames}',
-              StructuralOverlayMode.custom =>
-                outgoingRenderedTop.isEmpty ? null : outgoingRenderedTop,
-              StructuralOverlayMode.none => null,
-            };
-
-      void paintHeaderText({
-        required String title,
-        required String? topText,
-        required double alpha,
-      }) {
-        if (alpha <= 0.001) return;
-
-        TextPainter? right;
-        double rightX = header.right - horizontalPad;
-        if (topText != null) {
-          right = TextPainter(
-            text: TextSpan(
-              text: topText,
-              style: theme.micro.copyWith(
-                fontFamily: fontFamily,
-                color: const Color(0xFF8E8884)
-                    .withValues(alpha: c * alpha),
-                fontSize: (theme.micro.fontSize ?? 10.5) * s,
-                letterSpacing: (theme.micro.letterSpacing ?? 0.0) * s,
-              ),
-            ),
-            maxLines: 1,
-            ellipsis: '…',
-            textDirection: TextDirection.ltr,
-          );
-          right.layout(maxWidth: math.max(0.0, header.width * 0.42));
-          rightX -= right.width;
-        }
-
-        final double labelMax = math.max(
-          0.0,
-          rightX -
-              (header.left + horizontalPad) -
-              (right == null ? 0.0 : 10.0 * s),
-        );
-        final TextPainter left = TextPainter(
-          text: TextSpan(
-            text: title,
-            style: theme.value.copyWith(
-              fontFamily: fontFamily,
-              color: const Color(0xFFC7C3C0)
-                  .withValues(alpha: c * alpha),
-              fontSize: 12.0 * s,
-            ),
-          ),
-          maxLines: 1,
-          ellipsis: '…',
-          textDirection: TextDirection.ltr,
-        )..layout(maxWidth: labelMax);
-
-        final double leftY =
-            header.top + (header.height - left.height) / 2.0;
-        left.paint(canvas, Offset(header.left + horizontalPad, leftY));
-        if (right != null) {
-          final double rightY =
-              header.top + (header.height - right.height) / 2.0;
-          right.paint(canvas, Offset(rightX, rightY));
-        }
-      }
-
-      if (handoffActive) {
-        paintHeaderText(
-          title: outgoingRenderedTitle,
-          topText: outgoingTopText,
-          alpha: 1.0 - slideT,
-        );
-        paintHeaderText(
-          title: renderedTitle,
-          topText: incomingTopText,
-          alpha: slideT,
-        );
-      } else {
-        paintHeaderText(
-          title: renderedTitle,
-          topText: incomingTopText,
-          alpha: 1.0,
-        );
-      }
-    }
-    canvas.restore();
-
-    if (faded) canvas.restore();
-  }
-
-  void _paintStructuralBottomOverlay({
-    required Canvas canvas,
-    required Rect client,
-    required String? text,
-    required String fontFamily,
-    required R3Theme theme,
-    required double scale,
-  }) {
-    if (text == null ||
-        text.isEmpty ||
-        client.width <= 0.0 ||
-        client.height <= 0.0) {
-      return;
-    }
-
-    final TextPainter bottom = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: theme.micro.copyWith(
-          fontFamily: fontFamily,
-          color: R3Theme.textMid,
-          fontSize: (theme.micro.fontSize ?? 10.5) * scale,
-          letterSpacing: (theme.micro.letterSpacing ?? 0.0) * scale,
-        ),
-      ),
-      maxLines: 1,
-      ellipsis: '…',
-      textDirection: TextDirection.ltr,
-    );
-    bottom.layout(maxWidth: math.max(0.0, client.width - 28.0 * scale));
-
-    final double padX = 6.0 * scale;
-    final double padY = 3.0 * scale;
-    final Rect plate = Rect.fromLTWH(
-      client.left + 8.0 * scale,
-      client.bottom - 7.0 * scale - bottom.height - padY * 2.0,
-      bottom.width + padX * 2.0,
-      bottom.height + padY * 2.0,
-    );
-    canvas.drawRect(
-      plate,
-      Paint()..color = Colors.black.withValues(alpha: 0.72),
-    );
-    bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
-  }
-
-  void _drawImageContain(Canvas canvas, ui.Image image, Rect destination) {
-    final double sourceWidth = image.width.toDouble();
-    final double sourceHeight = image.height.toDouble();
-    if (sourceWidth <= 0.0 || sourceHeight <= 0.0) return;
-
-    final double scale = math.min(
-      destination.width / sourceWidth,
-      destination.height / sourceHeight,
-    );
-    final double drawWidth = sourceWidth * scale;
-    final double drawHeight = sourceHeight * scale;
-    final Rect fitted = Rect.fromLTWH(
-      destination.left + (destination.width - drawWidth) / 2.0,
-      destination.top + (destination.height - drawHeight) / 2.0,
-      drawWidth,
-      drawHeight,
-    );
-
-    canvas.drawImageRect(
-      image,
-      Rect.fromLTWH(0, 0, sourceWidth, sourceHeight),
-      fitted,
-      Paint()..filterQuality = FilterQuality.low,
-    );
   }
 
   void _checkAlive() {

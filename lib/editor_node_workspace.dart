@@ -2668,16 +2668,23 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     ));
   }
 
-  Widget _fToggle(ScriptNode node, String label, String key, String onValue,
-      String description) {
+  Widget _fToggle(
+    ScriptNode node,
+    String label,
+    String key,
+    String onValue,
+    String description, {
+    VoidCallback? onTap,
+  }) {
     final t = widget.theme;
     final bool on = node.param(key).trim().isNotEmpty;
 
     return _wrap(InkWell(
-      onTap: () {
-        node.set(key, on ? '' : onValue);
-        _notifyChanged();
-      },
+      onTap: onTap ??
+          () {
+            node.set(key, on ? '' : onValue);
+            _notifyChanged();
+          },
       borderRadius: BorderRadius.circular(4),
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: sc(4)),
@@ -3126,6 +3133,12 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
   List<Widget> _structForm(ScriptNode node) {
     final List<Widget> f = [];
     final String current = node.param('source').trim();
+    final bool fullscreen =
+        node.param('mode').trim().toUpperCase() == 'FULL';
+    final bool split =
+        node.param('split').trim().toUpperCase() == 'SPLIT';
+    final bool maximizeSplit =
+        node.param('maxSplit').trim().toUpperCase() == 'MAX';
 
     final List<String> sources = _nodes
         .where((n) =>
@@ -3180,7 +3193,63 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       'FULL',
       'Fill the program frame directly instead of presenting this source '
           'inside a desktop window.',
+      onTap: () {
+        node.set('mode', fullscreen ? '' : 'FULL');
+        if (!fullscreen) {
+          node.set('split', '');
+          node.set('maxSplit', '');
+        }
+        _notifyChanged();
+      },
     ));
+
+    f.add(_fToggle(
+      node,
+      'Two windows',
+      'split',
+      'SPLIT',
+      'Present an eligible two-pane MOSAIC as two equal desktop windows. '
+          'Unsupported sources stay authored but fall back to the ordinary '
+          'windowed presentation.',
+      onTap: () {
+        node.set('split', split ? '' : 'SPLIT');
+        if (!split) {
+          node.set('mode', '');
+        } else {
+          node.set('maxSplit', '');
+        }
+        _notifyChanged();
+      },
+    ));
+
+    if (split) {
+      f.add(_fToggle(
+        node,
+        'Maximize split',
+        'maxSplit',
+        'MAX',
+        'Use the full program width: each window takes one horizontal half '
+            'with no outside margin or center gap. Client aspect still owns '
+            'the window height, so video does not become unnecessarily tall.',
+      ));
+      f.add(_fEnum(
+        node,
+        'Client aspect',
+        'aspect',
+        const <String>['16X9', '4X3', '9X16'],
+        '16X9',
+      ));
+      f.add(_hint(
+        maximizeSplit
+            ? 'MAXIMIZE SPLIT fixes each client to half the program width. '
+                'This aspect determines its height; portrait is capped by '
+                'available program height.'
+            : 'One aspect applies to both windows. 16X9 is the implicit '
+                'default. Window titles use the placement title followed by '
+                'PANE 1 or PANE 2, so timeline cuts inside a pane never '
+                'rename its desktop window.',
+      ));
+    }
 
     f.add(_fToggle(
       node,
@@ -3222,7 +3291,8 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
 
     f.add(_hint('This changes only this STRUCT placement. The referenced '
         'EDIT or MOSAIC definition stays unchanged and can be placed '
-        'windowed or full screen with different chrome somewhere else.'));
+        'windowed, full screen, or as an eligible two-window MOSAIC with '
+        'different chrome somewhere else.'));
 
     return f;
   }
