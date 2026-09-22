@@ -182,6 +182,51 @@ class EditVideoCompositor {
     );
   }
 
+  /// Exact composition of one authored pane from a MOSAIC source.
+  ///
+  /// Unlike calling MediaLayer.renderPane directly, this stays at compositor
+  /// level: nested EDIT/MOSAIC clips are recursively resolved and the recursive
+  /// leaf diagnostic channel is preserved exactly as it is for whole-source
+  /// rendering.
+  EditVideoCompositeResult renderMosaicPane(
+    String source,
+    int paneIndex,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    _checkAlive();
+    _checkGraph();
+    final StructuralSourceRef ref = _requireStructuralSource(source);
+    return _renderMosaicPaneSource(
+      ref,
+      paneIndex,
+      time,
+      size,
+      nonBlocking: false,
+      depth: 1,
+    );
+  }
+
+  /// Nonblocking counterpart to [renderMosaicPane].
+  EditVideoCompositeResult renderMosaicPaneAvailable(
+    String source,
+    int paneIndex,
+    ProjectTime time,
+    ui.Size size,
+  ) {
+    _checkAlive();
+    _checkGraph();
+    final StructuralSourceRef ref = _requireStructuralSource(source);
+    return _renderMosaicPaneSource(
+      ref,
+      paneIndex,
+      time,
+      size,
+      nonBlocking: true,
+      depth: 1,
+    );
+  }
+
   StructuralSourceRef _requireStructuralSource(String source) {
     final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
     if (ref == null || ref.id.isEmpty) {
@@ -249,6 +294,88 @@ class EditVideoCompositor {
     );
   }
 
+  EditVideoCompositeResult _renderMosaicPaneSource(
+    StructuralSourceRef ref,
+    int paneIndex,
+    ProjectTime time,
+    ui.Size size, {
+    required bool nonBlocking,
+    required int depth,
+  }) {
+    if (ref.kind != StructuralSourceKind.mosaic) {
+      throw ArgumentError.value(
+        ref.canonicalSource,
+        'source',
+        'Pane rendering requires a MOSAIC source.',
+      );
+    }
+    _checkRenderDepth(ref, depth);
+
+    final int width = size.width.round();
+    final int height = size.height.round();
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        width <= 0 ||
+        height <= 0) {
+      throw ArgumentError.value(
+        size,
+        'size',
+        'MOSAIC pane render size must be positive.',
+      );
+    }
+
+    final MosaicSequence mosaic = model.mosaic(ref.id);
+    if (paneIndex < 0 || paneIndex >= mosaic.panes.length) {
+      throw RangeError.index(paneIndex, mosaic.panes, 'paneIndex');
+    }
+    return _renderMosaicPaneByIndex(
+      ref.id,
+      mosaic,
+      paneIndex,
+      time,
+      ui.Size(width.toDouble(), height.toDouble()),
+      nonBlocking: nonBlocking,
+      depth: depth,
+    );
+  }
+
+  EditVideoCompositeResult _renderMosaicPaneByIndex(
+    String mosaicId,
+    MosaicSequence mosaic,
+    int paneIndex,
+    ProjectTime time,
+    ui.Size paneSize, {
+    required bool nonBlocking,
+    required int depth,
+  }) {
+    final MosaicPane pane = mosaic.panes[paneIndex];
+    final MediaRenderResult media = nonBlocking
+        ? mediaLayer.renderPaneAvailable(
+            mosaicId,
+            pane.id,
+            time,
+            paneSize,
+          )
+        : mediaLayer.renderPane(
+            mosaicId,
+            pane.id,
+            time,
+            paneSize,
+          );
+    final _ResolvedMediaRender resolved = _resolveStructuralFrames(
+      media,
+      nonBlocking: nonBlocking,
+      depth: depth,
+    );
+    return _composePane(
+      pane,
+      resolved.media,
+      time,
+      paneSize,
+      diagnosticFrames: resolved.diagnosticFrames,
+    );
+  }
+
   EditVideoCompositeResult _renderMosaic(
     String mosaicId,
     ProjectTime time,
@@ -279,7 +406,6 @@ class EditVideoCompositor {
     bool hasImage = false;
 
     for (int i = 0; i < mosaic.panes.length; i++) {
-      final MosaicPane pane = mosaic.panes[i];
       final _PixelRect rect = _pixelRect(layout[i], width, height);
       if (rect.width <= 0 || rect.height <= 0) continue;
 
@@ -287,30 +413,14 @@ class EditVideoCompositor {
         rect.width.toDouble(),
         rect.height.toDouble(),
       );
-      final MediaRenderResult media = nonBlocking
-          ? mediaLayer.renderPaneAvailable(
-              mosaicId,
-              pane.id,
-              time,
-              paneSize,
-            )
-          : mediaLayer.renderPane(
-              mosaicId,
-              pane.id,
-              time,
-              paneSize,
-            );
-      final _ResolvedMediaRender resolved = _resolveStructuralFrames(
-        media,
-        nonBlocking: nonBlocking,
-        depth: depth,
-      );
-      final EditVideoCompositeResult paneResult = _composePane(
-        pane,
-        resolved.media,
+      final EditVideoCompositeResult paneResult = _renderMosaicPaneByIndex(
+        mosaicId,
+        mosaic,
+        i,
         time,
         paneSize,
-        diagnosticFrames: resolved.diagnosticFrames,
+        nonBlocking: nonBlocking,
+        depth: depth,
       );
 
       mediaFrames.addAll(paneResult.mediaFrames);
