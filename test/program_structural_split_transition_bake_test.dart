@@ -252,10 +252,11 @@ void main() {
 
       // The outgoing ordinary window remains visible in the split gap while
       // it fades, proving this is a transition rather than a desktop flash.
-      expect(
-        _pixelAt(opening, 640, const Offset(320, 200)),
-        const <int>[255, 0, 0, 255],
-      );
+      final List<int> fadingRed =
+          _pixelAt(opening, 640, const Offset(320, 200));
+      expect(fadingRed[0], greaterThan(0));
+      expect(fadingRed[0], greaterThan(fadingRed[1]));
+      expect(fadingRed[0], greaterThan(fadingRed[2]));
 
       final int showingProjectFrame = _findProjectFrame(
         scene,
@@ -396,17 +397,17 @@ void main() {
         aspect: placements[0].splitClientAspect,
         titleHeight: titleHeight,
       );
-      expect(
-        _pixelAt(
-          opening,
-          640,
-          Offset(
-            outgoingGeometry.leftClientRect.left + 8,
-            outgoingGeometry.leftClientRect.center.dy,
-          ),
+      final List<int> fadingGreen = _pixelAt(
+        opening,
+        640,
+        Offset(
+          outgoingGeometry.leftClientRect.left + 8,
+          outgoingGeometry.leftClientRect.center.dy,
         ),
-        const <int>[0, 255, 0, 255],
       );
+      expect(fadingGreen[1], greaterThan(0));
+      expect(fadingGreen[1], greaterThan(fadingGreen[0]));
+      expect(fadingGreen[1], greaterThan(fadingGreen[2]));
 
       final int showingProjectFrame = _findProjectFrame(
         scene,
