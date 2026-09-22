@@ -323,7 +323,7 @@ void main() {
   );
 
   test(
-    'BAKE paints MAX split clients edge to edge with no center gap',
+    'BAKE paints MAX split clients edge to edge horizontally',
     () async {
       const String source = '''[SPEED:MAX]
 [MOSAIC:wall]
@@ -436,10 +436,21 @@ void main() {
 
       expect(geometry.leftWindowRect.left, 0.0);
       expect(geometry.rightWindowRect.right, outputWidth.toDouble());
-      expect(geometry.leftWindowRect.top, 0.0);
-      expect(geometry.rightWindowRect.bottom, outputHeight.toDouble());
       expect(geometry.gap, 0.0);
       expect(geometry.leftWindowRect.right, geometry.rightWindowRect.left);
+      expect(geometry.leftWindowRect.top, greaterThan(0.0));
+      expect(
+        geometry.rightWindowRect.bottom,
+        lessThan(outputHeight.toDouble()),
+      );
+      expect(
+        geometry.leftWindowRect.center.dy,
+        closeTo(outputHeight / 2.0, 0.000001),
+      );
+      expect(
+        geometry.clientSize.width / geometry.clientSize.height,
+        closeTo(4.0 / 3.0, 0.000001),
+      );
 
       expect(red!.left, closeTo(geometry.leftClientRect.left, 2.0));
       expect(red.right, closeTo(geometry.leftClientRect.right, 2.0));
