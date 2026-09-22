@@ -95,13 +95,13 @@ class StructuralChromeSpec {
   /// sources remain authored but fall back to ordinary windowed presentation.
   final bool splitWindows;
 
-  /// Windows-style edge-to-edge split presentation. This remains placement
-  /// metadata and is meaningful only when [splitWindows] is authored.
+  /// Windows-style horizontal snap. This removes split margins/gap and gives
+  /// each window one half of the program width while authored aspect continues
+  /// to own client height. Meaningful only when [splitWindows] is authored.
   final bool maximizeSplit;
 
-  /// One authored client aspect shared by both normal split windows. It stays
-  /// authored while MAX is enabled so turning MAX off restores the prior
-  /// aspect rather than silently resetting presentation intent.
+  /// One authored client aspect shared by both split windows. In MAX it still
+  /// determines height after each client takes half of the program width.
   final MosaicSplitClientAspect splitAspect;
 
   /// Placement-owned intent to play the audio belonging to clips in [source].
