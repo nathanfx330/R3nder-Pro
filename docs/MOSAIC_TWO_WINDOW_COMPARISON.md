@@ -335,13 +335,73 @@ flutter test test/structural_source_export_native_test.dart
 dart run tool/check_doc_contracts.dart
 ```
 
-W5 does not begin until that gate passes locally.
+W4 passed locally: the non-native gate completed with 24 tests, the
+Linux native MLT gate completed with 2 tests, and the documentation checker
+reported 16 contracts / 84 proof files.
 
 ### W5 - transitions and readiness
 
-Keep existing entry/exit budgets. Split-to-split and split aspect changes cut
-simultaneously. Add delayed-readiness regression coverage so decoder state never
-moves authored geometry or project time.
+W5 gives SPLIT an explicit presentation-shape identity without changing the
+legacy `StructuralPresentationMode` API. Effective presentation shapes are
+windowed, fullscreen, and split. Unsupported authored SPLIT remains ordinary
+windowed for timing as well as rendering.
+
+The transition contract is:
+
+- split -> split is an immediate simultaneous two-pane cut, including an
+  authored aspect change;
+- split aspect changes add no project frames;
+- window/fullscreen <-> split uses the existing single incoming
+  `kStructuralWindowFrames` budget; the outgoing placement pays no extra close
+  budget;
+- any boundary involving SPLIT is excluded from the legacy horizontal
+  single-client APPSWITCH slide;
+- during a shape-change entry budget, the outgoing presentation remains seated
+  while the incoming desktop/shell stays live underneath it;
+- once the budget has elapsed, incoming readiness controls only visibility. A
+  late incoming split continues to advance authored source time while the
+  outgoing presentation remains stationary, then both panes cut together at
+  the current authored source frame after one active-ready paint.
+
+Preview implements the stationary cover with
+`StructuralSequenceHandoffRole.heldOutgoing`. BAKE applies the same rule
+synchronously: it paints the previous placement at its final source frame for
+the incoming shape-change opening budget, then cuts to the incoming
+presentation at showing time. The normal window/fullscreen APPSWITCH slide path
+is unchanged.
+
+Proof:
+
+- `test/structural_split_transition_plan_test.dart` pins split-to-split,
+  aspect-change, window-to-split, split-to-window, and unsupported-SPLIT timing;
+- `test/program_preview_structural_split_transition_test.dart` proves the
+  top-level Program Preview stationary two-pane cut, one active-ready paint,
+  delayed-readiness source-time advance, current-aspect reveal, and existing
+  incoming budget for a window-to-split change;
+- `test/program_structural_split_transition_bake_test.dart` proves BAKE holds
+  the outgoing ordinary window through that same budget and then replaces it
+  with both split pane colors in one cut.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/structural_split_transition_plan_test.dart \
+  test/program_preview_structural_split_transition_test.dart \
+  test/program_structural_split_transition_bake_test.dart \
+  test/program_preview_structural_switch_test.dart \
+  test/program_preview_structural_late_handoff_test.dart \
+  test/program_preview_structural_raster_handoff_test.dart \
+  test/structural_sequence_preview_test.dart \
+  test/structural_sequence_readiness_test.dart \
+  test/structural_sequence_decode_timing_determinism_test.dart \
+  test/program_structural_mixed_mode_bake_test.dart \
+  test/program_structural_split_bake_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+W6 does not begin until that gate passes locally.
 
 ### W6 - cue routing and unsupported shell cues
 
