@@ -63,6 +63,34 @@ void main() {
     );
   });
 
+  test('MAX is placement-owned, SPLIT-only, and preserves dormant aspect', () {
+    final StructuralChromeSpec? max = parseStructuralChromeTag(
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]',
+    );
+    expect(max, isNotNull);
+    expect(max!.splitWindows, isTrue);
+    expect(max.maximizeSplit, isTrue);
+    expect(max.splitAspect, MosaicSplitClientAspect.aspect4x3);
+    expect(
+      formatStructuralChromeTag(max),
+      '[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3]',
+    );
+
+    expect(
+      parseStructuralChromeTag('[STRUCT:MOSAIC.wall:MAX]'),
+      isNull,
+    );
+    expect(
+      () => formatStructuralChromeTag(
+        const StructuralChromeSpec(
+          source: 'MOSAIC.wall',
+          maximizeSplit: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('FULL and SPLIT are exclusive and ASPECT requires SPLIT', () {
     expect(
       parseStructuralChromeTag('[STRUCT:MOSAIC.wall:FULL:SPLIT]'),
@@ -101,6 +129,23 @@ void main() {
       'Archive Monitor · PANE 2',
     );
     expect(() => placement.splitWindowTitleForPane(2), throwsRangeError);
+  });
+
+  test('supported MAX split reaches the effective placement', () {
+    final String source = _supportedSource.replaceFirst(
+      ':SPLIT:ASPECT=4X3',
+      ':SPLIT:MAX:ASPECT=4X3',
+    );
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(source).single;
+
+    expect(placement.splitWindow, isTrue);
+    expect(placement.maximizeSplit, isTrue);
+    expect(
+      placement.splitClientAspect,
+      MosaicSplitClientAspect.aspect4x3,
+    );
+    expect(placement.presentationShape, StructuralPresentationShape.split);
   });
 
   test('default split titles derive from canonical placement title convention',
