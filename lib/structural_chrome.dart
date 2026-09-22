@@ -95,7 +95,13 @@ class StructuralChromeSpec {
   /// sources remain authored but fall back to ordinary windowed presentation.
   final bool splitWindows;
 
-  /// One authored client aspect shared by both split windows.
+  /// Windows-style edge-to-edge split presentation. This remains placement
+  /// metadata and is meaningful only when [splitWindows] is authored.
+  final bool maximizeSplit;
+
+  /// One authored client aspect shared by both normal split windows. It stays
+  /// authored while MAX is enabled so turning MAX off restores the prior
+  /// aspect rather than silently resetting presentation intent.
   final MosaicSplitClientAspect splitAspect;
 
   /// Placement-owned intent to play the audio belonging to clips in [source].
@@ -116,6 +122,7 @@ class StructuralChromeSpec {
     required this.source,
     this.fullscreen = false,
     this.splitWindows = false,
+    this.maximizeSplit = false,
     this.splitAspect = MosaicSplitClientAspect.aspect16x9,
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
@@ -131,6 +138,7 @@ class StructuralChromeSpec {
     String? source,
     bool? fullscreen,
     bool? splitWindows,
+    bool? maximizeSplit,
     MosaicSplitClientAspect? splitAspect,
     bool? clipAudio,
     StructuralOverlayMode? overlayMode,
@@ -142,6 +150,7 @@ class StructuralChromeSpec {
       source: source ?? this.source,
       fullscreen: fullscreen ?? this.fullscreen,
       splitWindows: splitWindows ?? this.splitWindows,
+      maximizeSplit: maximizeSplit ?? this.maximizeSplit,
       splitAspect: splitAspect ?? this.splitAspect,
       clipAudio: clipAudio ?? this.clipAudio,
       overlayMode: overlayMode ?? this.overlayMode,
@@ -171,6 +180,7 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
 
   bool fullscreen = false;
   bool splitWindows = false;
+  bool maximizeSplit = false;
   MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9;
   bool clipAudio = false;
   StructuralOverlayMode overlay = StructuralOverlayMode.defaultOverlay;
@@ -197,6 +207,11 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
     if (bare == 'SPLIT') {
       if (splitWindows) return null;
       splitWindows = true;
+      continue;
+    }
+    if (bare == 'MAX') {
+      if (maximizeSplit) return null;
+      maximizeSplit = true;
       continue;
     }
     if (bare == 'AUDIO') {
@@ -255,11 +270,13 @@ StructuralChromeSpec? parseStructuralChromeTag(String raw) {
 
   if (fullscreen && splitWindows) return null;
   if (sawAspect && !splitWindows) return null;
+  if (maximizeSplit && !splitWindows) return null;
 
   return StructuralChromeSpec(
     source: source,
     fullscreen: fullscreen,
     splitWindows: splitWindows,
+    maximizeSplit: maximizeSplit,
     splitAspect: splitAspect,
     clipAudio: clipAudio,
     overlayMode: overlay,
@@ -284,8 +301,12 @@ String formatStructuralChromeTag(StructuralChromeSpec spec) {
   }
   final StringBuffer out = StringBuffer('[STRUCT:${spec.source}');
   if (spec.fullscreen) out.write(':FULL');
+  if (spec.maximizeSplit && !spec.splitWindows) {
+    throw ArgumentError('STRUCT MAX is valid only with SPLIT.');
+  }
   if (spec.splitWindows) {
     out.write(':SPLIT');
+    if (spec.maximizeSplit) out.write(':MAX');
     if (spec.splitAspect != MosaicSplitClientAspect.aspect16x9) {
       out.write(':ASPECT=${spec.splitAspect.token}');
     }
