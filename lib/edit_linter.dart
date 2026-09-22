@@ -11,7 +11,9 @@
 // never parse failures: source preservation allows a newer script to round trip
 // through an older build without silently pretending an unknown key worked.
 
+import 'edit_cue.dart';
 import 'edit_model.dart';
+import 'presentation_requests.dart';
 import 'structural_sequence.dart';
 
 enum EditLintSeverity {
@@ -26,6 +28,8 @@ enum EditLintCode {
   nestingLimit,
   unknownClipOption,
   unsupportedSplitPlacement,
+  unsupportedSplitSideCard,
+  unsupportedSplitMaximize,
 }
 
 class EditLintIssue {
@@ -197,6 +201,59 @@ class EditGraphLinter {
               editPath: <String>[node.graphLabel, clip.id],
             ),
           );
+        }
+      }
+    }
+
+    for (final StructuralSequencePlacement placement
+        in parseStructuralSequencePlacements(document.cst.source)) {
+      if (!placement.splitWindow) continue;
+
+      final StructuralSourceRef ref = placement.sourceRef;
+      if (ref.kind != StructuralSourceKind.mosaic ||
+          !document.containsStructuralSource(ref)) {
+        continue;
+      }
+
+      final MosaicSequence mosaic = document.mosaic(ref.id);
+      for (final MosaicPane pane in mosaic.panes) {
+        for (final EditClip clip in pane.clips) {
+          final bool hasSideCard = parseClipCardCues(clip).any(
+            (EditCardCue cue) => cue.card is SideCardRequest,
+          );
+          if (hasSideCard) {
+            emit(
+              EditLintIssue(
+                code: EditLintCode.unsupportedSplitSideCard,
+                severity: EditLintSeverity.warning,
+                message: 'SIDECARD in PANE "${pane.id}" is not supported by '
+                    'STRUCT ${ref.canonicalSource} SPLIT v1 and will not paint.',
+                editPath: <String>[
+                  'STRUCT',
+                  ref.canonicalSource,
+                  'PANE.${pane.id}',
+                  clip.id,
+                ],
+              ),
+            );
+          }
+
+          if (parseClipMaximizeCues(clip).isNotEmpty) {
+            emit(
+              EditLintIssue(
+                code: EditLintCode.unsupportedSplitMaximize,
+                severity: EditLintSeverity.warning,
+                message: 'MAXIMIZE in PANE "${pane.id}" is not supported by '
+                    'STRUCT ${ref.canonicalSource} SPLIT v1 and will not paint.',
+                editPath: <String>[
+                  'STRUCT',
+                  ref.canonicalSource,
+                  'PANE.${pane.id}',
+                  clip.id,
+                ],
+              ),
+            );
+          }
         }
       }
     }
