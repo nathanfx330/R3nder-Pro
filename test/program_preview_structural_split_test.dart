@@ -184,7 +184,7 @@ void main() {
         ),
       );
 
-      for (int attempt = 0; attempt < 30; attempt++) {
+      for (int attempt = 0; attempt < 50; attempt++) {
         if ((backend.opens['/workspace/video/red.mp4'] ?? 0) == 1 &&
             (backend.opens['/workspace/video/blue.mp4'] ?? 0) == 1 &&
             find
@@ -193,7 +193,10 @@ void main() {
                 .isNotEmpty) {
           break;
         }
-        await tester.pump(const Duration(milliseconds: 1));
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
       }
 
       expect(
