@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'engine.dart';
@@ -213,7 +214,7 @@ class _EditorScreenState extends State<EditorScreen> {
   );
 
   Timer? _debounce;
-  Timer? _playTimer;
+  Ticker? _playTicker;
 
   /// Historical wall-clock playback source. TEXT keeps it only for runs where
   /// no structural clip audio owns realtime time. AUDIO-enabled runs sample the
@@ -478,7 +479,8 @@ class _EditorScreenState extends State<EditorScreen> {
   void dispose() {
     _playGeneration++;
     _debounce?.cancel();
-    _playTimer?.cancel();
+    _playTicker?.dispose();
+    _playTicker = null;
     // Stop, never dispose: the player belongs to main and outlives this
     // screen. Disposing it here would leave the menu with a dead backend.
     _stopBed();
@@ -1306,52 +1308,54 @@ class _EditorScreenState extends State<EditorScreen> {
       _startBedAt(startFrame);
     }
 
-    _playTimer = Timer.periodic(const Duration(milliseconds: 8), (_) {
-      if (!mounted || _textStructuralBuffering) return;
-
-      final Stopwatch? fallbackClock = _playClock;
-      final NativeRealtimeProjectClock? projectClock =
-          _structuralAudioOwnsRun ? sharedRealtimeProjectClock : null;
-
-      final int target;
-      if (projectClock != null) {
-        target = projectClock.sample().frame;
-      } else {
-        if (fallbackClock == null) return;
-        target = _playStartFrame +
-            (fallbackClock.elapsedMicroseconds * engineFps) ~/
-                Duration.microsecondsPerSecond;
-      }
-
-      if (target >= _totalFrames) {
-        while (_currentFrame < _totalFrames) {
-          _scene.tick();
-          _currentFrame++;
-        }
-        _updateHighlight();
-        _stopPlayback();
-        return;
-      }
-
-      int behind = target - _currentFrame;
-      if (behind <= 0) return;
-      if (behind > engineFps) behind = engineFps;
-
-      for (int i = 0; i < behind; i++) {
-        _scene.tick();
-        _currentFrame++;
-      }
-      _updateHighlight();
-      if (mounted) setState(() {});
-    });
+    _playTicker ??= Ticker(_onTextPlaybackTick);
+    _playTicker!.start();
 
     setState(() {});
   }
 
+  void _onTextPlaybackTick(Duration _) {
+    if (!mounted || !_isPlaying || _textStructuralBuffering) return;
+
+    final Stopwatch? fallbackClock = _playClock;
+    final NativeRealtimeProjectClock? projectClock =
+        _structuralAudioOwnsRun ? sharedRealtimeProjectClock : null;
+
+    final int target;
+    if (projectClock != null) {
+      target = projectClock.sample().frame;
+    } else {
+      if (fallbackClock == null) return;
+      target = _playStartFrame +
+          (fallbackClock.elapsedMicroseconds * engineFps) ~/
+              Duration.microsecondsPerSecond;
+    }
+
+    if (target >= _totalFrames) {
+      while (_currentFrame < _totalFrames) {
+        _scene.tick();
+        _currentFrame++;
+      }
+      _updateHighlight();
+      _stopPlayback();
+      return;
+    }
+
+    int behind = target - _currentFrame;
+    if (behind <= 0) return;
+    if (behind > engineFps) behind = engineFps;
+
+    for (int i = 0; i < behind; i++) {
+      _scene.tick();
+      _currentFrame++;
+    }
+    _updateHighlight();
+    if (mounted) setState(() {});
+  }
+
   void _stopPlayback({bool invalidateStructuralAudio = false}) {
     _playGeneration++;
-    _playTimer?.cancel();
-    _playTimer = null;
+    _playTicker?.stop();
     _playClock = null;
     _isPlaying = false;
     _startingTextPlayback = false;
