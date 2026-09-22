@@ -133,6 +133,25 @@ StructuralShapeEntryFrame structuralShapeEntryFrameAt({
   );
 }
 
+/// One standard close-scale frame for an independently seated window.
+///
+/// This is the exact reverse choreography used by the ordinary STRUCT shell:
+/// target -> 84% emergence using the authored closing progress and the same
+/// easeInOutCubic curve. Opacity remains owned by the outer shell so readiness
+/// and visibility rules do not acquire a second authority here.
+Rect structuralShapeExitRectAt({
+  required Rect targetRect,
+  required double linearProgress,
+}) {
+  final double linear = linearProgress.clamp(0.0, 1.0).toDouble();
+  final double eased = Curves.easeInOutCubic.transform(linear);
+  return Rect.lerp(
+    targetRect,
+    structuralShellEmergenceRect(targetRect),
+    eased,
+  )!;
+}
+
 /// Outgoing visibility while an incoming shape opens above it.
 ///
 /// The outgoing presentation remains a stable cover at frame zero and fades
