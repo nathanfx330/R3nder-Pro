@@ -249,6 +249,18 @@ double _layerOpacity(WidgetTester tester, int index) {
   return (ignore.child as Opacity).opacity;
 }
 
+double _splitPresentationOpacity(WidgetTester tester, int index) {
+  final Opacity opacity = tester.widget<Opacity>(
+    find.descendant(
+      of: _layer(index),
+      matching: find.byKey(
+        const ValueKey<String>('structural-split-window-opacity'),
+      ),
+    ),
+  );
+  return opacity.opacity;
+}
+
 StructuralSequenceHandoffRole _handoffRole(
   WidgetTester tester,
   int placementIndex,
@@ -485,7 +497,8 @@ void main() {
 
       expect(_layer(0), findsOneWidget);
       expect(_layer(1), findsOneWidget);
-      expect(_layerOpacity(tester, 1), 0.0);
+      expect(_layerOpacity(tester, 1), 1.0);
+      expect(_splitPresentationOpacity(tester, 1), 0.0);
       expect(_handoffRole(tester, 0), StructuralSequenceHandoffRole.heldOutgoing);
 
       expect(
@@ -498,6 +511,7 @@ void main() {
       await tester.pump();
 
       expect(_layerOpacity(tester, 1), 1.0);
+      expect(_splitPresentationOpacity(tester, 1), 1.0);
       expect(_layer(0), findsOneWidget);
       await tester.pump();
       await _pumpUntil(tester, () => _layer(0).evaluate().isEmpty);
