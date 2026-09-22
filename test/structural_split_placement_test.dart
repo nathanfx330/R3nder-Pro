@@ -189,5 +189,14 @@ void main() {
       ),
       isTrue,
     );
+    expect(
+      splitWarnings.every(
+        (EditLintIssue issue) =>
+            issue.message.contains(
+              '${kStructuralWindowFrames * 2} frames across two neighbors',
+            ),
+      ),
+      isTrue,
+    );
   });
 }
