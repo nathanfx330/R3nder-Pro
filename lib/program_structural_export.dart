@@ -34,6 +34,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_split_window_painter.dart';
 import 'structural_shell_geometry.dart';
 import 'structural_source_export.dart';
 import 'structural_window_painter.dart';
@@ -523,30 +524,26 @@ class ProgramStructuralFrameRenderer {
       final MosaicSplitWindowGeometry? geometry = splitGeometry;
       final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
       if (placement.splitWindow && geometry != null && panes != null) {
-        for (int paneIndex = 0; paneIndex < panes.length; paneIndex++) {
-          paintStructuralWindow(
-            canvas: canvas,
-            theme: structuralTheme,
-            chromeScale: structuralChromeScale,
-            fontFamily: fontFamily,
-            sourceFrame: visual.sourceFrame,
-            sourceDurationFrames: placement.sourceDurationFrames,
-            windowTitle: placement.splitWindowTitleForPane(paneIndex),
-            overlayMode: placement.overlayMode,
-            topOverlay: placement.topOverlay,
-            bottomOverlay: placement.bottomOverlay,
-            defaultBottomOverlay: panes[paneIndex].diagnosticLabel,
-            rect: geometry.windowRects[paneIndex],
-            sourceImage: panes[paneIndex].image,
-            outgoingSourceImage: null,
-            outgoingPlacement: null,
-            outgoingSourceFrame: 0,
-            outgoingDefaultBottomOverlay: '',
-            handoffSlideT: 1.0,
-            opacity: visual.structuralOpacity,
-            windowChrome: 1.0,
-          );
-        }
+        StructuralSplitWindowPainter(
+          geometry: geometry,
+          placement: placement,
+          sourceFrame: visual.sourceFrame,
+          theme: structuralTheme,
+          fontFamily: fontFamily,
+          chromeScale: structuralChromeScale,
+          images: <ui.Image?>[
+            panes[0].image,
+            panes[1].image,
+          ],
+          diagnosticLabels: <String>[
+            panes[0].diagnosticLabel,
+            panes[1].diagnosticLabel,
+          ],
+          opacity: visual.structuralOpacity,
+        ).paint(
+          canvas,
+          Size(width.toDouble(), height.toDouble()),
+        );
       } else {
         paintStructuralWindow(
           canvas: canvas,
