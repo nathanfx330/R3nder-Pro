@@ -1,9 +1,8 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: W0 through W5 are locally verified. W6 passed its initial automated
-gate, then GUI validation exposed missing CARD traversal through a MOSAIC
-pane's nested EDIT source. The nested-source fix is implemented on
-`mosaic-w6-split-cue-routing` and awaiting local re-verification.
+Status: W0 through W5 are locally verified. W6's nested EDIT CARD fix and
+W7's post-review shape-transition/timing diagnostics are implemented on
+`mosaic-w7-shape-transition-polish` and awaiting local verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -357,19 +356,21 @@ The transition contract is:
   budget;
 - any boundary involving SPLIT is excluded from the legacy horizontal
   single-client APPSWITCH slide;
-- during a shape-change entry budget, the outgoing presentation remains seated
-  while the incoming desktop/shell stays live underneath it;
+- during a shape-change entry budget, the outgoing presentation remains as a
+  fading cover while the incoming first source frame performs the standard
+  open scale-and-fade inside the same authored budget;
 - once the budget has elapsed, incoming readiness controls only visibility. A
   late incoming split continues to advance authored source time while the
   outgoing presentation remains stationary, then both panes cut together at
   the current authored source frame after one active-ready paint.
 
-Preview implements the stationary cover with
-`StructuralSequenceHandoffRole.heldOutgoing`. BAKE applies the same rule
-synchronously: it paints the previous placement at its final source frame for
-the incoming shape-change opening budget, then cuts to the incoming
-presentation at showing time. The normal window/fullscreen APPSWITCH slide path
-is unchanged.
+W5 initially implemented a stationary outgoing cover through that budget.
+W7 keeps the same `StructuralSequenceHandoffRole.heldOutgoing` ownership and
+the same frame count, but spends those frames on visible intent: the outgoing
+final presentation fades while the incoming first source frame grows from the
+standard emergence geometry. Preview and BAKE consume the same easing helpers.
+Readiness can delay visibility but never restarts the authored progress. The
+normal window/fullscreen APPSWITCH slide path is unchanged.
 
 Proof:
 
@@ -470,6 +471,65 @@ The initial W6 gate passed with 20 tests and the documentation checker reported
 had authored CARD directly on a PANE CLIP instead of inside the nested EDIT used
 by the real project. The strengthened nested-source proofs and production fix
 must pass locally before W6 is considered complete again.
+
+### W7 - shape-transition polish and fallback timing visibility
+
+Post-review validation found two consequences that were deterministic but not
+yet author-friendly.
+
+First, the W5 split/non-split opening budget was visually a stationary hold.
+The budget itself is correct and remains exactly
+`kStructuralWindowFrames` (12 frames). W7 introduces
+`structuralShapeEntryFrameAt` and `structuralShapeOutgoingOpacity` so those
+same frames now show an intentional transition. The outgoing final presentation
+fades while the incoming first source frame opens from the standard 84%
+emergence rectangle. For SPLIT, each of the two windows applies that same
+emergence-to-seated geometry independently. No source frames, project frames,
+or readiness semantics are added.
+
+Second, SPLIT timing follows the effective rendered shape, not merely the
+authored request. If a two-pane MOSAIC becomes unsupported because a pane is
+emptied, its requested SPLIT falls back to ordinary windowed presentation.
+Inside an `APPSWITCH:SLIDE` chain that can introduce the existing 12-frame
+shape-change budget at each neighboring split/windowed boundary. A middle
+placement can therefore shift later TEXT timing by 24 frames without changing
+the MOSAIC duration. This is intentional because reserving SPLIT timing for a
+windowed fallback would make rendered geometry and timing disagree. The
+fallback lint now explains this coupling.
+
+Proof:
+
+- `test/structural_shell_geometry_test.dart` pins the shared entry geometry,
+  fade, and readiness-only opacity gate;
+- `test/program_preview_structural_split_transition_test.dart` proves visible
+  window-to-split and split-to-window motion in Program Preview while preserving
+  delayed-readiness behavior;
+- `test/program_structural_split_transition_bake_test.dart` proves the same
+  two directions in BAKE with pixel probes for both outgoing and incoming
+  presentations;
+- `test/structural_split_transition_plan_test.dart` pins the two-boundary
+  24-frame fallback shift without changing source duration;
+- `test/structural_split_placement_test.dart` pins the warning text that
+  exposes the timing consequence.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/structural_shell_geometry_test.dart \
+  test/structural_split_transition_plan_test.dart \
+  test/program_preview_structural_split_transition_test.dart \
+  test/program_structural_split_transition_bake_test.dart \
+  test/structural_split_placement_test.dart \
+  test/structural_split_cue_policy_test.dart \
+  test/structural_split_card_preview_test.dart \
+  test/program_structural_split_card_bake_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+W7 does not change the 12-frame authored budget. It changes only how those
+frames are presented and makes fallback-induced timing changes explicit.
 
 ## Non-goals
 
