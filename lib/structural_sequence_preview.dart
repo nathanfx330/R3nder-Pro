@@ -543,6 +543,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               stage == StructuralSequenceStage.opening;
           double presentationOpacity = structuralOpacity;
           double splitEntryProgress = 1.0;
+          double? splitExitProgress;
+          if (placement.splitWindow) {
+            if (stage == StructuralSequenceStage.opening) {
+              splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
+            } else if (stage == StructuralSequenceStage.closing) {
+              splitExitProgress = linear.clamp(0.0, 1.0).toDouble();
+            }
+          }
           if (splitShapeEntry) {
             final StructuralShapeEntryFrame entry =
                 structuralShapeEntryFrameAt(
@@ -551,7 +559,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               contentReady: _firstFrameReady,
             );
             presentationOpacity = entry.opacity;
-            splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
             if (!placement.splitWindow) {
               structuralRect = entry.rect;
             }
@@ -719,6 +726,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                               : 'monospace',
                       chromeScale: chromeScale,
                       entryProgress: splitEntryProgress,
+                      exitProgress: splitExitProgress,
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       backend: widget.backend,
