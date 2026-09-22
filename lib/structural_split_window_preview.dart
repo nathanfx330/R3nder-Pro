@@ -189,6 +189,7 @@ class _StructuralSplitWindowPreviewState
       }
       _render(size);
     });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _render(ui.Size paneSize) async {
