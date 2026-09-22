@@ -1,7 +1,9 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: implemented and locally verified. W0 through W6 passed their local
-Flutter gates on `mosaic-w6-split-cue-routing`.
+Status: W0 through W5 are locally verified. W6 passed its initial automated
+gate, then GUI validation exposed missing CARD traversal through a MOSAIC
+pane's nested EDIT source. The nested-source fix is implemented on
+`mosaic-w6-split-cue-routing` and awaiting local re-verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -408,13 +410,16 @@ W6 makes cue ownership match the split presentation surface rather than the
 legacy Metro MOSAIC rectangle.
 
 For CARD, `structuralCardOverlayPlacementsForMosaicPane` evaluates one authored
-pane at source time and remaps that pane to a complete 0..1 split client. Both
-live `StructuralSplitWindowPreview` and whole-program BAKE composite the
-result over the decoded pane image before `StructuralSplitWindowPainter`
-receives it. The shared `compositeStructuralCardOverlaysToImage` helper keeps
-the actual CARD face painting identical in Preview and BAKE. A CARD authored in
-PANE 2 therefore cannot paint into PANE 1 merely because the reusable MOSAIC's
-legacy layout rectangle was wider or differently positioned.
+pane at source time and remaps that pane to a complete 0..1 split client. It
+also follows structural CLIPs recursively, which is the normal authored
+topology when a MOSAIC pane points at `EDIT.foo` and the CARD lives on a media
+CLIP inside that EDIT. Parent AT, IN, and rational speed map the pane frame to
+the exact nested source frame before CARD timing is evaluated. Nested MOSAIC
+geometry is retained inside the owning split client. Both live
+`StructuralSplitWindowPreview` and whole-program BAKE composite the result
+over the decoded pane image before `StructuralSplitWindowPainter` receives
+it. The shared `compositeStructuralCardOverlaysToImage` helper keeps the
+actual CARD face painting identical in Preview and BAKE.
 
 SIDECARD and MAXIMIZE remain authored cue types, but an effective SPLIT
 placement does not promote either cue into the outer structural shell. Preview
@@ -431,15 +436,16 @@ throw.
 
 Proof:
 
-- `test/structural_split_cue_policy_test.dart` proves pane-local CARD
-  ownership, full-client remapping, both warning codes, and ordinary-window
-  behavior for unsupported SPLIT fallback;
-- `test/structural_split_card_preview_test.dart` proves live Preview paints a
-  right-pane CARD only into the right split client and does not mount or
-  rasterize SIDECARD;
-- `test/program_structural_split_card_bake_test.dart` proves final BAKE has the
-  same CARD ownership and contains no SIDECARD panel pixels while retaining
-  both underlying pane images.
+- `test/structural_split_cue_policy_test.dart` proves nested EDIT CARD
+  ownership, parent AT/IN/speed frame projection, both warning codes through
+  nested structural sources, and ordinary-window behavior for unsupported
+  SPLIT fallback;
+- `test/structural_split_card_preview_test.dart` uses the real
+  MOSAIC -> EDIT -> media topology and proves live Preview paints a right-pane
+  CARD only into the right split client while suppressing nested SIDECARD;
+- `test/program_structural_split_card_bake_test.dart` uses the same nested
+  topology and proves final BAKE has identical CARD ownership and no SIDECARD
+  panel pixels while retaining both underlying pane images.
 
 Verification gate:
 
@@ -459,8 +465,11 @@ flutter test \
 dart run tool/check_doc_contracts.dart
 ```
 
-W6 passed locally with 20 tests. The documentation checker reported
-16 contracts / 90 proof files. The MOSAIC two-window v1 milestone is complete.
+The initial W6 gate passed with 20 tests and the documentation checker reported
+16 contracts / 90 proof files. GUI validation then found that those fixtures
+had authored CARD directly on a PANE CLIP instead of inside the nested EDIT used
+by the real project. The strengthened nested-source proofs and production fix
+must pass locally before W6 is considered complete again.
 
 ## Non-goals
 
