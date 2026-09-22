@@ -25,6 +25,43 @@ class _PaneColorBackend implements MediaDecoderBackend {
   }
 }
 
+class _RecordingSizeBackend implements MediaDecoderBackend {
+  final List<Size> sizes = <Size>[];
+
+  @override
+  MediaDecoder open(String resolvedPath) =>
+      _RecordingSizeDecoder(sizes);
+}
+
+class _RecordingSizeDecoder implements MediaDecoder {
+  _RecordingSizeDecoder(this.sizes);
+
+  final List<Size> sizes;
+
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    sizes.add(Size(width.toDouble(), height.toDouble()));
+    final Uint8List rgba = Uint8List(width * height * 4);
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 80;
+      rgba[i + 1] = 160;
+      rgba[i + 2] = 220;
+      rgba[i + 3] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void dispose() {}
+}
+
 class _SolidColorDecoder implements MediaDecoder {
   _SolidColorDecoder(this.color);
 
@@ -51,6 +88,140 @@ class _SolidColorDecoder implements MediaDecoder {
 }
 
 void main() {
+  testWidgets(
+    'moving MAX split caps pane decode to EDIT fast-preview pixel budget',
+    (WidgetTester tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1280, 720);
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+
+      const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:OVERLAY=NONE]
+''';
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final _RecordingSizeBackend backend = _RecordingSizeBackend();
+      bool ready = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 1280,
+            height: 720,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: 0,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: true,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0; attempt < 50 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+      }
+
+      expect(ready, isTrue);
+      expect(backend.sizes, isNotEmpty);
+      expect(
+        backend.sizes.where((Size size) => size == const Size(480, 270)).length,
+        greaterThanOrEqualTo(2),
+      );
+
+      final CustomPaint movingPaint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter movingPainter =
+          movingPaint.painter! as StructuralSplitWindowPainter;
+      expect(
+        movingPainter.geometry.clientSize,
+        const Size(640, 360),
+      );
+      expect(movingPainter.images[0]!.width, 480);
+      expect(movingPainter.images[0]!.height, 270);
+
+      ready = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 1280,
+            height: 720,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: 0,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: false,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0; attempt < 50; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+        final CustomPaint paint = tester.widget<CustomPaint>(
+          find.byKey(
+            const ValueKey<String>('structural-split-window-frame'),
+          ),
+        );
+        final StructuralSplitWindowPainter painter =
+            paint.painter! as StructuralSplitWindowPainter;
+        if (painter.images[0]?.width == 640 &&
+            painter.images[0]?.height == 360) {
+          break;
+        }
+      }
+
+      final CustomPaint parkedPaint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter parkedPainter =
+          parkedPaint.painter! as StructuralSplitWindowPainter;
+      expect(parkedPainter.geometry.clientSize, const Size(640, 360));
+      expect(parkedPainter.images[0]!.width, 640);
+      expect(parkedPainter.images[0]!.height, 360);
+      expect(
+        backend.sizes.where((Size size) => size == const Size(640, 360)).length,
+        greaterThanOrEqualTo(2),
+      );
+    },
+  );
+
   testWidgets(
     'seated split Preview uses shared painter with both compositor pane images',
     (WidgetTester tester) async {
