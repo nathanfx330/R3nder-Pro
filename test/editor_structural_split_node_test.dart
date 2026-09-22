@@ -111,8 +111,18 @@ void main() {
       contains('[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]'),
     );
 
+    // The aspect dropdown sits below the presentation toggles. On the real
+    // inspector-sized test viewport, bringing it into view can lazily unbuild
+    // the earlier FULL SCREEN row. Scroll the properties panel back upward
+    // before exercising the reciprocal FULL -> clears SPLIT contract.
+    await tester.drag(
+      find.byType(Scrollable).last,
+      const Offset(0, 500),
+    );
+    await tester.pumpAndSettle();
+
     final Finder fullScreen = find.text('FULL SCREEN');
-    await tester.ensureVisible(fullScreen);
+    expect(fullScreen, findsOneWidget);
     await tester.tap(fullScreen);
     await tester.pump();
 
