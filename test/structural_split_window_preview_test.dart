@@ -179,7 +179,7 @@ void main() {
   );
 
   testWidgets(
-    'MAX split Preview uses edge-to-edge geometry and ignores dormant aspect',
+    'MAX split Preview fills horizontal halves without a tall 16X9 client',
     (WidgetTester tester) async {
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(640, 360);
@@ -198,7 +198,7 @@ void main() {
 [/CLIP]
 [/PANE]
 [/MOSAIC]
-[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=9X16:OVERLAY=NONE]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:OVERLAY=NONE]
 ''';
 
       const double outputWidth = 640;
@@ -208,7 +208,7 @@ void main() {
       expect(placement.maximizeSplit, isTrue);
       expect(
         placement.splitClientAspect,
-        MosaicSplitClientAspect.aspect9x16,
+        MosaicSplitClientAspect.aspect16x9,
       );
 
       final _PaneColorBackend backend = _PaneColorBackend();
@@ -253,14 +253,22 @@ void main() {
       expect(painter.geometry.maximized, isTrue);
       expect(
         painter.geometry.leftWindowRect,
-        const Rect.fromLTWH(0, 0, 320, 360),
+        const Rect.fromLTWH(0, 71, 320, 218),
       );
       expect(
         painter.geometry.rightWindowRect,
-        const Rect.fromLTWH(320, 0, 320, 360),
+        const Rect.fromLTWH(320, 71, 320, 218),
       );
       expect(painter.geometry.gap, 0.0);
       expect(painter.geometry.edgeMargin, 0.0);
+      expect(
+        painter.geometry.clientSize,
+        const Size(320, 180),
+      );
+      expect(
+        painter.geometry.leftClientRect,
+        const Rect.fromLTWH(0, 109, 320, 180),
+      );
     },
   );
 }
