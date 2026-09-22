@@ -724,6 +724,75 @@ remains the current half-width-first behavior. If portrait MAX is revisited,
 the decision should be made as a visible window-design choice rather than by
 changing contain fitting or decoder behavior.
 
+## Rocky Linux cold-entry readiness investigation
+
+After W0-W8 were merged and exercised on Ubuntu, Rocky Linux exposed a
+platform-sensitive Preview failure: a cold two-window placement could skip the
+visible open-scale/fade and appear only after the authored opening budget had
+already elapsed. The geometry itself was correct once resident.
+
+The cause was in live split readiness polling, not authored timing.
+`StructuralSplitWindowPreview._render` uses the compositor's nonblocking pane
+path while playback is moving. When either pane reported a pending leaf decode,
+the method returned immediately. Source frame zero remains clamped throughout a
+normal STRUCT opening, and opening progress alone does not require a pane
+re-render. On a slower native decoder, no later source-frame/widget change was
+guaranteed before showing began, so the pending decoder could simply stop being
+polled during the exact frames in which the window should have become visible.
+
+The fix schedules another render through the widget's existing coalesced
+post-frame scheduler before returning from the pending branch. This is a
+presentation-readiness retry only:
+
+- project time does not advance;
+- source time does not advance;
+- authored entry progress is not restarted or extended;
+- both panes must resolve before the pair is exposed;
+- decoder/compositor instances remain resident and are reused;
+- retries stop after the request resolves;
+- disposal invalidates outstanding work through the existing mounted/serial
+  guards.
+
+This does not promise that arbitrarily slow decoding can always complete inside
+the authored 12-frame opening. A genuinely late decoder can still become ready
+after the authored budget. The fix removes the accidental missing poll; it does
+not retime the presentation around decoder latency.
+
+The Program Preview regression uses two genuine
+`NonBlockingMediaDecoder` fakes at a partial authored opening frame while
+source frame remains zero. The left pane follows a nested MOSAIC -> EDIT -> media
+path, the right pane is direct media. Releasing the left decoder alone must keep
+the presentation hidden. Releasing the right decoder without changing project
+frame, source frame, repaint state, or widget input must make both pane images
+resident at the already-authored partial entry progress and opacity. The test
+also proves requests remain on source frame zero, decoder instances are reused,
+and polling stops after readiness. The same boundary runs for ordinary SPLIT
+and SPLIT:MAX.
+
+BAKE has no equivalent pending-poll seam. `ProgramStructuralFrameRenderer`
+renders split panes through the blocking exact compositor path, then passes
+authored opening/closing progress and shell opacity into the shared
+`StructuralSplitWindowPainter`. The BAKE regression is nevertheless expanded
+to ordinary SPLIT and SPLIT:MAX so early opening, middle opening, seated, and
+closing frames prove both colored panes grow/shrink correctly. Because final
+program output is opaque, fade is proved by increasing dominant pane color over
+the desktop rather than by output alpha.
+
+Focused verification gate:
+
+```bash
+flutter test \
+  test/program_preview_structural_split_transition_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/structural_split_window_preview_test.dart \
+  test/program_structural_split_transition_bake_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+The code and regressions on `fix-split-preview-entry-readiness` remain
+unverified until this gate and a cold Rocky Preview/BAKE visual check pass.
+
 ## Non-goals
 
 This milestone does not change MOSAIC Trim to shortest. In particular,
