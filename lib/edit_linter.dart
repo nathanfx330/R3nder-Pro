@@ -205,6 +205,114 @@ class EditGraphLinter {
       }
     }
 
+    void lintSplitCueClip(
+      EditClip clip, {
+      required StructuralSourceRef splitRoot,
+      required String splitPaneId,
+      required List<String> nestedPath,
+      required Set<StructuralSourceRef> path,
+    }) {
+      bool hasSideCard = false;
+      bool hasMaximize = false;
+      try {
+        hasSideCard = parseClipCardCues(clip).any(
+          (EditCardCue cue) => cue.card is SideCardRequest,
+        );
+      } catch (_) {
+        // Malformed cue syntax belongs to the cue/script lint layer.
+      }
+      try {
+        hasMaximize = parseClipMaximizeCues(clip).isNotEmpty;
+      } catch (_) {
+        // Malformed cue syntax belongs to the cue/script lint layer.
+      }
+
+      final List<String> issuePath = <String>[
+        'STRUCT',
+        splitRoot.canonicalSource,
+        'PANE.$splitPaneId',
+        ...nestedPath,
+        clip.id,
+      ];
+
+      if (hasSideCard) {
+        emit(
+          EditLintIssue(
+            code: EditLintCode.unsupportedSplitSideCard,
+            severity: EditLintSeverity.warning,
+            message: 'SIDECARD reachable from PANE "$splitPaneId" is not '
+                'supported by STRUCT ${splitRoot.canonicalSource} SPLIT v1 '
+                'and will not paint.',
+            editPath: issuePath,
+          ),
+        );
+      }
+
+      if (hasMaximize) {
+        emit(
+          EditLintIssue(
+            code: EditLintCode.unsupportedSplitMaximize,
+            severity: EditLintSeverity.warning,
+            message: 'MAXIMIZE reachable from PANE "$splitPaneId" is not '
+                'supported by STRUCT ${splitRoot.canonicalSource} SPLIT v1 '
+                'and will not paint.',
+            editPath: issuePath,
+          ),
+        );
+      }
+
+      final StructuralSourceRef? nested =
+          StructuralSourceRef.tryParse(clip.source);
+      if (nested == null ||
+          nested.id.isEmpty ||
+          !document.containsStructuralSource(nested) ||
+          path.contains(nested)) {
+        return;
+      }
+
+      final Set<StructuralSourceRef> nestedSet =
+          <StructuralSourceRef>{...path, nested};
+      switch (nested.kind) {
+        case StructuralSourceKind.edit:
+          final EditSequence edit = document.edit(nested.id);
+          for (final EditTrack track in edit.tracks) {
+            for (final EditClip child in track.clips) {
+              lintSplitCueClip(
+                child,
+                splitRoot: splitRoot,
+                splitPaneId: splitPaneId,
+                nestedPath: <String>[
+                  ...nestedPath,
+                  nested.canonicalSource,
+                  'TRACK.${track.id}',
+                ],
+                path: nestedSet,
+              );
+            }
+          }
+          break;
+
+        case StructuralSourceKind.mosaic:
+          final MosaicSequence mosaic = document.mosaic(nested.id);
+          for (final MosaicPane pane in mosaic.panes) {
+            for (final EditClip child in pane.clips) {
+              lintSplitCueClip(
+                child,
+                splitRoot: splitRoot,
+                splitPaneId: splitPaneId,
+                nestedPath: <String>[
+                  ...nestedPath,
+                  nested.canonicalSource,
+                  'PANE.${pane.id}',
+                ],
+                path: nestedSet,
+              );
+            }
+          }
+          break;
+      }
+    }
+
     for (final StructuralSequencePlacement placement
         in parseStructuralSequencePlacements(document.cst.source)) {
       if (!placement.splitWindow) continue;
@@ -218,54 +326,13 @@ class EditGraphLinter {
       final MosaicSequence mosaic = document.mosaic(ref.id);
       for (final MosaicPane pane in mosaic.panes) {
         for (final EditClip clip in pane.clips) {
-          bool hasSideCard = false;
-          bool hasMaximize = false;
-          try {
-            hasSideCard = parseClipCardCues(clip).any(
-              (EditCardCue cue) => cue.card is SideCardRequest,
-            );
-          } catch (_) {
-            // Malformed cue syntax belongs to the cue/script lint layer.
-          }
-          try {
-            hasMaximize = parseClipMaximizeCues(clip).isNotEmpty;
-          } catch (_) {
-            // Malformed cue syntax belongs to the cue/script lint layer.
-          }
-
-          if (hasSideCard) {
-            emit(
-              EditLintIssue(
-                code: EditLintCode.unsupportedSplitSideCard,
-                severity: EditLintSeverity.warning,
-                message: 'SIDECARD in PANE "${pane.id}" is not supported by '
-                    'STRUCT ${ref.canonicalSource} SPLIT v1 and will not paint.',
-                editPath: <String>[
-                  'STRUCT',
-                  ref.canonicalSource,
-                  'PANE.${pane.id}',
-                  clip.id,
-                ],
-              ),
-            );
-          }
-
-          if (hasMaximize) {
-            emit(
-              EditLintIssue(
-                code: EditLintCode.unsupportedSplitMaximize,
-                severity: EditLintSeverity.warning,
-                message: 'MAXIMIZE in PANE "${pane.id}" is not supported by '
-                    'STRUCT ${ref.canonicalSource} SPLIT v1 and will not paint.',
-                editPath: <String>[
-                  'STRUCT',
-                  ref.canonicalSource,
-                  'PANE.${pane.id}',
-                  clip.id,
-                ],
-              ),
-            );
-          }
+          lintSplitCueClip(
+            clip,
+            splitRoot: ref,
+            splitPaneId: pane.id,
+            nestedPath: const <String>[],
+            path: <StructuralSourceRef>{ref},
+          );
         }
       }
     }
