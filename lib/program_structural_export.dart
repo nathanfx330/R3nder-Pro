@@ -371,19 +371,20 @@ class ProgramStructuralFrameRenderer {
     final StructuralSequenceStage stage = placement.stageAt(localFrame);
     final StructuralSequencePlacement? splitBoundaryPrevious =
         _splitBoundaryPrevious(marker, placement);
-    final bool holdPreviousForSplitShapeChange =
+    final bool splitShapeEntry =
         splitBoundaryPrevious != null &&
         splitBoundaryPrevious.presentationShape != placement.presentationShape &&
         stage == StructuralSequenceStage.opening;
-    final StructuralSequencePlacement displayPlacement =
-        holdPreviousForSplitShapeChange
-            ? splitBoundaryPrevious!
-            : placement;
-    final int heldOutgoingSourceFrame = holdPreviousForSplitShapeChange
-        ? displayPlacement.sourceFrameAt(
-            math.max(0, displayPlacement.effectiveDurationFrames - 1),
-          )
-        : 0;
+    final StructuralSequencePlacement displayPlacement = placement;
+    final StructuralSequencePlacement? shapeOutgoingPlacement =
+        splitShapeEntry ? splitBoundaryPrevious : null;
+    final int shapeOutgoingSourceFrame = shapeOutgoingPlacement == null
+        ? 0
+        : shapeOutgoingPlacement.sourceFrameAt(
+            math.max(0, shapeOutgoingPlacement.effectiveDurationFrames - 1),
+          );
+    final double shapeEntryLinear =
+        splitShapeEntry ? placement.stageProgressAt(localFrame) : 1.0;
     final bool closing = stage == StructuralSequenceStage.closing;
     final StructuralDossierOverlayPlacement? truncatedDossier =
         closing ? _dossierAtSourceEnd(placement) : null;
@@ -411,9 +412,7 @@ class ProgramStructuralFrameRenderer {
 
     final _StructuralBakeHandoff? handoff =
         _handoffFor(marker, placement, visual.sourceFrame);
-    final int displaySourceFrame = holdPreviousForSplitShapeChange
-        ? heldOutgoingSourceFrame
-        : visual.sourceFrame;
+    final int displaySourceFrame = visual.sourceFrame;
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
@@ -484,8 +483,7 @@ class ProgramStructuralFrameRenderer {
         );
         defaultBottomOverlay = _cachedDiagnosticLabel;
 
-        final _StructuralBakeHandoff? activeHandoff =
-            holdPreviousForSplitShapeChange ? null : handoff;
+        final _StructuralBakeHandoff? activeHandoff = handoff;
         if (activeHandoff != null) {
           final StructuralSequencePlacement outgoing =
               activeHandoff.outgoingPlacement;
@@ -500,6 +498,62 @@ class ProgramStructuralFrameRenderer {
         }
       }
     }
+
+    ui.Image? shapeOutgoingSourceImage;
+    MosaicSplitWindowGeometry? shapeOutgoingSplitGeometry;
+    List<_RenderedStructuralSourceImage>? shapeOutgoingSplitPaneImages;
+    String shapeOutgoingDefaultBottomOverlay = '';
+    final StructuralSequencePlacement? outgoingShape = shapeOutgoingPlacement;
+    if (outgoingShape != null) {
+      if (outgoingShape.splitWindow) {
+        final double engineWidth =
+            scene.width > 0.0 ? scene.width : width.toDouble();
+        final double chromeScale =
+            scene.terminal.scale * width.toDouble() / engineWidth;
+        final double titleHeight = 38.0 * chromeScale;
+        shapeOutgoingSplitGeometry = mosaicSplitWindowGeometry(
+          frame: Rect.fromLTWH(
+            0,
+            0,
+            width.toDouble(),
+            height.toDouble(),
+          ),
+          aspect: outgoingShape.splitClientAspect,
+          titleHeight: titleHeight,
+        );
+        final int paneWidth = math.max(
+          1,
+          shapeOutgoingSplitGeometry.clientSize.width.round(),
+        );
+        final int paneHeight = math.max(
+          1,
+          shapeOutgoingSplitGeometry.clientSize.height.round(),
+        );
+        shapeOutgoingSplitPaneImages = <_RenderedStructuralSourceImage>[];
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          shapeOutgoingSplitPaneImages.add(
+            await _renderSplitPaneFrameImage(
+              outgoingShape.sourceRef.canonicalSource,
+              paneIndex,
+              shapeOutgoingSourceFrame,
+              paneWidth,
+              paneHeight,
+              fontFamily,
+            ),
+          );
+        }
+      } else {
+        final _RenderedStructuralSourceImage renderedOutgoing =
+            await _renderSourceFrameImage(
+          outgoingShape.sourceRef.canonicalSource,
+          shapeOutgoingSourceFrame,
+          fontFamily,
+        );
+        shapeOutgoingSourceImage = renderedOutgoing.image;
+        shapeOutgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+      }
+    }
+
     if (dossier != null) {
       await _dossierImages.ensure(dossier);
     } else if (sideCard != null) {
