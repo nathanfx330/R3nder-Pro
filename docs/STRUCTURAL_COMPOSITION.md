@@ -121,9 +121,12 @@ both call `paintStructuralWindow` from
 `lib/structural_window_painter.dart`, making the W1 geometry plus one shared
 window raster painter the Preview/BAKE parity boundary.
 
-`test/structural_split_window_preview_test.dart` captures the live split raster
-and compares its seated window interiors directly with BAKE. The W4 native
-addition to `test/structural_source_export_native_test.dart` separately sends
+`test/structural_split_window_preview_test.dart` proves the live seated
+surface owns both compositor pane images at the W1 raster size and mounts the
+same `StructuralSplitWindowPainter` that Program BAKE invokes. This avoids
+RepaintBoundary readback as a parity mechanism while making the production
+painter identity explicit. The W4 native addition to
+`test/structural_source_export_native_test.dart` separately sends
 an edge-marked circular 16:9 fixture through the actual Linux MLT bridge into a
 4:3 pane request to detect crop or stretch. W5 still owns split transition and
 delayed-readiness choreography; W6 owns pane CARD routing and unsupported
