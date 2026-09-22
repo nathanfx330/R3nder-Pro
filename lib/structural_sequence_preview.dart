@@ -94,6 +94,7 @@ enum StructuralSequenceHandoffRole {
   none,
   incoming,
   outgoing,
+  heldOutgoing,
 }
 
 class StructuralSequencePreview extends StatefulWidget {
@@ -414,7 +415,8 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
     final bool externalOutgoing =
-        widget.handoffRole == StructuralSequenceHandoffRole.outgoing;
+        widget.handoffRole == StructuralSequenceHandoffRole.outgoing ||
+        widget.handoffRole == StructuralSequenceHandoffRole.heldOutgoing;
 
     return ColoredBox(
       color: externalOutgoing ? Colors.transparent : Colors.black,
@@ -1102,7 +1104,9 @@ class _StructuralWindow extends StatelessWidget {
         handoffRole == StructuralSequenceHandoffRole.incoming;
     final bool externalOutgoing =
         handoffRole == StructuralSequenceHandoffRole.outgoing;
-    final bool overlayOnly = externalOutgoing;
+    final bool heldOutgoing =
+        handoffRole == StructuralSequenceHandoffRole.heldOutgoing;
+    final bool overlayOnly = externalOutgoing || heldOutgoing;
 
     final StructuralOverlayMode visibleOverlayMode =
         showingCover ? outgoingOverlayMode : overlayMode;
