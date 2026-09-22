@@ -7,6 +7,7 @@
 
 import 'parser.dart';
 import 'script_cst.dart';
+import 'mosaic_split_geometry.dart';
 import 'structural_chrome.dart';
 
 // =====================================================================
