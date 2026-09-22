@@ -172,6 +172,7 @@ A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/su
 - `test/structural_split_placement_test.dart`
 - `test/mosaic_split_geometry_test.dart`
 - `test/structural_split_window_preview_test.dart`
+- `test/structural_split_transition_plan_test.dart`
 
 ---
 
@@ -224,6 +225,7 @@ Decode readiness may delay when an incoming structural source is exposed, but it
 - `test/program_preview_structural_late_handoff_test.dart`
 - `test/program_preview_structural_split_test.dart`
 - `test/program_preview_structural_raster_handoff_test.dart`
+- `test/program_preview_structural_split_transition_test.dart`
 - `test/program_structural_audio_test.dart`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_GATE.md`
 - `docs/M18_STRUCT_APP_SWITCH_VISUAL_FIXTURE.txt`
@@ -260,6 +262,7 @@ SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer 
 - `test/scene_exporter_structural_chrome_end_to_end_test.dart`
 - `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
 - `test/program_structural_split_bake_test.dart`
+- `test/program_structural_split_transition_bake_test.dart`
 
 ---
 
