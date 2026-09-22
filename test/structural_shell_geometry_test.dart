@@ -2,6 +2,7 @@
 
 import 'dart:ui';
 
+import 'package:flutter/animation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/structural_shell_geometry.dart';
@@ -56,7 +57,10 @@ void main() {
     expect(middle.rect.width, greaterThan(emergence.width));
     expect(middle.rect.width, lessThan(presentation.width));
     expect(middle.opacity, greaterThan(0.0));
-    expect(structuralShapeOutgoingOpacity(0.5), closeTo(0.5, 1e-9));
+    expect(
+      structuralShapeOutgoingOpacity(0.5),
+      closeTo(1.0 - Curves.easeInOutCubic.transform(0.5), 1e-9),
+    );
 
     final StructuralShapeEntryFrame last = structuralShapeEntryFrameAt(
       targetRect: presentation,
