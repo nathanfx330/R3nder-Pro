@@ -107,9 +107,15 @@ void main() {
     'BAKE paints supported SPLIT MOSAIC panes as independent clients',
     () async {
       const String source = '''[SPEED:MAX]
+[EDIT:left_source]
+[TRACK:V1]
+[CLIP:red:red.mp4:0:0:6:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
 [MOSAIC:wall]
 [PANE:left]
-[CLIP:red:red.mp4:0:0:6:1]
+[CLIP:nested:EDIT.left_source:0:0:6:1]
 [/CLIP]
 [/PANE]
 [PANE:right]
@@ -230,7 +236,7 @@ void main() {
       final double chromeScale =
           scene.terminal.scale * outputWidth / scene.width;
       final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
-        frame: const Rect.fromLTWH(
+        frame: Rect.fromLTWH(
           0,
           0,
           outputWidth.toDouble(),
