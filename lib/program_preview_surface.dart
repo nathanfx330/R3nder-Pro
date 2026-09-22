@@ -80,6 +80,14 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPaintedPlacements = <int>{};
   final Set<int> _readyPaintCommitScheduled = <int>{};
 
+  /// Placements that became active before their preload had resolved.
+  ///
+  /// Early-ready placements retain the outgoing client for the complete
+  /// authored APPSWITCH slide. Late-ready placements instead retain it only
+  /// until one active-ready paint has completed, then release the cover
+  /// without restarting or delaying authored source time.
+  final Set<int> _lateReadyActivePlacements = <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +111,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       _mountedPlacements.clear();
       _readyPaintedPlacements.clear();
       _readyPaintCommitScheduled.clear();
+      _lateReadyActivePlacements.clear();
     }
   }
 
@@ -282,8 +291,13 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
+          if (placement.seamlessFromPrevious && !activeReady) {
+            _lateReadyActivePlacements.add(activeIndex);
+          }
           final bool activeReadyPainted =
               _readyPaintedPlacements.contains(activeIndex);
+          final bool lateReadyActive =
+              _lateReadyActivePlacements.contains(activeIndex);
           final int activeSourceFrame =
               placement.sourceFrameAt(activeLocalFrame);
 
@@ -326,7 +340,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             fallbackIndex = previousIndex;
             fallbackPlacement = previousPlacement;
             fallbackIsHeldSplit = true;
-          } else if (handoffWindowOpen && previousCanHandoff) {
+          } else if (handoffWindowOpen &&
+              previousCanHandoff &&
+              (!lateReadyActive || !activeReadyPainted)) {
             fallbackIndex = previousIndex;
             fallbackPlacement = previousPlacement;
           }
@@ -379,6 +395,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           (int index) => !nextMounted.contains(index),
         );
         _readyPaintedPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _lateReadyActivePlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
         _mountedPlacements
