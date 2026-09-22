@@ -753,10 +753,33 @@ presentation-readiness retry only:
 - disposal invalidates outstanding work through the existing mounted/serial
   guards.
 
-This does not promise that arbitrarily slow decoding can always complete inside
-the authored 12-frame opening. A genuinely late decoder can still become ready
-after the authored budget. The fix removes the accidental missing poll; it does
-not retime the presentation around decoder latency.
+The first polling repair deliberately did not retime presentation around decoder
+latency. Rocky visual validation then proved that limitation was still visible
+in the product: BAKE rendered the complete open-scale/fade correctly, but live
+TEXT playback could consume part of the 12-frame opening while native video was
+still becoming resident, and dashboard PREVIEW could consume the entire opening
+before the pair was ready.
+
+That established a second live-only contract. Decode latency is wall-clock work,
+not authored project time. For monotonic live playback, a cold structural
+opening now reports buffering to its transport owner. The owner holds project
+time at the beginning of the authored window-opening stage, shows the existing
+busy indicator, and resumes from that same project frame only after readiness.
+If the readiness report is first observed a few opening frames late, the live
+scene is restored to opening frame zero before the hold. No project frames are
+inserted, source time remains frame zero during the hold, and BAKE is unchanged.
+
+TEXT applies the same rule to its fallback stopwatch transport. While buffering,
+the stopwatch is stopped and any workspace bed/music transport is stopped. Once
+the structural frame is resident, the stopwatch is re-anchored to the held
+project frame and the workspace mix restarts from that same program time. This
+removes the Rocky-only visible frame skip without changing authored duration.
+
+The current hold is intentionally not applied while STRUCT clip audio owns the
+native AUDIO ProjectClock. That transport requires coordinated sink pause/resume
+rather than a unilateral SCRUB seek; the Rocky script that exposed this issue
+does not author STRUCT clip audio. AUDIO-authority buffering remains a separate
+transport extension rather than risking picture/audio divergence.
 
 The Program Preview regression uses two genuine
 `NonBlockingMediaDecoder` fakes at a partial authored opening frame while
@@ -840,8 +863,10 @@ Proof is split across two levels:
   ordinary `STRUCT:MOSAIC...:AUDIO` opening path and proves first-frame
   readiness is reached with the same nested EDIT and same pane CLIP id.
 
-The code and regressions on `fix-split-preview-entry-readiness` remain
-unverified until the expanded local gate and visual checks pass.
+Ubuntu previously passed the expanded local gate and visual checks. Rocky then
+confirmed BAKE itself is correct and exposed the remaining live transport
+readiness gap described above. The updated live buffering behavior remains
+unverified until the focused tests and Rocky TEXT/PREVIEW visual checks pass.
 
 ## Non-goals
 
