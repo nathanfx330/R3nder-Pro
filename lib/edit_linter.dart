@@ -202,7 +202,7 @@ class EditGraphLinter {
     }
 
     for (final StructuralSequencePlacement placement
-        in parseStructuralSequencePlacements(document.source)) {
+        in parseStructuralSequencePlacements(document.cst.source)) {
       if (!placement.splitWindowRequested || placement.splitWindowSupported) {
         continue;
       }
