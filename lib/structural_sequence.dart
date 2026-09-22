@@ -14,6 +14,8 @@
 //   [STRUCT:MOSAIC.wall]
 //   [STRUCT:MOSAIC.wall:FULL]
 //   [STRUCT:MOSAIC.wall:AUDIO]
+//   [STRUCT:MOSAIC.wall:SPLIT]
+//   [STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
 //
 // Window title, informational player overlays, and clip-audio intent are
 // placement-owned for the same reason. They are parsed from STRUCT tail
@@ -32,6 +34,7 @@
 import 'package:flutter/animation.dart';
 
 import 'edit_model.dart';
+import 'mosaic_split_geometry.dart';
 import 'scene_engine.dart';
 import 'script_cst.dart';
 import 'structural_chrome.dart';
@@ -237,6 +240,17 @@ class StructuralSequencePlacement {
   /// Placement presentation, independent of EDIT/MOSAIC composition.
   final StructuralPresentationMode presentationMode;
 
+  /// Authored request for the two-window MOSAIC presentation. The request is
+  /// preserved even when the current source is unsupported so lint can explain
+  /// the ordinary-window fallback without destroying authored intent.
+  final bool splitWindowRequested;
+
+  /// True only for a MOSAIC with exactly two panes, both populated.
+  final bool splitWindowSupported;
+
+  /// One shared authored client aspect for both split windows.
+  final MosaicSplitClientAspect splitClientAspect;
+
   /// Placement-owned intent to play audio belonging to clips in this source.
   /// Workspace voice and music beds are separate authored systems.
   final bool clipAudio;
@@ -271,6 +285,9 @@ class StructuralSequencePlacement {
     required this.sourceDurationFrames,
     required this.durationFrames,
     this.presentationMode = StructuralPresentationMode.windowed,
+    this.splitWindowRequested = false,
+    this.splitWindowSupported = false,
+    this.splitClientAspect = MosaicSplitClientAspect.aspect16x9,
     this.clipAudio = false,
     this.overlayMode = StructuralOverlayMode.defaultOverlay,
     this.windowTitle = '',
@@ -286,8 +303,23 @@ class StructuralSequencePlacement {
   bool get resolves => sourceDurationFrames > 0;
   bool get fullscreen =>
       presentationMode == StructuralPresentationMode.fullscreen;
+
+  /// Effective split mode. Unsupported authored requests deliberately render as
+  /// the existing ordinary windowed presentation until the source is repaired.
+  bool get splitWindow => splitWindowRequested && splitWindowSupported;
+
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
+
+  /// Stable split titles follow the existing placement title convention and
+  /// MOSAIC's authored-order PANE 1 / PANE 2 vocabulary. They never follow the
+  /// currently active clip, so a pane timeline cut cannot rename its window.
+  String splitWindowTitleForPane(int paneIndex) {
+    if (paneIndex < 0 || paneIndex > 1) {
+      throw RangeError.range(paneIndex, 0, 1, 'paneIndex');
+    }
+    return '$effectiveWindowTitle · PANE ${paneIndex + 1}';
+  }
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 
   int get entryZoomFrames =>
@@ -452,6 +484,9 @@ class _StructuralPlacementSeed {
   final StructuralSourceRef sourceRef;
   final int sourceDurationFrames;
   final StructuralPresentationMode presentationMode;
+  final bool splitWindowRequested;
+  final bool splitWindowSupported;
+  final MosaicSplitClientAspect splitClientAspect;
   final bool clipAudio;
   final StructuralOverlayMode overlayMode;
   final String windowTitle;
@@ -463,6 +498,9 @@ class _StructuralPlacementSeed {
     required this.sourceRef,
     required this.sourceDurationFrames,
     required this.presentationMode,
+    required this.splitWindowRequested,
+    required this.splitWindowSupported,
+    required this.splitClientAspect,
     required this.clipAudio,
     required this.overlayMode,
     required this.windowTitle,
@@ -521,6 +559,24 @@ bool _insideStructuralRoot(int offset, List<(int, int)> spans) {
     if (offset >= start && offset < end) return true;
   }
   return false;
+}
+
+bool _splitWindowSupported(
+  EditDocumentModel? model,
+  StructuralSourceRef ref,
+) {
+  if (model == null ||
+      ref.kind != StructuralSourceKind.mosaic ||
+      !model.containsStructuralSource(ref)) {
+    return false;
+  }
+  try {
+    final MosaicSequence mosaic = model.mosaic(ref.id);
+    return mosaic.panes.length == 2 &&
+        mosaic.panes.every((MosaicPane pane) => pane.clips.isNotEmpty);
+  } catch (_) {
+    return false;
+  }
 }
 
 bool _slideAppSwitchEnabled(String rawDocument) {
@@ -641,6 +697,11 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         presentationMode: chrome.fullscreen
             ? StructuralPresentationMode.fullscreen
             : StructuralPresentationMode.windowed,
+        splitWindowRequested: chrome.splitWindows,
+        splitWindowSupported: chrome.splitWindows
+            ? _splitWindowSupported(model, ref)
+            : false,
+        splitClientAspect: chrome.splitAspect,
         clipAudio: chrome.clipAudio,
         overlayMode: chrome.overlayMode,
         windowTitle: chrome.windowTitle,
@@ -701,6 +762,9 @@ List<StructuralSequencePlacement> parseStructuralSequencePlacements(
         sourceDurationFrames: seed.sourceDurationFrames,
         durationFrames: duration,
         presentationMode: seed.presentationMode,
+        splitWindowRequested: seed.splitWindowRequested,
+        splitWindowSupported: seed.splitWindowSupported,
+        splitClientAspect: seed.splitClientAspect,
         clipAudio: seed.clipAudio,
         overlayMode: seed.overlayMode,
         windowTitle: seed.windowTitle,
@@ -786,6 +850,8 @@ String appendStructuralSequencePlacement({
   required StructuralSourceRef sourceRef,
   StructuralPresentationMode presentationMode =
       StructuralPresentationMode.windowed,
+  bool splitWindows = false,
+  MosaicSplitClientAspect splitAspect = MosaicSplitClientAspect.aspect16x9,
   bool clipAudio = false,
   StructuralOverlayMode overlayMode = StructuralOverlayMode.defaultOverlay,
   String windowTitle = '',
@@ -815,6 +881,8 @@ String appendStructuralSequencePlacement({
         source: sourceRef.canonicalSource,
         fullscreen:
             presentationMode == StructuralPresentationMode.fullscreen,
+        splitWindows: splitWindows,
+        splitAspect: splitAspect,
         clipAudio: clipAudio,
         overlayMode: overlayMode,
         windowTitle: windowTitle,
