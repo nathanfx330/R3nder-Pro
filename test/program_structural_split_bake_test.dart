@@ -67,12 +67,12 @@ int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
   );
 }
 
-Rect? _solidBounds(
+Rect? _paneColorBounds(
   Uint8List rgba,
   int width,
-  int height,
-  List<int> color,
-) {
+  int height, {
+  required bool red,
+}) {
   int minX = width;
   int minY = height;
   int maxX = -1;
@@ -81,12 +81,20 @@ Rect? _solidBounds(
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
       final int at = (y * width + x) * 4;
-      if (rgba[at] != color[0] ||
-          rgba[at + 1] != color[1] ||
-          rgba[at + 2] != color[2] ||
-          rgba[at + 3] != color[3]) {
-        continue;
-      }
+      final int r = rgba[at];
+      final int g = rgba[at + 1];
+      final int b = rgba[at + 2];
+      final int a = rgba[at + 3];
+
+      // The right window's normal blurred desktop shadow can fall across the
+      // last few pixels of the left client. That darkens a pure-red fixture
+      // without changing its hue. Measure pane ownership by dominant color
+      // rather than requiring exact unshadowed RGB.
+      final bool matches = red
+          ? a >= 240 && r >= 80 && r >= g + 60 && r >= b + 60
+          : a >= 240 && b >= 80 && b >= r + 60 && b >= g + 60;
+      if (!matches) continue;
+
       minX = x < minX ? x : minX;
       minY = y < minY ? y : minY;
       maxX = x > maxX ? x : maxX;
@@ -219,17 +227,17 @@ void main() {
         data.lengthInBytes,
       );
 
-      final Rect? red = _solidBounds(
+      final Rect? red = _paneColorBounds(
         rgba,
         outputWidth,
         outputHeight,
-        const <int>[255, 0, 0, 255],
+        red: true,
       );
-      final Rect? blue = _solidBounds(
+      final Rect? blue = _paneColorBounds(
         rgba,
         outputWidth,
         outputHeight,
-        const <int>[0, 0, 255, 255],
+        red: false,
       );
       expect(red, isNotNull);
       expect(blue, isNotNull);
