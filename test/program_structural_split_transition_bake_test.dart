@@ -14,6 +14,7 @@ import 'package:r3nder/scene_engine.dart';
 import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
+import 'package:r3nder/structural_shell_geometry.dart';
 
 class _ColorBackend implements MediaDecoderBackend {
   @override
@@ -74,6 +75,27 @@ const String _source = '''[CONFIG:APPSWITCH:SLIDE]
 [STRUCT:MOSAIC.second:SPLIT:OVERLAY=NONE]
 ''';
 
+const String _reverseSource = '''[CONFIG:APPSWITCH:SLIDE]
+[MOSAIC:first]
+[PANE:left]
+[CLIP:green:green.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[EDIT:second]
+[TRACK:V1]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[STRUCT:MOSAIC.first:SPLIT:OVERLAY=NONE]
+[STRUCT:EDIT.second:OVERLAY=NONE]
+''';
+
 int _runtimeLocalFrame(SceneEngine scene, StructuralRuntimeMarker marker) {
   final terminal = scene.terminal;
   final bool awaitingPauseTag = terminal.activePause == null &&
@@ -132,7 +154,7 @@ List<int> _pixelAt(
 
 void main() {
   test(
-    'BAKE holds outgoing window for split shape budget then cuts both panes',
+    'BAKE opens incoming split panes over fading outgoing window',
     () async {
       final List<StructuralSequencePlacement> placements =
           parseStructuralSequencePlacements(_source);
@@ -208,25 +230,30 @@ void main() {
       openingImage.dispose();
 
       const double titleHeight = 38.0;
-      final Rect heldWindow = structuralProgramTargetRectForOutput(
-        outputWidth: 640,
-        outputHeight: 360,
+      final MosaicSplitWindowGeometry splitGeometry =
+          mosaicSplitWindowGeometry(
+        frame: const Rect.fromLTWH(0, 0, 640, 360),
+        aspect: second.splitClientAspect,
         titleHeight: titleHeight,
       );
-      final Rect heldWindowPixels = Rect.fromLTRB(
-        heldWindow.left * 640,
-        heldWindow.top * 360,
-        heldWindow.right * 640,
-        heldWindow.bottom * 360,
-      );
-      final Rect heldClient = Rect.fromLTRB(
-        heldWindowPixels.left,
-        heldWindowPixels.top + titleHeight,
-        heldWindowPixels.right,
-        heldWindowPixels.bottom,
-      );
+      final double entryLinear =
+          second.stageProgressAt(kStructuralWindowFrames ~/ 2);
+      final Rect animatedLeft = structuralShapeEntryFrameAt(
+        targetRect: splitGeometry.leftWindowRect,
+        linearProgress: entryLinear,
+        contentReady: true,
+      ).rect;
+
+      // The incoming left pane is already moving/visible during the budget.
       expect(
-        _pixelAt(opening, 640, heldClient.center),
+        _pixelAt(opening, 640, animatedLeft.center),
+        const <int>[0, 255, 0, 255],
+      );
+
+      // The outgoing ordinary window remains visible in the split gap while
+      // it fades, proving this is a transition rather than a desktop flash.
+      expect(
+        _pixelAt(opening, 640, const Offset(320, 200)),
         const <int>[255, 0, 0, 255],
       );
 
@@ -253,12 +280,6 @@ void main() {
       final Uint8List showing = await _rgba(showingImage!);
       showingImage.dispose();
 
-      final MosaicSplitWindowGeometry splitGeometry =
-          mosaicSplitWindowGeometry(
-        frame: const Rect.fromLTWH(0, 0, 640, 360),
-        aspect: second.splitClientAspect,
-        titleHeight: titleHeight,
-      );
       expect(
         _pixelAt(showing, 640, splitGeometry.leftClientRect.center),
         const <int>[0, 255, 0, 255],
@@ -266,6 +287,165 @@ void main() {
       expect(
         _pixelAt(showing, 640, splitGeometry.rightClientRect.center),
         const <int>[0, 0, 255, 255],
+      );
+    },
+  );
+
+  test(
+    'BAKE opens incoming window over fading outgoing split panes',
+    () async {
+      final List<StructuralSequencePlacement> placements =
+          parseStructuralSequencePlacements(_reverseSource);
+      expect(placements, hasLength(2));
+      final StructuralSequencePlacement second = placements[1];
+      expect(second.entryWindowFrames, kStructuralWindowFrames);
+
+      final Directory root =
+          await Directory.systemTemp.createTemp('r3nder_w7_split_bake_reverse_');
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final SceneEngine scene = SceneEngine();
+      final CompiledScript compiled =
+          compileScript(_reverseSource, lineMarkers: false);
+      await scene.setup(
+        templateText: compiled.engineText,
+        fontColor: Colors.green,
+        bgColor: Colors.black,
+        width: 640,
+        height: 360,
+        scale: 1,
+        fontPath: 'monospace',
+        fontSize: 12,
+        lineSpacing: 16,
+        tracking: 0,
+        marginTop: 10,
+        marginSide: 10,
+        imagesDir: images.path,
+        spritesDir: sprites.path,
+        paneLifeConfig: compiled.paneLife,
+        captionConfig: compiled.caption,
+        appSwitchConfig: compiled.appSwitch,
+      );
+
+      final ProgramStructuralFrameRenderer renderer =
+          ProgramStructuralFrameRenderer(
+        rawDocument: _reverseSource,
+        width: 640,
+        height: 360,
+        backend: _ColorBackend(),
+        resolveSource: (String value) => value,
+      );
+
+      addTearDown(() {
+        renderer.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      final int openingProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: kStructuralWindowFrames ~/ 2,
+      );
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: openingProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+
+      final ui.Image? openingImage = await renderer.renderIfActive(
+        scene: scene,
+        fontFamily: 'monospace',
+      );
+      expect(openingImage, isNotNull);
+      final Uint8List opening = await _rgba(openingImage!);
+      openingImage.dispose();
+
+      const double titleHeight = 38.0;
+      final Rect seatedWindow = structuralProgramTargetRectForOutput(
+        outputWidth: 640,
+        outputHeight: 360,
+        titleHeight: titleHeight,
+      );
+      final Rect animatedWindow = structuralShapeEntryFrameAt(
+        targetRect: seatedWindow,
+        linearProgress:
+            second.stageProgressAt(kStructuralWindowFrames ~/ 2),
+        contentReady: true,
+      ).rect;
+      final Offset incomingCenter = Offset(
+        animatedWindow.center.dx * 640,
+        animatedWindow.center.dy * 360,
+      );
+
+      expect(
+        _pixelAt(opening, 640, incomingCenter),
+        const <int>[255, 0, 0, 255],
+      );
+
+      final MosaicSplitWindowGeometry outgoingGeometry =
+          mosaicSplitWindowGeometry(
+        frame: const Rect.fromLTWH(0, 0, 640, 360),
+        aspect: placements[0].splitClientAspect,
+        titleHeight: titleHeight,
+      );
+      expect(
+        _pixelAt(
+          opening,
+          640,
+          Offset(
+            outgoingGeometry.leftClientRect.left + 8,
+            outgoingGeometry.leftClientRect.center.dy,
+          ),
+        ),
+        const <int>[0, 255, 0, 255],
+      );
+
+      final int showingProjectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 1,
+        localFrame: kStructuralWindowFrames,
+      );
+      expect(
+        scene.evaluate(
+          ProjectTime(
+            frame: showingProjectFrame,
+            mode: ProjectClockMode.scrub,
+          ),
+        ).exact,
+        isTrue,
+      );
+
+      final ui.Image? showingImage = await renderer.renderIfActive(
+        scene: scene,
+        fontFamily: 'monospace',
+      );
+      expect(showingImage, isNotNull);
+      final Uint8List showing = await _rgba(showingImage!);
+      showingImage.dispose();
+
+      final Rect seatedPixels = Rect.fromLTRB(
+        seatedWindow.left * 640,
+        seatedWindow.top * 360,
+        seatedWindow.right * 640,
+        seatedWindow.bottom * 360,
+      );
+      final Rect seatedClient = Rect.fromLTRB(
+        seatedPixels.left,
+        seatedPixels.top + titleHeight,
+        seatedPixels.right,
+        seatedPixels.bottom,
+      );
+      expect(
+        _pixelAt(showing, 640, seatedClient.center),
+        const <int>[255, 0, 0, 255],
       );
     },
   );
