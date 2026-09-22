@@ -112,6 +112,23 @@ MOSAIC has exactly two populated panes. Stable split titles derive from the
 existing effective STRUCT title as `<title> · PANE 1` and
 `<title> · PANE 2`. Rendering the two separate clients begins in W3.
 
+W3 establishes the compositor-level pane boundary for exact BAKE and
+nonblocking Preview so nested structural sources are resolved before a pane is
+presented. W4 adds `StructuralSplitWindowPreview`, which owns one shared
+MediaLayer/compositor instance for both live panes rather than constructing two
+independent editor previews. The live seated surface and whole-program BAKE
+both call `paintStructuralWindow` from
+`lib/structural_window_painter.dart`, making the W1 geometry plus one shared
+window raster painter the Preview/BAKE parity boundary.
+
+`test/structural_split_window_preview_test.dart` captures the live split raster
+and compares its seated window interiors directly with BAKE. The W4 native
+addition to `test/structural_source_export_native_test.dart` separately sends
+an edge-marked circular 16:9 fixture through the actual Linux MLT bridge into a
+4:3 pane request to detect crop or stretch. W5 still owns split transition and
+delayed-readiness choreography; W6 owns pane CARD routing and unsupported
+SIDECARD/MAXIMIZE behavior.
+
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
