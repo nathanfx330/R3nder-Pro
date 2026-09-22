@@ -149,9 +149,10 @@ two-window geometry remains unchanged.
 
 W8 adds optional `SPLIT:MAX`. It remains the same effective SPLIT presentation
 shape and uses the same open/close choreography, cue ownership, and readiness
-rules. Only seated geometry changes: each outer window occupies one exact half
-of the program frame from top to bottom, with zero outer margin and zero center
-gap. The authored normal-split aspect remains dormant state while MAX is on.
+rules. Only seated geometry changes: each client takes one exact horizontal
+half of the program frame with zero outer margin and zero center gap, while the
+authored aspect continues to determine client height. The pair remains
+vertically centered unless an over-tall aspect reaches the program-height cap.
 
 W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
 the top-level pane to the complete split client before the pane image reaches
