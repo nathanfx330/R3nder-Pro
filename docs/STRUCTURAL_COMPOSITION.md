@@ -139,23 +139,30 @@ Once that budget is over, readiness may delay only the reveal; authored source
 time continues and the eventual cut uses the current source frame. The old
 single-client horizontal APPSWITCH slide is never applied to a split boundary.
 
-W6 completes split cue policy. CARD state is evaluated per authored MOSAIC
-pane and remapped to the complete split client before the pane image reaches the
-shared split-window painter. Preview and BAKE use the same CARD image-composite
-helper, so a pane-local CARD cannot leak into its sibling client. SIDECARD and
-MAXIMIZE remain valid authored cue syntax but are warning-only unsupported
-features for an effective SPLIT placement; neither active cue state nor
-source-end truncation state may alter the split outer shell or paint a
-SIDECARD panel. Unsupported SPLIT requests still use ordinary-window fallback
-semantics rather than these SPLIT-only restrictions.
+W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
+the top-level pane to the complete split client before the pane image reaches
+the shared split-window painter. The resolver follows nested structural CLIPs,
+so the normal MOSAIC -> EDIT -> media topology carries CARD state through the
+same AT/IN/speed source-frame mapping used by the compositor. Nested MOSAIC
+layout remains relative to that owning split client. Preview and BAKE use the
+same CARD image-composite helper, so a pane-local or nested EDIT CARD cannot
+leak into its sibling client. SIDECARD and MAXIMIZE remain valid authored cue
+syntax but are warning-only unsupported features for an effective SPLIT
+placement; the policy lint also follows nested structural sources. Neither
+active cue state nor source-end truncation state may alter the split outer
+shell or paint a SIDECARD panel. Unsupported SPLIT requests still use ordinary
+window fallback semantics rather than these SPLIT-only restrictions.
 
 The W6 boundary proofs are `test/structural_split_cue_policy_test.dart`,
 `test/structural_split_card_preview_test.dart`, and
 `test/program_structural_split_card_bake_test.dart`.
 
-W6 passed its local regression gate with 20 tests, and the documentation
-contract checker reported 16 contracts / 90 proof files. W0 through W6 of the
-two-window SPLIT milestone are therefore locally verified.
+W6's initial regression gate passed with 20 tests and the documentation
+checker reported 16 contracts / 90 proof files. Subsequent GUI validation found
+that the CARD proof topology stopped at the PANE CLIP while the real project
+placed CARD inside its nested EDIT. The resolver and the three W6 boundary
+proofs have been strengthened for that topology and are awaiting local
+re-verification.
 
 ## Common endpoint calculation (T0)
 
