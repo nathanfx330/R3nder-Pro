@@ -17,10 +17,16 @@
 // is still playing. A zero-opacity preload can decode and become logically ready
 // without ever painting: Flutter's opacity render object skips painting a child
 // at alpha zero. For that reason readiness alone cannot begin the visual switch.
-// On every seamless marker hand-off the horizontal pan is a pure function of
-// authored incoming source time: outgoing client left, incoming client from the
-// right, fixed shell. Decoder readiness never changes that position. Project
-// time never pauses and the incoming source never restarts.
+// On every seamless marker hand-off the horizontal pan remains a pure function
+// of authored incoming source time: outgoing client left, incoming client from
+// the right, fixed shell.
+//
+// A cold FIRST opening is different. If its first presentable video frame is not
+// resident when the authored window-opening budget begins, this surface can
+// report a transport buffer request to its owner. The owner may hold wall-clock
+// playback at that authored opening frame until readiness arrives, then resume
+// from the same project frame. No project frames are inserted and BAKE is
+// unaffected.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
