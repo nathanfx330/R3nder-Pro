@@ -33,6 +33,36 @@ import 'structural_sequence_preview.dart';
 import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
+@immutable
+class StructuralPreviewBufferingState {
+  final bool buffering;
+  final int placementIndex;
+  final int openingFrame;
+
+  const StructuralPreviewBufferingState({
+    required this.buffering,
+    required this.placementIndex,
+    required this.openingFrame,
+  });
+
+  static const StructuralPreviewBufferingState idle =
+      StructuralPreviewBufferingState(
+    buffering: false,
+    placementIndex: -1,
+    openingFrame: 0,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is StructuralPreviewBufferingState &&
+      other.buffering == buffering &&
+      other.placementIndex == placementIndex &&
+      other.openingFrame == openingFrame;
+
+  @override
+  int get hashCode => Object.hash(buffering, placementIndex, openingFrame);
+}
+
 class ProgramPreviewSurface extends StatefulWidget {
   final Listenable repaint;
   final SceneEngine scene;
@@ -51,6 +81,17 @@ class ProgramPreviewSurface extends StatefulWidget {
   final void Function(int placementIndex, VoidCallback accept)?
       structuralReadinessInterceptor;
 
+  /// Live playback coordination seam. A cold structural source can require
+  /// real wall-clock decode time before its first authored window-opening
+  /// frame is paintable. When provided, PREVIEW reports that hold instead of
+  /// silently spending the authored opening budget while pixels are pending.
+  ///
+  /// The callback owns transport policy. ProgramPreviewSurface never mutates
+  /// project time itself; it only reports whether the active opening is
+  /// waiting for first-frame readiness.
+  final ValueChanged<StructuralPreviewBufferingState>?
+      onStructuralBufferingChanged;
+
   const ProgramPreviewSurface({
     super.key,
     required this.repaint,
@@ -61,6 +102,7 @@ class ProgramPreviewSurface extends StatefulWidget {
     this.structuralBackend,
     this.structuralResolveSource,
     this.structuralReadinessInterceptor,
+    this.onStructuralBufferingChanged,
   });
 
   @override
@@ -95,6 +137,12 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   /// without restarting or delaying authored source time.
   final Set<int> _lateReadyActivePlacements = <int>{};
 
+  StructuralPreviewBufferingState _reportedBuffering =
+      StructuralPreviewBufferingState.idle;
+  StructuralPreviewBufferingState _pendingBuffering =
+      StructuralPreviewBufferingState.idle;
+  bool _bufferingReportScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -120,7 +168,31 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       _readyPaintedPlacements.clear();
       _readyPaintCommitScheduled.clear();
       _lateReadyActivePlacements.clear();
+      _reportedBuffering = StructuralPreviewBufferingState.idle;
+      _pendingBuffering = StructuralPreviewBufferingState.idle;
+      _bufferingReportScheduled = false;
     }
+  }
+
+  void _reportStructuralBuffering(
+    StructuralPreviewBufferingState next,
+  ) {
+    final ValueChanged<StructuralPreviewBufferingState>? callback =
+        widget.onStructuralBufferingChanged;
+    if (callback == null) return;
+
+    _pendingBuffering = next;
+    if (_bufferingReportScheduled) return;
+    _bufferingReportScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bufferingReportScheduled = false;
+      if (!mounted) return;
+      final StructuralPreviewBufferingState pending = _pendingBuffering;
+      if (pending == _reportedBuffering) return;
+      _reportedBuffering = pending;
+      callback(pending);
+    });
   }
 
   StructuralSequencePlacement? _placementAt(int index) {
@@ -303,8 +375,23 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           }
 
           final int activeLocalFrame = _localFrame(marker);
-          final bool activeReady = previouslyMounted.contains(activeIndex) &&
+          final bool readinessResident =
               _readyPlacements.contains(activeIndex);
+          final bool activeReady = previouslyMounted.contains(activeIndex) &&
+              readinessResident;
+          final bool coldOpening =
+              placement.stageAt(activeLocalFrame) ==
+                      StructuralSequenceStage.opening &&
+                  !readinessResident;
+          _reportStructuralBuffering(
+            coldOpening
+                ? StructuralPreviewBufferingState(
+                    buffering: true,
+                    placementIndex: activeIndex,
+                    openingFrame: placement.stageFrameAt(activeLocalFrame),
+                  )
+                : StructuralPreviewBufferingState.idle,
+          );
           final bool readinessReportedBeforeActive =
               _reportedReadyPlacements.contains(activeIndex);
           if (placement.seamlessFromPrevious &&
@@ -429,6 +516,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
             // authored window budget ends.
             _scheduleReadyPaintCommit(activeIndex);
           }
+        }
+
+        if (marker == null || placement == null || activeIndex == null) {
+          _reportStructuralBuffering(StructuralPreviewBufferingState.idle);
         }
 
         _readyPlacements.removeWhere(
