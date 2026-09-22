@@ -487,6 +487,14 @@ emergence rectangle. For SPLIT, each of the two windows applies that same
 emergence-to-seated geometry independently. No source frames, project frames,
 or readiness semantics are added.
 
+GUI validation then exposed the same seated-geometry shortcut on an ordinary
+SPLIT desktop entry: the two windows faded on at final size rather than using
+the normal window-manager open. W7 now applies the standard emergence-to-seated
+geometry to every SPLIT opening and the exact seated-to-emergence reverse curve
+to every SPLIT closing. Opacity remains owned by the common structural shell,
+so the two windows become visible and grow exactly during the existing window
+budget rather than gaining any new timing.
+
 Second, SPLIT timing follows the effective rendered shape, not merely the
 authored request. If a two-pane MOSAIC becomes unsupported because a pane is
 emptied, its requested SPLIT falls back to ordinary windowed presentation.
@@ -504,9 +512,14 @@ Proof:
 - `test/program_preview_structural_split_transition_test.dart` proves visible
   window-to-split and split-to-window motion in Program Preview while preserving
   delayed-readiness behavior;
+- `test/program_preview_structural_split_test.dart` proves an ordinary SPLIT
+  placement receives partial open progress and partial close progress from the
+  top-level Program Preview rather than appearing/disappearing seated;
 - `test/program_structural_split_transition_bake_test.dart` proves the same
   two directions in BAKE with pixel probes for both outgoing and incoming
   presentations;
+- `test/program_structural_split_bake_test.dart` proves ordinary SPLIT open
+  and close pixel bounds are smaller than the seated client bounds in BAKE;
 - `test/structural_split_transition_plan_test.dart` pins the two-boundary
   24-frame fallback shift without changing source duration;
 - `test/structural_split_placement_test.dart` pins the warning text that
