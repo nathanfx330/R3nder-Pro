@@ -100,6 +100,7 @@ Persistent media decoders answer exact source-frame requests. Requested and actu
 - `linux/runner/media_decoder_test.cc`
 - `test/edit_video_compositor_test.dart`
 - `test/edit_video_compositor_depth_guard_test.dart`
+- `test/mosaic_split_pane_compositor_test.dart`
 
 ---
 
@@ -245,7 +246,7 @@ Program Preview uses the compiled runtime REGION bridge and the same raw authore
 
 **Contract**
 
-SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, and structural source-local frame identity.
+SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, and supported two-window MOSAIC split placement without bypassing recursive pane composition.
 
 **Proof**
 
@@ -255,6 +256,7 @@ SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer 
 - `test/program_structural_chrome_text_bake_test.dart`
 - `test/scene_exporter_structural_chrome_end_to_end_test.dart`
 - `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
+- `test/program_structural_split_bake_test.dart`
 
 ---
 
