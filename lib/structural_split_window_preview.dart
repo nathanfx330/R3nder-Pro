@@ -32,6 +32,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final R3Theme theme;
   final String fontFamily;
   final double chromeScale;
+  final double entryProgress;
   final bool moving;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
@@ -45,6 +46,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     required this.theme,
     required this.fontFamily,
     required this.chromeScale,
+    this.entryProgress = 1.0,
     required this.moving,
     this.backend,
     this.resolveSource,
@@ -470,6 +472,7 @@ class _StructuralSplitWindowPreviewState
               images: List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
+              entryProgress: widget.entryProgress,
             ),
             child: const SizedBox.expand(),
           ),
