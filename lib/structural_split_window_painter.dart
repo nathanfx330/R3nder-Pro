@@ -34,6 +34,9 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// each split window independently.
   final double entryProgress;
 
+  /// Authored close progress. Null means this is not a closing frame.
+  final double? exitProgress;
+
   const StructuralSplitWindowPainter({
     required this.geometry,
     required this.placement,
@@ -45,21 +48,28 @@ class StructuralSplitWindowPainter extends CustomPainter {
     required this.diagnosticLabels,
     this.opacity = 1.0,
     this.entryProgress = 1.0,
+    this.exitProgress,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
   @override
   void paint(Canvas canvas, Size size) {
     final double progress = entryProgress.clamp(0.0, 1.0).toDouble();
+    final double? closing = exitProgress?.clamp(0.0, 1.0).toDouble();
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
       final Rect target = geometry.windowRects[paneIndex];
-      final Rect rect = progress >= 0.999999
-          ? target
-          : structuralShapeEntryFrameAt(
+      final Rect rect = closing != null
+          ? structuralShapeExitRectAt(
               targetRect: target,
-              linearProgress: progress,
-              contentReady: true,
-            ).rect;
+              linearProgress: closing,
+            )
+          : progress >= 0.999999
+              ? target
+              : structuralShapeEntryFrameAt(
+                  targetRect: target,
+                  linearProgress: progress,
+                  contentReady: true,
+                ).rect;
       paintStructuralWindow(
         canvas: canvas,
         theme: theme,
@@ -95,6 +105,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.chromeScale != chromeScale ||
         oldDelegate.opacity != opacity ||
         oldDelegate.entryProgress != entryProgress ||
+        oldDelegate.exitProgress != exitProgress ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
