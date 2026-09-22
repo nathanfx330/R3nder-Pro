@@ -150,41 +150,62 @@ void main() {
     );
   });
 
-  test('MAX split snaps both outer windows edge to edge', () {
-    for (final MosaicSplitClientAspect aspect
-        in MosaicSplitClientAspect.values) {
-      final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
-        frame: hd,
-        aspect: aspect,
-        titleHeight: 38.0,
-        maximized: true,
-      );
+  test('MAX split fills horizontal halves while aspect owns height', () {
+    final MosaicSplitWindowGeometry wide = mosaicSplitWindowGeometry(
+      frame: hd,
+      aspect: MosaicSplitClientAspect.aspect16x9,
+      titleHeight: 38.0,
+      maximized: true,
+    );
+    expect(wide.maximized, isTrue);
+    _expectClose(wide.edgeMargin, 0.0);
+    _expectClose(wide.gap, 0.0);
+    _expectClose(wide.maximumClientWidth, 960.0);
+    _expectClose(wide.maximumClientHeight, 1042.0);
+    _expectClose(wide.clientSize.width, 960.0);
+    _expectClose(wide.clientSize.height, 540.0);
+    _expectRect(
+      wide.leftWindowRect,
+      const Rect.fromLTWH(0, 251, 960, 578),
+    );
+    _expectRect(
+      wide.rightWindowRect,
+      const Rect.fromLTWH(960, 251, 960, 578),
+    );
+    _expectRect(
+      wide.leftClientRect,
+      const Rect.fromLTWH(0, 289, 960, 540),
+    );
+    _expectRect(
+      wide.rightClientRect,
+      const Rect.fromLTWH(960, 289, 960, 540),
+    );
 
-      expect(geometry.maximized, isTrue);
-      _expectClose(geometry.edgeMargin, 0.0);
-      _expectClose(geometry.gap, 0.0);
-      _expectClose(geometry.maximumClientWidth, 960.0);
-      _expectClose(geometry.maximumClientHeight, 1042.0);
-      _expectClose(geometry.clientSize.width, 960.0);
-      _expectClose(geometry.clientSize.height, 1042.0);
+    final MosaicSplitWindowGeometry classic = mosaicSplitWindowGeometry(
+      frame: hd,
+      aspect: MosaicSplitClientAspect.aspect4x3,
+      titleHeight: 38.0,
+      maximized: true,
+    );
+    _expectClose(classic.clientSize.width, 960.0);
+    _expectClose(classic.clientSize.height, 720.0);
+    _expectClose(classic.leftWindowRect.top, 161.0);
+    _expectClose(classic.leftWindowRect.height, 758.0);
 
-      _expectRect(
-        geometry.leftWindowRect,
-        const Rect.fromLTWH(0, 0, 960, 1080),
-      );
-      _expectRect(
-        geometry.rightWindowRect,
-        const Rect.fromLTWH(960, 0, 960, 1080),
-      );
-      _expectRect(
-        geometry.leftClientRect,
-        const Rect.fromLTWH(0, 38, 960, 1042),
-      );
-      _expectRect(
-        geometry.rightClientRect,
-        const Rect.fromLTWH(960, 38, 960, 1042),
-      );
-    }
+    final MosaicSplitWindowGeometry portrait = mosaicSplitWindowGeometry(
+      frame: hd,
+      aspect: MosaicSplitClientAspect.aspect9x16,
+      titleHeight: 38.0,
+      maximized: true,
+    );
+    _expectClose(portrait.clientSize.width, 960.0);
+    _expectClose(portrait.clientSize.height, 1042.0);
+    _expectClose(portrait.leftWindowRect.top, 0.0);
+    _expectClose(portrait.leftWindowRect.height, 1080.0);
+    expect(
+      portrait.clientSize.height,
+      portrait.maximumClientHeight,
+    );
   });
 
   test('every aspect stays bounded, equal, gapped, and centered as one group',
