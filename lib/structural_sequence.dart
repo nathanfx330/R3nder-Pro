@@ -254,11 +254,12 @@ class StructuralSequencePlacement {
   /// True only for a MOSAIC with exactly two panes, both populated.
   final bool splitWindowSupported;
 
-  /// Edge-to-edge Windows-style snapped split presentation. This is effective
-  /// only when [splitWindow] is true.
+  /// Horizontal Windows-style snapped split presentation. Each client gets
+  /// half the program width; authored aspect still owns height. Effective only
+  /// when [splitWindow] is true.
   final bool maximizeSplit;
 
-  /// One shared authored client aspect for both normal split windows.
+  /// One shared authored client aspect for both split windows.
   final MosaicSplitClientAspect splitClientAspect;
 
   /// Placement-owned intent to play audio belonging to clips in this source.
