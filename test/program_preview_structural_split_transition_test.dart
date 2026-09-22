@@ -360,6 +360,7 @@ Widget _program({
   required ChangeNotifier repaint,
   required String source,
   required MediaDecoderBackend backend,
+  ValueChanged<StructuralPreviewBufferingState>? onStructuralBufferingChanged,
 }) {
   return MaterialApp(
     home: SizedBox(
@@ -373,6 +374,7 @@ Widget _program({
         theme: R3Theme.of(Colors.green),
         structuralBackend: backend,
         structuralResolveSource: _resolveSource,
+        onStructuralBufferingChanged: onStructuralBufferingChanged,
       ),
     ),
   );
@@ -492,6 +494,8 @@ Future<void> _expectColdSplitOpeningRetries(
   final Directory root = await _setupScene(tester, scene, source);
   final ChangeNotifier repaint = ChangeNotifier();
   final _ColdSplitBackend backend = _ColdSplitBackend();
+  final List<StructuralPreviewBufferingState> buffering =
+      <StructuralPreviewBufferingState>[];
   addTearDown(() {
     repaint.dispose();
     scene.disposeImages();
@@ -516,6 +520,7 @@ Future<void> _expectColdSplitOpeningRetries(
       repaint: repaint,
       source: source,
       backend: backend,
+      onStructuralBufferingChanged: buffering.add,
     ),
   );
 
@@ -544,6 +549,14 @@ Future<void> _expectColdSplitOpeningRetries(
     findsNothing,
   );
   expect(_splitPresentationOpacity(tester, 0), 0.0);
+  await tester.pump();
+  expect(buffering, isNotEmpty);
+  expect(buffering.last.buffering, isTrue);
+  expect(buffering.last.placementIndex, 0);
+  expect(
+    buffering.last.openingFrame,
+    placement.stageFrameAt(openingLocal),
+  );
 
   final int leftPollsBeforeRelease = left.pollFrames.length;
   backend.releaseLeft = true;
@@ -580,6 +593,8 @@ Future<void> _expectColdSplitOpeningRetries(
     ).evaluate().isNotEmpty,
   );
   expect(right.pollFrames.length, greaterThan(rightPollsBeforeRelease));
+  await tester.pump();
+  expect(buffering.last, StructuralPreviewBufferingState.idle);
 
   final StructuralSplitWindowPreview preview =
       tester.widget<StructuralSplitWindowPreview>(
