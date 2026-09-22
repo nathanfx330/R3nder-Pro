@@ -393,7 +393,7 @@ StructuralSequenceHandoffRole _handoffRole(
   return preview.handoffRole;
 }
 
-int _partialOpeningLocalFrame(
+int _earlyPartialOpeningLocalFrame(
   StructuralSequencePlacement placement,
 ) {
   final List<int> opening = <int>[
@@ -405,7 +405,7 @@ int _partialOpeningLocalFrame(
         frame,
   ];
   expect(opening, isNotEmpty);
-  return opening[opening.length ~/ 2];
+  return opening.first;
 }
 
 StructuralSplitWindowPainter _splitPainter(
@@ -446,9 +446,9 @@ Future<void> _expectColdSplitOpeningRetries(
   expect(placement.splitWindow, isTrue);
   expect(placement.maximizeSplit, maximized);
 
-  final int openingLocal = _partialOpeningLocalFrame(placement);
+  final int openingLocal = _earlyPartialOpeningLocalFrame(placement);
   final double authoredProgress = placement.stageProgressAt(openingLocal);
-  expect(authoredProgress, allOf(greaterThan(0.0), lessThan(1.0)));
+  expect(authoredProgress, allOf(greaterThan(0.0), lessThan(0.4)));
   expect(placement.sourceFrameAt(openingLocal), 0);
 
   final SceneEngine scene = SceneEngine();
