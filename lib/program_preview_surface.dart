@@ -28,7 +28,6 @@
 // from the same project frame. No project frames are inserted and BAKE is
 // unaffected.
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'media_layer.dart';
@@ -420,9 +419,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
               previousPlacement.seamlessToNext &&
               previouslyMounted.contains(previousIndex);
           final bool splitBoundary = previousCanHandoff &&
-              (previousPlacement!.splitWindow || placement.splitWindow);
+              (previousPlacement.splitWindow || placement.splitWindow);
           final bool splitShapeChange = splitBoundary &&
-              previousPlacement!.presentationShape !=
+              previousPlacement.presentationShape !=
                   placement.presentationShape;
           final bool splitEntryBudgetOpen = splitShapeChange &&
               placement.stageAt(activeLocalFrame) ==
