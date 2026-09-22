@@ -145,6 +145,12 @@ void main() {
       }
 
       expect(ready, isTrue);
+
+      // onFirstFrameReady is emitted after setState() queues the painter
+      // update. Pump once more so the CustomPaint reflects the resident
+      // moving pane images before asserting their raster size.
+      await tester.pump();
+
       expect(backend.sizes, isNotEmpty);
       expect(
         backend.sizes.where((Size size) => size == const Size(480, 270)).length,
