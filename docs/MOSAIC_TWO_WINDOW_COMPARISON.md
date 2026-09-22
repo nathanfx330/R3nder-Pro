@@ -1,8 +1,8 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: design locked for v1. W0 shared legacy layout extraction passed its
-local gate. W1 pure split geometry is implemented on
-`mosaic-w1-split-geometry` and awaiting local Flutter verification.
+Status: design locked for v1. W0 and W1 passed their local gates. W2 placement
+grammar/model/authoring/lint is implemented on
+`mosaic-w2-placement-authoring` and awaiting local Flutter verification.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -164,9 +164,65 @@ W2 does not begin until that gate passes locally.
 
 ### W2 - grammar, model, authoring, and lint
 
-Add placement metadata and inspector authoring. Preserve absent defaults on
-no-op round trips. Confirm exact grammar spelling and title derivation against
-existing conventions.
+W2 locks the placement spelling to the existing STRUCT tail conventions:
+
+```text
+[STRUCT:MOSAIC.wall:SPLIT]
+[STRUCT:MOSAIC.wall:SPLIT:ASPECT=4X3]
+[STRUCT:MOSAIC.wall:SPLIT:ASPECT=9X16]
+```
+
+`SPLIT` is a bare placement presentation token like `FULL`. `ASPECT` is a
+keyed value because it carries authored data. Its legal values are `16X9`,
+`4X3`, and `9X16`; 16:9 is the implicit default and therefore emits no
+`ASPECT` segment. `FULL` and `SPLIT` are mutually exclusive, and authored
+`ASPECT` without `SPLIT` is invalid markup.
+
+The placement model preserves two different facts:
+
+- `splitWindowRequested`: what the document authored;
+- `splitWindowSupported`: whether the current source is a MOSAIC with exactly
+  two panes and both panes populated.
+
+`splitWindow` is true only when both are true. An unsupported request remains
+in source, produces a warning, and falls back to the existing ordinary windowed
+presentation rather than becoming a render error or silently rewriting the
+tag.
+
+The node inspector now authors TWO WINDOWS and, while enabled, one CLIENT ASPECT.
+Turning FULL on clears SPLIT and turning SPLIT on clears FULL. Opening NODES and
+making unrelated edits does not materialize `SPLIT` or default
+`ASPECT=16X9` into legacy tags.
+
+Split window titles follow existing conventions rather than active clip names.
+The existing effective STRUCT title is the base: blank TITLE means the canonical
+source name; a custom TITLE replaces it. The two stable derived titles are:
+
+```text
+<effective title> · PANE 1
+<effective title> · PANE 2
+```
+
+This matches MOSAIC's existing authored-order PANE 1/PANE 2 UI vocabulary and
+prevents a pane timeline cut from renaming its desktop window.
+
+Proof:
+
+- `test/structural_split_placement_test.dart` covers grammar, support/fallback,
+  title derivation, aspect state, and lint;
+- `test/script_node_structural_split_test.dart` covers lossless/default
+  round-trip and canonical node serialization;
+- `test/editor_structural_split_node_test.dart` covers inspector controls,
+  FULL/SPLIT exclusivity, and aspect authoring.
+
+Verification gate:
+
+```bash
+flutter test test/structural_split_placement_test.dart test/script_node_structural_split_test.dart test/editor_structural_split_node_test.dart test/structural_chrome_test.dart test/structural_sequence_chrome_test.dart test/editor_structural_fullscreen_node_test.dart test/edit_linter_test.dart
+dart run tool/check_doc_contracts.dart
+```
+
+W3 does not begin until that gate passes locally.
 
 ### W3 - BAKE
 
