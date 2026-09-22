@@ -445,6 +445,7 @@ class ScriptNode {
             source: param('source'),
             fullscreen: param('mode').trim().toUpperCase() == 'FULL',
             splitWindows: param('split').trim().toUpperCase() == 'SPLIT',
+            maximizeSplit: param('maxSplit').trim().toUpperCase() == 'MAX',
             splitAspect:
                 mosaicSplitClientAspectFromToken(param('aspect', '16X9'))!,
             clipAudio: param('audio').trim().toUpperCase() == 'AUDIO',
@@ -738,6 +739,7 @@ ScriptNode _nodeFromMacroMatch(RegExpMatch m) {
       n.params['source'] = chrome.source;
       n.params['mode'] = chrome.fullscreen ? 'FULL' : '';
       n.params['split'] = chrome.splitWindows ? 'SPLIT' : '';
+      n.params['maxSplit'] = chrome.maximizeSplit ? 'MAX' : '';
       n.params['aspect'] = chrome.splitAspect.token;
       n.params['audio'] = chrome.clipAudio ? 'AUDIO' : '';
       n.params['overlay'] = chrome.overlayMode.token;
