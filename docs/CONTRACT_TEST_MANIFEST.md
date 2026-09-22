@@ -159,7 +159,7 @@ second duration authority or an extra program-time adjustment.
 
 **Contract**
 
-A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen mode, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, and application-switch presentation. The source definition remains reusable and unchanged.
+A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, and application-switch presentation. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter.
 
 **Proof**
 
@@ -171,6 +171,7 @@ A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen mo
 - `test/structural_chrome_frame_expression_preview_test.dart`
 - `test/structural_split_placement_test.dart`
 - `test/mosaic_split_geometry_test.dart`
+- `test/structural_split_window_preview_test.dart`
 
 ---
 
