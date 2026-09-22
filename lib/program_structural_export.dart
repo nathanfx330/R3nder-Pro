@@ -373,7 +373,7 @@ class ProgramStructuralFrameRenderer {
         stage == StructuralSequenceStage.opening;
     final StructuralSequencePlacement displayPlacement =
         holdPreviousForSplitShapeChange
-            ? splitBoundaryPrevious
+            ? splitBoundaryPrevious!
             : placement;
     final int heldOutgoingSourceFrame = holdPreviousForSplitShapeChange
         ? displayPlacement.sourceFrameAt(
