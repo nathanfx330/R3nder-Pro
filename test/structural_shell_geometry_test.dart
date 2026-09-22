@@ -80,6 +80,35 @@ void main() {
     expect(waiting.rect, isNot(emergence));
   });
 
+  test('split close uses the ordinary seated-to-emergence curve', () {
+    final Rect emergence = structuralShellEmergenceRect(presentation);
+
+    expect(
+      structuralShapeExitRectAt(
+        targetRect: presentation,
+        linearProgress: 0.0,
+      ),
+      presentation,
+    );
+
+    final Rect middle = structuralShapeExitRectAt(
+      targetRect: presentation,
+      linearProgress: 0.5,
+    );
+    expect(middle.width, lessThan(presentation.width));
+    expect(middle.width, greaterThan(emergence.width));
+    expect(middle.top, greaterThan(presentation.top));
+    expect(middle.top, lessThan(emergence.top));
+
+    expect(
+      structuralShapeExitRectAt(
+        targetRect: presentation,
+        linearProgress: 1.0,
+      ),
+      emergence,
+    );
+  });
+
   test('preview readiness is the only opening/showing gate', () {
     final Rect emergence = structuralShellEmergenceRect(parked);
 
