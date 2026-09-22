@@ -79,6 +79,50 @@ List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
   }
 }
 
+/// CARD-family placements for one authored MOSAIC pane, expressed in the
+/// pane's own 0..1 client coordinates.
+///
+/// SPLIT presents each authored pane as an independent client. Reusing the
+/// ordinary MOSAIC normalized layout here would shrink a CARD into its old
+/// grid cell a second time, so pane-local presentation deliberately expands
+/// the owning pane to the complete split client.
+List<StructuralCardOverlayPlacement>
+    structuralCardOverlayPlacementsForMosaicPane(
+  EditDocumentModel model,
+  StructuralSourceRef root,
+  int paneIndex,
+  int projectFrame,
+) {
+  if (root.kind != StructuralSourceKind.mosaic) {
+    return const <StructuralCardOverlayPlacement>[];
+  }
+
+  final MosaicSequence mosaic = model.mosaic(root.id);
+  if (paneIndex < 0 || paneIndex >= mosaic.panes.length) {
+    throw RangeError.range(
+      paneIndex,
+      0,
+      mosaic.panes.length - 1,
+      'paneIndex',
+    );
+  }
+
+  final MosaicPane pane = mosaic.panes[paneIndex];
+  final List<StructuralCardOverlayPlacement> result =
+      <StructuralCardOverlayPlacement>[];
+  for (final ActiveEditCardCue cue
+      in activeCardCuesForPane(pane, projectFrame)) {
+    result.add(
+      StructuralCardOverlayPlacement(
+        card: cue.cue.card,
+        slide: cue.presentationFrame.slide,
+        normalizedRect: const Rect.fromLTWH(0, 0, 1, 1),
+      ),
+    );
+  }
+  return List<StructuralCardOverlayPlacement>.unmodifiable(result);
+}
+
 /// The active SIDECARD that owns the outer structural presentation shell.
 ///
 /// V1 deliberately allows only one shell composition at a time. If authored
