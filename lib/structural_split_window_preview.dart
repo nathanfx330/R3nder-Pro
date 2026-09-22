@@ -448,6 +448,7 @@ class _StructuralSplitWindowPreviewState
           frame: Rect.fromLTWH(0, 0, width, height),
           aspect: widget.placement.splitClientAspect,
           titleHeight: 38.0 * widget.chromeScale,
+          maximized: widget.placement.maximizeSplit,
         );
         final ui.Size nextPaneSize = ui.Size(
           geometry.clientSize.width.round().clamp(1, 1 << 30).toDouble(),
