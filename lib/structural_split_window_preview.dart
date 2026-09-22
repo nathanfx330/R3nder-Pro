@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'card_overlay.dart';
 import 'edit_model.dart';
 import 'edit_video_compositor.dart';
 import 'edit_video_preview.dart';
@@ -62,6 +63,8 @@ class _StructuralSplitWindowPreviewState
   String? _runtimeDocument;
   String? _runtimeSource;
   MediaDecoderBackend? _ownedBackend;
+  EditDocumentModel? _runtimeModel;
+  CardOverlayImageCache? _cardImages;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
@@ -136,6 +139,9 @@ class _StructuralSplitWindowPreviewState
     _layer = null;
     _runtimeDocument = null;
     _runtimeSource = null;
+    _runtimeModel = null;
+    _cardImages?.dispose();
+    _cardImages = null;
   }
 
   void _replaceImage(int paneIndex, ui.Image? next) {
@@ -189,6 +195,8 @@ class _StructuralSplitWindowPreviewState
     _compositor = compositor;
     _runtimeDocument = widget.rawDocument;
     _runtimeSource = source;
+    _runtimeModel = model;
+    _cardImages = CardOverlayImageCache(resolver);
     return compositor;
   }
 
@@ -318,6 +326,51 @@ class _StructuralSplitWindowPreviewState
         widget.onFirstFrameReady?.call();
       }
       return;
+    }
+
+    if (!mounted || serial != _serial) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      return;
+    }
+
+    final EditDocumentModel? model = _runtimeModel;
+    final CardOverlayImageCache? cardImages = _cardImages;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (model != null &&
+        cardImages != null &&
+        root != null &&
+        root.kind == StructuralSourceKind.mosaic &&
+        root.id.isNotEmpty &&
+        model.containsStructuralSource(root)) {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final ui.Image? base = decoded[paneIndex];
+        if (base == null) continue;
+        final List<StructuralCardOverlayPlacement> overlays =
+            structuralCardOverlayPlacementsForMosaicPane(
+          model,
+          root,
+          paneIndex,
+          widget.sourceFrame,
+        )
+                .where(
+                  (StructuralCardOverlayPlacement placement) =>
+                      !placement.isSideCard,
+                )
+                .toList(growable: false);
+        final ui.Image? composited =
+            await compositeStructuralCardOverlaysToImage(
+          structuralImage: base,
+          placements: overlays,
+          images: cardImages,
+          fontFamily: widget.fontFamily,
+        );
+        if (composited != null) {
+          base.dispose();
+          decoded[paneIndex] = composited;
+        }
+      }
     }
 
     if (!mounted || serial != _serial) {
