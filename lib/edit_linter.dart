@@ -218,9 +218,21 @@ class EditGraphLinter {
       final MosaicSequence mosaic = document.mosaic(ref.id);
       for (final MosaicPane pane in mosaic.panes) {
         for (final EditClip clip in pane.clips) {
-          final bool hasSideCard = parseClipCardCues(clip).any(
-            (EditCardCue cue) => cue.card is SideCardRequest,
-          );
+          bool hasSideCard = false;
+          bool hasMaximize = false;
+          try {
+            hasSideCard = parseClipCardCues(clip).any(
+              (EditCardCue cue) => cue.card is SideCardRequest,
+            );
+          } catch (_) {
+            // Malformed cue syntax belongs to the cue/script lint layer.
+          }
+          try {
+            hasMaximize = parseClipMaximizeCues(clip).isNotEmpty;
+          } catch (_) {
+            // Malformed cue syntax belongs to the cue/script lint layer.
+          }
+
           if (hasSideCard) {
             emit(
               EditLintIssue(
@@ -238,7 +250,7 @@ class EditGraphLinter {
             );
           }
 
-          if (parseClipMaximizeCues(clip).isNotEmpty) {
+          if (hasMaximize) {
             emit(
               EditLintIssue(
                 code: EditLintCode.unsupportedSplitMaximize,
