@@ -102,7 +102,15 @@ The planned two-window STRUCT presentation and its measured geometry are recorde
 changes placement presentation, not reusable MOSAIC content geometry.
 
 W1 of that milestone adds `lib/mosaic_split_geometry.dart` as a pure seated
-split-window geometry authority. Grammar/model ownership remains deferred to W2.
+split-window geometry authority.
+
+W2 locks placement syntax to `:SPLIT` plus optional keyed
+`:ASPECT=4X3` / `:ASPECT=9X16`; 16:9 is the omitted default. FULL and SPLIT
+are exclusive. Unsupported SPLIT requests remain authored, lint as warnings,
+and resolve through the existing ordinary-window presentation until their
+MOSAIC has exactly two populated panes. Stable split titles derive from the
+existing effective STRUCT title as `<title> · PANE 1` and
+`<title> · PANE 2`. Rendering the two separate clients begins in W3.
 
 ## Common endpoint calculation (T0)
 
