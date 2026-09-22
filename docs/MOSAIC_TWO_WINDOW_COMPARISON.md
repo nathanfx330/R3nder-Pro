@@ -785,7 +785,9 @@ flutter test \
   test/program_preview_structural_split_transition_test.dart \
   test/program_structural_split_bake_test.dart \
   test/structural_split_window_preview_test.dart \
-  test/program_structural_split_transition_bake_test.dart
+  test/program_structural_split_transition_bake_test.dart \
+  test/edit_video_compositor_test.dart \
+  test/structural_sequence_preview_test.dart
 
 dart run tool/check_doc_contracts.dart
 ```
