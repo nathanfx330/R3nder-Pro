@@ -29,6 +29,7 @@ import 'dossier_overlay.dart';
 import 'edit_model.dart';
 import 'maximize_shell_state.dart';
 import 'media_layer.dart';
+import 'mosaic_split_geometry.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
@@ -399,28 +400,64 @@ class ProgramStructuralFrameRenderer {
 
     ui.Image? sourceImage;
     ui.Image? outgoingSourceImage;
+    MosaicSplitWindowGeometry? splitGeometry;
+    List<_RenderedStructuralSourceImage>? splitPaneImages;
     String defaultBottomOverlay = '';
     String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      sourceImage = await _imageForSourceFrame(
-        placement.sourceRef.canonicalSource,
-        visual.sourceFrame,
-        fontFamily,
-      );
-      defaultBottomOverlay = _cachedDiagnosticLabel;
-
-      final _StructuralBakeHandoff? activeHandoff = handoff;
-      if (activeHandoff != null) {
-        final StructuralSequencePlacement outgoing =
-            activeHandoff.outgoingPlacement;
-        final _RenderedStructuralSourceImage renderedOutgoing =
-            await _renderSourceFrameImage(
-          outgoing.sourceRef.canonicalSource,
-          activeHandoff.outgoingSourceFrame,
+      if (placement.splitWindow) {
+        final double engineWidth =
+            scene.width > 0.0 ? scene.width : width.toDouble();
+        final double chromeScale =
+            scene.terminal.scale * width.toDouble() / engineWidth;
+        final double titleHeight = 38.0 * chromeScale;
+        splitGeometry = mosaicSplitWindowGeometry(
+          frame: Rect.fromLTWH(
+            0,
+            0,
+            width.toDouble(),
+            height.toDouble(),
+          ),
+          aspect: placement.splitClientAspect,
+          titleHeight: titleHeight,
+        );
+        final int paneWidth =
+            math.max(1, splitGeometry.clientSize.width.round());
+        final int paneHeight =
+            math.max(1, splitGeometry.clientSize.height.round());
+        splitPaneImages = <_RenderedStructuralSourceImage>[];
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          splitPaneImages.add(
+            await _renderSplitPaneFrameImage(
+              placement.sourceRef.canonicalSource,
+              paneIndex,
+              visual.sourceFrame,
+              paneWidth,
+              paneHeight,
+            ),
+          );
+        }
+      } else {
+        sourceImage = await _imageForSourceFrame(
+          placement.sourceRef.canonicalSource,
+          visual.sourceFrame,
           fontFamily,
         );
-        outgoingSourceImage = renderedOutgoing.image;
-        outgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+        defaultBottomOverlay = _cachedDiagnosticLabel;
+
+        final _StructuralBakeHandoff? activeHandoff = handoff;
+        if (activeHandoff != null) {
+          final StructuralSequencePlacement outgoing =
+              activeHandoff.outgoingPlacement;
+          final _RenderedStructuralSourceImage renderedOutgoing =
+              await _renderSourceFrameImage(
+            outgoing.sourceRef.canonicalSource,
+            activeHandoff.outgoingSourceFrame,
+            fontFamily,
+          );
+          outgoingSourceImage = renderedOutgoing.image;
+          outgoingDefaultBottomOverlay = renderedOutgoing.diagnosticLabel;
+        }
       }
     }
     if (dossier != null) {
@@ -476,27 +513,55 @@ class ProgramStructuralFrameRenderer {
     ).paint(canvas, Size(width.toDouble(), height.toDouble()));
 
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      _paintStructuralWindow(
-        canvas: canvas,
-        scene: scene,
-        fontFamily: fontFamily,
-        sourceFrame: visual.sourceFrame,
-        sourceDurationFrames: placement.sourceDurationFrames,
-        windowTitle: placement.effectiveWindowTitle,
-        overlayMode: placement.overlayMode,
-        topOverlay: placement.topOverlay,
-        bottomOverlay: placement.bottomOverlay,
-        defaultBottomOverlay: defaultBottomOverlay,
-        rect: _pixelRect(structuralRect),
-        sourceImage: sourceImage,
-        outgoingSourceImage: outgoingSourceImage,
-        outgoingPlacement: handoff?.outgoingPlacement,
-        outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
-        outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
-        handoffSlideT: handoff?.slideT ?? 1.0,
-        opacity: visual.structuralOpacity,
-        windowChrome: structuralChrome,
-      );
+      final MosaicSplitWindowGeometry? geometry = splitGeometry;
+      final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
+      if (placement.splitWindow && geometry != null && panes != null) {
+        for (int paneIndex = 0; paneIndex < panes.length; paneIndex++) {
+          _paintStructuralWindow(
+            canvas: canvas,
+            scene: scene,
+            fontFamily: fontFamily,
+            sourceFrame: visual.sourceFrame,
+            sourceDurationFrames: placement.sourceDurationFrames,
+            windowTitle: placement.splitWindowTitleForPane(paneIndex),
+            overlayMode: placement.overlayMode,
+            topOverlay: placement.topOverlay,
+            bottomOverlay: placement.bottomOverlay,
+            defaultBottomOverlay: panes[paneIndex].diagnosticLabel,
+            rect: geometry.windowRects[paneIndex],
+            sourceImage: panes[paneIndex].image,
+            outgoingSourceImage: null,
+            outgoingPlacement: null,
+            outgoingSourceFrame: 0,
+            outgoingDefaultBottomOverlay: '',
+            handoffSlideT: 1.0,
+            opacity: visual.structuralOpacity,
+            windowChrome: 1.0,
+          );
+        }
+      } else {
+        _paintStructuralWindow(
+          canvas: canvas,
+          scene: scene,
+          fontFamily: fontFamily,
+          sourceFrame: visual.sourceFrame,
+          sourceDurationFrames: placement.sourceDurationFrames,
+          windowTitle: placement.effectiveWindowTitle,
+          overlayMode: placement.overlayMode,
+          topOverlay: placement.topOverlay,
+          bottomOverlay: placement.bottomOverlay,
+          defaultBottomOverlay: defaultBottomOverlay,
+          rect: _pixelRect(structuralRect),
+          sourceImage: sourceImage,
+          outgoingSourceImage: outgoingSourceImage,
+          outgoingPlacement: handoff?.outgoingPlacement,
+          outgoingSourceFrame: handoff?.outgoingSourceFrame ?? 0,
+          outgoingDefaultBottomOverlay: outgoingDefaultBottomOverlay,
+          handoffSlideT: handoff?.slideT ?? 1.0,
+          opacity: visual.structuralOpacity,
+          windowChrome: structuralChrome,
+        );
+      }
     }
 
     if (dossier != null) {
@@ -523,6 +588,12 @@ class ProgramStructuralFrameRenderer {
     } finally {
       picture.dispose();
       outgoingSourceImage?.dispose();
+      final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
+      if (panes != null) {
+        for (final _RenderedStructuralSourceImage pane in panes) {
+          pane.image.dispose();
+        }
+      }
     }
   }
 
@@ -565,6 +636,41 @@ class ProgramStructuralFrameRenderer {
     _cachedSourceFrame = sourceFrame;
     _cachedDiagnosticLabel = rendered.diagnosticLabel;
     return rendered.image;
+  }
+
+  Future<_RenderedStructuralSourceImage> _renderSplitPaneFrameImage(
+    String source,
+    int paneIndex,
+    int sourceFrame,
+    int imageWidth,
+    int imageHeight,
+  ) async {
+    final String rendererKey =
+        '$source|split|${imageWidth}x$imageHeight';
+    final StructuralSourceFrameRenderer renderer =
+        _sourceRenderers.putIfAbsent(
+      rendererKey,
+      () => StructuralSourceFrameRenderer.create(
+        source: rawDocument,
+        structuralSource: source,
+        width: imageWidth,
+        height: imageHeight,
+        backend: backend,
+        resolveSource: resolveSource,
+      ),
+    );
+
+    final StructuralSourceRenderedFrame rendered =
+        renderer.renderMosaicPaneDetailed(paneIndex, sourceFrame);
+    return _RenderedStructuralSourceImage(
+      image: await _decodeRgba(
+        rendered.rgba,
+        imageWidth,
+        imageHeight,
+      ),
+      diagnosticLabel:
+          rendered.diagnosticLabel('$source · PANE ${paneIndex + 1}'),
+    );
   }
 
   Future<_RenderedStructuralSourceImage> _renderSourceFrameImage(
