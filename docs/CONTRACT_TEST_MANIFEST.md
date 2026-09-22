@@ -159,7 +159,7 @@ second duration authority or an extra program-time adjustment.
 
 **Contract**
 
-A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, and application-switch presentation. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter.
+A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/supported two-window SPLIT presentation, authored split client aspect, DEFAULT/CUSTOM/NONE chrome, title/overlay copy, dynamic `[frame]` expressions, application-switch presentation, and SPLIT cue policy. The source definition remains reusable and unchanged. Seated split Preview and BAKE consume the same geometry and shared window raster painter. CARD is routed to its owning split client; SIDECARD and MAXIMIZE lint as unsupported and do not alter or paint the split shell.
 
 **Proof**
 
@@ -173,6 +173,8 @@ A STRUCT placement selects an EDIT/MOSAIC source and owns windowed/fullscreen/su
 - `test/mosaic_split_geometry_test.dart`
 - `test/structural_split_window_preview_test.dart`
 - `test/structural_split_transition_plan_test.dart`
+- `test/structural_split_cue_policy_test.dart`
+- `test/structural_split_card_preview_test.dart`
 
 ---
 
@@ -251,7 +253,7 @@ Program Preview uses the compiled runtime REGION bridge and the same raw authore
 
 **Contract**
 
-SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, and supported two-window MOSAIC split placement without bypassing recursive pane composition.
+SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer composes the active STRUCT placement, and final encoded output preserves window/fullscreen geometry, DEFAULT/CUSTOM chrome, dynamic `[frame]` copy, structural source-local frame identity, supported two-window MOSAIC split placement, pane-owned split CARD overlays, and split shell-cue suppression without bypassing recursive pane composition.
 
 **Proof**
 
@@ -263,6 +265,7 @@ SceneExporter evaluates explicit project frames, ProgramStructuralFrameRenderer 
 - `test/scene_exporter_structural_mosaic_custom_end_to_end_test.dart`
 - `test/program_structural_split_bake_test.dart`
 - `test/program_structural_split_transition_bake_test.dart`
+- `test/program_structural_split_card_bake_test.dart`
 
 ---
 
