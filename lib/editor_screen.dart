@@ -220,7 +220,8 @@ class _EditorScreenState extends State<EditorScreen> {
   /// without rebuilding the entire editor tree. The preview pane and compact
   /// transport strip listen here; the text controller independently repaints
   /// only when the highlighted source line actually changes.
-  final ChangeNotifier _textPlaybackFrameSignal = ChangeNotifier();
+  final ValueNotifier<int> _textPlaybackFrameSignal =
+      ValueNotifier<int>(0);
 
   /// Historical wall-clock playback source. TEXT keeps it only for runs where
   /// no structural clip audio owns realtime time. AUDIO-enabled runs sample the
@@ -1357,7 +1358,7 @@ class _EditorScreenState extends State<EditorScreen> {
       _currentFrame++;
     }
     _updateHighlight();
-    _textPlaybackFrameSignal.notifyListeners();
+    _textPlaybackFrameSignal.value++;
   }
 
   void _stopPlayback({bool invalidateStructuralAudio = false}) {
