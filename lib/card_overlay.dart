@@ -246,6 +246,58 @@ void paintStructuralCardOverlays({
   }
 }
 
+/// Composites already-evaluated CARD-family placements over one decoded
+/// structural image. Returns null when nothing visible needs painting.
+///
+/// The source image remains owned by the caller. Preview and BAKE both use
+/// this helper so split-pane CARD routing shares the exact same paint path.
+Future<ui.Image?> compositeStructuralCardOverlaysToImage({
+  required ui.Image structuralImage,
+  required Iterable<StructuralCardOverlayPlacement> placements,
+  required CardOverlayImageCache images,
+  required String fontFamily,
+}) async {
+  final List<StructuralCardOverlayPlacement> visible = placements
+      .where((StructuralCardOverlayPlacement p) => p.slide > 0.0)
+      .toList(growable: false);
+  if (visible.isEmpty) return null;
+
+  await images.ensure(visible);
+
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final Canvas canvas = Canvas(
+    recorder,
+    Rect.fromLTWH(
+      0,
+      0,
+      structuralImage.width.toDouble(),
+      structuralImage.height.toDouble(),
+    ),
+  );
+  canvas.drawImage(structuralImage, Offset.zero, Paint());
+  paintStructuralCardOverlays(
+    canvas: canvas,
+    size: Size(
+      structuralImage.width.toDouble(),
+      structuralImage.height.toDouble(),
+    ),
+    placements: visible,
+    images: images,
+    structuralImage: structuralImage,
+    fontFamily: fontFamily,
+  );
+  final ui.Picture picture = recorder.endRecording();
+  try {
+    return await picture.toImage(
+      structuralImage.width,
+      structuralImage.height,
+    );
+  } finally {
+    picture.dispose();
+  }
+}
+
+
 /// Paints only the right-hand SIDECARD panel into a program render frame.
 ///
 /// The caller owns desktop and structural video window pixels. This helper owns
