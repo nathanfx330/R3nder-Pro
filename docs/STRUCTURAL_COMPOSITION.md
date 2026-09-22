@@ -97,6 +97,10 @@ The current model supports one composition rather than paged MOSAIC presentation
 
 MOSAIC duration is authored geometry: the maximum pane-local CLIP end.
 
+The planned two-window STRUCT presentation and its measured geometry are recorded in
+[`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). That work
+changes placement presentation, not reusable MOSAIC content geometry.
+
 ## Common endpoint calculation (T0)
 
 `mosaicCommonEndFrame` in `lib/mosaic_trim.dart` calculates a candidate exclusive
