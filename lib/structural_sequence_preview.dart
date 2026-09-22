@@ -86,6 +86,7 @@ import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
+import 'structural_split_window_preview.dart';
 import 'structural_shell_geometry.dart';
 import 'ui_theme.dart';
 
@@ -667,7 +668,37 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   ),
               ],
 
-              if (structuralWindowPresent)
+              if (structuralWindowPresent && placement.splitWindow)
+                Positioned.fromRect(
+                  key: const ValueKey<String>(
+                    'structural-split-window-positioned',
+                  ),
+                  rect: renderFrame,
+                  child: Opacity(
+                    key: const ValueKey<String>(
+                      'structural-split-window-opacity',
+                    ),
+                    opacity: structuralOpacity.clamp(0.0, 1.0),
+                    child: StructuralSplitWindowPreview(
+                      key: ValueKey<String>(
+                        'sequence-split-preview:$source',
+                      ),
+                      rawDocument: widget.rawDocument,
+                      placement: placement,
+                      sourceFrame: sourceFrame,
+                      theme: widget.theme,
+                      fontFamily:
+                          liveFont != null && liveFont.isNotEmpty
+                              ? liveFont
+                              : 'monospace',
+                      chromeScale: chromeScale,
+                      backend: widget.backend,
+                      resolveSource: widget.resolveSource,
+                      onFirstFrameReady: _handleFirstFrameReady,
+                    ),
+                  ),
+                )
+              else if (structuralWindowPresent)
                 Positioned.fromRect(
                   key: const ValueKey<String>('structural-window-positioned'),
                   rect: structuralRect,
