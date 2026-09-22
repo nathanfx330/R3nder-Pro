@@ -74,6 +74,12 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
   final Set<int> _readyPlacements = <int>{};
   final Set<int> _mountedPlacements = <int>{};
 
+  /// Child preview readiness reports, independent of whether a focused test
+  /// interceptor has delayed parent acceptance. This distinguishes a decoder
+  /// that was genuinely late from one that was already paintable during
+  /// preload but whose acceptance callback was intentionally withheld.
+  final Set<int> _reportedReadyPlacements = <int>{};
+
   /// Tracks whether an incoming placement has completed one active paint after
   /// readiness. This remains diagnostic/state information only; authored slide
   /// geometry must never depend on it.
@@ -109,6 +115,7 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
     if (previewIdentityChanged) {
       _readyPlacements.clear();
       _mountedPlacements.clear();
+      _reportedReadyPlacements.clear();
       _readyPaintedPlacements.clear();
       _readyPaintCommitScheduled.clear();
       _lateReadyActivePlacements.clear();
@@ -212,6 +219,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
       backend: widget.structuralBackend,
       resolveSource: widget.structuralResolveSource,
       onFirstFrameReady: () {
+        if (mounted && _mountedPlacements.contains(placementIndex)) {
+          _reportedReadyPlacements.add(placementIndex);
+        }
         final interceptor = widget.structuralReadinessInterceptor;
         if (interceptor == null) {
           _markPlacementReady(placementIndex);
@@ -291,7 +301,10 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
           final int activeLocalFrame = _localFrame(marker);
           final bool activeReady = previouslyMounted.contains(activeIndex) &&
               _readyPlacements.contains(activeIndex);
-          if (placement.seamlessFromPrevious && !activeReady) {
+          final bool readinessReportedBeforeActive =
+              _reportedReadyPlacements.contains(activeIndex);
+          if (placement.seamlessFromPrevious &&
+              !readinessReportedBeforeActive) {
             _lateReadyActivePlacements.add(activeIndex);
           }
           final bool activeReadyPainted =
@@ -392,6 +405,9 @@ class _ProgramPreviewSurfaceState extends State<ProgramPreviewSurface> {
         }
 
         _readyPlacements.removeWhere(
+          (int index) => !nextMounted.contains(index),
+        );
+        _reportedReadyPlacements.removeWhere(
           (int index) => !nextMounted.contains(index),
         );
         _readyPaintedPlacements.removeWhere(
