@@ -94,6 +94,55 @@ Rect structuralShellEmergenceRect(Rect target) {
   );
 }
 
+/// One intentional open-scale-and-fade frame used when a seamless STRUCT
+/// boundary changes effective presentation shape.
+///
+/// Shape changes already own the existing window-animation budget. This helper
+/// spends that authored time on visible geometry instead of freezing the
+/// outgoing final frame. Readiness gates only opacity; geometry remains a pure
+/// function of authored opening progress.
+class StructuralShapeEntryFrame {
+  const StructuralShapeEntryFrame({
+    required this.rect,
+    required this.opacity,
+    required this.easedProgress,
+  });
+
+  final Rect rect;
+  final double opacity;
+  final double easedProgress;
+}
+
+StructuralShapeEntryFrame structuralShapeEntryFrameAt({
+  required Rect targetRect,
+  required double linearProgress,
+  required bool contentReady,
+}) {
+  final double linear = linearProgress.clamp(0.0, 1.0).toDouble();
+  final double eased = Curves.easeInOutCubic.transform(linear);
+  final Rect emergence = structuralShellEmergenceRect(targetRect);
+  return StructuralShapeEntryFrame(
+    rect: Rect.lerp(emergence, targetRect, eased)!,
+    opacity: contentReady
+        ? Curves.easeOutCubic.transform(
+            (linear * kStructuralShellVisibilityRamp)
+                .clamp(0.0, 1.0),
+          )
+        : 0.0,
+    easedProgress: eased,
+  );
+}
+
+/// Outgoing visibility while an incoming shape opens above it.
+///
+/// The outgoing presentation remains a stable cover at frame zero and fades
+/// across the complete authored window budget. If incoming content is not
+/// ready, callers keep the outgoing cover fully visible instead.
+double structuralShapeOutgoingOpacity(double linearProgress) {
+  final double linear = linearProgress.clamp(0.0, 1.0).toDouble();
+  return 1.0 - Curves.easeInOutCubic.transform(linear);
+}
+
 /// Evaluates the complete terminal/desktop/structural-window shell.
 ///
 /// All rectangles must use the same coordinate space. [closingOriginRect] is
