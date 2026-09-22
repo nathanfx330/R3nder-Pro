@@ -1,0 +1,170 @@
+# MOSAIC Two-Window STRUCT Presentation
+
+Status: design locked for v1; W0 shared legacy layout extraction implemented on
+`mosaic-w0-shared-layout` and awaiting local Flutter verification.
+
+This document records the next MOSAIC presentation milestone after Trim to
+shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
+MOSAIC definition remains content-only.
+
+## Goal
+
+For an exactly two-pane populated MOSAIC, a STRUCT placement may present the two
+panes as two separate desktop windows instead of one Metro-style MOSAIC client.
+
+The mode is placement metadata. The same MOSAIC may therefore be reused in
+ordinary windowed, fullscreen, or split-window placements without rewriting the
+MOSAIC definition.
+
+## Locked v1 behavior
+
+- The mode belongs to STRUCT placement, never the MOSAIC definition.
+- It is valid only for exactly two panes and both panes must be populated.
+- Unsupported sources lint and fall back to ordinary windowed presentation.
+- One authored client aspect belongs to the placement: 16:9, 4:3, or 9:16.
+- The default authored aspect is 16:9.
+- Aspect is fixed for the placement and is never inferred from media.
+- Both windows are equal size, side by side, centered as a group, with a fixed
+  inter-window gap.
+- Footage is contained inside each client.
+- Split-to-split changes are simultaneous cuts. There is no client slide.
+- An aspect change between split placements also cuts geometry with no extra
+  timing.
+- Changes between presentation modes consume the existing entry budgets.
+- Desktop entry and exit retain the existing timing budgets.
+- CARD maps to the client owned by its source pane.
+- SIDECARD and MAXIMIZE are unsupported in split v1. They lint and do not paint.
+- Exact grammar spelling and title derivation must be checked against existing
+  STRUCT authoring conventions before W2 is locked.
+
+## Measured reference geometry
+
+At a 1920 x 1080 output:
+
+```text
+edge margin = width * 0.035 = 67.20
+gap = width * 0.024 = 46.08
+maximum client width
+  = (width - 2 * edge margin - gap) / 2
+  = 869.76
+
+title height = 38 reference pixels
+maximum client height
+  = height * 0.78 - title height
+  = 804.40
+```
+
+For authored client aspect `a`:
+
+```text
+clientHeight = min(maximumClientWidth / a, maximumClientHeight)
+clientWidth  = a * clientHeight
+```
+
+The two-window group is horizontally centered while retaining the fixed gap.
+Outer windows are vertically centered. When the height cap binds, width
+contracts rather than changing aspect.
+
+Reference results:
+
+| Authored aspect | Client size | Matching footage | Windowed Metro baseline |
+| --- | ---: | ---: | ---: |
+| 16:9 | 869.76 x 489.24 | 41.04% | 28.14% |
+| 4:3 | 869.76 x 652.32 | 54.72% | 37.52% |
+| 9:16 | 452.48 x 804.40 | 35.11% | 35.11% |
+
+16:9 and 4:3 both gain 45.86% relatively over their matching windowed Metro
+baseline. Portrait split improves framing and symmetry but not total visible
+footage area. Fullscreen Metro is a different comparison point: two 16:9
+sources occupy 50.72% there.
+
+These values are source-derived geometry calculations. The standard MLT 7.22
+CPU loader normalizers were traced as containing and padding footage, but the
+numbers above are not native pixel measurements. W3/W4 must verify the actual
+backend using an edge-marked circle fixture.
+
+## Rendering constraint discovered before implementation
+
+Calling `MediaLayer.renderPane` twice is not sufficient for split rendering.
+For nested EDIT/MOSAIC pane sources, MediaLayer deliberately returns structural
+pending placeholders. The compositor resolves those sources recursively and
+applies pane transitions.
+
+W3 therefore needs a compositor-level pane entry point that reuses the complete
+existing structural path, including nonblocking readiness behavior and recursive
+leaf diagnostics. Split rendering must not create a second, weaker render path.
+
+## Stage plan
+
+### W0 - shared legacy MOSAIC layout
+
+Extract the existing normalized pane rectangles into one pure helper shared by:
+
+- `EditVideoCompositor`
+- CARD structural cue ownership
+- DOSSIER structural cue ownership
+
+The compositor retains pixel rounding. No timing or visible geometry is intended
+to change.
+
+Proof is `test/mosaic_layout_test.dart`:
+
+- empty and unsupported legacy count behavior;
+- exact one-, two-, and three-pane normalized rectangles;
+- CARD ownership for every pane;
+- DOSSIER ownership for every pane;
+- exact and available compositor paths;
+- independent red/green/blue pixel fixtures;
+- odd 101 x 57 output, pinning the 56/44 seam at x=57 and the stacked seam at
+  y=29.
+
+Verification gate:
+
+```bash
+flutter test test/mosaic_layout_test.dart test/mosaic_source_test.dart test/card_overlay_state_test.dart test/edit_dossier_cue_test.dart
+dart run tool/check_doc_contracts.dart
+```
+
+W1 does not begin until that gate passes locally.
+
+### W1 - pure split geometry
+
+Add the two-window placement geometry as a pure shared calculation covering all
+three authored aspects, bounds, centering, fixed gap, title/client rectangles,
+and output scaling.
+
+### W2 - grammar, model, authoring, and lint
+
+Add placement metadata and inspector authoring. Preserve absent defaults on
+no-op round trips. Confirm exact grammar spelling and title derivation against
+existing conventions.
+
+### W3 - BAKE
+
+Render both clients through a compositor-level pane entry point, not direct
+MediaLayer pane calls. Preserve complete nested structural resolution,
+nonblocking semantics, and leaf diagnostics.
+
+### W4 - Preview
+
+Add live split presentation and prove seated pixel parity against BAKE. Run the
+edge-marked circle fixture against the actual media backend.
+
+### W5 - transitions and readiness
+
+Keep existing entry/exit budgets. Split-to-split and split aspect changes cut
+simultaneously. Add delayed-readiness regression coverage so decoder state never
+moves authored geometry or project time.
+
+### W6 - cue routing and unsupported shell cues
+
+Route CARD to the owning pane client. Lint SIDECARD and MAXIMIZE in split v1 and
+do not paint them.
+
+## Non-goals
+
+This milestone does not change MOSAIC Trim to shortest. In particular,
+`removeClip` retains exact block-span deletion, and trim primitives remain
+non-rippling. Surviving cue presentations truncated at their tails are a
+separate future diagnostic; they are not dormant triggers and are not part of
+this milestone.
