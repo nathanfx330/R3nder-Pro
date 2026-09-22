@@ -274,11 +274,11 @@ String _coldSameSourceSplitOpeningSource() => '''[SPEED:MAX]
 [/EDIT]
 [MOSAIC:wall]
 [PANE:left]
-[CLIP:left_edit:EDIT.shared:0:0:12:1]
+[CLIP:shared_edit_ref:EDIT.shared:0:0:12:1]
 [/CLIP]
 [/PANE]
 [PANE:right]
-[CLIP:right_edit:EDIT.shared:0:0:12:1]
+[CLIP:shared_edit_ref:EDIT.shared:0:0:12:1]
 [/CLIP]
 [/PANE]
 [/MOSAIC]
@@ -739,7 +739,7 @@ void main() {
   );
 
   testWidgets(
-    'cold SPLIT reuses one decoder when both panes reference the same nested EDIT',
+    'cold SPLIT supports the same nested EDIT and CLIP id in both panes',
     (WidgetTester tester) async {
       await _expectColdSameSourceSplitRetries(tester);
     },
