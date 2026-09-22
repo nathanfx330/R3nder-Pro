@@ -9,12 +9,14 @@ import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/presentation_requests.dart';
 import 'package:r3nder/structural_sequence.dart';
 
-const String _source = '''[MOSAIC:wall]
-[PANE:left]
+const String _source = '''[EDIT:left]
+[TRACK:V1]
 [CLIP:leftShot:video/left.mp4:0:0:40:1]
 [/CLIP]
-[/PANE]
-[PANE:right]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
 [CLIP:rightShot:video/right.mp4:0:0:40:1]
 [CUE:0]
 [CARD:missing-card.png:8:12,34,56:CARD]
@@ -29,6 +31,16 @@ SIDE BODY
 [CUE:0]
 [MAXIMIZE:8]
 [/CUE]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:left:EDIT.left:0:0:40:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right:EDIT.right:0:0:40:1]
 [/CLIP]
 [/PANE]
 [/MOSAIC]
@@ -99,7 +111,14 @@ void main() {
     expect(maximizeWarnings.single.message, contains('will not paint'));
     expect(
       sideWarnings.single.editPath,
-      <String>['STRUCT', 'MOSAIC.wall', 'PANE.right', 'rightShot'],
+      <String>[
+        'STRUCT',
+        'MOSAIC.wall',
+        'PANE.right',
+        'EDIT.right',
+        'TRACK.V1',
+        'rightShot',
+      ],
     );
     expect(
       maximizeWarnings.single.editPath,
