@@ -150,6 +150,43 @@ void main() {
     );
   });
 
+  test('MAX split snaps both outer windows edge to edge', () {
+    for (final MosaicSplitClientAspect aspect
+        in MosaicSplitClientAspect.values) {
+      final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
+        frame: hd,
+        aspect: aspect,
+        titleHeight: 38.0,
+        maximized: true,
+      );
+
+      expect(geometry.maximized, isTrue);
+      _expectClose(geometry.edgeMargin, 0.0);
+      _expectClose(geometry.gap, 0.0);
+      _expectClose(geometry.maximumClientWidth, 960.0);
+      _expectClose(geometry.maximumClientHeight, 1042.0);
+      _expectClose(geometry.clientSize.width, 960.0);
+      _expectClose(geometry.clientSize.height, 1042.0);
+
+      _expectRect(
+        geometry.leftWindowRect,
+        const Rect.fromLTWH(0, 0, 960, 1080),
+      );
+      _expectRect(
+        geometry.rightWindowRect,
+        const Rect.fromLTWH(960, 0, 960, 1080),
+      );
+      _expectRect(
+        geometry.leftClientRect,
+        const Rect.fromLTWH(0, 38, 960, 1042),
+      );
+      _expectRect(
+        geometry.rightClientRect,
+        const Rect.fromLTWH(960, 38, 960, 1042),
+      );
+    }
+  });
+
   test('every aspect stays bounded, equal, gapped, and centered as one group',
       () {
     for (final MosaicSplitClientAspect aspect
