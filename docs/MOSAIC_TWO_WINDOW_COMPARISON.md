@@ -284,18 +284,22 @@ and `EditVideoCompositor` for both panes, and each pane enters through the W3
 `renderMosaicPaneAvailable` compositor boundary. Nested EDIT/MOSAIC resolution
 and decoder/cache lifetime therefore remain shared across both desktop windows.
 
-Preview and BAKE now also share `lib/structural_window_painter.dart`. The
-existing BAKE window raster code was extracted into that helper rather than
-reimplemented for Preview, so seated split chrome, shadows, clipping, title
-copy, overlay copy, and image contain fitting have one painter authority. Both
-surfaces consume the W1 split geometry and the W2 stable PANE 1/PANE 2 titles.
+Preview and BAKE now share the exact same
+`StructuralSplitWindowPainter` from
+`lib/structural_split_window_painter.dart`. That painter delegates individual
+window chrome and contain fitting to `lib/structural_window_painter.dart`.
+The existing BAKE raster code was extracted rather than reimplemented for
+Preview, so seated split geometry, chrome, shadows, clipping, title copy,
+overlay copy, and image contain fitting have one production painter authority.
+Both surfaces consume the W1 split geometry and the W2 stable PANE 1/PANE 2
+titles.
 
 Proof added in W4:
 
 - `test/structural_split_window_preview_test.dart` renders a supported split
-  with a nested EDIT in one pane, captures the live seated Preview raster, and
-  compares the opaque window interiors channel-for-channel with whole-program
-  BAKE;
+  with a nested EDIT in one pane, proves both compositor pane images are
+  resident at the W1 client raster size, and verifies live Preview mounts the
+  same `StructuralSplitWindowPainter` class used by whole-program BAKE;
 - `test/program_preview_structural_split_test.dart` proves the compiled runtime
   REGION selects the SPLIT placement at the top-level Program Preview boundary,
   mounts the split raster rather than the ordinary single window, and opens both
