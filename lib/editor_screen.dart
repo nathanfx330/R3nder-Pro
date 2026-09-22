@@ -216,6 +216,12 @@ class _EditorScreenState extends State<EditorScreen> {
   Timer? _debounce;
   Ticker? _playTicker;
 
+  /// High-frequency playback repaint lane. Scene time can advance every vsync
+  /// without rebuilding the entire editor tree. The preview pane and compact
+  /// transport strip listen here; the text controller independently repaints
+  /// only when the highlighted source line actually changes.
+  final ChangeNotifier _textPlaybackFrameSignal = ChangeNotifier();
+
   /// Historical wall-clock playback source. TEXT keeps it only for runs where
   /// no structural clip audio owns realtime time. AUDIO-enabled runs sample the
   /// shared ProjectClock instead, matching dashboard Preview and EDIT.
@@ -481,6 +487,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _debounce?.cancel();
     _playTicker?.dispose();
     _playTicker = null;
+    _textPlaybackFrameSignal.dispose();
     // Stop, never dispose: the player belongs to main and outlives this
     // screen. Disposing it here would leave the menu with a dead backend.
     _stopBed();
@@ -1350,7 +1357,7 @@ class _EditorScreenState extends State<EditorScreen> {
       _currentFrame++;
     }
     _updateHighlight();
-    if (mounted) setState(() {});
+    _textPlaybackFrameSignal.notifyListeners();
   }
 
   void _stopPlayback({bool invalidateStructuralAudio = false}) {
@@ -1869,11 +1876,13 @@ class _EditorScreenState extends State<EditorScreen> {
                 color: R3Theme.panel,
                 border: Border(top: BorderSide(color: R3Theme.hairline)),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Focus(
-                    focusNode: _textTimelineFocusNode,
+              child: ListenableBuilder(
+                listenable: _textPlaybackFrameSignal,
+                builder: (BuildContext context, Widget? child) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Focus(
+                      focusNode: _textTimelineFocusNode,
                     onKeyEvent: _handleTextTimelineKeyEvent,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1954,7 +1963,8 @@ class _EditorScreenState extends State<EditorScreen> {
                       ),
                     ],
                   ),
-                ],
+                  ],
+                ),
               ),
             ),
         ],
@@ -2077,7 +2087,11 @@ class _EditorScreenState extends State<EditorScreen> {
     if (_isPreviewFull) {
       return Focus(
         focusNode: _previewFocusNode,
-        child: _buildPreviewPane(),
+        child: ListenableBuilder(
+          listenable: _textPlaybackFrameSignal,
+          builder: (BuildContext context, Widget? child) =>
+              _buildPreviewPane(),
+        ),
       );
     }
 
@@ -2290,7 +2304,11 @@ class _EditorScreenState extends State<EditorScreen> {
         Container(width: 1, color: R3Theme.hairline),
         Expanded(
           flex: 3,
-          child: _buildPreviewPane(),
+          child: ListenableBuilder(
+            listenable: _textPlaybackFrameSignal,
+            builder: (BuildContext context, Widget? child) =>
+                _buildPreviewPane(),
+          ),
         ),
       ],
     );
