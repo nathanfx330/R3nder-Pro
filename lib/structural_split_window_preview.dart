@@ -286,6 +286,15 @@ class _StructuralSplitWindowPreviewState
     if (!mounted || serial != _serial) return;
 
     if (results.any((EditVideoCompositeResult result) => result.hasPending)) {
+      // Native/nonblocking decoders may remain pending while authored opening
+      // geometry advances without changing sourceFrame. Poll again through the
+      // existing coalesced scheduler instead of waiting for a widget/source
+      // update that may not occur until the opening budget has already ended.
+      //
+      // This retries presentation readiness only. It does not advance project
+      // time, source time, or restart entry progress, and the pair remains
+      // hidden until both panes resolve.
+      _scheduleRender();
       return;
     }
 
