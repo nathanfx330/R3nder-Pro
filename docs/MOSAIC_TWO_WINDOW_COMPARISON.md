@@ -35,8 +35,9 @@ MOSAIC definition.
 - Desktop entry and exit retain the existing timing budgets.
 - CARD maps to the client owned by its source pane.
 - SIDECARD and MAXIMIZE are unsupported in split v1. They lint and do not paint.
-- Exact grammar spelling and title derivation must be checked against existing
-  STRUCT authoring conventions before W2 is locked.
+- Grammar is placement-owned: SPLIT is the presentation token, ASPECT carries
+  authored client ratio, and stable PANE 1/PANE 2 titles derive from the
+  effective STRUCT title.
 
 ## Measured reference geometry
 
@@ -81,8 +82,9 @@ sources occupy 50.72% there.
 
 These values are source-derived geometry calculations. The standard MLT 7.22
 CPU loader normalizers were traced as containing and padding footage, but the
-numbers above are not native pixel measurements. W3/W4 must verify the actual
-backend using an edge-marked circle fixture.
+numbers above are not native pixel measurements. W3 proves the compositor and
+BAKE ownership boundaries with synthetic pixel fixtures; W4 still owns the
+native edge-marked circle measurement against the actual media backend.
 
 ## Rendering constraint discovered before implementation
 
@@ -222,13 +224,56 @@ flutter test test/structural_split_placement_test.dart test/script_node_structur
 dart run tool/check_doc_contracts.dart
 ```
 
-W3 does not begin until that gate passes locally.
+W2 passed locally on the W2 branch, including the inspector scroll regression
+gate. The documentation checker remained at 16 contracts / 80 proof files.
 
 ### W3 - BAKE
 
-Render both clients through a compositor-level pane entry point, not direct
-MediaLayer pane calls. Preserve complete nested structural resolution,
-nonblocking semantics, and leaf diagnostics.
+W3 adds compositor-level exact and nonblocking MOSAIC pane entry points. The
+public pane API validates the MOSAIC root and pane index, then reuses the same
+private pane composer and recursive structural resolver used by whole-MOSAIC
+rendering. Direct MediaLayer pane output therefore never becomes the final split
+client when nested EDIT/MOSAIC sources are present.
+
+Structural source export exposes the same pane boundary for exact offline
+rendering and applies the existing recursive leaf validation before returning
+pixels. A nested leaf that is offline, pending in an exact render, or returns an
+adjacent source frame remains a hard export failure.
+
+Whole-program BAKE now uses the W1 geometry whenever a W2 placement has
+effective split support. It renders both panes at the split client raster size,
+paints two independent desktop windows, derives the stable PANE 1/PANE 2 titles,
+and reuses one split-sized structural renderer per source/size so both panes
+share decoder state. Unsupported authored SPLIT still reaches the unchanged
+ordinary windowed path because its effective `splitWindow` flag is false.
+
+W3 deliberately does not implement live Preview, split-to-split transition
+semantics, CARD ownership, or SIDECARD/MAXIMIZE suppression; those remain W4,
+W5, and W6 responsibilities.
+
+Proof:
+
+- `test/mosaic_split_pane_compositor_test.dart` proves exact recursive pane
+  rendering, leaf diagnostics, and nonblocking pending-to-ready behavior;
+- `test/program_structural_split_bake_test.dart` proves final BAKE paints two
+  independent clients from a supported placement, including a nested EDIT in a
+  pane, and preserves ordinary-window fallback for unsupported SPLIT.
+
+Verification gate:
+
+```bash
+flutter test \
+  test/mosaic_split_pane_compositor_test.dart \
+  test/program_structural_split_bake_test.dart \
+  test/structural_source_export_test.dart \
+  test/edit_video_compositor_test.dart \
+  test/program_structural_export_test.dart \
+  test/mosaic_split_geometry_test.dart
+
+dart run tool/check_doc_contracts.dart
+```
+
+W4 does not begin until that gate passes locally.
 
 ### W4 - Preview
 
