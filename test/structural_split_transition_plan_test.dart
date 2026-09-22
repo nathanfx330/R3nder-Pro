@@ -98,7 +98,10 @@ void main() {
     expect(second.sourceFrameAt(0), 0);
     expect(
       second.durationFrames,
-      kStructuralWindowFrames + second.sourceDurationFrames,
+      kStructuralWindowFrames +
+          second.sourceDurationFrames +
+          kStructuralWindowFrames +
+          kStructuralZoomFrames,
     );
   });
 
