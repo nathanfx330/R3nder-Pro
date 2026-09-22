@@ -11,6 +11,7 @@ import 'package:r3nder/mosaic_split_geometry.dart';
 import 'package:r3nder/program_structural_export.dart';
 import 'package:r3nder/project_clock.dart';
 import 'package:r3nder/scene_engine.dart';
+import 'package:r3nder/scene_evaluator.dart';
 import 'package:r3nder/script_pipeline.dart';
 import 'package:r3nder/structural_sequence.dart';
 
