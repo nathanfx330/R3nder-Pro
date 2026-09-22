@@ -323,6 +323,127 @@ void main() {
   );
 
   test(
+    'BAKE paints MAX split clients edge to edge with no center gap',
+    () async {
+      const String source = '''[SPEED:MAX]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3:OVERLAY=NONE]
+''';
+
+      const int outputWidth = 640;
+      const int outputHeight = 360;
+      final Directory root = await Directory.systemTemp
+          .createTemp('r3nder_program_max_split_bake_');
+      final Directory images = Directory('${root.path}/images')
+        ..createSync(recursive: true);
+      final Directory sprites = Directory('${root.path}/sprites')
+        ..createSync(recursive: true);
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      expect(placement.maximizeSplit, isTrue);
+
+      final CompiledScript compiled = compileScript(source, lineMarkers: false);
+      final SceneEngine scene = SceneEngine();
+      await scene.setup(
+        templateText: compiled.engineText,
+        fontColor: Colors.green,
+        bgColor: Colors.black,
+        width: 1920,
+        height: 1080,
+        scale: 1,
+        fontPath: 'monospace',
+        fontSize: 12,
+        lineSpacing: 16,
+        tracking: 0,
+        marginTop: 10,
+        marginSide: 10,
+        imagesDir: images.path,
+        spritesDir: sprites.path,
+        paneLifeConfig: compiled.paneLife,
+        captionConfig: compiled.caption,
+        appSwitchConfig: compiled.appSwitch,
+      );
+
+      final ProgramStructuralFrameRenderer renderer =
+          ProgramStructuralFrameRenderer(
+        rawDocument: source,
+        width: outputWidth,
+        height: outputHeight,
+        backend: _PaneColorBackend(),
+        resolveSource: (String value) => value,
+      );
+      addTearDown(() {
+        renderer.dispose();
+        scene.disposeImages();
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      final int showingLocal = _middleLocalFrameForStage(
+        placement,
+        StructuralSequenceStage.showing,
+      );
+      final int projectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: showingLocal,
+      );
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+
+      final Uint8List rgba = await _renderRgba(renderer, scene);
+      final Rect? red = _paneColorBounds(
+        rgba,
+        outputWidth,
+        outputHeight,
+        red: true,
+      );
+      final Rect? blue = _paneColorBounds(
+        rgba,
+        outputWidth,
+        outputHeight,
+        red: false,
+      );
+      expect(red, isNotNull);
+      expect(blue, isNotNull);
+
+      final double chromeScale =
+          scene.terminal.scale * outputWidth / scene.width;
+      final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
+        frame: const Rect.fromLTWH(0, 0, outputWidth, outputHeight),
+        aspect: placement.splitClientAspect,
+        titleHeight: 38.0 * chromeScale,
+        maximized: true,
+      );
+
+      expect(geometry.leftWindowRect.left, 0.0);
+      expect(geometry.rightWindowRect.right, outputWidth.toDouble());
+      expect(geometry.leftWindowRect.top, 0.0);
+      expect(geometry.rightWindowRect.bottom, outputHeight.toDouble());
+      expect(geometry.gap, 0.0);
+      expect(geometry.leftWindowRect.right, geometry.rightWindowRect.left);
+
+      expect(red!.left, closeTo(geometry.leftClientRect.left, 2.0));
+      expect(red.right, closeTo(geometry.leftClientRect.right, 2.0));
+      expect(blue!.left, closeTo(geometry.rightClientRect.left, 2.0));
+      expect(blue.right, closeTo(geometry.rightClientRect.right, 2.0));
+    },
+  );
+
+  test(
     'BAKE gives SPLIT the normal window open and close geometry',
     () async {
       const String source = '''[SPEED:MAX]
