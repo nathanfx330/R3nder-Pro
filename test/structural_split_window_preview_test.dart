@@ -177,4 +177,83 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'MAX split Preview uses edge-to-edge geometry and ignores dormant aspect',
+    (WidgetTester tester) async {
+      const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=9X16:OVERLAY=NONE]
+''';
+
+      const double outputWidth = 640;
+      const double outputHeight = 360;
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      expect(placement.maximizeSplit, isTrue);
+      expect(
+        placement.splitClientAspect,
+        MosaicSplitClientAspect.aspect9x16,
+      );
+
+      final _PaneColorBackend backend = _PaneColorBackend();
+      bool ready = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: outputWidth,
+            height: outputHeight,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: 2,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: false,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        ),
+      );
+
+      for (int attempt = 0; attempt < 50 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+      }
+      expect(ready, isTrue);
+      await tester.pump();
+
+      final CustomPaint paint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter painter =
+          paint.painter! as StructuralSplitWindowPainter;
+      expect(painter.geometry.maximized, isTrue);
+      expect(
+        painter.geometry.leftWindowRect,
+        const Rect.fromLTWH(0, 0, 320, 360),
+      );
+      expect(
+        painter.geometry.rightWindowRect,
+        const Rect.fromLTWH(320, 0, 320, 360),
+      );
+      expect(painter.geometry.gap, 0.0);
+      expect(painter.geometry.edgeMargin, 0.0);
+    },
+  );
 }
