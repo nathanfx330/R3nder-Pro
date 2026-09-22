@@ -1,8 +1,7 @@
 # MOSAIC Two-Window STRUCT Presentation
 
-Status: design locked for v1. W0 through W5 passed their local gates.
-W6 cue routing and unsupported-shell policy is implemented on
-`mosaic-w6-split-cue-routing` and awaiting local Flutter verification.
+Status: implemented and locally verified. W0 through W6 passed their local
+Flutter gates on `mosaic-w6-split-cue-routing`.
 
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
@@ -460,7 +459,8 @@ flutter test \
 dart run tool/check_doc_contracts.dart
 ```
 
-W6 is complete only after that local gate passes.
+W6 passed locally with 20 tests. The documentation checker reported
+16 contracts / 90 proof files. The MOSAIC two-window v1 milestone is complete.
 
 ## Non-goals
 
