@@ -181,6 +181,13 @@ void main() {
   testWidgets(
     'MAX split Preview uses edge-to-edge geometry and ignores dormant aspect',
     (WidgetTester tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(640, 360);
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+
       const String source = '''[MOSAIC:wall]
 [PANE:left]
 [CLIP:red:red.mp4:0:0:6:1]
