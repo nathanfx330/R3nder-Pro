@@ -249,12 +249,40 @@ abstract interface class MediaDecoderBackend {
   MediaDecoder open(String resolvedPath);
 }
 
+class _MediaDecoderRasterKey {
+  final String resolvedPath;
+  final int width;
+  final int height;
+
+  const _MediaDecoderRasterKey(
+    this.resolvedPath,
+    this.width,
+    this.height,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is _MediaDecoderRasterKey &&
+      other.resolvedPath == resolvedPath &&
+      other.width == width &&
+      other.height == height;
+
+  @override
+  int get hashCode => Object.hash(resolvedPath, width, height);
+}
+
 class MediaLayer {
   final EditDocumentModel editDocument;
   final MediaDecoderBackend backend;
   final String Function(String source) resolveSource;
 
-  final Map<String, MediaDecoder> _decoders = <String, MediaDecoder>{};
+  // One native worker owns one active decode raster at a time. Reusing a
+  // worker for the same file at two simultaneous sizes makes each request
+  // invalidate the other's native cache. Key persistent workers by both media
+  // identity and raster size so differently sized MOSAIC consumers can make
+  // progress independently while stable-size playback still reuses one worker.
+  final Map<_MediaDecoderRasterKey, MediaDecoder> _decoders =
+      <_MediaDecoderRasterKey, MediaDecoder>{};
   bool _disposed = false;
 
   MediaLayer({
@@ -361,8 +389,10 @@ class MediaLayer {
     }
 
     final String resolved = resolveSource(source);
+    final _MediaDecoderRasterKey key =
+        _MediaDecoderRasterKey(resolved, width, height);
     final MediaDecoder decoder =
-        _decoders.putIfAbsent(resolved, () => backend.open(resolved));
+        _decoders.putIfAbsent(key, () => backend.open(resolved));
     if (decoder is! TextureMediaDecoder) return null;
 
     final int id = decoder.textureId;
@@ -431,8 +461,10 @@ class MediaLayer {
 
         try {
           final String resolved = resolveSource(clip.source);
+          final _MediaDecoderRasterKey key =
+              _MediaDecoderRasterKey(resolved, width, height);
           final MediaDecoder decoder =
-              _decoders.putIfAbsent(resolved, () => backend.open(resolved));
+              _decoders.putIfAbsent(key, () => backend.open(resolved));
 
           DecodedMediaFrame? decoded;
           if (nonBlocking && decoder is NonBlockingMediaDecoder) {
