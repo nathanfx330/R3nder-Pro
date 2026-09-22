@@ -11,6 +11,7 @@ import 'dart:ui';
 
 import 'edit_cue.dart';
 import 'edit_model.dart';
+import 'mosaic_layout.dart';
 import 'presentation_requests.dart';
 
 /// One active CARD-family presentation plus the structural pixel region it owns.
@@ -57,7 +58,7 @@ List<StructuralCardOverlayPlacement> structuralCardOverlayPlacements(
 
     case StructuralSourceKind.mosaic:
       final MosaicSequence mosaic = model.mosaic(root.id);
-      final List<Rect> layout = _mosaicLayout(mosaic.panes.length);
+      final List<Rect> layout = mosaicPaneLayout(mosaic.panes.length);
       final List<StructuralCardOverlayPlacement> result =
           <StructuralCardOverlayPlacement>[];
       for (int i = 0; i < mosaic.panes.length; i++) {
@@ -116,18 +117,3 @@ StructuralCardOverlayPlacement? structuralSideCardPlacementAtSourceEnd(
   );
 }
 
-List<Rect> _mosaicLayout(int count) {
-  if (count <= 0) return const <Rect>[];
-  if (count == 1) return const <Rect>[Rect.fromLTRB(0, 0, 1, 1)];
-  if (count == 2) {
-    return const <Rect>[
-      Rect.fromLTRB(0, 0, 0.56, 1),
-      Rect.fromLTRB(0.56, 0, 1, 1),
-    ];
-  }
-  return const <Rect>[
-    Rect.fromLTRB(0, 0, 0.56, 1),
-    Rect.fromLTRB(0.56, 0, 1, 0.5),
-    Rect.fromLTRB(0.56, 0.5, 1, 1),
-  ];
-}
