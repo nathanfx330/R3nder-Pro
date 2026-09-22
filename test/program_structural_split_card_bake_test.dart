@@ -118,10 +118,10 @@ bool _containsRgbInRect(
   int green,
   int blue,
 ) {
-  final int left = rect.left.floor().clamp(0, width - 1);
-  final int top = rect.top.floor().clamp(0, height - 1);
-  final int right = rect.right.ceil().clamp(left + 1, width);
-  final int bottom = rect.bottom.ceil().clamp(top + 1, height);
+  final int left = rect.left.floor().clamp(0, width - 1).toInt();
+  final int top = rect.top.floor().clamp(0, height - 1).toInt();
+  final int right = rect.right.ceil().clamp(left + 1, width).toInt();
+  final int bottom = rect.bottom.ceil().clamp(top + 1, height).toInt();
 
   for (int y = top; y < bottom; y++) {
     for (int x = left; x < right; x++) {
@@ -223,7 +223,7 @@ void main() {
       final double chromeScale =
           scene.terminal.scale * width / scene.width;
       final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
-        frame: const Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+        frame: const Rect.fromLTWH(0, 0, 640.0, 360.0),
         aspect: placement.splitClientAspect,
         titleHeight: 38.0 * chromeScale,
       );
@@ -255,12 +255,7 @@ void main() {
         reason: 'Right-pane CARD must paint inside the right split client.',
       );
 
-      final Rect full = const Rect.fromLTWH(
-        0,
-        0,
-        width.toDouble(),
-        height.toDouble(),
-      );
+      const Rect full = Rect.fromLTWH(0, 0, 640.0, 360.0);
       expect(
         _containsRgbInRect(
           rgba,
