@@ -761,13 +761,16 @@ still becoming resident, and dashboard PREVIEW could consume the entire opening
 before the pair was ready.
 
 That established a second live-only contract. Decode latency is wall-clock work,
-not authored project time. For monotonic live playback, a cold structural
-opening now reports buffering to its transport owner. The owner holds project
-time at the beginning of the authored window-opening stage, shows the existing
-busy indicator, and resumes from that same project frame only after readiness.
-If the readiness report is first observed a few opening frames late, the live
-scene is restored to opening frame zero before the hold. No project frames are
-inserted, source time remains frame zero during the hold, and BAKE is unchanged.
+not authored project time. A cold structural opening now reports buffering to
+its transport owner. In the common case, readiness is observed at opening frame
+zero, project time holds there, the existing busy indicator remains visible, and
+playback resumes from that same project frame only after readiness.
+
+Late observation is a bounded exception to strict monotonicity. If readiness is
+first observed k frames into the opening, live playback restores to opening
+frame zero before holding, so up to k frames of picture and workspace bed/music
+can replay once. No project frames are inserted, source time remains frame zero
+during the hold, and BAKE is unchanged.
 
 TEXT applies the same rule to its fallback stopwatch transport. While buffering,
 the stopwatch is stopped and any workspace bed/music transport is stopped. Once
@@ -780,6 +783,14 @@ native AUDIO ProjectClock. That transport requires coordinated sink pause/resume
 rather than a unilateral SCRUB seek; the Rocky script that exposed this issue
 does not author STRUCT clip audio. AUDIO-authority buffering remains a separate
 transport extension rather than risking picture/audio divergence.
+
+Named follow-up: proactive opening-boundary residency hold. Dashboard PREVIEW
+and TEXT should use the same boundary definition and check whether the incoming
+placement is resident at the frame immediately before its opening stage would
+begin. If it is not resident, transport should hold there before any opening
+frame is consumed, then release the same project frame once readiness arrives.
+That removes the late-observation rewind entirely. It is deliberately deferred
+from this branch because both live transports must change together.
 
 The Program Preview regression uses two genuine
 `NonBlockingMediaDecoder` fakes at a partial authored opening frame while
@@ -864,9 +875,17 @@ Proof is split across two levels:
   readiness is reached with the same nested EDIT and same pane CLIP id.
 
 Ubuntu previously passed the expanded local gate and visual checks. Rocky then
-confirmed BAKE itself is correct and exposed the remaining live transport
-readiness gap described above. The updated live buffering behavior remains
-unverified until the focused tests and Rocky TEXT/PREVIEW visual checks pass.
+confirmed BAKE itself is correct. The updated live path was subsequently
+verified on Rocky: dashboard PREVIEW now shows the complete two-window opening
+smoothly, and TEXT mode also shows the two video windows opening smoothly after
+the moving split decode raster was capped and TEXT playback moved onto Flutter
+vsync. Focused regressions remained green.
+
+One editor-only visual limitation remains: in TEXT mode, the terminal pullback
+immediately before the split windows open can still stutter on Rocky even though
+the window animation that follows is smooth. BAKE is unaffected. That terminal
+cadence issue is accepted for this branch and should be profiled independently
+with Flutter frame timings before changing terminal presentation code.
 
 ## Non-goals
 
