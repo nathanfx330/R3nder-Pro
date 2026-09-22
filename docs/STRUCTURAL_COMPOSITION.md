@@ -147,6 +147,12 @@ while the common shell opacity ramps in; on close each window follows the exact
 reverse seated-to-emergence curve while shell opacity ramps out. The seated
 two-window geometry remains unchanged.
 
+W8 adds optional `SPLIT:MAX`. It remains the same effective SPLIT presentation
+shape and uses the same open/close choreography, cue ownership, and readiness
+rules. Only seated geometry changes: each outer window occupies one exact half
+of the program frame from top to bottom, with zero outer margin and zero center
+gap. The authored normal-split aspect remains dormant state while MAX is on.
+
 W6 split cue policy evaluates CARD state per authored MOSAIC pane and remaps
 the top-level pane to the complete split client before the pane image reaches
 the shared split-window painter. The resolver follows nested structural CLIPs,
