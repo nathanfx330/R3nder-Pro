@@ -96,6 +96,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_CLOSE_PNG_CANONICAL');
   static const bool _captureCloseBoundary =
       bool.fromEnvironment('R3_SPLIT_BOUNDARY_CAPTURE');
+  static const bool _useSeatedCloseSnapshot =
+      bool.fromEnvironment('R3_SPLIT_CLOSE_SEATED_SNAPSHOT');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -131,6 +133,9 @@ class _StructuralSplitWindowPreviewState
       GlobalKey(debugLabel: 'structural-split-raster-capture');
   bool _boundaryCaptureScheduled = false;
   bool _boundaryCaptureDone = false;
+  ui.Image? _seatedCloseSnapshot;
+  int _seatedCloseSnapshotFrame = -1;
+  bool _seatedCloseSnapshotScheduled = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -262,6 +267,8 @@ class _StructuralSplitWindowPreviewState
     _closeRgbaProbe?.dispose();
     _closeRgbaProbe = null;
     _closeRgbaProbeSize = null;
+    _seatedCloseSnapshot?.dispose();
+    _seatedCloseSnapshot = null;
     super.dispose();
   }
 
@@ -1015,6 +1022,44 @@ class _StructuralSplitWindowPreviewState
     return completer.future;
   }
 
+  void _captureSeatedCloseSnapshot(int sourceFrame) {
+    final BuildContext? boundaryContext =
+        _splitRasterBoundaryKey.currentContext;
+    if (boundaryContext == null) return;
+
+    final RenderObject? renderObject = boundaryContext.findRenderObject();
+    if (renderObject is! RenderRepaintBoundary ||
+        renderObject.debugNeedsPaint) {
+      debugPrint(
+        '[split-seated-snapshot] SKIP '
+        'frame=$sourceFrame '
+        'render=${renderObject.runtimeType}',
+      );
+      return;
+    }
+
+    try {
+      final ui.Image image = renderObject.toImageSync(pixelRatio: 1.0);
+      final ui.Image? old = _seatedCloseSnapshot;
+      _seatedCloseSnapshot = image;
+      _seatedCloseSnapshotFrame = sourceFrame;
+      old?.dispose();
+      debugPrint(
+        '[split-seated-snapshot] READY '
+        'frame=$sourceFrame '
+        'img=${identityHashCode(image)} '
+        'size=${image.width}x${image.height}',
+      );
+      if (mounted) setState(() {});
+    } catch (error, stack) {
+      _reportRenderError(
+        error,
+        stack,
+        'while capturing the seated split close snapshot',
+      );
+    }
+  }
+
   Future<void> _captureBoundaryDuringClose() async {
     final BuildContext? boundaryContext =
         _splitRasterBoundaryKey.currentContext;
@@ -1147,6 +1192,7 @@ class _StructuralSplitWindowPreviewState
           _midCloseReadbackReported = false;
           _boundaryCaptureScheduled = false;
           _boundaryCaptureDone = false;
+          _seatedCloseSnapshotScheduled = false;
         }
 
         if (widget.closing && !_closeBoundaryReported) {
@@ -1171,6 +1217,21 @@ class _StructuralSplitWindowPreviewState
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted || !widget.closing) return;
             unawaited(_verifyPreloadDuringClose());
+          });
+        }
+
+        final int finalSourceFrame =
+            math.max(0, widget.placement.sourceDurationFrames - 1);
+        if (_useSeatedCloseSnapshot &&
+            !widget.closing &&
+            widget.sourceFrame == finalSourceFrame &&
+            !_seatedCloseSnapshotScheduled &&
+            _seatedCloseSnapshotFrame != finalSourceFrame) {
+          _seatedCloseSnapshotScheduled = true;
+          final int captureFrame = widget.sourceFrame;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _captureSeatedCloseSnapshot(captureFrame);
           });
         }
 
@@ -1214,6 +1275,12 @@ class _StructuralSplitWindowPreviewState
                       : widget.closing && _paintImageCloseProbe
                           ? _closeImageProbe
                           : null,
+              seatedCloseSnapshot:
+                  widget.closing &&
+                          _useSeatedCloseSnapshot &&
+                          _seatedCloseSnapshotFrame == finalSourceFrame
+                      ? _seatedCloseSnapshot
+                      : null,
             ),
               child: const SizedBox.expand(),
             ),
