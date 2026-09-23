@@ -459,22 +459,24 @@ class ProgramStructuralFrameRenderer {
           titleHeight: titleHeight,
           maximized: displayPlacement.maximizeSplit,
         );
-        final int paneWidth =
-            math.max(1, splitGeometry.clientSize.width.round());
-        final int paneHeight =
-            math.max(1, splitGeometry.clientSize.height.round());
-        splitPaneImages = <_RenderedStructuralSourceImage>[];
-        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-          splitPaneImages.add(
-            await _renderSplitPaneFrameImage(
-              displayPlacement.sourceRef.canonicalSource,
-              paneIndex,
-              displaySourceFrame,
-              paneWidth,
-              paneHeight,
-              fontFamily,
-            ),
-          );
+        if (!closing) {
+          final int paneWidth =
+              math.max(1, splitGeometry.clientSize.width.round());
+          final int paneHeight =
+              math.max(1, splitGeometry.clientSize.height.round());
+          splitPaneImages = <_RenderedStructuralSourceImage>[];
+          for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+            splitPaneImages.add(
+              await _renderSplitPaneFrameImage(
+                displayPlacement.sourceRef.canonicalSource,
+                paneIndex,
+                displaySourceFrame,
+                paneWidth,
+                paneHeight,
+                fontFamily,
+              ),
+            );
+          }
         }
       } else {
         sourceImage = await _imageForSourceFrame(
@@ -684,16 +686,28 @@ class ProgramStructuralFrameRenderer {
 
       final MosaicSplitWindowGeometry? geometry = splitGeometry;
       final List<_RenderedStructuralSourceImage>? panes = splitPaneImages;
+      final bool splitBlackClose =
+          displayPlacement.splitWindow &&
+          stage == StructuralSequenceStage.closing;
       if (displayPlacement.splitWindow &&
           geometry != null &&
-          panes != null) {
-        final double incomingOpacity = splitShapeEntry
-            ? structuralShapeEntryFrameAt(
-                targetRect: const Rect.fromLTWH(0, 0, 1, 1),
-                linearProgress: shapeEntryLinear,
-                contentReady: true,
-              ).opacity
-            : visual.structuralOpacity;
+          (panes != null || splitBlackClose)) {
+        final double splitProgress = stage == StructuralSequenceStage.opening
+            ? placement.stageProgressAt(localFrame)
+            : splitBlackClose
+                ? (1.0 - placement.stageProgressAt(localFrame))
+                    .clamp(0.0, 1.0)
+                    .toDouble()
+                : 1.0;
+        final double incomingOpacity =
+            splitShapeEntry || splitBlackClose
+                ? structuralShapeEntryFrameAt(
+                    targetRect: const Rect.fromLTWH(0, 0, 1, 1),
+                    linearProgress:
+                        splitShapeEntry ? shapeEntryLinear : splitProgress,
+                    contentReady: true,
+                  ).opacity
+                : visual.structuralOpacity;
         StructuralSplitWindowPainter(
           geometry: geometry,
           placement: displayPlacement,
@@ -701,21 +715,21 @@ class ProgramStructuralFrameRenderer {
           theme: structuralTheme,
           fontFamily: fontFamily,
           chromeScale: structuralChromeScale,
-          images: <ui.Image?>[
-            panes[0].image,
-            panes[1].image,
-          ],
-          diagnosticLabels: <String>[
-            panes[0].diagnosticLabel,
-            panes[1].diagnosticLabel,
-          ],
+          images: splitBlackClose
+              ? const <ui.Image?>[null, null]
+              : <ui.Image?>[
+                  panes![0].image,
+                  panes[1].image,
+                ],
+          diagnosticLabels: splitBlackClose
+              ? const <String>['', '']
+              : <String>[
+                  panes![0].diagnosticLabel,
+                  panes[1].diagnosticLabel,
+                ],
           opacity: incomingOpacity,
-          entryProgress: stage == StructuralSequenceStage.opening
-              ? placement.stageProgressAt(localFrame)
-              : 1.0,
-          exitProgress: stage == StructuralSequenceStage.closing
-              ? placement.stageProgressAt(localFrame)
-              : null,
+          entryProgress: splitProgress,
+          exitProgress: null,
         ).paint(
           canvas,
           Size(width.toDouble(), height.toDouble()),
