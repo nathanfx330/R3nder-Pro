@@ -2046,6 +2046,17 @@ class _EditorScreenState extends State<EditorScreen> {
     if (active != null) {
       final StructuralSequenceStage stage =
           active.placement.stageAt(active.localFrame);
+      if (active.placement.splitWindow &&
+          (stage == StructuralSequenceStage.closing ||
+              active.localFrame >=
+                  active.placement.contentEndFrameExclusive - 2)) {
+        debugPrint(
+          '[split-close-probe] editor ACTIVE '
+          'project=$_currentFrame placement=${active.placementIndex} '
+          'local=${active.localFrame} stage=$stage '
+          'sourceFrame=${active.placement.sourceFrameAt(active.localFrame)}',
+        );
+      }
       if (stage == StructuralSequenceStage.opening &&
           !_textStructuralReadyLines.contains(active.placement.lineIndex)) {
         _scheduleTextStructuralBuffering(
