@@ -8,6 +8,7 @@
 
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'mosaic_split_geometry.dart';
@@ -26,6 +27,9 @@ class StructuralSplitWindowPainter extends CustomPainter {
   final List<ui.Image?> images;
   final List<String> diagnosticLabels;
   final double opacity;
+
+  /// Debug-only live-preview probe. BAKE leaves this false.
+  final bool debugCloseProbe;
 
   /// Authored open progress for the split-window shell.
   ///
@@ -48,6 +52,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     required this.images,
     required this.diagnosticLabels,
     this.opacity = 1.0,
+    this.debugCloseProbe = false,
     this.entryProgress = 1.0,
     this.exitProgress,
   })  : assert(images.length == 2),
@@ -93,6 +98,16 @@ class StructuralSplitWindowPainter extends CustomPainter {
         opacity: opacity,
         windowChrome: 1.0,
       );
+
+      if (debugCloseProbe && kDebugMode && closing != null) {
+        canvas.drawRect(
+          rect.deflate(1.5),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3.0
+            ..color = const Color(0xFFFF00FF),
+        );
+      }
     }
   }
 
@@ -105,6 +120,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.fontFamily != fontFamily ||
         oldDelegate.chromeScale != chromeScale ||
         oldDelegate.opacity != opacity ||
+        oldDelegate.debugCloseProbe != debugCloseProbe ||
         oldDelegate.entryProgress != entryProgress ||
         oldDelegate.exitProgress != exitProgress ||
         oldDelegate.images[0] != images[0] ||
