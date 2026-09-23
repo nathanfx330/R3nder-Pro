@@ -265,7 +265,7 @@ void _expectSameRect(Rect a, Rect b) {
 
 void main() {
   testWidgets(
-    'SPLIT closing holds exact final source frame instead of moving decode',
+    'SPLIT closing mirrors entry while source stays on final frame',
     (WidgetTester tester) async {
       final StructuralSequencePlacement placement =
           parseStructuralSequencePlacements(_splitCloseSource).single;
@@ -342,9 +342,12 @@ void main() {
       );
       expect(split.sourceFrame, placement.sourceDurationFrames - 1);
       expect(split.moving, isTrue);
-      expect(split.holdRaster, isTrue);
-      expect(split.exitProgress, isNotNull);
-      expect(split.exitProgress, allOf(greaterThan(0.0), lessThan(1.0)));
+      expect(split.holdRaster, isFalse);
+      expect(split.exitProgress, isNull);
+      expect(
+        split.entryProgress,
+        closeTo(1.0 - placement.stageProgressAt(closingFrame), 0.000001),
+      );
     },
   );
 
