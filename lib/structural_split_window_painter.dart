@@ -117,8 +117,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         handoffSlideT: 1.0,
         opacity: opacity,
         windowChrome: 1.0,
-        imageFilterQuality:
-            showSourceFrameProbe ? FilterQuality.none : FilterQuality.low,
+        imageFilterQuality: FilterQuality.low,
       );
       if (showSourceFrameProbe) {
         final TextPainter probe = TextPainter(
