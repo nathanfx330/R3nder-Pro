@@ -9,11 +9,13 @@
 // used by Program BAKE.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'card_overlay.dart';
 import 'edit_model.dart';
@@ -92,6 +94,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_CLOSE_RGBA_PROBE');
   static const bool _pngCanonicalCloseFrame =
       bool.fromEnvironment('R3_SPLIT_CLOSE_PNG_CANONICAL');
+  static const bool _captureCloseBoundary =
+      bool.fromEnvironment('R3_SPLIT_BOUNDARY_CAPTURE');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -123,6 +127,10 @@ class _StructuralSplitWindowPreviewState
   bool _closeBoundaryReported = false;
   bool _midCloseReadbackScheduled = false;
   bool _midCloseReadbackReported = false;
+  final GlobalKey _splitRasterBoundaryKey =
+      GlobalKey(debugLabel: 'structural-split-raster-capture');
+  bool _boundaryCaptureScheduled = false;
+  bool _boundaryCaptureDone = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -1007,6 +1015,56 @@ class _StructuralSplitWindowPreviewState
     return completer.future;
   }
 
+  Future<void> _captureBoundaryDuringClose() async {
+    final BuildContext? boundaryContext =
+        _splitRasterBoundaryKey.currentContext;
+    if (boundaryContext == null) return;
+
+    final RenderObject? renderObject = boundaryContext.findRenderObject();
+    if (renderObject is! RenderRepaintBoundary) {
+      debugPrint(
+        '[split-boundary-capture] SKIP render=${renderObject.runtimeType}',
+      );
+      return;
+    }
+
+    ui.Image? image;
+    try {
+      image = await renderObject.toImage(pixelRatio: 1.0);
+      final ByteData? png =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      if (png == null) {
+        debugPrint('[split-boundary-capture] SKIP png=null');
+        return;
+      }
+
+      final Uint8List bytes = Uint8List.fromList(
+        png.buffer.asUint8List(
+          png.offsetInBytes,
+          png.lengthInBytes,
+        ),
+      );
+      const String path = '/tmp/r3nder-split-midclose.png';
+      await File(path).writeAsBytes(bytes, flush: true);
+      _boundaryCaptureDone = true;
+      debugPrint(
+        '[split-boundary-capture] WROTE '
+        'path=$path '
+        'sf=${widget.sourceFrame} '
+        'entry=${widget.entryProgress.toStringAsFixed(6)} '
+        'size=${image.width}x${image.height}',
+      );
+    } catch (error, stack) {
+      _reportRenderError(
+        error,
+        stack,
+        'while capturing the split RepaintBoundary during close',
+      );
+    } finally {
+      image?.dispose();
+    }
+  }
+
   Future<void> _verifyPreloadDuringClose() async {
     final ui.Image? image0 = _closePreloadImages[0];
     final ui.Image? image1 = _closePreloadImages[1];
@@ -1087,6 +1145,8 @@ class _StructuralSplitWindowPreviewState
           _closeBoundaryReported = false;
           _midCloseReadbackScheduled = false;
           _midCloseReadbackReported = false;
+          _boundaryCaptureScheduled = false;
+          _boundaryCaptureDone = false;
         }
 
         if (widget.closing && !_closeBoundaryReported) {
@@ -1114,10 +1174,24 @@ class _StructuralSplitWindowPreviewState
           });
         }
 
+        if (_captureCloseBoundary &&
+            widget.closing &&
+            widget.entryProgress <= 0.65 &&
+            !_boundaryCaptureScheduled &&
+            !_boundaryCaptureDone) {
+          _boundaryCaptureScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !widget.closing || _boundaryCaptureDone) return;
+            unawaited(_captureBoundaryDuringClose());
+          });
+        }
+
         return RepaintBoundary(
-          key: const ValueKey<String>('structural-split-raster'),
-          child: CustomPaint(
-            key: const ValueKey<String>('structural-split-window-frame'),
+          key: _splitRasterBoundaryKey,
+          child: KeyedSubtree(
+            key: const ValueKey<String>('structural-split-raster'),
+            child: CustomPaint(
+              key: const ValueKey<String>('structural-split-window-frame'),
             painter: StructuralSplitWindowPainter(
               geometry: geometry,
               placement: widget.placement,
@@ -1141,7 +1215,8 @@ class _StructuralSplitWindowPreviewState
                           ? _closeImageProbe
                           : null,
             ),
-            child: const SizedBox.expand(),
+              child: const SizedBox.expand(),
+            ),
           ),
         );
       },
