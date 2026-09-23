@@ -48,6 +48,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// finished surface instead of changing drawImageRect destination geometry.
   final bool closeAsSurfaceTransform;
   final bool paintOpaqueCloseProbe;
+  final ui.Image? closeImageProbe;
 
   const StructuralSplitWindowPainter({
     required this.geometry,
@@ -64,6 +65,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.showSourceFrameProbe = false,
     this.closeAsSurfaceTransform = false,
     this.paintOpaqueCloseProbe = false,
+    this.closeImageProbe,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -111,7 +113,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         bottomOverlay: placement.bottomOverlay,
         defaultBottomOverlay: diagnosticLabels[paneIndex],
         rect: paintRect,
-        sourceImage: images[paneIndex],
+        sourceImage: closeImageProbe ?? images[paneIndex],
         outgoingSourceImage: null,
         outgoingPlacement: null,
         outgoingSourceFrame: 0,
@@ -182,6 +184,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.showSourceFrameProbe != showSourceFrameProbe ||
         oldDelegate.closeAsSurfaceTransform != closeAsSurfaceTransform ||
         oldDelegate.paintOpaqueCloseProbe != paintOpaqueCloseProbe ||
+        oldDelegate.closeImageProbe != closeImageProbe ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
