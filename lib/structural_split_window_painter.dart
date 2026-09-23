@@ -47,6 +47,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// During live close, paint the seated window once and transform the whole
   /// finished surface instead of changing drawImageRect destination geometry.
   final bool closeAsSurfaceTransform;
+  final bool paintOpaqueCloseProbe;
 
   const StructuralSplitWindowPainter({
     required this.geometry,
@@ -62,6 +63,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.exitProgress,
     this.showSourceFrameProbe = false,
     this.closeAsSurfaceTransform = false,
+    this.paintOpaqueCloseProbe = false,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -119,6 +121,23 @@ class StructuralSplitWindowPainter extends CustomPainter {
         windowChrome: 1.0,
         imageFilterQuality: FilterQuality.low,
       );
+
+      if (paintOpaqueCloseProbe) {
+        final double barH = math.min(
+          38.0 * chromeScale,
+          paintRect.height,
+        );
+        final Rect client = Rect.fromLTRB(
+          paintRect.left,
+          paintRect.top + barH,
+          paintRect.right,
+          paintRect.bottom,
+        );
+        canvas.drawRect(
+          client,
+          Paint()..color = const Color(0xFFFF00FF),
+        );
+      }
       if (showSourceFrameProbe) {
         final TextPainter probe = TextPainter(
           text: TextSpan(
@@ -162,6 +181,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.exitProgress != exitProgress ||
         oldDelegate.showSourceFrameProbe != showSourceFrameProbe ||
         oldDelegate.closeAsSurfaceTransform != closeAsSurfaceTransform ||
+        oldDelegate.paintOpaqueCloseProbe != paintOpaqueCloseProbe ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
