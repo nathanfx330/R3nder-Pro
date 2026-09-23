@@ -492,6 +492,16 @@ class _StructuralSplitWindowPreviewState
           }
         }
       }
+
+      // Detach the exact final pane pixels from the decode-backed image
+      // resource. Closing paints only these independently rasterized images.
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final ui.Image? base = decoded[paneIndex];
+        if (base == null) continue;
+        final ui.Image detached = await _detachImage(base);
+        base.dispose();
+        decoded[paneIndex] = detached;
+      }
     } catch (error, stack) {
       for (final ui.Image? image in decoded) {
         image?.dispose();
@@ -772,6 +782,18 @@ class _StructuralSplitWindowPreviewState
     if (!_readyReported) {
       _readyReported = true;
       widget.onFirstFrameReady?.call();
+    }
+  }
+
+  Future<ui.Image> _detachImage(ui.Image source) async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final ui.Canvas canvas = ui.Canvas(recorder);
+    canvas.drawImage(source, ui.Offset.zero, ui.Paint());
+    final ui.Picture picture = recorder.endRecording();
+    try {
+      return await picture.toImage(source.width, source.height);
+    } finally {
+      picture.dispose();
     }
   }
 
