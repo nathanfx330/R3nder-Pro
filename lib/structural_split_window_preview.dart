@@ -1439,8 +1439,8 @@ class _StructuralSplitWindowPreviewState
             _closePreloadImages[1] != null &&
             _closePreloadSize == nextPaneSize;
         final List<ui.Image?> paintImages =
-            widget.closing && closePreloadReady
-                ? _closePreloadImages
+            widget.closing
+                ? const <ui.Image?>[null, null]
                 : _images;
         final int finalSourceFrame =
             math.max(0, widget.placement.sourceDurationFrames - 1);
@@ -1540,12 +1540,7 @@ class _StructuralSplitWindowPreviewState
                       : widget.closing && _paintImageCloseProbe
                           ? _closeImageProbe
                           : null,
-              seatedCloseSnapshot:
-                  widget.closing &&
-                          _useSeatedCloseSnapshot &&
-                          _seatedCloseSnapshotFrame == finalSourceFrame
-                      ? _seatedCloseSnapshot
-                      : null,
+              seatedCloseSnapshot: null,
             ),
               child: const SizedBox.expand(),
             ),
