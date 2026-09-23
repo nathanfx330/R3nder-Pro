@@ -104,6 +104,7 @@ class _StructuralSplitWindowPreviewState
   int _closePreloadGeneration = 0;
   bool _renderScheduled = false;
   bool _closePreloadScheduled = false;
+  bool _closePreloadInFlight = false;
   bool _readyReported = false;
   bool _closeBoundaryReported = false;
 
@@ -212,6 +213,7 @@ class _StructuralSplitWindowPreviewState
   void _disposeClosePreload() {
     _closePreloadGeneration++;
     _closePreloadScheduled = false;
+    _closePreloadInFlight = false;
     _closePreloadCompositor?.dispose();
     _closePreloadCompositor = null;
     _closePreloadLayer?.dispose();
@@ -349,7 +351,7 @@ class _StructuralSplitWindowPreviewState
     }
     _closePreloadSize = paneSize;
 
-    if (_closePreloadScheduled) return;
+    if (_closePreloadScheduled || _closePreloadInFlight) return;
     _closePreloadScheduled = true;
     final int generation = _closePreloadGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -359,12 +361,26 @@ class _StructuralSplitWindowPreviewState
           !widget.preloadCloseFrame) {
         return;
       }
-      _preloadCloseFrame(paneSize, generation);
+      _closePreloadInFlight = true;
+      unawaited(_preloadCloseFrame(paneSize, generation));
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _preloadCloseFrame(
+    ui.Size paneSize,
+    int generation,
+  ) async {
+    try {
+      await _preloadCloseFrameOnce(paneSize, generation);
+    } finally {
+      if (generation == _closePreloadGeneration) {
+        _closePreloadInFlight = false;
+      }
+    }
+  }
+
+  Future<void> _preloadCloseFrameOnce(
     ui.Size paneSize,
     int generation,
   ) async {
@@ -416,7 +432,15 @@ class _StructuralSplitWindowPreviewState
 
     if (results.any((EditVideoCompositeResult result) => result.hasPending) ||
         results.any((EditVideoCompositeResult result) => result.rgba == null)) {
-      _scheduleClosePreload(paneSize);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            generation != _closePreloadGeneration ||
+            !widget.preloadCloseFrame) {
+          return;
+        }
+        _closePreloadInFlight = false;
+        _scheduleClosePreload(paneSize);
+      });
       return;
     }
 
@@ -480,6 +504,13 @@ class _StructuralSplitWindowPreviewState
     }
 
     if (!mounted || generation != _closePreloadGeneration) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      return;
+    }
+
+    if (_closePreloadImages[0] != null && _closePreloadImages[1] != null) {
       for (final ui.Image? image in decoded) {
         image?.dispose();
       }
