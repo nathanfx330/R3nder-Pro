@@ -37,10 +37,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double? exitProgress;
   final bool moving;
 
-  /// During close, paint detached copies of the final resident pane images.
-  /// This removes the live video image resources from the animated exit path.
-  final bool useCloseSnapshot;
-
   /// Freeze the exact currently resident pane rasters.
   ///
   /// Closing choreography changes only geometry. If both pane images are
@@ -64,7 +60,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.entryProgress = 1.0,
     this.exitProgress,
     required this.moving,
-    this.useCloseSnapshot = false,
     this.holdRaster = false,
     this.backend,
     this.resolveSource,
@@ -89,14 +84,12 @@ class _StructuralSplitWindowPreviewState
   CardOverlayImageCache? _cardImages;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
-  final List<ui.Image?> _closeSnapshots = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
 
   ui.Size? _paneRenderSize;
   int _serial = 0;
   bool _renderScheduled = false;
   bool _readyReported = false;
-  bool _closePaintPathReported = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -127,30 +120,13 @@ class _StructuralSplitWindowPreviewState
         oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
 
-    if (!widget.useCloseSnapshot && oldWidget.useCloseSnapshot) {
-      _closePaintPathReported = false;
-    }
-
     if (runtimeChanged) {
       _disposeRuntime();
       _replaceImage(0, null);
       _replaceImage(1, null);
-      _replaceCloseSnapshot(0, null);
-      _replaceCloseSnapshot(1, null);
       _diagnosticLabels[0] = '';
       _diagnosticLabels[1] = '';
       _readyReported = false;
-    }
-
-    final int closeArmStart = math.max(
-      0,
-      widget.placement.sourceDurationFrames - 4,
-    );
-    if (!widget.useCloseSnapshot &&
-        widget.sourceFrame < closeArmStart &&
-        oldWidget.sourceFrame >= closeArmStart) {
-      _replaceCloseSnapshot(0, null);
-      _replaceCloseSnapshot(1, null);
     }
 
     final bool hasResidentPair =
@@ -185,8 +161,6 @@ class _StructuralSplitWindowPreviewState
     _disposeRuntime();
     _replaceImage(0, null);
     _replaceImage(1, null);
-    _replaceCloseSnapshot(0, null);
-    _replaceCloseSnapshot(1, null);
     super.dispose();
   }
 
@@ -207,29 +181,6 @@ class _StructuralSplitWindowPreviewState
     if (identical(old, next)) return;
     _images[paneIndex] = next;
     old?.dispose();
-  }
-
-  void _replaceCloseSnapshot(int paneIndex, ui.Image? next) {
-    final ui.Image? old = _closeSnapshots[paneIndex];
-    if (identical(old, next)) return;
-    _closeSnapshots[paneIndex] = next;
-    old?.dispose();
-  }
-
-  ui.Image _detachRgbaSync(EditVideoCompositeResult result) {
-    final Uint8List rgba = result.rgba!;
-    if (result.stride != result.width * 4) {
-      throw StateError(
-        'Split close snapshot requires tightly packed RGBA: '
-        '${result.stride} != ${result.width * 4}.',
-      );
-    }
-    return ui.decodeImageFromPixelsSync(
-      rgba,
-      result.width,
-      result.height,
-      ui.PixelFormat.rgba8888,
-    );
   }
 
   EditVideoCompositor _ensureCompositor() {
@@ -478,53 +429,6 @@ class _StructuralSplitWindowPreviewState
       return;
     }
 
-    // Arm the close surface *before* the stage transition. Live preview can
-    // advance into closing before the exact final source request has finished
-    // decoding, so waiting for only sourceDurationFrames - 1 leaves the first
-    // closing paint on the live video image. Instead keep a detached copy of
-    // the latest successfully presented tail frame. At the showing -> closing
-    // boundary this is, by definition, the exact visible image the user saw.
-    final int closeArmStart = math.max(
-      0,
-      widget.placement.sourceDurationFrames - 4,
-    );
-    final bool armCloseSnapshot =
-        !widget.useCloseSnapshot && widget.sourceFrame >= closeArmStart;
-    if (armCloseSnapshot) {
-      final List<ui.Image?> detached = <ui.Image?>[null, null];
-      try {
-        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-          final EditVideoCompositeResult result = results[paneIndex];
-          if (result.rgba != null) {
-            detached[paneIndex] = _detachRgbaSync(result);
-          }
-        }
-      } catch (error, stack) {
-        for (final ui.Image? image in detached) {
-          image?.dispose();
-        }
-        _reportRenderError(
-          error,
-          stack,
-          'while arming split close pane snapshots from composed RGBA',
-        );
-      }
-
-      if (detached[0] != null && detached[1] != null) {
-        _replaceCloseSnapshot(0, detached[0]);
-        _replaceCloseSnapshot(1, detached[1]);
-        debugPrint(
-          '[split-close-arm] sourceFrame=${widget.sourceFrame} '
-          'left=${identityHashCode(detached[0])} '
-          'right=${identityHashCode(detached[1])}',
-        );
-      } else {
-        for (final ui.Image? image in detached) {
-          image?.dispose();
-        }
-      }
-    }
-
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
@@ -626,25 +530,6 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
-        final bool useDetachedClose =
-            widget.useCloseSnapshot &&
-            _closeSnapshots[0] != null &&
-            _closeSnapshots[1] != null;
-        final List<ui.Image?> paintImages = useDetachedClose
-            ? _closeSnapshots
-            : _images;
-
-        if (widget.useCloseSnapshot && !_closePaintPathReported) {
-          _closePaintPathReported = true;
-          debugPrint(
-            '[split-close-path] '
-            '${useDetachedClose ? "SNAPSHOT" : "LIVE"} '
-            'sourceFrame=${widget.sourceFrame} '
-            'left=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
-            'right=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
-          );
-        }
-
         return RepaintBoundary(
           key: const ValueKey<String>('structural-split-raster'),
           child: CustomPaint(
@@ -656,7 +541,7 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(paintImages),
+              images: List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,
