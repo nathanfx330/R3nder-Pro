@@ -84,6 +84,8 @@ class _StructuralSplitWindowPreviewState
   static const int _movingDecodePixelBudget = 480 * 270;
   static const bool _verifyClosePreloadImage =
       bool.fromEnvironment('R3_SPLIT_PRELOAD_VERIFY');
+  static const bool _paintOpaqueCloseProbe =
+      bool.fromEnvironment('R3_SPLIT_CLOSE_OPAQUE_PROBE');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -955,6 +957,8 @@ class _StructuralSplitWindowPreviewState
               exitProgress: widget.exitProgress,
               showSourceFrameProbe: widget.showSourceFrameProbe,
               closeAsSurfaceTransform: widget.closeAsSurfaceTransform,
+              paintOpaqueCloseProbe:
+                  widget.closing && _paintOpaqueCloseProbe,
             ),
             child: const SizedBox.expand(),
           ),
