@@ -49,6 +49,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
   final bool closeAsSurfaceTransform;
   final bool paintOpaqueCloseProbe;
   final ui.Image? closeImageProbe;
+  final ui.Image? seatedCloseSnapshot;
 
   const StructuralSplitWindowPainter({
     required this.geometry,
@@ -66,6 +67,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.closeAsSurfaceTransform = false,
     this.paintOpaqueCloseProbe = false,
     this.closeImageProbe,
+    this.seatedCloseSnapshot,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -98,6 +100,47 @@ class StructuralSplitWindowPainter extends CustomPainter {
         canvas.translate(rect.left, rect.top);
         canvas.scale(sx, sy);
         canvas.translate(-target.left, -target.top);
+      }
+
+      if (seatedCloseSnapshot != null) {
+        final Rect snapshotSource = target;
+        canvas.save();
+        canvas.clipRect(rect);
+        canvas.drawImageRect(
+          seatedCloseSnapshot!,
+          snapshotSource,
+          rect,
+          Paint()..filterQuality = FilterQuality.low,
+        );
+        canvas.restore();
+
+        if (showSourceFrameProbe) {
+          final TextPainter probe = TextPainter(
+            text: TextSpan(
+              text: 'SF $sourceFrame  SEATED',
+              style: TextStyle(
+                fontFamily: fontFamily,
+                fontSize: math.max(14.0, 22.0 * chromeScale),
+                fontWeight: FontWeight.w700,
+                color: Colors.yellow,
+                backgroundColor: Colors.black,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          probe.paint(
+            canvas,
+            Offset(
+              rect.left + 10.0 * chromeScale,
+              rect.top + 10.0 * chromeScale,
+            ),
+          );
+        }
+
+        if (closeAsSurfaceTransform) {
+          canvas.restore();
+        }
+        continue;
       }
 
       paintStructuralWindow(
@@ -185,6 +228,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.closeAsSurfaceTransform != closeAsSurfaceTransform ||
         oldDelegate.paintOpaqueCloseProbe != paintOpaqueCloseProbe ||
         oldDelegate.closeImageProbe != closeImageProbe ||
+        oldDelegate.seatedCloseSnapshot != seatedCloseSnapshot ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
