@@ -837,10 +837,14 @@ Focused proof is:
   reverse-entry progress rather than the old independent exit painter path;
 - `test/structural_split_window_preview_test.dart` verifies resident pane
   images are replaced by null client images during close, which makes the
-  shared window painter render its normal black client surface.
+  shared window painter render its normal black client surface;
+- `test/program_structural_split_bake_test.dart` verifies ordinary SPLIT and
+  SPLIT:MAX closing rasters contain neither synthetic red nor blue pane pixels,
+  proving whole-program BAKE uses the same black-client boundary.
 
-The focused tests passed on Rocky Linux and the resulting GUI behavior was
-confirmed interactively before merge.
+The live focused tests and resulting GUI behavior were confirmed interactively
+on Rocky Linux. Branch closure also runs the BAKE parity proof and the
+documentation contract checker before merge.
 
 ## Rocky Linux cold-entry readiness investigation
 
