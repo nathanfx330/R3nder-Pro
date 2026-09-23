@@ -36,6 +36,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double entryProgress;
   final double? exitProgress;
   final bool moving;
+  final bool closing;
   final bool showSourceFrameProbe;
 
   /// Freeze the exact currently resident pane rasters.
@@ -61,6 +62,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.entryProgress = 1.0,
     this.exitProgress,
     required this.moving,
+    this.closing = false,
     this.showSourceFrameProbe = false,
     this.holdRaster = false,
     this.backend,
@@ -92,6 +94,7 @@ class _StructuralSplitWindowPreviewState
   int _serial = 0;
   bool _renderScheduled = false;
   bool _readyReported = false;
+  bool _closeBoundaryReported = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -114,6 +117,10 @@ class _StructuralSplitWindowPreviewState
   @override
   void didUpdateWidget(covariant StructuralSplitWindowPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    if (!widget.closing && oldWidget.closing) {
+      _closeBoundaryReported = false;
+    }
 
     final bool runtimeChanged =
         oldWidget.rawDocument != widget.rawDocument ||
@@ -437,6 +444,20 @@ class _StructuralSplitWindowPreviewState
           _diagnosticLabel(results[paneIndex], paneIndex);
     }
 
+    final int tailStart = math.max(
+      0,
+      widget.placement.sourceDurationFrames - 6,
+    );
+    if (widget.sourceFrame >= tailStart) {
+      debugPrint(
+        '[split-boundary] PRESENT '
+        'closing=${widget.closing} '
+        'sf=${widget.sourceFrame} '
+        'img0=${_images[0] == null ? "null" : identityHashCode(_images[0])} '
+        'img1=${_images[1] == null ? "null" : identityHashCode(_images[1])}',
+      );
+    }
+
     if (mounted) {
       setState(() {});
     }
@@ -530,6 +551,17 @@ class _StructuralSplitWindowPreviewState
           _paneRenderSize = nextPaneSize;
           _serial++;
           _scheduleRender();
+        }
+
+        if (widget.closing && !_closeBoundaryReported) {
+          _closeBoundaryReported = true;
+          debugPrint(
+            '[split-boundary] CLOSE_ENTER '
+            'sf=${widget.sourceFrame} '
+            'entry=${widget.entryProgress.toStringAsFixed(6)} '
+            'img0=${_images[0] == null ? "null" : identityHashCode(_images[0])} '
+            'img1=${_images[1] == null ? "null" : identityHashCode(_images[1])}',
+          );
         }
 
         return RepaintBoundary(
