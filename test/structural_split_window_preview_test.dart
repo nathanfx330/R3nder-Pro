@@ -1,6 +1,7 @@
 // ./test/structural_split_window_preview_test.dart
 
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,7 +44,7 @@ class _HoldRecordingDecoder implements NonBlockingMediaDecoder {
 
   DecodedMediaFrame _frame(int frame, int width, int height) {
     final Uint8List rgba = Uint8List(width * height * 4);
-    final int value = (frame * 17).clamp(0, 255);
+    final int value = (frame * 17).clamp(0, 255).toInt();
     for (int i = 0; i < rgba.length; i += 4) {
       rgba[i] = value;
       rgba[i + 1] = 80;
