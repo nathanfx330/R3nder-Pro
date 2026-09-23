@@ -90,6 +90,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_CLOSE_IMAGE_PROBE');
   static const bool _paintRgbaCloseProbe =
       bool.fromEnvironment('R3_SPLIT_CLOSE_RGBA_PROBE');
+  static const bool _pngCanonicalCloseFrame =
+      bool.fromEnvironment('R3_SPLIT_CLOSE_PNG_CANONICAL');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -547,11 +549,14 @@ class _StructuralSplitWindowPreviewState
       }
 
       // Detach the exact final pane pixels from the decode-backed image
-      // resource. Closing paints only these independently rasterized images.
+      // resource. The PNG diagnostic takes an even stronger CPU round trip:
+      // verified pixels -> encoded bytes -> ordinary Flutter image codec.
       for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
         final ui.Image? base = decoded[paneIndex];
         if (base == null) continue;
-        final ui.Image detached = await _detachImage(base);
+        final ui.Image detached = _pngCanonicalCloseFrame
+            ? await _pngCanonicalImage(base)
+            : await _detachImage(base);
         base.dispose();
         decoded[paneIndex] = detached;
       }
@@ -597,6 +602,7 @@ class _StructuralSplitWindowPreviewState
     debugPrint(
       '[split-close-preload] READY '
       'sf=$finalSourceFrame '
+      'canonical=${_pngCanonicalCloseFrame ? "PNG" : "PICTURE"} '
       'sig0=${_rgbaSignature(results[0].rgba)} '
       'sig1=${_rgbaSignature(results[1].rgba)} '
       'imageSig0=$imageSig0 '
@@ -886,6 +892,28 @@ class _StructuralSplitWindowPreviewState
     if (!_readyReported) {
       _readyReported = true;
       widget.onFirstFrameReady?.call();
+    }
+  }
+
+  Future<ui.Image> _pngCanonicalImage(ui.Image source) async {
+    final ByteData? encoded =
+        await source.toByteData(format: ui.ImageByteFormat.png);
+    if (encoded == null) {
+      throw StateError('Could not encode split close frame as PNG.');
+    }
+
+    final Uint8List bytes = Uint8List.fromList(
+      encoded.buffer.asUint8List(
+        encoded.offsetInBytes,
+        encoded.lengthInBytes,
+      ),
+    );
+    final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+    try {
+      final ui.FrameInfo frame = await codec.getNextFrame();
+      return frame.image;
+    } finally {
+      codec.dispose();
     }
   }
 
