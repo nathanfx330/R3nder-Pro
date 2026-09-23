@@ -739,7 +739,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       closing: closing,
-                      preloadCloseFrame: widget.isPlaying && _firstFrameReady,
+                      preloadCloseFrame: false,
                       closeAsSurfaceTransform: false,
                       showSourceFrameProbe: false,
                       holdRaster: closing,
