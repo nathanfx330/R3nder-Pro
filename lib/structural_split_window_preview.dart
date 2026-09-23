@@ -13,7 +13,6 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
@@ -46,6 +45,10 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   /// the requested frame once so the surface is not blank.
   final bool holdRaster;
 
+  /// Final raster opacity. Closing uses this inside the shared painter so
+  /// Preview follows the same compositing path as BAKE.
+  final double opacity;
+
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -62,6 +65,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.exitProgress,
     required this.moving,
     this.holdRaster = false,
+    this.opacity = 1.0,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -107,13 +111,6 @@ class _StructuralSplitWindowPreviewState
   @override
   void initState() {
     super.initState();
-    if (kDebugMode) {
-      debugPrint(
-        '[split-close-probe] splitState INIT '
-        'state=${identityHashCode(this)} '
-        'source=${widget.placement.sourceRef.canonicalSource}',
-      );
-    }
     _scheduleRender();
   }
 
@@ -140,17 +137,6 @@ class _StructuralSplitWindowPreviewState
     final bool hasResidentPair =
         _images[0] != null && _images[1] != null;
 
-    if (kDebugMode && (widget.holdRaster || oldWidget.holdRaster)) {
-      debugPrint(
-        '[split-close-probe] splitState UPDATE '
-        'state=${identityHashCode(this)} '
-        'hold=${widget.holdRaster} runtimeChanged=$runtimeChanged '
-        'sourceFrame=${widget.sourceFrame} exit=${widget.exitProgress} '
-        'images=${_images.map((ui.Image? image) => image == null ? "null" : identityHashCode(image)).join(",")} '
-        'size=$_paneRenderSize',
-      );
-    }
-
     if (widget.holdRaster && !runtimeChanged && hasResidentPair) {
       // Entering/remaining in closing choreography must preserve the exact
       // already-painted pane pair. Invalidate any async decode that started
@@ -176,14 +162,6 @@ class _StructuralSplitWindowPreviewState
 
   @override
   void dispose() {
-    if (kDebugMode) {
-      debugPrint(
-        '[split-close-probe] splitState DISPOSE '
-        'state=${identityHashCode(this)} '
-        'source=${widget.placement.sourceRef.canonicalSource} '
-        'hold=${widget.holdRaster} sourceFrame=${widget.sourceFrame}',
-      );
-    }
     _serial++;
     _disposeRuntime();
     _replaceImage(0, null);
@@ -206,16 +184,6 @@ class _StructuralSplitWindowPreviewState
   void _replaceImage(int paneIndex, ui.Image? next) {
     final ui.Image? old = _images[paneIndex];
     if (identical(old, next)) return;
-    if (kDebugMode && (widget.holdRaster || widget.exitProgress != null)) {
-      debugPrint(
-        '[split-close-probe] REPLACE_IMAGE '
-        'state=${identityHashCode(this)} pane=$paneIndex '
-        'hold=${widget.holdRaster} sourceFrame=${widget.sourceFrame} '
-        'old=${old == null ? "null" : identityHashCode(old)} '
-        'next=${next == null ? "null" : identityHashCode(next)}',
-      );
-      debugPrint(StackTrace.current.toString());
-    }
     _images[paneIndex] = next;
     old?.dispose();
   }
@@ -581,7 +549,7 @@ class _StructuralSplitWindowPreviewState
               images: List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
-              debugCloseProbe: kDebugMode && widget.holdRaster,
+              opacity: widget.opacity.clamp(0.0, 1.0),
               entryProgress: widget.entryProgress,
               exitProgress: widget.exitProgress,
             ),
