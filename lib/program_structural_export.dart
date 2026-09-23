@@ -719,13 +719,13 @@ class ProgramStructuralFrameRenderer {
               ? const <ui.Image?>[null, null]
               : <ui.Image?>[
                   panes![0].image,
-                  panes[1].image,
+                  panes![1].image,
                 ],
           diagnosticLabels: splitBlackClose
               ? const <String>['', '']
               : <String>[
                   panes![0].diagnosticLabel,
-                  panes[1].diagnosticLabel,
+                  panes![1].diagnosticLabel,
                 ],
           opacity: incomingOpacity,
           entryProgress: splitProgress,
