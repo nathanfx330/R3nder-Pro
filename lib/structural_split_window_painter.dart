@@ -6,7 +6,6 @@
 // only the final two-window raster projection and delegates each individual
 // desktop window to structural_window_painter.dart.
 
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -94,39 +93,6 @@ class StructuralSplitWindowPainter extends CustomPainter {
         opacity: opacity,
         windowChrome: 1.0,
       );
-
-      if (closing != null) {
-        final Rect client = Rect.fromLTRB(
-          rect.left,
-          math.min(rect.bottom, rect.top + 38.0 * chromeScale),
-          rect.right,
-          rect.bottom,
-        );
-        canvas.save();
-        canvas.clipRect(client);
-        canvas.drawRect(
-          client,
-          Paint()
-            ..color = (paneIndex == 0
-                    ? const Color(0xFFFF00FF)
-                    : const Color(0xFF00FFFF))
-                .withValues(alpha: 0.28),
-        );
-        final TextPainter probe = TextPainter(
-          text: const TextSpan(
-            text: 'HOLD',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        probe.paint(canvas, client.topLeft + const Offset(8, 8));
-        probe.dispose();
-        canvas.restore();
-      }
     }
   }
 
