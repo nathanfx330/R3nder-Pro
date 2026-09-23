@@ -16,8 +16,6 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
-
 import 'edit_model.dart';
 import 'project_clock.dart';
 
@@ -322,13 +320,6 @@ class MediaLayer {
       return existing;
     }
 
-    if (kDebugMode) {
-      debugPrint(
-        '[split-close-probe] DECODER_OPEN '
-        'path=$resolvedPath raster=${width}x$height '
-        'backend=${backend.runtimeType}',
-      );
-    }
     final MediaDecoder created = backend.open(resolvedPath);
     _decoders[key] = created;
     _decoderLastUse[key] = ++_decoderUseSerial;
