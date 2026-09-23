@@ -711,9 +711,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     key: const ValueKey<String>(
                       'structural-split-window-opacity',
                     ),
-                    opacity: closing
-                        ? 1.0
-                        : presentationOpacity.clamp(0.0, 1.0),
+                    opacity: presentationOpacity.clamp(0.0, 1.0),
                     child: StructuralSplitWindowPreview(
                       key: ValueKey<String>(
                         'sequence-split-preview:$source',
@@ -732,9 +730,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       holdRaster: closing,
-                      opacity: closing
-                          ? presentationOpacity.clamp(0.0, 1.0)
-                          : 1.0,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
