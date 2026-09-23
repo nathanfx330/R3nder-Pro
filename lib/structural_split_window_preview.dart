@@ -121,6 +121,8 @@ class _StructuralSplitWindowPreviewState
   bool _closePreloadInFlight = false;
   bool _readyReported = false;
   bool _closeBoundaryReported = false;
+  bool _midCloseReadbackScheduled = false;
+  bool _midCloseReadbackReported = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -1005,6 +1007,27 @@ class _StructuralSplitWindowPreviewState
     return completer.future;
   }
 
+  Future<void> _verifyPreloadDuringClose() async {
+    final ui.Image? image0 = _closePreloadImages[0];
+    final ui.Image? image1 = _closePreloadImages[1];
+    if (image0 == null || image1 == null) return;
+
+    final int id0 = identityHashCode(image0);
+    final int id1 = identityHashCode(image1);
+    final String sig0 = await _imageSignature(image0);
+    final String sig1 = await _imageSignature(image1);
+    if (!mounted) return;
+
+    _midCloseReadbackReported = true;
+    debugPrint(
+      '[split-close-readback] MID '
+      'sf=${widget.sourceFrame} '
+      'entry=${widget.entryProgress.toStringAsFixed(6)} '
+      'img0=$id0 sig0=$sig0 '
+      'img1=$id1 sig1=$sig1',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -1060,6 +1083,12 @@ class _StructuralSplitWindowPreviewState
                 ? _closePreloadImages
                 : _images;
 
+        if (!widget.closing) {
+          _closeBoundaryReported = false;
+          _midCloseReadbackScheduled = false;
+          _midCloseReadbackReported = false;
+        }
+
         if (widget.closing && !_closeBoundaryReported) {
           _closeBoundaryReported = true;
           debugPrint(
@@ -1070,6 +1099,19 @@ class _StructuralSplitWindowPreviewState
             'img0=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
             'img1=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
           );
+        }
+
+        if (_verifyClosePreloadImage &&
+            widget.closing &&
+            closePreloadReady &&
+            widget.entryProgress <= 0.75 &&
+            !_midCloseReadbackScheduled &&
+            !_midCloseReadbackReported) {
+          _midCloseReadbackScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !widget.closing) return;
+            unawaited(_verifyPreloadDuringClose());
+          });
         }
 
         return RepaintBoundary(
