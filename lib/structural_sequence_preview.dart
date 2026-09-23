@@ -74,7 +74,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'card_overlay.dart';
@@ -163,31 +162,6 @@ class StructuralSequencePreview extends StatefulWidget {
 
 class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   static const double _renderAspect = 16.0 / 9.0;
-
-  @override
-  void initState() {
-    super.initState();
-    if (kDebugMode && widget.placement.splitWindow) {
-      debugPrint(
-        '[split-close-probe] sequenceState INIT '
-        'state=${identityHashCode(this)} '
-        'source=${widget.placement.sourceRef.canonicalSource}',
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    if (kDebugMode && widget.placement.splitWindow) {
-      debugPrint(
-        '[split-close-probe] sequenceState DISPOSE '
-        'state=${identityHashCode(this)} '
-        'source=${widget.placement.sourceRef.canonicalSource} '
-        'localFrame=${widget.localFrame}',
-      );
-    }
-    super.dispose();
-  }
 
   bool _firstFrameReady = false;
   EditDocumentModel? _cardModel;
@@ -442,17 +416,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final StructuralSequenceStage stage = placement.stageAt(widget.localFrame);
     final double linear = placement.stageProgressAt(widget.localFrame);
     final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
-    if (kDebugMode &&
-        placement.splitWindow &&
-        (stage == StructuralSequenceStage.closing ||
-            widget.localFrame >= placement.contentEndFrameExclusive - 2)) {
-      debugPrint(
-        '[split-close-probe] sequenceState PAINT_INPUT '
-        'state=${identityHashCode(this)} localFrame=${widget.localFrame} '
-        'stage=$stage sourceFrame=$sourceFrame linear=$linear '
-        'playing=${widget.isPlaying}',
-      );
-    }
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
     final bool externalOutgoing =
@@ -748,7 +711,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     key: const ValueKey<String>(
                       'structural-split-window-opacity',
                     ),
-                    opacity: presentationOpacity.clamp(0.0, 1.0),
+                    opacity: closing
+                        ? 1.0
+                        : presentationOpacity.clamp(0.0, 1.0),
                     child: StructuralSplitWindowPreview(
                       key: ValueKey<String>(
                         'sequence-split-preview:$source',
@@ -767,6 +732,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       holdRaster: closing,
+                      opacity: closing
+                          ? presentationOpacity.clamp(0.0, 1.0)
+                          : 1.0,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
