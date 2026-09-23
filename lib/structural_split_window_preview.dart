@@ -430,6 +430,23 @@ class _StructuralSplitWindowPreviewState
     }
 
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      if (widget.sourceFrame <= 2 ||
+          widget.sourceFrame >= widget.placement.sourceDurationFrames - 3) {
+        final String leaves = results[paneIndex].diagnosticFrames
+            .map((MediaFrame frame) {
+          final Uint8List? rgba = frame.rgba;
+          final String sig = rgba == null
+              ? 'none'
+              : _rgbaSignature(rgba).toRadixString(16).padLeft(8, '0');
+          return '${frame.source}#${frame.clipId}:'
+              '${frame.requestedSourceFrame}/${frame.actualSourceFrame}:'
+              '${frame.status.name}:sig=$sig';
+        }).join(',');
+        debugPrint(
+          '[split-pixel-probe] outer=${widget.sourceFrame} pane=$paneIndex '
+          'leaves=[$leaves]',
+        );
+      }
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
           _diagnosticLabel(results[paneIndex], paneIndex);
@@ -443,6 +460,19 @@ class _StructuralSplitWindowPreviewState
       _readyReported = true;
       widget.onFirstFrameReady?.call();
     }
+  }
+
+  int _rgbaSignature(Uint8List rgba) {
+    // Cheap deterministic 32-bit FNV-1a sample across the frame. Sampling keeps
+    // debug overhead low while still making accidental equality vanishingly
+    // unlikely for unrelated video frames.
+    int hash = 0x811C9DC5;
+    final int step = math.max(1, rgba.length ~/ 4096);
+    for (int i = 0; i < rgba.length; i += step) {
+      hash ^= rgba[i];
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
   }
 
   String _diagnosticLabel(
