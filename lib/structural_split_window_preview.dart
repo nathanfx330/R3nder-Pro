@@ -1044,12 +1044,34 @@ class _StructuralSplitWindowPreviewState
       _seatedCloseSnapshot = image;
       _seatedCloseSnapshotFrame = sourceFrame;
       old?.dispose();
-      debugPrint(
-        '[split-seated-snapshot] READY '
-        'frame=$sourceFrame '
-        'img=${identityHashCode(image)} '
-        'size=${image.width}x${image.height}',
-      );
+
+      final ByteData? png =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      if (png != null) {
+        final Uint8List bytes = Uint8List.fromList(
+          png.buffer.asUint8List(
+            png.offsetInBytes,
+            png.lengthInBytes,
+          ),
+        );
+        const String path = '/tmp/r3nder-split-seated.png';
+        await File(path).writeAsBytes(bytes, flush: true);
+        debugPrint(
+          '[split-seated-snapshot] READY '
+          'frame=$sourceFrame '
+          'img=${identityHashCode(image)} '
+          'size=${image.width}x${image.height} '
+          'path=$path',
+        );
+      } else {
+        debugPrint(
+          '[split-seated-snapshot] READY '
+          'frame=$sourceFrame '
+          'img=${identityHashCode(image)} '
+          'size=${image.width}x${image.height} '
+          'path=null',
+        );
+      }
       if (mounted) setState(() {});
     } catch (error, stack) {
       _reportRenderError(
@@ -1201,7 +1223,15 @@ class _StructuralSplitWindowPreviewState
             '[split-boundary] CLOSE_ENTER '
             'sf=${widget.sourceFrame} '
             'entry=${widget.entryProgress.toStringAsFixed(6)} '
-            'using=${closePreloadReady ? "PRELOAD" : "LIVE"} '
+            'using=${widget.closing &&
+                    _useSeatedCloseSnapshot &&
+                    _seatedCloseSnapshotFrame == finalSourceFrame &&
+                    _seatedCloseSnapshot != null
+                ? "SEATED"
+                : closePreloadReady
+                    ? "PRELOAD"
+                    : "LIVE"} '
+            'seatedImg=${_seatedCloseSnapshot == null ? "null" : identityHashCode(_seatedCloseSnapshot)} '
             'img0=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
             'img1=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
           );
