@@ -36,7 +36,6 @@ void paintStructuralWindow({
   required double handoffSlideT,
   required double opacity,
   required double windowChrome,
-  FilterQuality imageFilterQuality = FilterQuality.low,
 }) {
   if (rect.width <= 0.0 || rect.height <= 0.0 || opacity <= 0.001) {
     return;
@@ -162,12 +161,7 @@ void paintStructuralWindow({
     if (sourceImage != null) {
       canvas.save();
       canvas.translate(client.width * (1.0 - slideT), 0.0);
-      _drawImageContain(
-        canvas,
-        sourceImage,
-        client,
-        filterQuality: imageFilterQuality,
-      );
+      _drawImageContain(canvas, sourceImage, client);
       _paintStructuralBottomOverlay(
         canvas: canvas,
         client: client,
@@ -181,12 +175,7 @@ void paintStructuralWindow({
 
     canvas.save();
     canvas.translate(-client.width * slideT, 0.0);
-    _drawImageContain(
-      canvas,
-      outgoingSourceImage!,
-      client,
-      filterQuality: imageFilterQuality,
-    );
+    _drawImageContain(canvas, outgoingSourceImage!, client);
     _paintStructuralBottomOverlay(
       canvas: canvas,
       client: client,
@@ -198,12 +187,7 @@ void paintStructuralWindow({
     canvas.restore();
   } else {
     if (sourceImage != null && client.width > 0.0 && client.height > 0.0) {
-      _drawImageContain(
-        canvas,
-        sourceImage,
-        client,
-        filterQuality: imageFilterQuality,
-      );
+      _drawImageContain(canvas, sourceImage, client);
     }
     _paintStructuralBottomOverlay(
       canvas: canvas,
@@ -378,12 +362,7 @@ void _paintStructuralBottomOverlay({
   bottom.paint(canvas, Offset(plate.left + padX, plate.top + padY));
 }
 
-void _drawImageContain(
-  Canvas canvas,
-  ui.Image image,
-  Rect destination, {
-  required FilterQuality filterQuality,
-}) {
+void _drawImageContain(Canvas canvas, ui.Image image, Rect destination) {
   final double sourceWidth = image.width.toDouble();
   final double sourceHeight = image.height.toDouble();
   if (sourceWidth <= 0.0 || sourceHeight <= 0.0) return;
@@ -405,6 +384,6 @@ void _drawImageContain(
     image,
     Rect.fromLTWH(0, 0, sourceWidth, sourceHeight),
     fitted,
-    Paint()..filterQuality = filterQuality,
+    Paint()..filterQuality = FilterQuality.low,
   );
 }
