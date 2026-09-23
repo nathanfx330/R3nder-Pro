@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/structural_sequence_preview.dart';
+import 'package:r3nder/structural_split_window_painter.dart';
 import 'package:r3nder/structural_split_window_preview.dart';
 import 'package:r3nder/ui_theme.dart';
 
@@ -345,6 +346,23 @@ void main() {
       expect(split.holdRaster, isTrue);
       expect(split.exitProgress, isNotNull);
       expect(split.exitProgress, allOf(greaterThan(0.0), lessThan(1.0)));
+
+      final Opacity outerOpacity = tester.widget<Opacity>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-opacity'),
+        ),
+      );
+      expect(outerOpacity.opacity, 1.0);
+
+      final CustomPaint splitPaint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter painter =
+          splitPaint.painter! as StructuralSplitWindowPainter;
+      expect(painter.opacity, split.opacity);
+      expect(painter.opacity, allOf(greaterThan(0.0), lessThan(1.0)));
     },
   );
 
