@@ -533,6 +533,7 @@ class _StructuralSplitWindowPreviewState
     }
 
     final List<int> comparisonFrames = <int>{
+      0,
       math.max(0, finalSourceFrame - 51),
       math.max(0, finalSourceFrame - 1),
     }.toList()
