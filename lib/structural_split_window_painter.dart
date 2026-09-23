@@ -38,6 +38,11 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// Authored close progress. Null means this is not a closing frame.
   final double? exitProgress;
 
+  /// Temporary Rocky close diagnostic. When enabled, stamps the authored
+  /// source frame into each pane so stale display-list replay can be
+  /// distinguished from wrong image-texture content.
+  final bool showSourceFrameProbe;
+
   const StructuralSplitWindowPainter({
     required this.geometry,
     required this.placement,
@@ -50,6 +55,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.opacity = 1.0,
     this.entryProgress = 1.0,
     this.exitProgress,
+    this.showSourceFrameProbe = false,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -93,6 +99,28 @@ class StructuralSplitWindowPainter extends CustomPainter {
         opacity: opacity,
         windowChrome: 1.0,
       );
+      if (showSourceFrameProbe) {
+        final TextPainter probe = TextPainter(
+          text: TextSpan(
+            text: 'SF $sourceFrame',
+            style: TextStyle(
+              fontFamily: fontFamily,
+              fontSize: math.max(14.0, 22.0 * chromeScale),
+              fontWeight: FontWeight.w700,
+              color: Colors.yellow,
+              backgroundColor: Colors.black,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        probe.paint(
+          canvas,
+          Offset(
+            rect.left + 10.0 * chromeScale,
+            rect.top + 48.0 * chromeScale,
+          ),
+        );
+      }
     }
   }
 
@@ -107,6 +135,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.opacity != opacity ||
         oldDelegate.entryProgress != entryProgress ||
         oldDelegate.exitProgress != exitProgress ||
+        oldDelegate.showSourceFrameProbe != showSourceFrameProbe ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
