@@ -238,6 +238,9 @@ class _StructuralSplitWindowPreviewState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _renderScheduled = false;
       if (!mounted) return;
+      if (widget.holdRaster && _images[0] != null && _images[1] != null) {
+        return;
+      }
       final ui.Size? size = _paneRenderSize;
       if (size == null || size.width <= 0.0 || size.height <= 0.0) {
         return;
@@ -248,6 +251,10 @@ class _StructuralSplitWindowPreviewState
   }
 
   Future<void> _render(ui.Size paneSize) async {
+    if (widget.holdRaster && _images[0] != null && _images[1] != null) {
+      return;
+    }
+
     final int serial = ++_serial;
     final EditVideoCompositor compositor;
     try {
