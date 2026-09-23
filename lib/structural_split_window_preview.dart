@@ -96,6 +96,7 @@ class _StructuralSplitWindowPreviewState
   int _serial = 0;
   bool _renderScheduled = false;
   bool _readyReported = false;
+  bool _closePaintPathReported = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -125,6 +126,10 @@ class _StructuralSplitWindowPreviewState
             widget.placement.sourceRef.canonicalSource ||
         oldWidget.backend != widget.backend ||
         oldWidget.resolveSource != widget.resolveSource;
+
+    if (!widget.useCloseSnapshot && oldWidget.useCloseSnapshot) {
+      _closePaintPathReported = false;
+    }
 
     if (runtimeChanged) {
       _disposeRuntime();
@@ -208,7 +213,7 @@ class _StructuralSplitWindowPreviewState
     old?.dispose();
   }
 
-  Future<ui.Image> _detachImage(ui.Image source) async {
+  ui.Image _detachImageSync(ui.Image source) {
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(recorder);
     final Rect bounds = Rect.fromLTWH(
@@ -225,7 +230,7 @@ class _StructuralSplitWindowPreviewState
     );
     final ui.Picture picture = recorder.endRecording();
     try {
-      return await picture.toImage(source.width, source.height);
+      return picture.toImageSync(source.width, source.height);
     } finally {
       picture.dispose();
     }
@@ -487,27 +492,21 @@ class _StructuralSplitWindowPreviewState
         for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
           final ui.Image? image = decoded[paneIndex];
           if (image != null) {
-            detached[paneIndex] = await _detachImage(image);
+            detached[paneIndex] = _detachImageSync(image);
           }
         }
       } catch (error, stack) {
         for (final ui.Image? image in detached) {
           image?.dispose();
         }
-        if (mounted && serial == _serial) {
-          _reportRenderError(
-            error,
-            stack,
-            'while detaching final split pane snapshots',
-          );
-        }
+        _reportRenderError(
+          error,
+          stack,
+          'while synchronously detaching final split pane snapshots',
+        );
       }
 
-      if (!mounted || serial != _serial) {
-        for (final ui.Image? image in detached) {
-          image?.dispose();
-        }
-      } else if (detached[0] != null && detached[1] != null) {
+      if (detached[0] != null && detached[1] != null) {
         _replaceCloseSnapshot(0, detached[0]);
         _replaceCloseSnapshot(1, detached[1]);
       } else {
@@ -625,6 +624,17 @@ class _StructuralSplitWindowPreviewState
         final List<ui.Image?> paintImages = useDetachedClose
             ? _closeSnapshots
             : _images;
+
+        if (widget.useCloseSnapshot && !_closePaintPathReported) {
+          _closePaintPathReported = true;
+          debugPrint(
+            '[split-close-path] '
+            '${useDetachedClose ? "SNAPSHOT" : "LIVE"} '
+            'sourceFrame=${widget.sourceFrame} '
+            'left=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
+            'right=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
+          );
+        }
 
         return RepaintBoundary(
           key: const ValueKey<String>('structural-split-raster'),
