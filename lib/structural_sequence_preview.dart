@@ -543,12 +543,20 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               stage == StructuralSequenceStage.opening;
           double presentationOpacity = structuralOpacity;
           double splitEntryProgress = 1.0;
-          double? splitExitProgress;
           if (placement.splitWindow) {
             if (stage == StructuralSequenceStage.opening) {
               splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
             } else if (stage == StructuralSequenceStage.closing) {
-              splitExitProgress = linear.clamp(0.0, 1.0).toDouble();
+              // SPLIT close uses the proven opening choreography in reverse.
+              // Content itself is forced black by StructuralSplitWindowPreview;
+              // only the window motion and opacity are mirrored here.
+              splitEntryProgress =
+                  (1.0 - linear).clamp(0.0, 1.0).toDouble();
+              presentationOpacity = structuralShapeEntryFrameAt(
+                targetRect: presentationRect,
+                linearProgress: splitEntryProgress,
+                contentReady: true,
+              ).opacity;
             }
           }
           if (splitShapeEntry) {
@@ -726,9 +734,10 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                               : 'monospace',
                       chromeScale: chromeScale,
                       entryProgress: splitEntryProgress,
-                      exitProgress: splitExitProgress,
+                      exitProgress: null,
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
+                      closing: closing,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,

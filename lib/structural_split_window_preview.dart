@@ -36,6 +36,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double entryProgress;
   final double? exitProgress;
   final bool moving;
+  final bool closing;
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -51,6 +52,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.entryProgress = 1.0,
     this.exitProgress,
     required this.moving,
+    this.closing = false,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -505,7 +507,13 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(_images),
+              // SPLIT close intentionally owns no live picture. Editors can
+              // author any desired fade to black before the structural close;
+              // once close begins, the two client areas stay solid black while
+              // the window chrome runs the normal reverse-entry choreography.
+              images: widget.closing
+                  ? const <ui.Image?>[null, null]
+                  : List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,

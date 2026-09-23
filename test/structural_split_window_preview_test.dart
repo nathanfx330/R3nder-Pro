@@ -89,6 +89,79 @@ class _SolidColorDecoder implements MediaDecoder {
 
 void main() {
   testWidgets(
+    'closing paints black clients instead of resident video images',
+    (WidgetTester tester) async {
+      const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:left_clip:left.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_clip:right.mp4:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final _PaneColorBackend backend = _PaneColorBackend();
+      bool ready = false;
+
+      Widget preview({required bool closing}) {
+        return MaterialApp(
+          home: SizedBox(
+            width: 640,
+            height: 360,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: 2,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: false,
+              closing: closing,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(preview(closing: false));
+      for (int attempt = 0; attempt < 50 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+      }
+      expect(ready, isTrue);
+      await tester.pump();
+
+      StructuralSplitWindowPainter painter =
+          tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      ).painter! as StructuralSplitWindowPainter;
+      expect(painter.images[0], isNotNull);
+      expect(painter.images[1], isNotNull);
+
+      await tester.pumpWidget(preview(closing: true));
+      await tester.pump();
+
+      painter = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      ).painter! as StructuralSplitWindowPainter;
+      expect(painter.images, everyElement(isNull));
+    },
+  );
+
+  testWidgets(
     'moving MAX split caps pane decode to EDIT fast-preview pixel budget',
     (WidgetTester tester) async {
       tester.view.devicePixelRatio = 1.0;

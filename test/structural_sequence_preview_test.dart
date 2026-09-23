@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/structural_sequence_preview.dart';
+import 'package:r3nder/structural_split_window_preview.dart';
 import 'package:r3nder/ui_theme.dart';
 
 class _FakeBackend implements MediaDecoderBackend {
@@ -162,6 +163,19 @@ const String _sameNestedEditMosaicSource = '''[EDIT:test2s]
 [STRUCT:MOSAIC.mosaic:AUDIO]
 ''';
 
+const String _splitCloseSource = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:left_clip:video/left.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_clip:video/right.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
+
 const String _slideSource = '''[CONFIG:APPSWITCH:SLIDE]
 [EDIT:a]
 [TRACK:V1]
@@ -250,6 +264,92 @@ void _expectSameRect(Rect a, Rect b) {
 }
 
 void main() {
+  testWidgets(
+    'SPLIT closing mirrors entry and marks client content closed',
+    (WidgetTester tester) async {
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(_splitCloseSource).single;
+      final _FakeBackend backend = _FakeBackend();
+      final int showingFrame = placement.contentStartFrame + 2;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 500,
+            child: StructuralSequencePreview(
+              rawDocument: _splitCloseSource,
+              placement: placement,
+              localFrame: showingFrame,
+              isPlaying: true,
+              theme: R3Theme.of(Colors.green),
+              wallpaper: null,
+              backend: backend,
+              resolveSource: _resolveTestSource,
+            ),
+          ),
+        ),
+      );
+
+      final Finder ready = find.byKey(
+        const ValueKey<String>('structural-first-frame-ready'),
+      );
+      for (int attempt = 0; attempt < 50 && ready.evaluate().isEmpty; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        });
+        await tester.pump();
+      }
+      expect(ready, findsOneWidget);
+      await tester.pump();
+
+      StructuralSplitWindowPreview split =
+          tester.widget<StructuralSplitWindowPreview>(
+        find.byType(StructuralSplitWindowPreview),
+      );
+      expect(split.closing, isFalse);
+      expect(split.sourceFrame, placement.sourceFrameAt(showingFrame));
+
+      final int closingFrame =
+          placement.closingStartFrame + (placement.exitWindowFrames ~/ 2);
+      expect(
+        placement.stageAt(closingFrame),
+        StructuralSequenceStage.closing,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 500,
+            child: StructuralSequencePreview(
+              rawDocument: _splitCloseSource,
+              placement: placement,
+              localFrame: closingFrame,
+              isPlaying: true,
+              theme: R3Theme.of(Colors.green),
+              wallpaper: null,
+              backend: backend,
+              resolveSource: _resolveTestSource,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      split = tester.widget<StructuralSplitWindowPreview>(
+        find.byType(StructuralSplitWindowPreview),
+      );
+      expect(split.closing, isTrue);
+      expect(split.sourceFrame, placement.sourceDurationFrames - 1);
+      expect(split.exitProgress, isNull);
+      expect(
+        split.entryProgress,
+        closeTo(1.0 - placement.stageProgressAt(closingFrame), 0.000001),
+      );
+    },
+  );
+
   testWidgets(
     'windowed live MOSAIC resolves same nested EDIT at both legacy pane rasters',
     (WidgetTester tester) async {
