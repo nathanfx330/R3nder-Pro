@@ -547,10 +547,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             if (stage == StructuralSequenceStage.opening) {
               splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
             } else if (stage == StructuralSequenceStage.closing) {
-              // SPLIT close is literally the working entry choreography played
-              // backward. sourceFrameAt() already clamps closing frames to the
-              // final authored source frame, just as opening clamps to frame 0.
-              // Keep one renderer path and reverse only authored motion.
+              // SPLIT close uses the proven opening choreography in reverse.
+              // Content itself is forced black by StructuralSplitWindowPreview;
+              // only the window motion and opacity are mirrored here.
               splitEntryProgress =
                   (1.0 - linear).clamp(0.0, 1.0).toDouble();
               presentationOpacity = structuralShapeEntryFrameAt(
@@ -739,10 +738,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
                       closing: closing,
-                      preloadCloseFrame: false,
-                      closeAsSurfaceTransform: false,
-                      showSourceFrameProbe: false,
-                      holdRaster: closing,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
