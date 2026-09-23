@@ -82,6 +82,8 @@ class StructuralSplitWindowPreview extends StatefulWidget {
 class _StructuralSplitWindowPreviewState
     extends State<StructuralSplitWindowPreview> {
   static const int _movingDecodePixelBudget = 480 * 270;
+  static const bool _verifyClosePreloadImage =
+      bool.fromEnvironment('R3_SPLIT_PRELOAD_VERIFY');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -521,9 +523,13 @@ class _StructuralSplitWindowPreviewState
     _replaceClosePreloadImage(1, decoded[1]);
     _closePreloadSize = paneSize;
 
-    final String imageSig0 = await _imageSignature(_closePreloadImages[0]);
-    final String imageSig1 = await _imageSignature(_closePreloadImages[1]);
-    if (!mounted || generation != _closePreloadGeneration) return;
+    String imageSig0 = 'disabled';
+    String imageSig1 = 'disabled';
+    if (_verifyClosePreloadImage) {
+      imageSig0 = await _imageSignature(_closePreloadImages[0]);
+      imageSig1 = await _imageSignature(_closePreloadImages[1]);
+      if (!mounted || generation != _closePreloadGeneration) return;
+    }
 
     debugPrint(
       '[split-close-preload] READY '
