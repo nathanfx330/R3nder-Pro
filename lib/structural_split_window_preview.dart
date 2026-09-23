@@ -142,10 +142,13 @@ class _StructuralSplitWindowPreviewState
       _readyReported = false;
     }
 
-    final int finalSourceFrame =
-        math.max(0, widget.placement.sourceDurationFrames - 1);
-    if (oldWidget.sourceFrame == finalSourceFrame &&
-        widget.sourceFrame != finalSourceFrame) {
+    final int closeArmStart = math.max(
+      0,
+      widget.placement.sourceDurationFrames - 4,
+    );
+    if (!widget.useCloseSnapshot &&
+        widget.sourceFrame < closeArmStart &&
+        oldWidget.sourceFrame >= closeArmStart) {
       _replaceCloseSnapshot(0, null);
       _replaceCloseSnapshot(1, null);
     }
@@ -482,11 +485,19 @@ class _StructuralSplitWindowPreviewState
       return;
     }
 
-    final bool finalSourceFrame =
-        widget.sourceFrame ==
-            math.max(0, widget.placement.sourceDurationFrames - 1);
-    if (finalSourceFrame &&
-        (_closeSnapshots[0] == null || _closeSnapshots[1] == null)) {
+    // Arm the close surface *before* the stage transition. Live preview can
+    // advance into closing before the exact final source request has finished
+    // decoding, so waiting for only sourceDurationFrames - 1 leaves the first
+    // closing paint on the live video image. Instead keep a detached copy of
+    // the latest successfully presented tail frame. At the showing -> closing
+    // boundary this is, by definition, the exact visible image the user saw.
+    final int closeArmStart = math.max(
+      0,
+      widget.placement.sourceDurationFrames - 4,
+    );
+    final bool armCloseSnapshot =
+        !widget.useCloseSnapshot && widget.sourceFrame >= closeArmStart;
+    if (armCloseSnapshot) {
       final List<ui.Image?> detached = <ui.Image?>[null, null];
       try {
         for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
@@ -502,7 +513,7 @@ class _StructuralSplitWindowPreviewState
         _reportRenderError(
           error,
           stack,
-          'while synchronously detaching final split pane snapshots',
+          'while arming split close pane snapshots',
         );
       }
 
