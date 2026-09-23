@@ -36,6 +36,15 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double entryProgress;
   final double? exitProgress;
   final bool moving;
+
+  /// Freeze the exact currently resident pane rasters.
+  ///
+  /// Closing choreography changes only geometry. If both pane images are
+  /// already resident, no new source request is allowed while this is true.
+  /// A direct scrub/mount into a held frame with no resident raster may render
+  /// the requested frame once so the surface is not blank.
+  final bool holdRaster;
+
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -51,6 +60,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.entryProgress = 1.0,
     this.exitProgress,
     required this.moving,
+    this.holdRaster = false,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -119,9 +129,21 @@ class _StructuralSplitWindowPreviewState
       _readyReported = false;
     }
 
+    final bool hasResidentPair =
+        _images[0] != null && _images[1] != null;
+
+    if (widget.holdRaster && !runtimeChanged && hasResidentPair) {
+      // Entering/remaining in closing choreography must preserve the exact
+      // already-painted pane pair. Invalidate any async decode that started
+      // during the final showing frame, then let only painter geometry update.
+      _serial++;
+      return;
+    }
+
     if (runtimeChanged ||
         oldWidget.sourceFrame != widget.sourceFrame ||
         oldWidget.moving != widget.moving ||
+        oldWidget.holdRaster != widget.holdRaster ||
         oldWidget.chromeScale != widget.chromeScale ||
         oldWidget.fontFamily != widget.fontFamily ||
         oldWidget.placement.maximizeSplit !=
@@ -250,14 +272,15 @@ class _StructuralSplitWindowPreviewState
 
     try {
       for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final bool moving = widget.moving && !widget.holdRaster;
         final ProjectTime time = ProjectTime(
           frame: widget.sourceFrame,
-          mode: widget.moving
+          mode: moving
               ? ProjectClockMode.monotonic
               : ProjectClockMode.scrub,
         );
         results.add(
-          widget.moving
+          moving
               ? compositor.renderMosaicPaneAvailable(
                   source,
                   paneIndex,
@@ -485,8 +508,14 @@ class _StructuralSplitWindowPreviewState
           geometry.clientSize.width.round().clamp(1, 1 << 30).toDouble(),
           geometry.clientSize.height.round().clamp(1, 1 << 30).toDouble(),
         );
-        final ui.Size nextPaneSize =
-            _decodePaneSize(displayPaneSize, moving: widget.moving);
+        final bool hasResidentPair =
+            _images[0] != null && _images[1] != null;
+        final bool freezeResidentRaster =
+            widget.holdRaster && hasResidentPair && _paneRenderSize != null;
+        final bool moving = widget.moving && !widget.holdRaster;
+        final ui.Size nextPaneSize = freezeResidentRaster
+            ? _paneRenderSize!
+            : _decodePaneSize(displayPaneSize, moving: moving);
 
         if (_paneRenderSize != nextPaneSize) {
           _paneRenderSize = nextPaneSize;
