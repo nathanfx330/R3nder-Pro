@@ -216,27 +216,20 @@ class _StructuralSplitWindowPreviewState
     old?.dispose();
   }
 
-  ui.Image _detachImageSync(ui.Image source) {
-    final ui.PictureRecorder recorder = ui.PictureRecorder();
-    final Canvas canvas = Canvas(recorder);
-    final Rect bounds = Rect.fromLTWH(
-      0.0,
-      0.0,
-      source.width.toDouble(),
-      source.height.toDouble(),
-    );
-    canvas.drawImageRect(
-      source,
-      bounds,
-      bounds,
-      Paint()..filterQuality = FilterQuality.low,
-    );
-    final ui.Picture picture = recorder.endRecording();
-    try {
-      return picture.toImageSync(source.width, source.height);
-    } finally {
-      picture.dispose();
+  ui.Image _detachRgbaSync(EditVideoCompositeResult result) {
+    final Uint8List rgba = result.rgba!;
+    if (result.stride != result.width * 4) {
+      throw StateError(
+        'Split close snapshot requires tightly packed RGBA: '
+        '${result.stride} != ${result.width * 4}.',
+      );
     }
+    return ui.decodeImageFromPixelsSync(
+      rgba,
+      result.width,
+      result.height,
+      ui.PixelFormat.rgba8888,
+    );
   }
 
   EditVideoCompositor _ensureCompositor() {
@@ -501,9 +494,9 @@ class _StructuralSplitWindowPreviewState
       final List<ui.Image?> detached = <ui.Image?>[null, null];
       try {
         for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-          final ui.Image? image = decoded[paneIndex];
-          if (image != null) {
-            detached[paneIndex] = _detachImageSync(image);
+          final EditVideoCompositeResult result = results[paneIndex];
+          if (result.rgba != null) {
+            detached[paneIndex] = _detachRgbaSync(result);
           }
         }
       } catch (error, stack) {
@@ -513,13 +506,18 @@ class _StructuralSplitWindowPreviewState
         _reportRenderError(
           error,
           stack,
-          'while arming split close pane snapshots',
+          'while arming split close pane snapshots from composed RGBA',
         );
       }
 
       if (detached[0] != null && detached[1] != null) {
         _replaceCloseSnapshot(0, detached[0]);
         _replaceCloseSnapshot(1, detached[1]);
+        debugPrint(
+          '[split-close-arm] sourceFrame=${widget.sourceFrame} '
+          'left=${identityHashCode(detached[0])} '
+          'right=${identityHashCode(detached[1])}',
+        );
       } else {
         for (final ui.Image? image in detached) {
           image?.dispose();
