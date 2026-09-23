@@ -98,6 +98,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_BOUNDARY_CAPTURE');
   static const bool _useSeatedCloseSnapshot =
       bool.fromEnvironment('R3_SPLIT_CLOSE_SEATED_SNAPSHOT');
+  static const bool _dumpPreloadContent =
+      bool.fromEnvironment('R3_SPLIT_DUMP_PRELOAD_CONTENT');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -136,6 +138,7 @@ class _StructuralSplitWindowPreviewState
   ui.Image? _seatedCloseSnapshot;
   int _seatedCloseSnapshotFrame = -1;
   bool _seatedCloseSnapshotScheduled = false;
+  bool _preloadContentDumped = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -295,6 +298,7 @@ class _StructuralSplitWindowPreviewState
     _closePreloadCardImages?.dispose();
     _closePreloadCardImages = null;
     _closePreloadSize = null;
+    _preloadContentDumped = false;
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
       final ui.Image? image = _closePreloadImages[paneIndex];
       _closePreloadImages[paneIndex] = null;
@@ -412,6 +416,136 @@ class _StructuralSplitWindowPreviewState
     return compositor;
   }
 
+  Future<void> _writeCompositeRgbaPpm({
+    required EditVideoCompositeResult result,
+    required int paneIndex,
+    required int sourceFrame,
+    required String label,
+  }) async {
+    final Uint8List? rgba = result.rgba;
+    if (rgba == null) {
+      debugPrint(
+        '[split-rgba-dump] SKIP label=$label pane=$paneIndex '
+        'sf=$sourceFrame rgba=null',
+      );
+      return;
+    }
+
+    final BytesBuilder bytes = BytesBuilder(copy: false);
+    bytes.add(
+      Uint8List.fromList(
+        'P6\n${result.width} ${result.height}\n255\n'.codeUnits,
+      ),
+    );
+
+    final int rowBytes = result.width * 4;
+    final Uint8List rgbRow = Uint8List(result.width * 3);
+    for (int y = 0; y < result.height; y++) {
+      final int srcRow = y * result.stride;
+      int dst = 0;
+      for (int x = 0; x < result.width; x++) {
+        final int src = srcRow + x * 4;
+        rgbRow[dst++] = rgba[src];
+        rgbRow[dst++] = rgba[src + 1];
+        rgbRow[dst++] = rgba[src + 2];
+      }
+      bytes.add(rgbRow);
+    }
+
+    final String path =
+        '/tmp/r3nder-${label}-pane$paneIndex-sf$sourceFrame.ppm';
+    await File(path).writeAsBytes(bytes.takeBytes(), flush: true);
+    debugPrint(
+      '[split-rgba-dump] WROTE '
+      'label=$label pane=$paneIndex sf=$sourceFrame '
+      'sig=${_rgbaSignature(rgba)} '
+      'size=${result.width}x${result.height} '
+      'rowBytes=$rowBytes stride=${result.stride} '
+      'path=$path',
+    );
+  }
+
+  Future<void> _dumpFreshExactFrame({
+    required int sourceFrame,
+    required ui.Size paneSize,
+  }) async {
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final MediaDecoderBackend backend =
+        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final EditDocumentModel model =
+        EditDocumentModel.parse(widget.rawDocument);
+
+    final MediaLayer layer = MediaLayer(
+      editDocument: model,
+      backend: backend,
+      resolveSource: resolver,
+    );
+    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+      model: model,
+      mediaLayer: layer,
+      backend: backend,
+      resolveSource: resolver,
+    );
+
+    try {
+      final ProjectTime time = ProjectTime(
+        frame: sourceFrame,
+        mode: ProjectClockMode.scrub,
+      );
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final EditVideoCompositeResult result =
+            compositor.renderMosaicPane(
+          source,
+          paneIndex,
+          time,
+          paneSize,
+        );
+        await _writeCompositeRgbaPpm(
+          result: result,
+          paneIndex: paneIndex,
+          sourceFrame: sourceFrame,
+          label: 'fresh-exact',
+        );
+      }
+    } finally {
+      compositor.dispose();
+      layer.dispose();
+    }
+  }
+
+  Future<void> _dumpPreloadContentFrames({
+    required List<EditVideoCompositeResult> finalResults,
+    required int finalSourceFrame,
+    required ui.Size paneSize,
+  }) async {
+    if (_preloadContentDumped) return;
+    _preloadContentDumped = true;
+
+    for (int paneIndex = 0; paneIndex < finalResults.length; paneIndex++) {
+      await _writeCompositeRgbaPpm(
+        result: finalResults[paneIndex],
+        paneIndex: paneIndex,
+        sourceFrame: finalSourceFrame,
+        label: 'actual-preload',
+      );
+    }
+
+    final List<int> comparisonFrames = <int>{
+      math.max(0, finalSourceFrame - 51),
+      math.max(0, finalSourceFrame - 1),
+    }.toList()
+      ..sort();
+
+    for (final int frame in comparisonFrames) {
+      await _dumpFreshExactFrame(
+        sourceFrame: frame,
+        paneSize: paneSize,
+      );
+    }
+  }
+
   void _scheduleClosePreload(ui.Size paneSize) {
     if (!widget.preloadCloseFrame) return;
     if (_closePreloadImages[0] != null &&
@@ -516,6 +650,23 @@ class _StructuralSplitWindowPreviewState
         _scheduleClosePreload(paneSize);
       });
       return;
+    }
+
+    if (_dumpPreloadContent && !_preloadContentDumped) {
+      try {
+        await _dumpPreloadContentFrames(
+          finalResults: results,
+          finalSourceFrame: finalSourceFrame,
+          paneSize: paneSize,
+        );
+      } catch (error, stack) {
+        _reportRenderError(
+          error,
+          stack,
+          'while dumping split preload RGBA content',
+        );
+      }
+      if (!mounted || generation != _closePreloadGeneration) return;
     }
 
     final List<ui.Image?> decoded = <ui.Image?>[null, null];
