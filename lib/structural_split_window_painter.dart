@@ -6,6 +6,7 @@
 // only the final two-window raster projection and delegates each individual
 // desktop window to structural_window_painter.dart.
 
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
