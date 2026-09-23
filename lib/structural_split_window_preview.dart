@@ -530,38 +530,25 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
-        final CustomPaint splitPaint = CustomPaint(
-          key: const ValueKey<String>('structural-split-window-frame'),
-          painter: StructuralSplitWindowPainter(
-            geometry: geometry,
-            placement: widget.placement,
-            sourceFrame: widget.sourceFrame,
-            theme: widget.theme,
-            fontFamily: widget.fontFamily,
-            chromeScale: widget.chromeScale,
-            images: List<ui.Image?>.unmodifiable(_images),
-            diagnosticLabels:
-                List<String>.unmodifiable(_diagnosticLabels),
-            entryProgress: widget.entryProgress,
-            exitProgress: widget.exitProgress,
-          ),
-          child: const SizedBox.expand(),
-        );
-
-        if (widget.holdRaster) {
-          // Closing geometry changes every authored frame while the pane
-          // rasters themselves are intentionally frozen. Paint that path
-          // directly rather than through a repaint boundary so Flutter cannot
-          // reuse a stale cached split surface during the shrink.
-          return KeyedSubtree(
-            key: const ValueKey<String>('structural-split-raster'),
-            child: splitPaint,
-          );
-        }
-
         return RepaintBoundary(
           key: const ValueKey<String>('structural-split-raster'),
-          child: splitPaint,
+          child: CustomPaint(
+            key: const ValueKey<String>('structural-split-window-frame'),
+            painter: StructuralSplitWindowPainter(
+              geometry: geometry,
+              placement: widget.placement,
+              sourceFrame: widget.sourceFrame,
+              theme: widget.theme,
+              fontFamily: widget.fontFamily,
+              chromeScale: widget.chromeScale,
+              images: List<ui.Image?>.unmodifiable(_images),
+              diagnosticLabels:
+                  List<String>.unmodifiable(_diagnosticLabels),
+              entryProgress: widget.entryProgress,
+              exitProgress: widget.exitProgress,
+            ),
+            child: const SizedBox.expand(),
+          ),
         );
       },
     );
