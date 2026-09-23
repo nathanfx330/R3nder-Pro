@@ -807,14 +807,28 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
+        if (widget.preloadCloseFrame) {
+          _scheduleClosePreload(nextPaneSize);
+        }
+
+        final bool closePreloadReady =
+            _closePreloadImages[0] != null &&
+            _closePreloadImages[1] != null &&
+            _closePreloadSize == nextPaneSize;
+        final List<ui.Image?> paintImages =
+            widget.closing && closePreloadReady
+                ? _closePreloadImages
+                : _images;
+
         if (widget.closing && !_closeBoundaryReported) {
           _closeBoundaryReported = true;
           debugPrint(
             '[split-boundary] CLOSE_ENTER '
             'sf=${widget.sourceFrame} '
             'entry=${widget.entryProgress.toStringAsFixed(6)} '
-            'img0=${_images[0] == null ? "null" : identityHashCode(_images[0])} '
-            'img1=${_images[1] == null ? "null" : identityHashCode(_images[1])}',
+            'using=${closePreloadReady ? "PRELOAD" : "LIVE"} '
+            'img0=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
+            'img1=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
           );
         }
 
@@ -829,7 +843,7 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(_images),
+              images: List<ui.Image?>.unmodifiable(paintImages),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,
