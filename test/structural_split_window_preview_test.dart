@@ -27,17 +27,23 @@ class _PaneColorBackend implements MediaDecoderBackend {
 }
 
 class _HoldRecordingBackend implements MediaDecoderBackend {
+  bool blockMovingFrame = false;
   final List<_HoldRecordingDecoder> decoders = <_HoldRecordingDecoder>[];
 
   @override
   MediaDecoder open(String resolvedPath) {
-    final _HoldRecordingDecoder decoder = _HoldRecordingDecoder();
+    final _HoldRecordingDecoder decoder = _HoldRecordingDecoder(
+      blockMovingFrame: () => blockMovingFrame,
+    );
     decoders.add(decoder);
     return decoder;
   }
 }
 
 class _HoldRecordingDecoder implements NonBlockingMediaDecoder {
+  _HoldRecordingDecoder({required this.blockMovingFrame});
+
+  final bool Function() blockMovingFrame;
   final List<int> requested = <int>[];
   final List<int> polled = <int>[];
   final List<int> rendered = <int>[];
@@ -73,6 +79,7 @@ class _HoldRecordingDecoder implements NonBlockingMediaDecoder {
     int height,
   ) {
     polled.add(requestedSourceFrame);
+    if (blockMovingFrame() && requestedSourceFrame == 8) return null;
     return _frame(requestedSourceFrame, width, height);
   }
 
@@ -221,6 +228,26 @@ void main() {
       expect(before.images[1], isNotNull);
       final ui.Image leftHeld = before.images[0]!;
       final ui.Image rightHeld = before.images[1]!;
+
+      final int requestCountBefore = backend.decoders
+          .expand((_HoldRecordingDecoder d) => d.requested)
+          .length;
+      final int pollCountBefore = backend.decoders
+          .expand((_HoldRecordingDecoder d) => d.polled)
+          .length;
+      backend.blockMovingFrame = true;
+      await tester.pumpWidget(
+        preview(sourceFrame: 8, holdRaster: false),
+      );
+
+      // Frame 8 is pending, so the split preview retains the already-painted
+      // frame-7 rasters and queues its normal nonblocking retry.
+      expect(
+        backend.decoders
+            .expand((_HoldRecordingDecoder d) => d.polled)
+            .contains(8),
+        isTrue,
+      );
 
       final int requestCountBefore = backend.decoders
           .expand((_HoldRecordingDecoder d) => d.requested)
