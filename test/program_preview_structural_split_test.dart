@@ -369,10 +369,15 @@ void main() {
       await tester.pump();
 
       final StructuralSplitWindowPainter closing = painter();
-      expect(closing.entryProgress, 1.0);
-      expect(closing.exitProgress, isNotNull);
-      expect(closing.exitProgress!, greaterThan(0.0));
-      expect(closing.exitProgress!, lessThan(1.0));
+      expect(
+        closing.entryProgress,
+        closeTo(
+          1.0 - placement.stageProgressAt(closingLocal),
+          0.000001,
+        ),
+      );
+      expect(closing.exitProgress, isNull);
+      expect(closing.images, everyElement(isNull));
     },
   );
 }
