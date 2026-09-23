@@ -445,10 +445,19 @@ class _StructuralSplitWindowPreviewState
 
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
       final MediaFrame? top = results[paneIndex].topFrame;
+      final String leaves = results[paneIndex].diagnosticFrames
+          .map(
+            (MediaFrame frame) =>
+                '${frame.source}#${frame.clipId}:'
+                '${frame.requestedSourceFrame}/${frame.actualSourceFrame}'
+                ':${frame.status.name}',
+          )
+          .join(',');
       _residentFrameMeta[paneIndex] = top == null
-          ? 'top=null outer=${widget.sourceFrame}'
+          ? 'top=null outer=${widget.sourceFrame} leaves=[$leaves]'
           : 'source=${top.source} requested=${top.requestedSourceFrame} '
-              'actual=${top.actualSourceFrame} outer=${widget.sourceFrame}';
+              'actual=${top.actualSourceFrame} outer=${widget.sourceFrame} '
+              'leaves=[$leaves]';
       if (widget.sourceFrame >= widget.placement.sourceDurationFrames - 6 ||
           widget.holdRaster) {
         debugPrint(
