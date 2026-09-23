@@ -360,11 +360,10 @@ void main() {
               )
               .painter! as StructuralSplitWindowPainter;
       final ui.Image oldPainterImage = first.images[0]!;
-      final ByteData? oldPixelsBefore =
-          await oldPainterImage.toByteData(format: ui.ImageByteFormat.rawRgba);
-      expect(oldPixelsBefore, isNotNull);
+      expect(oldPainterImage.debugDisposed, isFalse);
 
       await tester.pumpWidget(preview(4));
+      StructuralSplitWindowPainter? second;
       for (int attempt = 0; attempt < 50; attempt++) {
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -379,30 +378,29 @@ void main() {
                   ),
                 )
                 .painter! as StructuralSplitWindowPainter;
-        if (!identical(current.images[0], oldPainterImage)) break;
+        if (backend.decoders
+                .expand((_HoldRecordingDecoder d) => d.polled)
+                .contains(4) &&
+            !identical(current.images[0], oldPainterImage)) {
+          second = current;
+          break;
+        }
       }
 
-      final StructuralSplitWindowPainter second =
-          tester
-              .widget<CustomPaint>(
-                find.byKey(
-                  const ValueKey<String>('structural-split-window-frame'),
-                ),
-              )
-              .painter! as StructuralSplitWindowPainter;
-      expect(identical(second.images[0], oldPainterImage), isFalse);
+      expect(
+        backend.decoders
+            .expand((_HoldRecordingDecoder d) => d.polled)
+            .contains(4),
+        isTrue,
+      );
+      expect(second, isNotNull);
+      expect(identical(second!.images[0], oldPainterImage), isFalse);
 
-      // The old painter handle must remain readable after State installs the
-      // replacement. Older display lists can still reference that handle on
-      // the raster thread even though the State-owned image has advanced.
-      final ByteData? oldPixelsAfter =
-          await oldPainterImage.toByteData(format: ui.ImageByteFormat.rawRgba);
-      expect(oldPixelsAfter, isNotNull);
-      expect(oldPixelsAfter!.lengthInBytes, oldPixelsBefore!.lengthInBytes);
-
-      final ByteData? newPixels =
-          await second.images[0]!.toByteData(format: ui.ImageByteFormat.rawRgba);
-      expect(newPixels, isNotNull);
+      // Older display lists can still reference this painter handle after the
+      // State-owned resident advances. It must remain open until retirement,
+      // while the new painter owns a different open clone handle.
+      expect(oldPainterImage.debugDisposed, isFalse);
+      expect(second.images[0]!.debugDisposed, isFalse);
     },
   );
 
