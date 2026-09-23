@@ -727,8 +727,14 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                       chromeScale: chromeScale,
                       entryProgress: splitEntryProgress,
                       exitProgress: splitExitProgress,
+                      // Closing is a stationary source hold, not live playback.
+                      // Resolve the exact final source frame once, then let only
+                      // the authored split-window geometry animate back toward
+                      // the terminal. Keeping the nonblocking moving path here
+                      // can expose an older resident raster during the close.
                       moving: widget.isPlaying &&
-                          (parentOwnsReadiness || _firstFrameReady),
+                          (parentOwnsReadiness || _firstFrameReady) &&
+                          !closing,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
