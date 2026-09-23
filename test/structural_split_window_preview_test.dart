@@ -224,15 +224,11 @@ void main() {
       );
       final StructuralSplitWindowPainter before =
           beforePaint.painter! as StructuralSplitWindowPainter;
-      expect(
-        find.ancestor(
-          of: find.byKey(
-            const ValueKey<String>('structural-split-window-frame'),
-          ),
-          matching: find.byType(RepaintBoundary),
-        ),
-        findsOneWidget,
+      final Finder splitRaster = find.byKey(
+        const ValueKey<String>('structural-split-raster'),
       );
+      expect(splitRaster, findsOneWidget);
+      expect(tester.widget(splitRaster), isA<RepaintBoundary>());
       expect(before.images[0], isNotNull);
       expect(before.images[1], isNotNull);
       final ui.Image leftHeld = before.images[0]!;
@@ -280,15 +276,11 @@ void main() {
       final StructuralSplitWindowPainter held =
           heldPaint.painter! as StructuralSplitWindowPainter;
 
-      expect(
-        find.ancestor(
-          of: find.byKey(
-            const ValueKey<String>('structural-split-window-frame'),
-          ),
-          matching: find.byType(RepaintBoundary),
-        ),
-        findsNothing,
+      final Finder heldSplitRaster = find.byKey(
+        const ValueKey<String>('structural-split-raster'),
       );
+      expect(heldSplitRaster, findsOneWidget);
+      expect(tester.widget(heldSplitRaster), isA<KeyedSubtree>());
       expect(identical(held.images[0], leftHeld), isTrue);
       expect(identical(held.images[1], rightHeld), isTrue);
       expect(
