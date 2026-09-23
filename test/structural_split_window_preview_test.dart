@@ -300,6 +300,101 @@ void main() {
   );
 
   testWidgets(
+    'split painter image handle survives resident frame replacement',
+    (WidgetTester tester) async {
+      const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final _HoldRecordingBackend backend = _HoldRecordingBackend();
+      bool ready = false;
+
+      Widget preview(int sourceFrame) {
+        return MaterialApp(
+          home: SizedBox(
+            width: 1280,
+            height: 720,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: sourceFrame,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: true,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(preview(3));
+      for (int attempt = 0; attempt < 50 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        });
+        await tester.pump();
+      }
+      expect(ready, isTrue);
+      await tester.pump();
+
+      final StructuralSplitWindowPainter first =
+          tester
+              .widget<CustomPaint>(
+                find.byKey(
+                  const ValueKey<String>('structural-split-window-frame'),
+                ),
+              )
+              .painter! as StructuralSplitWindowPainter;
+      final ui.Image oldPainterImage = first.images[0]!;
+      expect(oldPainterImage.debugDisposed, isFalse);
+
+      await tester.pumpWidget(preview(4));
+      for (int attempt = 0; attempt < 50; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        });
+        await tester.pump();
+
+        final StructuralSplitWindowPainter current =
+            tester
+                .widget<CustomPaint>(
+                  find.byKey(
+                    const ValueKey<String>('structural-split-window-frame'),
+                  ),
+                )
+                .painter! as StructuralSplitWindowPainter;
+        if (!identical(current.images[0], oldPainterImage)) break;
+      }
+
+      final StructuralSplitWindowPainter second =
+          tester
+              .widget<CustomPaint>(
+                find.byKey(
+                  const ValueKey<String>('structural-split-window-frame'),
+                ),
+              )
+              .painter! as StructuralSplitWindowPainter;
+      expect(identical(second.images[0], oldPainterImage), isFalse);
+      expect(oldPainterImage.debugDisposed, isFalse);
+      expect(second.images[0]!.debugDisposed, isFalse);
+    },
+  );
+
+  testWidgets(
     'moving MAX split caps pane decode to EDIT fast-preview pixel budget',
     (WidgetTester tester) async {
       tester.view.devicePixelRatio = 1.0;
