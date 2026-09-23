@@ -168,6 +168,7 @@ void main() {
       final StructuralSequencePlacement placement =
           parseStructuralSequencePlacements(source).single;
       final _HoldRecordingBackend backend = _HoldRecordingBackend();
+      final String Function(String) resolver = (String value) => value;
       bool ready = false;
 
       Widget preview({
@@ -190,7 +191,7 @@ void main() {
               holdRaster: holdRaster,
               exitProgress: exitProgress,
               backend: backend,
-              resolveSource: (String value) => value,
+              resolveSource: resolver,
               onFirstFrameReady: () => ready = true,
             ),
           ),
