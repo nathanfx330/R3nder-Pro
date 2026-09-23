@@ -311,8 +311,11 @@ void main() {
       expect(split.moving, isTrue);
       expect(split.sourceFrame, placement.sourceFrameAt(showingFrame));
 
+      // Use a late closing frame. The shared shell intentionally keeps
+      // structural opacity at 1.0 through the first part of closing, then
+      // fades near the end via kStructuralShellVisibilityRamp.
       final int closingFrame =
-          placement.closingStartFrame + (placement.exitWindowFrames ~/ 2);
+          placement.closingStartFrame + placement.exitWindowFrames - 2;
       expect(
         placement.stageAt(closingFrame),
         StructuralSequenceStage.closing,
