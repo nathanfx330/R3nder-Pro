@@ -248,6 +248,14 @@ static gboolean R3MediaTexturePopulate(
     GError** error) {
   R3MediaTexture* self = reinterpret_cast<R3MediaTexture*>(texture);
 
+  // Flutter invokes populate on the raster GL context shared with Skia.
+  // Preserve state that this texture upload mutates so Skia's cached GL state
+  // cannot disagree with the actual driver state after we return.
+  GLint previous_texture_binding = 0;
+  GLint previous_unpack_alignment = 4;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture_binding);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_unpack_alignment);
+
   int display_index = -1;
   bool consumed_ready_frame = false;
 
@@ -320,6 +328,10 @@ static gboolean R3MediaTexturePopulate(
   if (front_index < 0 || self->gl_texture_ids[front_index] == 0 ||
       self->uploaded_width[front_index] <= 0 ||
       self->uploaded_height[front_index] <= 0) {
+    glBindTexture(
+        GL_TEXTURE_2D,
+        static_cast<GLuint>(previous_texture_binding));
+    glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
     return FailTexture(error, "R3nder media texture front buffer is invalid.");
   }
 
@@ -327,6 +339,11 @@ static gboolean R3MediaTexturePopulate(
   *name = self->gl_texture_ids[front_index];
   *width = static_cast<uint32_t>(self->uploaded_width[front_index]);
   *height = static_cast<uint32_t>(self->uploaded_height[front_index]);
+
+  glBindTexture(
+      GL_TEXTURE_2D,
+      static_cast<GLuint>(previous_texture_binding));
+  glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
   return TRUE;
 }
 
