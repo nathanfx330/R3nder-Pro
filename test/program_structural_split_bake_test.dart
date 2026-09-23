@@ -523,7 +523,7 @@ void main() {
   );
 
   test(
-    'BAKE animates ordinary and MAX SPLIT entry opacity and geometry',
+    'BAKE animates SPLIT entry and closes ordinary and MAX clients on black',
     () async {
       for (final bool maximized in <bool>[false, true]) {
         final String source = _splitMotionBakeSource(maximized: maximized);
@@ -644,7 +644,6 @@ void main() {
           final early = await renderProbe(opening.early);
           final middle = await renderProbe(opening.middle);
           final seated = await renderProbe(showingLocal);
-          final closing = await renderProbe(closingLocal);
 
           // Both panes visibly grow during the authored opening budget.
           expect(early.red.width, lessThan(middle.red.width));
@@ -662,11 +661,43 @@ void main() {
           expect(early.redIntensity, lessThan(middle.redIntensity));
           expect(early.blueIntensity, lessThan(middle.blueIntensity));
 
-          // Closing reverses the seated geometry for both panes.
-          expect(closing.red.width, lessThan(seated.red.width));
-          expect(closing.red.height, lessThan(seated.red.height));
-          expect(closing.blue.width, lessThan(seated.blue.width));
-          expect(closing.blue.height, lessThan(seated.blue.height));
+          final int closingProject = _findProjectFrame(
+            scene,
+            placementIndex: 0,
+            localFrame: closingLocal,
+          );
+          expect(
+            scene.evaluate(
+              ProjectTime(
+                frame: closingProject,
+                mode: ProjectClockMode.scrub,
+              ),
+            ).exact,
+            isTrue,
+          );
+          final Uint8List closingRgba = await _renderRgba(renderer, scene);
+
+          // SPLIT close intentionally owns no video picture. Both client
+          // surfaces are black, so neither fixture pane color may survive into
+          // the closing raster. The edit owns any fade into this boundary.
+          expect(
+            _paneColorBounds(
+              closingRgba,
+              outputWidth,
+              outputHeight,
+              red: true,
+            ),
+            isNull,
+          );
+          expect(
+            _paneColorBounds(
+              closingRgba,
+              outputWidth,
+              outputHeight,
+              red: false,
+            ),
+            isNull,
+          );
         } finally {
           renderer.dispose();
           scene.disposeImages();
