@@ -341,7 +341,8 @@ void main() {
         find.byType(StructuralSplitWindowPreview),
       );
       expect(split.sourceFrame, placement.sourceDurationFrames - 1);
-      expect(split.moving, isFalse);
+      expect(split.moving, isTrue);
+      expect(split.holdRaster, isTrue);
       expect(split.exitProgress, isNotNull);
       expect(split.exitProgress, allOf(greaterThan(0.0), lessThan(1.0)));
     },
