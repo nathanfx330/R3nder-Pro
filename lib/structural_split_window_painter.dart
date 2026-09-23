@@ -121,7 +121,8 @@ class StructuralSplitWindowPainter extends CustomPainter {
       if (showSourceFrameProbe) {
         final TextPainter probe = TextPainter(
           text: TextSpan(
-            text: 'SF $sourceFrame',
+            text: 'SF $sourceFrame  IMG '
+                '${images[paneIndex] == null ? "null" : identityHashCode(images[paneIndex])}',
             style: TextStyle(
               fontFamily: fontFamily,
               fontSize: math.max(14.0, 22.0 * chromeScale),
