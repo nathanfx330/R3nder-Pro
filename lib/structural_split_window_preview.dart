@@ -296,6 +296,205 @@ class _StructuralSplitWindowPreviewState
     return compositor;
   }
 
+  EditVideoCompositor _ensureClosePreloadCompositor() {
+    final EditVideoCompositor? existing = _closePreloadCompositor;
+    if (existing != null) return existing;
+
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final MediaDecoderBackend backend =
+        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final EditDocumentModel model =
+        EditDocumentModel.parse(widget.rawDocument);
+
+    final StructuralSourceRef? selected = StructuralSourceRef.tryParse(source);
+    if (selected == null ||
+        selected.kind != StructuralSourceKind.mosaic ||
+        selected.id.isEmpty ||
+        !model.containsStructuralSource(selected)) {
+      throw StateError(
+        'Split close preload requires a valid MOSAIC structural source: "$source".',
+      );
+    }
+
+    final MediaLayer layer = MediaLayer(
+      editDocument: model,
+      backend: backend,
+      resolveSource: resolver,
+    );
+    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+      model: model,
+      mediaLayer: layer,
+      backend: backend,
+      resolveSource: resolver,
+    );
+
+    _closePreloadLayer = layer;
+    _closePreloadCompositor = compositor;
+    _closePreloadCardImages = CardOverlayImageCache(resolver);
+    return compositor;
+  }
+
+  void _scheduleClosePreload(ui.Size paneSize) {
+    if (!widget.preloadCloseFrame) return;
+    if (_closePreloadImages[0] != null &&
+        _closePreloadImages[1] != null &&
+        _closePreloadSize == paneSize) {
+      return;
+    }
+
+    if (_closePreloadSize != null && _closePreloadSize != paneSize) {
+      _disposeClosePreload();
+    }
+    _closePreloadSize = paneSize;
+
+    if (_closePreloadScheduled) return;
+    _closePreloadScheduled = true;
+    final int generation = _closePreloadGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _closePreloadScheduled = false;
+      if (!mounted ||
+          generation != _closePreloadGeneration ||
+          !widget.preloadCloseFrame) {
+        return;
+      }
+      _preloadCloseFrame(paneSize, generation);
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  Future<void> _preloadCloseFrame(
+    ui.Size paneSize,
+    int generation,
+  ) async {
+    final EditVideoCompositor compositor;
+    try {
+      compositor = _ensureClosePreloadCompositor();
+    } catch (error, stack) {
+      if (!mounted || generation != _closePreloadGeneration) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while creating the isolated split close preload compositor',
+      );
+      return;
+    }
+
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final int finalSourceFrame =
+        math.max(0, widget.placement.sourceDurationFrames - 1);
+    final ProjectTime time = ProjectTime(
+      frame: finalSourceFrame,
+      mode: ProjectClockMode.scrub,
+    );
+    final List<EditVideoCompositeResult> results =
+        <EditVideoCompositeResult>[];
+
+    try {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        results.add(
+          compositor.renderMosaicPaneAvailable(
+            source,
+            paneIndex,
+            time,
+            paneSize,
+          ),
+        );
+      }
+    } catch (error, stack) {
+      if (!mounted || generation != _closePreloadGeneration) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while preloading the final split close frame',
+      );
+      return;
+    }
+
+    if (!mounted || generation != _closePreloadGeneration) return;
+
+    if (results.any((EditVideoCompositeResult result) => result.hasPending) ||
+        results.any((EditVideoCompositeResult result) => result.rgba == null)) {
+      _scheduleClosePreload(paneSize);
+      return;
+    }
+
+    final List<ui.Image?> decoded = <ui.Image?>[null, null];
+    try {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final EditVideoCompositeResult result = results[paneIndex];
+        decoded[paneIndex] = await _decodeRgba(
+          result.rgba!,
+          result.width,
+          result.height,
+          result.stride,
+        );
+      }
+
+      final EditDocumentModel model =
+          EditDocumentModel.parse(widget.rawDocument);
+      final StructuralSourceRef root =
+          StructuralSourceRef.tryParse(source)!;
+      final CardOverlayImageCache? cardImages = _closePreloadCardImages;
+      if (cardImages != null) {
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          final ui.Image? base = decoded[paneIndex];
+          if (base == null) continue;
+          final List<StructuralCardOverlayPlacement> overlays =
+              structuralCardOverlayPlacementsForMosaicPane(
+            model,
+            root,
+            paneIndex,
+            finalSourceFrame,
+          )
+                  .where(
+                    (StructuralCardOverlayPlacement placement) =>
+                        !placement.isSideCard,
+                  )
+                  .toList(growable: false);
+          final ui.Image? composited =
+              await compositeStructuralCardOverlaysToImage(
+            structuralImage: base,
+            placements: overlays,
+            images: cardImages,
+            fontFamily: widget.fontFamily,
+          );
+          if (composited != null) {
+            base.dispose();
+            decoded[paneIndex] = composited;
+          }
+        }
+      }
+    } catch (error, stack) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      if (!mounted || generation != _closePreloadGeneration) return;
+      _reportRenderError(
+        error,
+        stack,
+        'while decoding the isolated split close preload',
+      );
+      return;
+    }
+
+    if (!mounted || generation != _closePreloadGeneration) {
+      for (final ui.Image? image in decoded) {
+        image?.dispose();
+      }
+      return;
+    }
+
+    _replaceClosePreloadImage(0, decoded[0]);
+    _replaceClosePreloadImage(1, decoded[1]);
+    _closePreloadSize = paneSize;
+    debugPrint(
+      '[split-close-preload] READY sf=$finalSourceFrame',
+    );
+    if (mounted) setState(() {});
+  }
+
   void _scheduleRender() {
     if (_renderScheduled) return;
     _renderScheduled = true;
