@@ -490,7 +490,12 @@ class _StructuralSplitWindowPreviewState
     _replaceClosePreloadImage(1, decoded[1]);
     _closePreloadSize = paneSize;
     debugPrint(
-      '[split-close-preload] READY sf=$finalSourceFrame',
+      '[split-close-preload] READY '
+      'sf=$finalSourceFrame '
+      'sig0=${_rgbaSignature(results[0].rgba)} '
+      'sig1=${_rgbaSignature(results[1].rgba)} '
+      'leaf0=${_leafFrameSummary(results[0])} '
+      'leaf1=${_leafFrameSummary(results[1])}',
     );
     if (mounted) setState(() {});
   }
@@ -707,6 +712,10 @@ class _StructuralSplitWindowPreviewState
         '[split-boundary] PRESENT '
         'closing=${widget.closing} '
         'sf=${widget.sourceFrame} '
+        'sig0=${_rgbaSignature(results[0].rgba)} '
+        'sig1=${_rgbaSignature(results[1].rgba)} '
+        'leaf0=${_leafFrameSummary(results[0])} '
+        'leaf1=${_leafFrameSummary(results[1])} '
         'img0=${_images[0] == null ? "null" : identityHashCode(_images[0])} '
         'img1=${_images[1] == null ? "null" : identityHashCode(_images[1])}',
       );
@@ -720,6 +729,28 @@ class _StructuralSplitWindowPreviewState
       _readyReported = true;
       widget.onFirstFrameReady?.call();
     }
+  }
+
+  String _rgbaSignature(Uint8List? bytes) {
+    if (bytes == null || bytes.isEmpty) return 'null';
+    int hash = 0x811C9DC5;
+    for (final int byte in bytes) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  String _leafFrameSummary(EditVideoCompositeResult result) {
+    final List<String> leaves = result.mediaFrames
+        .where((MediaFrame frame) => frame.isDecoded)
+        .map(
+          (MediaFrame frame) =>
+              '${frame.source}:${frame.requestedSourceFrame}/'
+              '${frame.actualSourceFrame ?? -1}',
+        )
+        .toList(growable: false);
+    return leaves.isEmpty ? 'none' : leaves.join(',');
   }
 
   String _diagnosticLabel(
