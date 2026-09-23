@@ -86,6 +86,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_PRELOAD_VERIFY');
   static const bool _paintOpaqueCloseProbe =
       bool.fromEnvironment('R3_SPLIT_CLOSE_OPAQUE_PROBE');
+  static const bool _paintImageCloseProbe =
+      bool.fromEnvironment('R3_SPLIT_CLOSE_IMAGE_PROBE');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -101,6 +103,7 @@ class _StructuralSplitWindowPreviewState
   final List<ui.Image?> _images = <ui.Image?>[null, null];
   final List<ui.Image?> _closePreloadImages = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
+  ui.Image? _closeImageProbe;
 
   ui.Size? _paneRenderSize;
   ui.Size? _closePreloadSize;
@@ -127,7 +130,45 @@ class _StructuralSplitWindowPreviewState
   @override
   void initState() {
     super.initState();
+    if (_paintImageCloseProbe) {
+      unawaited(_createCloseImageProbe());
+    }
     _scheduleRender();
+  }
+
+  Future<void> _createCloseImageProbe() async {
+    const int size = 64;
+    const int cells = 8;
+    const double cell = size / cells;
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final ui.Canvas canvas = ui.Canvas(recorder);
+    canvas.drawRect(
+      const Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+      ui.Paint()..color = const Color(0xFFFF00FF),
+    );
+    for (int y = 0; y < cells; y++) {
+      for (int x = 0; x < cells; x++) {
+        if ((x + y).isEven) {
+          canvas.drawRect(
+            Rect.fromLTWH(x * cell, y * cell, cell, cell),
+            ui.Paint()..color = const Color(0xFF00FF00),
+          );
+        }
+      }
+    }
+    final ui.Picture picture = recorder.endRecording();
+    try {
+      final ui.Image image = await picture.toImage(size, size);
+      if (!mounted) {
+        image.dispose();
+        return;
+      }
+      _closeImageProbe?.dispose();
+      _closeImageProbe = image;
+      setState(() {});
+    } finally {
+      picture.dispose();
+    }
   }
 
   @override
@@ -199,6 +240,8 @@ class _StructuralSplitWindowPreviewState
     _disposeClosePreload();
     _replaceImage(0, null);
     _replaceImage(1, null);
+    _closeImageProbe?.dispose();
+    _closeImageProbe = null;
     super.dispose();
   }
 
@@ -959,6 +1002,10 @@ class _StructuralSplitWindowPreviewState
               closeAsSurfaceTransform: widget.closeAsSurfaceTransform,
               paintOpaqueCloseProbe:
                   widget.closing && _paintOpaqueCloseProbe,
+              closeImageProbe:
+                  widget.closing && _paintImageCloseProbe
+                      ? _closeImageProbe
+                      : null,
             ),
             child: const SizedBox.expand(),
           ),
