@@ -265,7 +265,7 @@ void _expectSameRect(Rect a, Rect b) {
 
 void main() {
   testWidgets(
-    'SPLIT closing mirrors entry while source stays on final frame',
+    'SPLIT closing mirrors entry and marks client content closed',
     (WidgetTester tester) async {
       final StructuralSequencePlacement placement =
           parseStructuralSequencePlacements(_splitCloseSource).single;
@@ -307,7 +307,7 @@ void main() {
           tester.widget<StructuralSplitWindowPreview>(
         find.byType(StructuralSplitWindowPreview),
       );
-      expect(split.moving, isTrue);
+      expect(split.closing, isFalse);
       expect(split.sourceFrame, placement.sourceFrameAt(showingFrame));
 
       final int closingFrame =
@@ -340,11 +340,8 @@ void main() {
       split = tester.widget<StructuralSplitWindowPreview>(
         find.byType(StructuralSplitWindowPreview),
       );
+      expect(split.closing, isTrue);
       expect(split.sourceFrame, placement.sourceDurationFrames - 1);
-      expect(split.moving, isTrue);
-      expect(split.holdRaster, isTrue);
-      expect(split.preloadCloseFrame, isFalse);
-      expect(split.closeAsSurfaceTransform, isFalse);
       expect(split.exitProgress, isNull);
       expect(
         split.entryProgress,
