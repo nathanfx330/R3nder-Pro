@@ -83,14 +83,7 @@ class _StructuralSplitWindowPreviewState
   EditDocumentModel? _runtimeModel;
   CardOverlayImageCache? _cardImages;
 
-  static const int _retiredPaintImageLimit = 12;
-
-  // _images are owned by this State. CustomPainter receives separate clone
-  // handles so replacing a decoded frame never disposes a handle still owned by
-  // an older painter/display list on the raster thread.
   final List<ui.Image?> _images = <ui.Image?>[null, null];
-  final List<ui.Image?> _paintImages = <ui.Image?>[null, null];
-  final List<ui.Image> _retiredPaintImages = <ui.Image>[];
   final List<String> _diagnosticLabels = <String>['', ''];
 
   ui.Size? _paneRenderSize;
@@ -166,16 +159,8 @@ class _StructuralSplitWindowPreviewState
   void dispose() {
     _serial++;
     _disposeRuntime();
-    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-      _images[paneIndex]?.dispose();
-      _images[paneIndex] = null;
-      _paintImages[paneIndex]?.dispose();
-      _paintImages[paneIndex] = null;
-    }
-    for (final ui.Image image in _retiredPaintImages) {
-      image.dispose();
-    }
-    _retiredPaintImages.clear();
+    _replaceImage(0, null);
+    _replaceImage(1, null);
     super.dispose();
   }
 
@@ -194,20 +179,7 @@ class _StructuralSplitWindowPreviewState
   void _replaceImage(int paneIndex, ui.Image? next) {
     final ui.Image? old = _images[paneIndex];
     if (identical(old, next)) return;
-
-    final ui.Image? oldPaintHandle = _paintImages[paneIndex];
-    if (oldPaintHandle != null) {
-      _retiredPaintImages.add(oldPaintHandle);
-      while (_retiredPaintImages.length > _retiredPaintImageLimit) {
-        _retiredPaintImages.removeAt(0).dispose();
-      }
-    }
-
     _images[paneIndex] = next;
-    _paintImages[paneIndex] = next?.clone();
-
-    // The State-owned handle is never shared with CustomPainter, so it can be
-    // released immediately after its replacement is installed.
     old?.dispose();
   }
 
@@ -569,7 +541,7 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(_paintImages),
+              images: List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,
