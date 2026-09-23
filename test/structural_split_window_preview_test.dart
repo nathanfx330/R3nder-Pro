@@ -25,6 +25,66 @@ class _PaneColorBackend implements MediaDecoderBackend {
   }
 }
 
+class _HoldRecordingBackend implements MediaDecoderBackend {
+  final List<_HoldRecordingDecoder> decoders = <_HoldRecordingDecoder>[];
+
+  @override
+  MediaDecoder open(String resolvedPath) {
+    final _HoldRecordingDecoder decoder = _HoldRecordingDecoder();
+    decoders.add(decoder);
+    return decoder;
+  }
+}
+
+class _HoldRecordingDecoder implements NonBlockingMediaDecoder {
+  final List<int> requested = <int>[];
+  final List<int> polled = <int>[];
+  final List<int> rendered = <int>[];
+
+  DecodedMediaFrame _frame(int frame, int width, int height) {
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final int value = (frame * 17).clamp(0, 255);
+    for (int i = 0; i < rgba.length; i += 4) {
+      rgba[i] = value;
+      rgba[i + 1] = 80;
+      rgba[i + 2] = 160;
+      rgba[i + 3] = 255;
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: frame,
+      actualSourceFrame: frame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {
+    requested.add(requestedSourceFrame);
+  }
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    polled.add(requestedSourceFrame);
+    return _frame(requestedSourceFrame, width, height);
+  }
+
+  @override
+  DecodedMediaFrame render(int requestedSourceFrame, int width, int height) {
+    rendered.add(requestedSourceFrame);
+    return _frame(requestedSourceFrame, width, height);
+  }
+
+  @override
+  void dispose() {}
+}
+
 class _RecordingSizeBackend implements MediaDecoderBackend {
   final List<Size> sizes = <Size>[];
 
@@ -88,6 +148,134 @@ class _SolidColorDecoder implements MediaDecoder {
 }
 
 void main() {
+  testWidgets(
+    'closing hold keeps the exact resident split pane rasters',
+    (WidgetTester tester) async {
+      const String source = '''[MOSAIC:wall]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
+''';
+
+      final StructuralSequencePlacement placement =
+          parseStructuralSequencePlacements(source).single;
+      final _HoldRecordingBackend backend = _HoldRecordingBackend();
+      bool ready = false;
+
+      Widget preview({
+        required int sourceFrame,
+        required bool holdRaster,
+        double? exitProgress,
+      }) {
+        return MaterialApp(
+          home: SizedBox(
+            width: 1280,
+            height: 720,
+            child: StructuralSplitWindowPreview(
+              rawDocument: source,
+              placement: placement,
+              sourceFrame: sourceFrame,
+              theme: R3Theme.of(Colors.green),
+              fontFamily: 'monospace',
+              chromeScale: 1.0,
+              moving: true,
+              holdRaster: holdRaster,
+              exitProgress: exitProgress,
+              backend: backend,
+              resolveSource: (String value) => value,
+              onFirstFrameReady: () => ready = true,
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        preview(sourceFrame: 7, holdRaster: false),
+      );
+      for (int attempt = 0; attempt < 50 && !ready; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        });
+        await tester.pump();
+      }
+      expect(ready, isTrue);
+      await tester.pump();
+
+      final CustomPaint beforePaint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter before =
+          beforePaint.painter! as StructuralSplitWindowPainter;
+      expect(before.images[0], isNotNull);
+      expect(before.images[1], isNotNull);
+      final ui.Image leftHeld = before.images[0]!;
+      final ui.Image rightHeld = before.images[1]!;
+
+      final int requestCountBefore = backend.decoders
+          .expand((_HoldRecordingDecoder d) => d.requested)
+          .length;
+      final int pollCountBefore = backend.decoders
+          .expand((_HoldRecordingDecoder d) => d.polled)
+          .length;
+      final int renderCountBefore = backend.decoders
+          .expand((_HoldRecordingDecoder d) => d.rendered)
+          .length;
+
+      await tester.pumpWidget(
+        preview(
+          sourceFrame: placement.sourceDurationFrames - 1,
+          holdRaster: true,
+          exitProgress: 0.5,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final CustomPaint heldPaint = tester.widget<CustomPaint>(
+        find.byKey(
+          const ValueKey<String>('structural-split-window-frame'),
+        ),
+      );
+      final StructuralSplitWindowPainter held =
+          heldPaint.painter! as StructuralSplitWindowPainter;
+
+      expect(identical(held.images[0], leftHeld), isTrue);
+      expect(identical(held.images[1], rightHeld), isTrue);
+      expect(
+        backend.decoders.expand((_HoldRecordingDecoder d) => d.requested).length,
+        requestCountBefore,
+      );
+      expect(
+        backend.decoders.expand((_HoldRecordingDecoder d) => d.polled).length,
+        pollCountBefore,
+      );
+      expect(
+        backend.decoders.expand((_HoldRecordingDecoder d) => d.rendered).length,
+        renderCountBefore,
+      );
+      expect(
+        backend.decoders
+            .expand((_HoldRecordingDecoder d) => <int>[
+                  ...d.requested,
+                  ...d.polled,
+                  ...d.rendered,
+                ])
+            .contains(placement.sourceDurationFrames - 1),
+        isFalse,
+      );
+      expect(held.exitProgress, 0.5);
+    },
+  );
+
   testWidgets(
     'moving MAX split caps pane decode to EDIT fast-preview pixel budget',
     (WidgetTester tester) async {
