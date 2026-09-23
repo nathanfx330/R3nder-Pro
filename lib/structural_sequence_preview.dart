@@ -543,12 +543,21 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               stage == StructuralSequenceStage.opening;
           double presentationOpacity = structuralOpacity;
           double splitEntryProgress = 1.0;
-          double? splitExitProgress;
           if (placement.splitWindow) {
             if (stage == StructuralSequenceStage.opening) {
               splitEntryProgress = linear.clamp(0.0, 1.0).toDouble();
             } else if (stage == StructuralSequenceStage.closing) {
-              splitExitProgress = linear.clamp(0.0, 1.0).toDouble();
+              // SPLIT close is literally the working entry choreography played
+              // backward. sourceFrameAt() already clamps closing frames to the
+              // final authored source frame, just as opening clamps to frame 0.
+              // Keep one renderer path and reverse only authored motion.
+              splitEntryProgress =
+                  (1.0 - linear).clamp(0.0, 1.0).toDouble();
+              presentationOpacity = structuralShapeEntryFrameAt(
+                targetRect: presentationRect,
+                linearProgress: splitEntryProgress,
+                contentReady: true,
+              ).opacity;
             }
           }
           if (splitShapeEntry) {
@@ -726,10 +735,10 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                               : 'monospace',
                       chromeScale: chromeScale,
                       entryProgress: splitEntryProgress,
-                      exitProgress: splitExitProgress,
+                      exitProgress: null,
                       moving: widget.isPlaying &&
                           (parentOwnsReadiness || _firstFrameReady),
-                      holdRaster: closing,
+                      holdRaster: false,
                       backend: widget.backend,
                       resolveSource: widget.resolveSource,
                       onFirstFrameReady: _handleFirstFrameReady,
