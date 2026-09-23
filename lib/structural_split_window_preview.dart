@@ -37,6 +37,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double? exitProgress;
   final bool moving;
   final bool closing;
+  final bool closeAsSurfaceTransform;
   final bool showSourceFrameProbe;
 
   /// Freeze the exact currently resident pane rasters.
@@ -63,6 +64,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.exitProgress,
     required this.moving,
     this.closing = false,
+    this.closeAsSurfaceTransform = false,
     this.showSourceFrameProbe = false,
     this.holdRaster = false,
     this.backend,
@@ -581,6 +583,7 @@ class _StructuralSplitWindowPreviewState
               entryProgress: widget.entryProgress,
               exitProgress: widget.exitProgress,
               showSourceFrameProbe: widget.showSourceFrameProbe,
+              closeAsSurfaceTransform: widget.closeAsSurfaceTransform,
             ),
             child: const SizedBox.expand(),
           ),
