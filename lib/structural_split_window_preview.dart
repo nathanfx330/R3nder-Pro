@@ -516,6 +516,75 @@ class _StructuralSplitWindowPreviewState
     }
   }
 
+  Future<void> _dumpWarmSequentialTail({
+    required int finalSourceFrame,
+    required ui.Size paneSize,
+  }) async {
+    final String source = widget.placement.sourceRef.canonicalSource;
+    final MediaDecoderBackend backend =
+        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final EditDocumentModel model =
+        EditDocumentModel.parse(widget.rawDocument);
+
+    final MediaLayer layer = MediaLayer(
+      editDocument: model,
+      backend: backend,
+      resolveSource: resolver,
+    );
+    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
+      model: model,
+      mediaLayer: layer,
+      backend: backend,
+      resolveSource: resolver,
+    );
+
+    final int startFrame = math.max(0, finalSourceFrame - 80);
+    List<EditVideoCompositeResult>? finalResults;
+
+    try {
+      for (int frame = startFrame; frame <= finalSourceFrame; frame++) {
+        final ProjectTime time = ProjectTime(
+          frame: frame,
+          mode: ProjectClockMode.scrub,
+        );
+        final List<EditVideoCompositeResult> current =
+            <EditVideoCompositeResult>[];
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          current.add(
+            compositor.renderMosaicPane(
+              source,
+              paneIndex,
+              time,
+              paneSize,
+            ),
+          );
+        }
+        if (frame == finalSourceFrame) {
+          finalResults = current;
+        }
+      }
+
+      if (finalResults == null) return;
+      for (int paneIndex = 0; paneIndex < finalResults.length; paneIndex++) {
+        await _writeCompositeRgbaPpm(
+          result: finalResults[paneIndex],
+          paneIndex: paneIndex,
+          sourceFrame: finalSourceFrame,
+          label: 'warm-sequential',
+        );
+      }
+      debugPrint(
+        '[split-rgba-dump] WARM '
+        'startSf=$startFrame endSf=$finalSourceFrame',
+      );
+    } finally {
+      compositor.dispose();
+      layer.dispose();
+    }
+  }
+
   Future<void> _dumpPreloadContentFrames({
     required List<EditVideoCompositeResult> finalResults,
     required int finalSourceFrame,
@@ -546,6 +615,11 @@ class _StructuralSplitWindowPreviewState
         paneSize: paneSize,
       );
     }
+
+    await _dumpWarmSequentialTail(
+      finalSourceFrame: finalSourceFrame,
+      paneSize: paneSize,
+    );
   }
 
   void _scheduleClosePreload(ui.Size paneSize) {
