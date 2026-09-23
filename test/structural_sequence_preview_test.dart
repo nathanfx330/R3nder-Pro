@@ -343,6 +343,7 @@ void main() {
       expect(split.sourceFrame, placement.sourceDurationFrames - 1);
       expect(split.moving, isTrue);
       expect(split.holdRaster, isFalse);
+      expect(split.useCloseSnapshot, isTrue);
       expect(split.exitProgress, isNull);
       expect(
         split.entryProgress,
