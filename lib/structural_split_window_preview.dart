@@ -9,13 +9,11 @@
 // used by Program BAKE.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 
 import 'card_overlay.dart';
 import 'edit_model.dart';
@@ -39,18 +37,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double? exitProgress;
   final bool moving;
   final bool closing;
-  final bool preloadCloseFrame;
-  final bool closeAsSurfaceTransform;
-  final bool showSourceFrameProbe;
-
-  /// Freeze the exact currently resident pane rasters.
-  ///
-  /// Closing choreography changes only geometry. If both pane images are
-  /// already resident, no new source request is allowed while this is true.
-  /// A direct scrub/mount into a held frame with no resident raster may render
-  /// the requested frame once so the surface is not blank.
-  final bool holdRaster;
-
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -67,10 +53,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.exitProgress,
     required this.moving,
     this.closing = false,
-    this.preloadCloseFrame = false,
-    this.closeAsSurfaceTransform = false,
-    this.showSourceFrameProbe = false,
-    this.holdRaster = false,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -84,61 +66,22 @@ class StructuralSplitWindowPreview extends StatefulWidget {
 class _StructuralSplitWindowPreviewState
     extends State<StructuralSplitWindowPreview> {
   static const int _movingDecodePixelBudget = 480 * 270;
-  static const bool _verifyClosePreloadImage =
-      bool.fromEnvironment('R3_SPLIT_PRELOAD_VERIFY');
-  static const bool _paintOpaqueCloseProbe =
-      bool.fromEnvironment('R3_SPLIT_CLOSE_OPAQUE_PROBE');
-  static const bool _paintImageCloseProbe =
-      bool.fromEnvironment('R3_SPLIT_CLOSE_IMAGE_PROBE');
-  static const bool _paintRgbaCloseProbe =
-      bool.fromEnvironment('R3_SPLIT_CLOSE_RGBA_PROBE');
-  static const bool _pngCanonicalCloseFrame =
-      bool.fromEnvironment('R3_SPLIT_CLOSE_PNG_CANONICAL');
-  static const bool _captureCloseBoundary =
-      bool.fromEnvironment('R3_SPLIT_BOUNDARY_CAPTURE');
-  static const bool _useSeatedCloseSnapshot =
-      bool.fromEnvironment('R3_SPLIT_CLOSE_SEATED_SNAPSHOT');
-  static const bool _dumpPreloadContent =
-      bool.fromEnvironment('R3_SPLIT_DUMP_PRELOAD_CONTENT');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
-  MediaLayer? _closePreloadLayer;
-  EditVideoCompositor? _closePreloadCompositor;
   String? _runtimeDocument;
   String? _runtimeSource;
   MediaDecoderBackend? _ownedBackend;
   EditDocumentModel? _runtimeModel;
   CardOverlayImageCache? _cardImages;
-  CardOverlayImageCache? _closePreloadCardImages;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
-  final List<ui.Image?> _closePreloadImages = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
-  ui.Image? _closeImageProbe;
-  ui.Image? _closeRgbaProbe;
-  ui.Size? _closeRgbaProbeSize;
-  bool _closeRgbaProbeInFlight = false;
 
   ui.Size? _paneRenderSize;
-  ui.Size? _closePreloadSize;
   int _serial = 0;
-  int _closePreloadGeneration = 0;
   bool _renderScheduled = false;
-  bool _closePreloadScheduled = false;
-  bool _closePreloadInFlight = false;
   bool _readyReported = false;
-  bool _closeBoundaryReported = false;
-  bool _midCloseReadbackScheduled = false;
-  bool _midCloseReadbackReported = false;
-  final GlobalKey _splitRasterBoundaryKey =
-      GlobalKey(debugLabel: 'structural-split-raster-capture');
-  bool _boundaryCaptureScheduled = false;
-  bool _boundaryCaptureDone = false;
-  ui.Image? _seatedCloseSnapshot;
-  int _seatedCloseSnapshotFrame = -1;
-  bool _seatedCloseSnapshotScheduled = false;
-  bool _preloadContentDumped = false;
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
     FlutterError.reportError(
@@ -155,54 +98,12 @@ class _StructuralSplitWindowPreviewState
   @override
   void initState() {
     super.initState();
-    if (_paintImageCloseProbe) {
-      unawaited(_createCloseImageProbe());
-    }
     _scheduleRender();
-  }
-
-  Future<void> _createCloseImageProbe() async {
-    const int size = 64;
-    const int cells = 8;
-    const double cell = size / cells;
-    final ui.PictureRecorder recorder = ui.PictureRecorder();
-    final ui.Canvas canvas = ui.Canvas(recorder);
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
-      ui.Paint()..color = const Color(0xFFFF00FF),
-    );
-    for (int y = 0; y < cells; y++) {
-      for (int x = 0; x < cells; x++) {
-        if ((x + y).isEven) {
-          canvas.drawRect(
-            Rect.fromLTWH(x * cell, y * cell, cell, cell),
-            ui.Paint()..color = const Color(0xFF00FF00),
-          );
-        }
-      }
-    }
-    final ui.Picture picture = recorder.endRecording();
-    try {
-      final ui.Image image = await picture.toImage(size, size);
-      if (!mounted) {
-        image.dispose();
-        return;
-      }
-      _closeImageProbe?.dispose();
-      _closeImageProbe = image;
-      setState(() {});
-    } finally {
-      picture.dispose();
-    }
   }
 
   @override
   void didUpdateWidget(covariant StructuralSplitWindowPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    if (!widget.closing && oldWidget.closing) {
-      _closeBoundaryReported = false;
-    }
 
     final bool runtimeChanged =
         oldWidget.rawDocument != widget.rawDocument ||
@@ -213,7 +114,6 @@ class _StructuralSplitWindowPreviewState
 
     if (runtimeChanged) {
       _disposeRuntime();
-      _disposeClosePreload();
       _replaceImage(0, null);
       _replaceImage(1, null);
       _diagnosticLabels[0] = '';
@@ -221,32 +121,9 @@ class _StructuralSplitWindowPreviewState
       _readyReported = false;
     }
 
-    if (!runtimeChanged &&
-        (oldWidget.preloadCloseFrame != widget.preloadCloseFrame ||
-            oldWidget.chromeScale != widget.chromeScale ||
-            oldWidget.fontFamily != widget.fontFamily ||
-            oldWidget.placement.maximizeSplit !=
-                widget.placement.maximizeSplit ||
-            oldWidget.placement.splitClientAspect !=
-                widget.placement.splitClientAspect)) {
-      _resetClosePreload();
-    }
-
-    final bool hasResidentPair =
-        _images[0] != null && _images[1] != null;
-
-    if (widget.holdRaster && !runtimeChanged && hasResidentPair) {
-      // Entering/remaining in closing choreography must preserve the exact
-      // already-painted pane pair. Invalidate any async decode that started
-      // during the final showing frame, then let only painter geometry update.
-      _serial++;
-      return;
-    }
-
     if (runtimeChanged ||
         oldWidget.sourceFrame != widget.sourceFrame ||
         oldWidget.moving != widget.moving ||
-        oldWidget.holdRaster != widget.holdRaster ||
         oldWidget.chromeScale != widget.chromeScale ||
         oldWidget.fontFamily != widget.fontFamily ||
         oldWidget.placement.maximizeSplit !=
@@ -262,16 +139,8 @@ class _StructuralSplitWindowPreviewState
   void dispose() {
     _serial++;
     _disposeRuntime();
-    _disposeClosePreload();
     _replaceImage(0, null);
     _replaceImage(1, null);
-    _closeImageProbe?.dispose();
-    _closeImageProbe = null;
-    _closeRgbaProbe?.dispose();
-    _closeRgbaProbe = null;
-    _closeRgbaProbeSize = null;
-    _seatedCloseSnapshot?.dispose();
-    _seatedCloseSnapshot = null;
     super.dispose();
   }
 
@@ -285,39 +154,6 @@ class _StructuralSplitWindowPreviewState
     _runtimeModel = null;
     _cardImages?.dispose();
     _cardImages = null;
-  }
-
-  void _disposeClosePreload() {
-    _closePreloadGeneration++;
-    _closePreloadScheduled = false;
-    _closePreloadInFlight = false;
-    _closePreloadCompositor?.dispose();
-    _closePreloadCompositor = null;
-    _closePreloadLayer?.dispose();
-    _closePreloadLayer = null;
-    _closePreloadCardImages?.dispose();
-    _closePreloadCardImages = null;
-    _closePreloadSize = null;
-    _preloadContentDumped = false;
-    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-      final ui.Image? image = _closePreloadImages[paneIndex];
-      _closePreloadImages[paneIndex] = null;
-      image?.dispose();
-    }
-  }
-
-  void _resetClosePreload() {
-    _disposeClosePreload();
-    if (!widget.preloadCloseFrame) return;
-    final ui.Size? size = _paneRenderSize;
-    if (size != null) _scheduleClosePreload(size);
-  }
-
-  void _replaceClosePreloadImage(int paneIndex, ui.Image? next) {
-    final ui.Image? old = _closePreloadImages[paneIndex];
-    if (identical(old, next)) return;
-    _closePreloadImages[paneIndex] = next;
-    old?.dispose();
   }
 
   void _replaceImage(int paneIndex, ui.Image? next) {
@@ -376,547 +212,12 @@ class _StructuralSplitWindowPreviewState
     return compositor;
   }
 
-  EditVideoCompositor _ensureClosePreloadCompositor() {
-    final EditVideoCompositor? existing = _closePreloadCompositor;
-    if (existing != null) return existing;
-
-    final String source = widget.placement.sourceRef.canonicalSource;
-    final MediaDecoderBackend backend =
-        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
-    final String Function(String source) resolver =
-        widget.resolveSource ?? resolveWorkspaceMediaSource;
-    final EditDocumentModel model =
-        EditDocumentModel.parse(widget.rawDocument);
-
-    final StructuralSourceRef? selected = StructuralSourceRef.tryParse(source);
-    if (selected == null ||
-        selected.kind != StructuralSourceKind.mosaic ||
-        selected.id.isEmpty ||
-        !model.containsStructuralSource(selected)) {
-      throw StateError(
-        'Split close preload requires a valid MOSAIC structural source: "$source".',
-      );
-    }
-
-    final MediaLayer layer = MediaLayer(
-      editDocument: model,
-      backend: backend,
-      resolveSource: resolver,
-    );
-    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
-      model: model,
-      mediaLayer: layer,
-      backend: backend,
-      resolveSource: resolver,
-    );
-
-    _closePreloadLayer = layer;
-    _closePreloadCompositor = compositor;
-    _closePreloadCardImages = CardOverlayImageCache(resolver);
-    return compositor;
-  }
-
-  Future<void> _writeCompositeRgbaPpm({
-    required EditVideoCompositeResult result,
-    required int paneIndex,
-    required int sourceFrame,
-    required String label,
-  }) async {
-    final Uint8List? rgba = result.rgba;
-    if (rgba == null) {
-      debugPrint(
-        '[split-rgba-dump] SKIP label=$label pane=$paneIndex '
-        'sf=$sourceFrame rgba=null',
-      );
-      return;
-    }
-
-    final Uint8List header = Uint8List.fromList(
-      'P6\n${result.width} ${result.height}\n255\n'.codeUnits,
-    );
-    final Uint8List rgb =
-        Uint8List(result.width * result.height * 3);
-
-    final int rowBytes = result.width * 4;
-    for (int y = 0; y < result.height; y++) {
-      final int srcRow = y * result.stride;
-      int dst = y * result.width * 3;
-      for (int x = 0; x < result.width; x++) {
-        final int src = srcRow + x * 4;
-        rgb[dst++] = rgba[src];
-        rgb[dst++] = rgba[src + 1];
-        rgb[dst++] = rgba[src + 2];
-      }
-    }
-
-    final BytesBuilder bytes = BytesBuilder(copy: true)
-      ..add(header)
-      ..add(rgb);
-    final String path =
-        '/tmp/r3nder-${label}-pane$paneIndex-sf$sourceFrame.ppm';
-    await File(path).writeAsBytes(bytes.takeBytes(), flush: true);
-    debugPrint(
-      '[split-rgba-dump] WROTE '
-      'label=$label pane=$paneIndex sf=$sourceFrame '
-      'sig=${_rgbaSignature(rgba)} '
-      'size=${result.width}x${result.height} '
-      'rowBytes=$rowBytes stride=${result.stride} '
-      'leaf=${_leafFrameSummary(result)} '
-      'path=$path',
-    );
-  }
-
-  Future<void> _dumpFreshExactFrame({
-    required int sourceFrame,
-    required ui.Size paneSize,
-  }) async {
-    final String source = widget.placement.sourceRef.canonicalSource;
-    final MediaDecoderBackend backend =
-        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
-    final String Function(String source) resolver =
-        widget.resolveSource ?? resolveWorkspaceMediaSource;
-    final EditDocumentModel model =
-        EditDocumentModel.parse(widget.rawDocument);
-
-    final MediaLayer layer = MediaLayer(
-      editDocument: model,
-      backend: backend,
-      resolveSource: resolver,
-    );
-    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
-      model: model,
-      mediaLayer: layer,
-      backend: backend,
-      resolveSource: resolver,
-    );
-
-    try {
-      final ProjectTime time = ProjectTime(
-        frame: sourceFrame,
-        mode: ProjectClockMode.scrub,
-      );
-      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-        final EditVideoCompositeResult result =
-            compositor.renderMosaicPane(
-          source,
-          paneIndex,
-          time,
-          paneSize,
-        );
-        await _writeCompositeRgbaPpm(
-          result: result,
-          paneIndex: paneIndex,
-          sourceFrame: sourceFrame,
-          label: 'fresh-exact',
-        );
-      }
-    } finally {
-      compositor.dispose();
-      layer.dispose();
-    }
-  }
-
-  Future<void> _dumpWarmSequentialTail({
-    required int finalSourceFrame,
-    required ui.Size paneSize,
-  }) async {
-    final String source = widget.placement.sourceRef.canonicalSource;
-    final MediaDecoderBackend backend =
-        widget.backend ?? (_ownedBackend ??= NativeMltMediaBackend());
-    final String Function(String source) resolver =
-        widget.resolveSource ?? resolveWorkspaceMediaSource;
-    final EditDocumentModel model =
-        EditDocumentModel.parse(widget.rawDocument);
-
-    final MediaLayer layer = MediaLayer(
-      editDocument: model,
-      backend: backend,
-      resolveSource: resolver,
-    );
-    final EditVideoCompositor compositor = EditVideoCompositor.forModel(
-      model: model,
-      mediaLayer: layer,
-      backend: backend,
-      resolveSource: resolver,
-    );
-
-    final int startFrame = math.max(0, finalSourceFrame - 80);
-    List<EditVideoCompositeResult>? finalResults;
-
-    try {
-      for (int frame = startFrame; frame <= finalSourceFrame; frame++) {
-        final ProjectTime time = ProjectTime(
-          frame: frame,
-          mode: ProjectClockMode.scrub,
-        );
-        final List<EditVideoCompositeResult> current =
-            <EditVideoCompositeResult>[];
-        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-          current.add(
-            compositor.renderMosaicPane(
-              source,
-              paneIndex,
-              time,
-              paneSize,
-            ),
-          );
-        }
-        if (frame == finalSourceFrame) {
-          finalResults = current;
-        }
-      }
-
-      if (finalResults == null) return;
-      for (int paneIndex = 0; paneIndex < finalResults.length; paneIndex++) {
-        await _writeCompositeRgbaPpm(
-          result: finalResults[paneIndex],
-          paneIndex: paneIndex,
-          sourceFrame: finalSourceFrame,
-          label: 'warm-sequential',
-        );
-      }
-      debugPrint(
-        '[split-rgba-dump] WARM '
-        'startSf=$startFrame endSf=$finalSourceFrame',
-      );
-    } finally {
-      compositor.dispose();
-      layer.dispose();
-    }
-  }
-
-  Future<void> _dumpPreloadContentFrames({
-    required List<EditVideoCompositeResult> finalResults,
-    required int finalSourceFrame,
-    required ui.Size paneSize,
-  }) async {
-    if (_preloadContentDumped) return;
-    _preloadContentDumped = true;
-
-    for (int paneIndex = 0; paneIndex < finalResults.length; paneIndex++) {
-      await _writeCompositeRgbaPpm(
-        result: finalResults[paneIndex],
-        paneIndex: paneIndex,
-        sourceFrame: finalSourceFrame,
-        label: 'actual-preload',
-      );
-    }
-
-    final List<int> comparisonFrames = <int>{
-      0,
-      math.max(0, finalSourceFrame - 51),
-      math.max(0, finalSourceFrame - 1),
-    }.toList()
-      ..sort();
-
-    for (final int frame in comparisonFrames) {
-      await _dumpFreshExactFrame(
-        sourceFrame: frame,
-        paneSize: paneSize,
-      );
-    }
-
-    await _dumpWarmSequentialTail(
-      finalSourceFrame: finalSourceFrame,
-      paneSize: paneSize,
-    );
-  }
-
-  void _scheduleClosePreload(ui.Size paneSize) {
-    if (!widget.preloadCloseFrame) return;
-    if (_closePreloadImages[0] != null &&
-        _closePreloadImages[1] != null &&
-        _closePreloadSize == paneSize) {
-      return;
-    }
-
-    if (_closePreloadSize != null && _closePreloadSize != paneSize) {
-      _disposeClosePreload();
-    }
-    _closePreloadSize = paneSize;
-
-    if (_closePreloadScheduled || _closePreloadInFlight) return;
-    _closePreloadScheduled = true;
-    final int generation = _closePreloadGeneration;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _closePreloadScheduled = false;
-      if (!mounted ||
-          generation != _closePreloadGeneration ||
-          !widget.preloadCloseFrame) {
-        return;
-      }
-      _closePreloadInFlight = true;
-      unawaited(_preloadCloseFrame(paneSize, generation));
-    });
-    WidgetsBinding.instance.ensureVisualUpdate();
-  }
-
-  Future<void> _preloadCloseFrame(
-    ui.Size paneSize,
-    int generation,
-  ) async {
-    try {
-      await _preloadCloseFrameOnce(paneSize, generation);
-    } finally {
-      if (generation == _closePreloadGeneration) {
-        _closePreloadInFlight = false;
-      }
-    }
-  }
-
-  Future<void> _preloadCloseFrameOnce(
-    ui.Size paneSize,
-    int generation,
-  ) async {
-    final EditVideoCompositor compositor;
-    try {
-      compositor = _ensureClosePreloadCompositor();
-    } catch (error, stack) {
-      if (!mounted || generation != _closePreloadGeneration) return;
-      _reportRenderError(
-        error,
-        stack,
-        'while creating the isolated split close preload compositor',
-      );
-      return;
-    }
-
-    final String source = widget.placement.sourceRef.canonicalSource;
-    final int finalSourceFrame =
-        math.max(0, widget.placement.sourceDurationFrames - 1);
-    final ProjectTime time = ProjectTime(
-      frame: finalSourceFrame,
-      mode: ProjectClockMode.scrub,
-    );
-    final List<EditVideoCompositeResult> results =
-        <EditVideoCompositeResult>[];
-
-    try {
-      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-        results.add(
-          compositor.renderMosaicPaneAvailable(
-            source,
-            paneIndex,
-            time,
-            paneSize,
-          ),
-        );
-      }
-    } catch (error, stack) {
-      if (!mounted || generation != _closePreloadGeneration) return;
-      _reportRenderError(
-        error,
-        stack,
-        'while preloading the final split close frame',
-      );
-      return;
-    }
-
-    if (!mounted || generation != _closePreloadGeneration) return;
-
-    if (results.any((EditVideoCompositeResult result) => result.hasPending) ||
-        results.any((EditVideoCompositeResult result) => result.rgba == null)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted ||
-            generation != _closePreloadGeneration ||
-            !widget.preloadCloseFrame) {
-          return;
-        }
-        _closePreloadInFlight = false;
-        _scheduleClosePreload(paneSize);
-      });
-      return;
-    }
-
-    if (_dumpPreloadContent && !_preloadContentDumped) {
-      try {
-        await _dumpPreloadContentFrames(
-          finalResults: results,
-          finalSourceFrame: finalSourceFrame,
-          paneSize: paneSize,
-        );
-      } catch (error, stack) {
-        _reportRenderError(
-          error,
-          stack,
-          'while dumping split preload RGBA content',
-        );
-      }
-      if (!mounted || generation != _closePreloadGeneration) return;
-    }
-
-    final List<ui.Image?> decoded = <ui.Image?>[null, null];
-    try {
-      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-        final EditVideoCompositeResult result = results[paneIndex];
-        decoded[paneIndex] = await _decodeRgba(
-          result.rgba!,
-          result.width,
-          result.height,
-          result.stride,
-        );
-      }
-
-      final EditDocumentModel model =
-          EditDocumentModel.parse(widget.rawDocument);
-      final StructuralSourceRef root =
-          StructuralSourceRef.tryParse(source)!;
-      final CardOverlayImageCache? cardImages = _closePreloadCardImages;
-      if (cardImages != null) {
-        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-          final ui.Image? base = decoded[paneIndex];
-          if (base == null) continue;
-          final List<StructuralCardOverlayPlacement> overlays =
-              structuralCardOverlayPlacementsForMosaicPane(
-            model,
-            root,
-            paneIndex,
-            finalSourceFrame,
-          )
-                  .where(
-                    (StructuralCardOverlayPlacement placement) =>
-                        !placement.isSideCard,
-                  )
-                  .toList(growable: false);
-          final ui.Image? composited =
-              await compositeStructuralCardOverlaysToImage(
-            structuralImage: base,
-            placements: overlays,
-            images: cardImages,
-            fontFamily: widget.fontFamily,
-          );
-          if (composited != null) {
-            base.dispose();
-            decoded[paneIndex] = composited;
-          }
-        }
-      }
-
-      // Detach the exact final pane pixels from the decode-backed image
-      // resource. The PNG diagnostic takes an even stronger CPU round trip:
-      // verified pixels -> encoded bytes -> ordinary Flutter image codec.
-      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-        final ui.Image? base = decoded[paneIndex];
-        if (base == null) continue;
-        final ui.Image detached = _pngCanonicalCloseFrame
-            ? await _pngCanonicalImage(base)
-            : await _detachImage(base);
-        base.dispose();
-        decoded[paneIndex] = detached;
-      }
-    } catch (error, stack) {
-      for (final ui.Image? image in decoded) {
-        image?.dispose();
-      }
-      if (!mounted || generation != _closePreloadGeneration) return;
-      _reportRenderError(
-        error,
-        stack,
-        'while decoding the isolated split close preload',
-      );
-      return;
-    }
-
-    if (!mounted || generation != _closePreloadGeneration) {
-      for (final ui.Image? image in decoded) {
-        image?.dispose();
-      }
-      return;
-    }
-
-    if (_closePreloadImages[0] != null && _closePreloadImages[1] != null) {
-      for (final ui.Image? image in decoded) {
-        image?.dispose();
-      }
-      return;
-    }
-
-    _replaceClosePreloadImage(0, decoded[0]);
-    _replaceClosePreloadImage(1, decoded[1]);
-    _closePreloadSize = paneSize;
-
-    String imageSig0 = 'disabled';
-    String imageSig1 = 'disabled';
-    if (_verifyClosePreloadImage) {
-      imageSig0 = await _imageSignature(_closePreloadImages[0]);
-      imageSig1 = await _imageSignature(_closePreloadImages[1]);
-      if (!mounted || generation != _closePreloadGeneration) return;
-    }
-
-    debugPrint(
-      '[split-close-preload] READY '
-      'sf=$finalSourceFrame '
-      'canonical=${_pngCanonicalCloseFrame ? "PNG" : "PICTURE"} '
-      'sig0=${_rgbaSignature(results[0].rgba)} '
-      'sig1=${_rgbaSignature(results[1].rgba)} '
-      'imageSig0=$imageSig0 '
-      'imageSig1=$imageSig1 '
-      'leaf0=${_leafFrameSummary(results[0])} '
-      'leaf1=${_leafFrameSummary(results[1])}',
-    );
-    if (mounted) setState(() {});
-  }
-
-  void _scheduleRgbaCloseProbe(ui.Size paneSize) {
-    if (!_paintRgbaCloseProbe || _closeRgbaProbeInFlight) return;
-    if (_closeRgbaProbe != null && _closeRgbaProbeSize == paneSize) return;
-
-    _closeRgbaProbeInFlight = true;
-    unawaited(_createRgbaCloseProbe(paneSize));
-  }
-
-  Future<void> _createRgbaCloseProbe(ui.Size paneSize) async {
-    final int width =
-        paneSize.width.round().clamp(1, 1 << 30).toInt();
-    final int height =
-        paneSize.height.round().clamp(1, 1 << 30).toInt();
-    final Uint8List rgba = Uint8List(width * height * 4);
-    const int cell = 24;
-
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final bool green = ((x ~/ cell) + (y ~/ cell)).isEven;
-        final int offset = (y * width + x) * 4;
-        rgba[offset] = green ? 0 : 255;
-        rgba[offset + 1] = green ? 255 : 0;
-        rgba[offset + 2] = green ? 0 : 255;
-        rgba[offset + 3] = 255;
-      }
-    }
-
-    ui.Image? image;
-    try {
-      image = await _decodeRgba(
-        rgba,
-        width,
-        height,
-        width * 4,
-      );
-      if (!mounted) {
-        image.dispose();
-        return;
-      }
-
-      _closeRgbaProbe?.dispose();
-      _closeRgbaProbe = image;
-      _closeRgbaProbeSize = paneSize;
-      image = null;
-      setState(() {});
-    } finally {
-      image?.dispose();
-      _closeRgbaProbeInFlight = false;
-    }
-  }
-
   void _scheduleRender() {
     if (_renderScheduled) return;
     _renderScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _renderScheduled = false;
       if (!mounted) return;
-      if (widget.holdRaster && _images[0] != null && _images[1] != null) {
-        return;
-      }
       final ui.Size? size = _paneRenderSize;
       if (size == null || size.width <= 0.0 || size.height <= 0.0) {
         return;
@@ -927,10 +228,6 @@ class _StructuralSplitWindowPreviewState
   }
 
   Future<void> _render(ui.Size paneSize) async {
-    if (widget.holdRaster && _images[0] != null && _images[1] != null) {
-      return;
-    }
-
     final int serial = ++_serial;
     final EditVideoCompositor compositor;
     try {
@@ -955,15 +252,14 @@ class _StructuralSplitWindowPreviewState
 
     try {
       for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-        final bool moving = widget.moving && !widget.holdRaster;
         final ProjectTime time = ProjectTime(
           frame: widget.sourceFrame,
-          mode: moving
+          mode: widget.moving
               ? ProjectClockMode.monotonic
               : ProjectClockMode.scrub,
         );
         results.add(
-          moving
+          widget.moving
               ? compositor.renderMosaicPaneAvailable(
                   source,
                   paneIndex,
@@ -1111,24 +407,6 @@ class _StructuralSplitWindowPreviewState
           _diagnosticLabel(results[paneIndex], paneIndex);
     }
 
-    final int tailStart = math.max(
-      0,
-      widget.placement.sourceDurationFrames - 6,
-    );
-    if (widget.sourceFrame >= tailStart) {
-      debugPrint(
-        '[split-boundary] PRESENT '
-        'closing=${widget.closing} '
-        'sf=${widget.sourceFrame} '
-        'sig0=${_rgbaSignature(results[0].rgba)} '
-        'sig1=${_rgbaSignature(results[1].rgba)} '
-        'leaf0=${_leafFrameSummary(results[0])} '
-        'leaf1=${_leafFrameSummary(results[1])} '
-        'img0=${_images[0] == null ? "null" : identityHashCode(_images[0])} '
-        'img1=${_images[1] == null ? "null" : identityHashCode(_images[1])}',
-      );
-    }
-
     if (mounted) {
       setState(() {});
     }
@@ -1137,78 +415,6 @@ class _StructuralSplitWindowPreviewState
       _readyReported = true;
       widget.onFirstFrameReady?.call();
     }
-  }
-
-  Future<ui.Image> _pngCanonicalImage(ui.Image source) async {
-    final ByteData? encoded =
-        await source.toByteData(format: ui.ImageByteFormat.png);
-    if (encoded == null) {
-      throw StateError('Could not encode split close frame as PNG.');
-    }
-
-    final Uint8List bytes = Uint8List.fromList(
-      encoded.buffer.asUint8List(
-        encoded.offsetInBytes,
-        encoded.lengthInBytes,
-      ),
-    );
-    final ui.Codec codec = await ui.instantiateImageCodec(bytes);
-    try {
-      final ui.FrameInfo frame = await codec.getNextFrame();
-      return frame.image;
-    } finally {
-      codec.dispose();
-    }
-  }
-
-  Future<ui.Image> _detachImage(ui.Image source) async {
-    final ui.PictureRecorder recorder = ui.PictureRecorder();
-    final ui.Canvas canvas = ui.Canvas(recorder);
-    canvas.drawImage(source, ui.Offset.zero, ui.Paint());
-    final ui.Picture picture = recorder.endRecording();
-    try {
-      return await picture.toImage(source.width, source.height);
-    } finally {
-      picture.dispose();
-    }
-  }
-
-  Future<String> _imageSignature(ui.Image? image) async {
-    if (image == null) return 'null';
-    final ByteData? data =
-        await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (data == null) return 'null';
-    return _rgbaSignature(data.buffer.asUint8List());
-  }
-
-  String _rgbaSignature(Uint8List? bytes) {
-    if (bytes == null || bytes.isEmpty) return 'null';
-    int hash = 0x811C9DC5;
-    for (final int byte in bytes) {
-      hash ^= byte;
-      hash = (hash * 0x01000193) & 0xFFFFFFFF;
-    }
-    return hash.toRadixString(16).padLeft(8, '0');
-  }
-
-  String _leafFrameSummary(EditVideoCompositeResult result) {
-    final String Function(String source) resolver =
-        widget.resolveSource ?? resolveWorkspaceMediaSource;
-    final List<String> leaves = result.diagnosticFrames
-        .where((MediaFrame frame) => frame.isDecoded)
-        .map((MediaFrame frame) {
-          String path = frame.source;
-          try {
-            path = resolver(frame.source);
-          } catch (_) {
-            // Keep the authored source in diagnostics if workspace resolution
-            // is unavailable.
-          }
-          return '$path:${frame.requestedSourceFrame}/'
-              '${frame.actualSourceFrame ?? -1}';
-        })
-        .toList(growable: false);
-    return leaves.isEmpty ? 'none' : leaves.join(',');
   }
 
   String _diagnosticLabel(
@@ -1257,137 +463,6 @@ class _StructuralSplitWindowPreviewState
     return completer.future;
   }
 
-  Future<void> _captureSeatedCloseSnapshot(int sourceFrame) async {
-    final BuildContext? boundaryContext =
-        _splitRasterBoundaryKey.currentContext;
-    if (boundaryContext == null) return;
-
-    final RenderObject? renderObject = boundaryContext.findRenderObject();
-    if (renderObject is! RenderRepaintBoundary ||
-        renderObject.debugNeedsPaint) {
-      debugPrint(
-        '[split-seated-snapshot] SKIP '
-        'frame=$sourceFrame '
-        'render=${renderObject.runtimeType}',
-      );
-      return;
-    }
-
-    try {
-      final ui.Image image = renderObject.toImageSync(pixelRatio: 1.0);
-      final ui.Image? old = _seatedCloseSnapshot;
-      _seatedCloseSnapshot = image;
-      _seatedCloseSnapshotFrame = sourceFrame;
-      old?.dispose();
-
-      final ByteData? png =
-          await image.toByteData(format: ui.ImageByteFormat.png);
-      if (png != null) {
-        final Uint8List bytes = Uint8List.fromList(
-          png.buffer.asUint8List(
-            png.offsetInBytes,
-            png.lengthInBytes,
-          ),
-        );
-        const String path = '/tmp/r3nder-split-seated.png';
-        await File(path).writeAsBytes(bytes, flush: true);
-        debugPrint(
-          '[split-seated-snapshot] READY '
-          'frame=$sourceFrame '
-          'img=${identityHashCode(image)} '
-          'size=${image.width}x${image.height} '
-          'path=$path',
-        );
-      } else {
-        debugPrint(
-          '[split-seated-snapshot] READY '
-          'frame=$sourceFrame '
-          'img=${identityHashCode(image)} '
-          'size=${image.width}x${image.height} '
-          'path=null',
-        );
-      }
-      if (mounted) setState(() {});
-    } catch (error, stack) {
-      _reportRenderError(
-        error,
-        stack,
-        'while capturing the seated split close snapshot',
-      );
-    }
-  }
-
-  Future<void> _captureBoundaryDuringClose() async {
-    final BuildContext? boundaryContext =
-        _splitRasterBoundaryKey.currentContext;
-    if (boundaryContext == null) return;
-
-    final RenderObject? renderObject = boundaryContext.findRenderObject();
-    if (renderObject is! RenderRepaintBoundary) {
-      debugPrint(
-        '[split-boundary-capture] SKIP render=${renderObject.runtimeType}',
-      );
-      return;
-    }
-
-    ui.Image? image;
-    try {
-      image = await renderObject.toImage(pixelRatio: 1.0);
-      final ByteData? png =
-          await image.toByteData(format: ui.ImageByteFormat.png);
-      if (png == null) {
-        debugPrint('[split-boundary-capture] SKIP png=null');
-        return;
-      }
-
-      final Uint8List bytes = Uint8List.fromList(
-        png.buffer.asUint8List(
-          png.offsetInBytes,
-          png.lengthInBytes,
-        ),
-      );
-      const String path = '/tmp/r3nder-split-midclose.png';
-      await File(path).writeAsBytes(bytes, flush: true);
-      _boundaryCaptureDone = true;
-      debugPrint(
-        '[split-boundary-capture] WROTE '
-        'path=$path '
-        'sf=${widget.sourceFrame} '
-        'entry=${widget.entryProgress.toStringAsFixed(6)} '
-        'size=${image.width}x${image.height}',
-      );
-    } catch (error, stack) {
-      _reportRenderError(
-        error,
-        stack,
-        'while capturing the split RepaintBoundary during close',
-      );
-    } finally {
-      image?.dispose();
-    }
-  }
-
-  Future<void> _verifyPreloadDuringClose() async {
-    final ui.Image? image0 = _closePreloadImages[0];
-    final ui.Image? image1 = _closePreloadImages[1];
-    if (image0 == null || image1 == null) return;
-
-    final int id0 = identityHashCode(image0);
-    final int id1 = identityHashCode(image1);
-    final String sig0 = await _imageSignature(image0);
-    final String sig1 = await _imageSignature(image1);
-    if (!mounted) return;
-
-    _midCloseReadbackReported = true;
-    debugPrint(
-      '[split-close-readback] MID '
-      'sf=${widget.sourceFrame} '
-      'entry=${widget.entryProgress.toStringAsFixed(6)} '
-      'img0=$id0 sig0=$sig0 '
-      'img1=$id1 sig1=$sig1',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -1412,14 +487,8 @@ class _StructuralSplitWindowPreviewState
           geometry.clientSize.width.round().clamp(1, 1 << 30).toDouble(),
           geometry.clientSize.height.round().clamp(1, 1 << 30).toDouble(),
         );
-        final bool hasResidentPair =
-            _images[0] != null && _images[1] != null;
-        final bool freezeResidentRaster =
-            widget.holdRaster && hasResidentPair && _paneRenderSize != null;
-        final bool moving = widget.moving && !widget.holdRaster;
-        final ui.Size nextPaneSize = freezeResidentRaster
-            ? _paneRenderSize!
-            : _decodePaneSize(displayPaneSize, moving: moving);
+        final ui.Size nextPaneSize =
+            _decodePaneSize(displayPaneSize, moving: widget.moving);
 
         if (_paneRenderSize != nextPaneSize) {
           _paneRenderSize = nextPaneSize;
@@ -1427,97 +496,10 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
-        if (widget.preloadCloseFrame) {
-          _scheduleClosePreload(nextPaneSize);
-        }
-        if (_paintRgbaCloseProbe) {
-          _scheduleRgbaCloseProbe(nextPaneSize);
-        }
-
-        final bool closePreloadReady =
-            _closePreloadImages[0] != null &&
-            _closePreloadImages[1] != null &&
-            _closePreloadSize == nextPaneSize;
-        final List<ui.Image?> paintImages =
-            widget.closing
-                ? const <ui.Image?>[null, null]
-                : _images;
-        final int finalSourceFrame =
-            math.max(0, widget.placement.sourceDurationFrames - 1);
-
-        if (!widget.closing) {
-          _closeBoundaryReported = false;
-          _midCloseReadbackScheduled = false;
-          _midCloseReadbackReported = false;
-          _boundaryCaptureScheduled = false;
-          _boundaryCaptureDone = false;
-          _seatedCloseSnapshotScheduled = false;
-        }
-
-        if (widget.closing && !_closeBoundaryReported) {
-          _closeBoundaryReported = true;
-          debugPrint(
-            '[split-boundary] CLOSE_ENTER '
-            'sf=${widget.sourceFrame} '
-            'entry=${widget.entryProgress.toStringAsFixed(6)} '
-            'using=${widget.closing &&
-                    _useSeatedCloseSnapshot &&
-                    _seatedCloseSnapshotFrame == finalSourceFrame &&
-                    _seatedCloseSnapshot != null
-                ? "SEATED"
-                : closePreloadReady
-                    ? "PRELOAD"
-                    : "LIVE"} '
-            'seatedImg=${_seatedCloseSnapshot == null ? "null" : identityHashCode(_seatedCloseSnapshot)} '
-            'img0=${paintImages[0] == null ? "null" : identityHashCode(paintImages[0])} '
-            'img1=${paintImages[1] == null ? "null" : identityHashCode(paintImages[1])}',
-          );
-        }
-
-        if (_verifyClosePreloadImage &&
-            widget.closing &&
-            closePreloadReady &&
-            widget.entryProgress <= 0.75 &&
-            !_midCloseReadbackScheduled &&
-            !_midCloseReadbackReported) {
-          _midCloseReadbackScheduled = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !widget.closing) return;
-            unawaited(_verifyPreloadDuringClose());
-          });
-        }
-
-        if (_useSeatedCloseSnapshot &&
-            !widget.closing &&
-            widget.sourceFrame == finalSourceFrame &&
-            !_seatedCloseSnapshotScheduled &&
-            _seatedCloseSnapshotFrame != finalSourceFrame) {
-          _seatedCloseSnapshotScheduled = true;
-          final int captureFrame = widget.sourceFrame;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            unawaited(_captureSeatedCloseSnapshot(captureFrame));
-          });
-        }
-
-        if (_captureCloseBoundary &&
-            widget.closing &&
-            widget.entryProgress <= 0.65 &&
-            !_boundaryCaptureScheduled &&
-            !_boundaryCaptureDone) {
-          _boundaryCaptureScheduled = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !widget.closing || _boundaryCaptureDone) return;
-            unawaited(_captureBoundaryDuringClose());
-          });
-        }
-
         return RepaintBoundary(
-          key: _splitRasterBoundaryKey,
-          child: KeyedSubtree(
-            key: const ValueKey<String>('structural-split-raster'),
-            child: CustomPaint(
-              key: const ValueKey<String>('structural-split-window-frame'),
+          key: const ValueKey<String>('structural-split-raster'),
+          child: CustomPaint(
+            key: const ValueKey<String>('structural-split-window-frame'),
             painter: StructuralSplitWindowPainter(
               geometry: geometry,
               placement: widget.placement,
@@ -1525,25 +507,19 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(paintImages),
+              // SPLIT close intentionally owns no live picture. Editors can
+              // author any desired fade to black before the structural close;
+              // once close begins, the two client areas stay solid black while
+              // the window chrome runs the normal reverse-entry choreography.
+              images: widget.closing
+                  ? const <ui.Image?>[null, null]
+                  : List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,
               exitProgress: widget.exitProgress,
-              showSourceFrameProbe: widget.showSourceFrameProbe,
-              closeAsSurfaceTransform: widget.closeAsSurfaceTransform,
-              paintOpaqueCloseProbe:
-                  widget.closing && _paintOpaqueCloseProbe,
-              closeImageProbe:
-                  widget.closing && _paintRgbaCloseProbe
-                      ? _closeRgbaProbe
-                      : widget.closing && _paintImageCloseProbe
-                          ? _closeImageProbe
-                          : null,
-              seatedCloseSnapshot: null,
             ),
-              child: const SizedBox.expand(),
-            ),
+            child: const SizedBox.expand(),
           ),
         );
       },
