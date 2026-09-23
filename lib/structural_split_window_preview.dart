@@ -461,6 +461,7 @@ class _StructuralSplitWindowPreviewState
       'sig=${_rgbaSignature(rgba)} '
       'size=${result.width}x${result.height} '
       'rowBytes=$rowBytes stride=${result.stride} '
+      'leaf=${_leafFrameSummary(result)} '
       'path=$path',
     );
   }
@@ -1117,13 +1118,21 @@ class _StructuralSplitWindowPreviewState
   }
 
   String _leafFrameSummary(EditVideoCompositeResult result) {
-    final List<String> leaves = result.mediaFrames
+    final String Function(String source) resolver =
+        widget.resolveSource ?? resolveWorkspaceMediaSource;
+    final List<String> leaves = result.diagnosticFrames
         .where((MediaFrame frame) => frame.isDecoded)
-        .map(
-          (MediaFrame frame) =>
-              '${frame.source}:${frame.requestedSourceFrame}/'
-              '${frame.actualSourceFrame ?? -1}',
-        )
+        .map((MediaFrame frame) {
+          String path = frame.source;
+          try {
+            path = resolver(frame.source);
+          } catch (_) {
+            // Keep the authored source in diagnostics if workspace resolution
+            // is unavailable.
+          }
+          return '$path:${frame.requestedSourceFrame}/'
+              '${frame.actualSourceFrame ?? -1}';
+        })
         .toList(growable: false);
     return leaves.isEmpty ? 'none' : leaves.join(',');
   }
