@@ -45,10 +45,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   /// the requested frame once so the surface is not blank.
   final bool holdRaster;
 
-  /// Final raster opacity. Closing uses this inside the shared painter so
-  /// Preview follows the same compositing path as BAKE.
-  final double opacity;
-
   final MediaDecoderBackend? backend;
   final String Function(String source)? resolveSource;
   final VoidCallback? onFirstFrameReady;
@@ -65,7 +61,6 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.exitProgress,
     required this.moving,
     this.holdRaster = false,
-    this.opacity = 1.0,
     this.backend,
     this.resolveSource,
     this.onFirstFrameReady,
@@ -577,7 +572,6 @@ class _StructuralSplitWindowPreviewState
               images: List<ui.Image?>.unmodifiable(_images),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
-              opacity: widget.opacity.clamp(0.0, 1.0),
               entryProgress: widget.entryProgress,
               exitProgress: widget.exitProgress,
             ),
