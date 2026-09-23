@@ -431,27 +431,27 @@ class _StructuralSplitWindowPreviewState
       return;
     }
 
-    final BytesBuilder bytes = BytesBuilder(copy: false);
-    bytes.add(
-      Uint8List.fromList(
-        'P6\n${result.width} ${result.height}\n255\n'.codeUnits,
-      ),
+    final Uint8List header = Uint8List.fromList(
+      'P6\n${result.width} ${result.height}\n255\n'.codeUnits,
     );
+    final Uint8List rgb =
+        Uint8List(result.width * result.height * 3);
 
     final int rowBytes = result.width * 4;
-    final Uint8List rgbRow = Uint8List(result.width * 3);
     for (int y = 0; y < result.height; y++) {
       final int srcRow = y * result.stride;
-      int dst = 0;
+      int dst = y * result.width * 3;
       for (int x = 0; x < result.width; x++) {
         final int src = srcRow + x * 4;
-        rgbRow[dst++] = rgba[src];
-        rgbRow[dst++] = rgba[src + 1];
-        rgbRow[dst++] = rgba[src + 2];
+        rgb[dst++] = rgba[src];
+        rgb[dst++] = rgba[src + 1];
+        rgb[dst++] = rgba[src + 2];
       }
-      bytes.add(rgbRow);
     }
 
+    final BytesBuilder bytes = BytesBuilder(copy: true)
+      ..add(header)
+      ..add(rgb);
     final String path =
         '/tmp/r3nder-${label}-pane$paneIndex-sf$sourceFrame.ppm';
     await File(path).writeAsBytes(bytes.takeBytes(), flush: true);
