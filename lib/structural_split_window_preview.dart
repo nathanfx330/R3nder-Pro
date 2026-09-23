@@ -85,7 +85,6 @@ class _StructuralSplitWindowPreviewState
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
-  final List<String> _residentFrameMeta = <String>['', ''];
 
   ui.Size? _paneRenderSize;
   int _serial = 0;
@@ -127,24 +126,11 @@ class _StructuralSplitWindowPreviewState
       _replaceImage(1, null);
       _diagnosticLabels[0] = '';
       _diagnosticLabels[1] = '';
-      _residentFrameMeta[0] = '';
-      _residentFrameMeta[1] = '';
       _readyReported = false;
     }
 
     final bool hasResidentPair =
         _images[0] != null && _images[1] != null;
-
-    if (widget.holdRaster && !oldWidget.holdRaster) {
-      debugPrint(
-        '[split-resident-probe] HOLD_ENTER '
-        'state=${identityHashCode(this)} outerSourceFrame=${widget.sourceFrame} '
-        'pane0Image=${_images[0] == null ? "null" : identityHashCode(_images[0]!)} '
-        'pane0={${_residentFrameMeta[0]}} '
-        'pane1Image=${_images[1] == null ? "null" : identityHashCode(_images[1]!)} '
-        'pane1={${_residentFrameMeta[1]}}',
-      );
-    }
 
     if (widget.holdRaster && !runtimeChanged && hasResidentPair) {
       // Entering/remaining in closing choreography must preserve the exact
@@ -444,29 +430,6 @@ class _StructuralSplitWindowPreviewState
     }
 
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-      final MediaFrame? top = results[paneIndex].topFrame;
-      final String leaves = results[paneIndex].diagnosticFrames
-          .map(
-            (MediaFrame frame) =>
-                '${frame.source}#${frame.clipId}:'
-                '${frame.requestedSourceFrame}/${frame.actualSourceFrame}'
-                ':${frame.status.name}',
-          )
-          .join(',');
-      _residentFrameMeta[paneIndex] = top == null
-          ? 'top=null outer=${widget.sourceFrame} leaves=[$leaves]'
-          : 'source=${top.source} requested=${top.requestedSourceFrame} '
-              'actual=${top.actualSourceFrame} outer=${widget.sourceFrame} '
-              'leaves=[$leaves]';
-      if (widget.sourceFrame >= widget.placement.sourceDurationFrames - 6 ||
-          widget.holdRaster) {
-        debugPrint(
-          '[split-resident-probe] PRESENT '
-          'state=${identityHashCode(this)} pane=$paneIndex '
-          'image=${decoded[paneIndex] == null ? "null" : identityHashCode(decoded[paneIndex]!)} '
-          '${_residentFrameMeta[paneIndex]}',
-        );
-      }
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
           _diagnosticLabel(results[paneIndex], paneIndex);
@@ -567,25 +530,38 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
+        final CustomPaint splitPaint = CustomPaint(
+          key: const ValueKey<String>('structural-split-window-frame'),
+          painter: StructuralSplitWindowPainter(
+            geometry: geometry,
+            placement: widget.placement,
+            sourceFrame: widget.sourceFrame,
+            theme: widget.theme,
+            fontFamily: widget.fontFamily,
+            chromeScale: widget.chromeScale,
+            images: List<ui.Image?>.unmodifiable(_images),
+            diagnosticLabels:
+                List<String>.unmodifiable(_diagnosticLabels),
+            entryProgress: widget.entryProgress,
+            exitProgress: widget.exitProgress,
+          ),
+          child: const SizedBox.expand(),
+        );
+
+        if (widget.holdRaster) {
+          // Closing geometry changes every authored frame while the pane
+          // rasters themselves are intentionally frozen. Paint that path
+          // directly rather than through a repaint boundary so Flutter cannot
+          // reuse a stale cached split surface during the shrink.
+          return KeyedSubtree(
+            key: const ValueKey<String>('structural-split-raster'),
+            child: splitPaint,
+          );
+        }
+
         return RepaintBoundary(
           key: const ValueKey<String>('structural-split-raster'),
-          child: CustomPaint(
-            key: const ValueKey<String>('structural-split-window-frame'),
-            painter: StructuralSplitWindowPainter(
-              geometry: geometry,
-              placement: widget.placement,
-              sourceFrame: widget.sourceFrame,
-              theme: widget.theme,
-              fontFamily: widget.fontFamily,
-              chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(_images),
-              diagnosticLabels:
-                  List<String>.unmodifiable(_diagnosticLabels),
-              entryProgress: widget.entryProgress,
-              exitProgress: widget.exitProgress,
-            ),
-            child: const SizedBox.expand(),
-          ),
+          child: splitPaint,
         );
       },
     );
