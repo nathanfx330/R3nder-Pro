@@ -37,6 +37,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double? exitProgress;
   final bool moving;
   final bool closing;
+  final bool preloadCloseFrame;
   final bool closeAsSurfaceTransform;
   final bool showSourceFrameProbe;
 
@@ -64,6 +65,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.exitProgress,
     required this.moving,
     this.closing = false,
+    this.preloadCloseFrame = false,
     this.closeAsSurfaceTransform = false,
     this.showSourceFrameProbe = false,
     this.holdRaster = false,
@@ -83,18 +85,25 @@ class _StructuralSplitWindowPreviewState
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
+  MediaLayer? _closePreloadLayer;
+  EditVideoCompositor? _closePreloadCompositor;
   String? _runtimeDocument;
   String? _runtimeSource;
   MediaDecoderBackend? _ownedBackend;
   EditDocumentModel? _runtimeModel;
   CardOverlayImageCache? _cardImages;
+  CardOverlayImageCache? _closePreloadCardImages;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
+  final List<ui.Image?> _closePreloadImages = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
 
   ui.Size? _paneRenderSize;
+  ui.Size? _closePreloadSize;
   int _serial = 0;
+  int _closePreloadGeneration = 0;
   bool _renderScheduled = false;
+  bool _closePreloadScheduled = false;
   bool _readyReported = false;
   bool _closeBoundaryReported = false;
 
