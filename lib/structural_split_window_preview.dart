@@ -37,6 +37,10 @@ class StructuralSplitWindowPreview extends StatefulWidget {
   final double? exitProgress;
   final bool moving;
 
+  /// During close, paint detached copies of the final resident pane images.
+  /// This removes the live video image resources from the animated exit path.
+  final bool useCloseSnapshot;
+
   /// Freeze the exact currently resident pane rasters.
   ///
   /// Closing choreography changes only geometry. If both pane images are
@@ -60,6 +64,7 @@ class StructuralSplitWindowPreview extends StatefulWidget {
     this.entryProgress = 1.0,
     this.exitProgress,
     required this.moving,
+    this.useCloseSnapshot = false,
     this.holdRaster = false,
     this.backend,
     this.resolveSource,
@@ -84,6 +89,7 @@ class _StructuralSplitWindowPreviewState
   CardOverlayImageCache? _cardImages;
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
+  final List<ui.Image?> _closeSnapshots = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
 
   ui.Size? _paneRenderSize;
@@ -124,9 +130,19 @@ class _StructuralSplitWindowPreviewState
       _disposeRuntime();
       _replaceImage(0, null);
       _replaceImage(1, null);
+      _replaceCloseSnapshot(0, null);
+      _replaceCloseSnapshot(1, null);
       _diagnosticLabels[0] = '';
       _diagnosticLabels[1] = '';
       _readyReported = false;
+    }
+
+    final int finalSourceFrame =
+        math.max(0, widget.placement.sourceDurationFrames - 1);
+    if (oldWidget.sourceFrame == finalSourceFrame &&
+        widget.sourceFrame != finalSourceFrame) {
+      _replaceCloseSnapshot(0, null);
+      _replaceCloseSnapshot(1, null);
     }
 
     final bool hasResidentPair =
@@ -161,6 +177,8 @@ class _StructuralSplitWindowPreviewState
     _disposeRuntime();
     _replaceImage(0, null);
     _replaceImage(1, null);
+    _replaceCloseSnapshot(0, null);
+    _replaceCloseSnapshot(1, null);
     super.dispose();
   }
 
@@ -181,6 +199,36 @@ class _StructuralSplitWindowPreviewState
     if (identical(old, next)) return;
     _images[paneIndex] = next;
     old?.dispose();
+  }
+
+  void _replaceCloseSnapshot(int paneIndex, ui.Image? next) {
+    final ui.Image? old = _closeSnapshots[paneIndex];
+    if (identical(old, next)) return;
+    _closeSnapshots[paneIndex] = next;
+    old?.dispose();
+  }
+
+  Future<ui.Image> _detachImage(ui.Image source) async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    final Rect bounds = Rect.fromLTWH(
+      0.0,
+      0.0,
+      source.width.toDouble(),
+      source.height.toDouble(),
+    );
+    canvas.drawImageRect(
+      source,
+      bounds,
+      bounds,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+    final ui.Picture picture = recorder.endRecording();
+    try {
+      return await picture.toImage(source.width, source.height);
+    } finally {
+      picture.dispose();
+    }
   }
 
   EditVideoCompositor _ensureCompositor() {
@@ -429,6 +477,46 @@ class _StructuralSplitWindowPreviewState
       return;
     }
 
+    final bool finalSourceFrame =
+        widget.sourceFrame ==
+            math.max(0, widget.placement.sourceDurationFrames - 1);
+    if (finalSourceFrame &&
+        (_closeSnapshots[0] == null || _closeSnapshots[1] == null)) {
+      final List<ui.Image?> detached = <ui.Image?>[null, null];
+      try {
+        for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+          final ui.Image? image = decoded[paneIndex];
+          if (image != null) {
+            detached[paneIndex] = await _detachImage(image);
+          }
+        }
+      } catch (error, stack) {
+        for (final ui.Image? image in detached) {
+          image?.dispose();
+        }
+        if (mounted && serial == _serial) {
+          _reportRenderError(
+            error,
+            stack,
+            'while detaching final split pane snapshots',
+          );
+        }
+      }
+
+      if (!mounted || serial != _serial) {
+        for (final ui.Image? image in detached) {
+          image?.dispose();
+        }
+      } else if (detached[0] != null && detached[1] != null) {
+        _replaceCloseSnapshot(0, detached[0]);
+        _replaceCloseSnapshot(1, detached[1]);
+      } else {
+        for (final ui.Image? image in detached) {
+          image?.dispose();
+        }
+      }
+    }
+
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
@@ -530,6 +618,14 @@ class _StructuralSplitWindowPreviewState
           _scheduleRender();
         }
 
+        final bool useDetachedClose =
+            widget.useCloseSnapshot &&
+            _closeSnapshots[0] != null &&
+            _closeSnapshots[1] != null;
+        final List<ui.Image?> paintImages = useDetachedClose
+            ? _closeSnapshots
+            : _images;
+
         return RepaintBoundary(
           key: const ValueKey<String>('structural-split-raster'),
           child: CustomPaint(
@@ -541,7 +637,7 @@ class _StructuralSplitWindowPreviewState
               theme: widget.theme,
               fontFamily: widget.fontFamily,
               chromeScale: widget.chromeScale,
-              images: List<ui.Image?>.unmodifiable(_images),
+              images: List<ui.Image?>.unmodifiable(paintImages),
               diagnosticLabels:
                   List<String>.unmodifiable(_diagnosticLabels),
               entryProgress: widget.entryProgress,
