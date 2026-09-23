@@ -143,7 +143,7 @@ class _StructuralSplitWindowPreviewState
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final ui.Canvas canvas = ui.Canvas(recorder);
     canvas.drawRect(
-      const Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+      Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
       ui.Paint()..color = const Color(0xFFFF00FF),
     );
     for (int y = 0; y < cells; y++) {
