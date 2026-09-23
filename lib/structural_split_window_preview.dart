@@ -616,8 +616,10 @@ class _StructuralSplitWindowPreviewState
   }
 
   Future<void> _createRgbaCloseProbe(ui.Size paneSize) async {
-    final int width = paneSize.width.round().clamp(1, 1 << 30);
-    final int height = paneSize.height.round().clamp(1, 1 << 30);
+    final int width =
+        paneSize.width.round().clamp(1, 1 << 30).toInt();
+    final int height =
+        paneSize.height.round().clamp(1, 1 << 30).toInt();
     final Uint8List rgba = Uint8List(width * height * 4);
     const int cell = 24;
 
