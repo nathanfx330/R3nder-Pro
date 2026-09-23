@@ -787,6 +787,61 @@ remains the current half-width-first behavior. If portrait MAX is revisited,
 the decision should be made as a visible window-design choice rather than by
 changing contain fitting or decoder behavior.
 
+## Post-W9 SPLIT close contract: edit fades, shell closes on black
+
+Rocky Linux exposed a separate close-only failure after the two-window naming
+work. The opening choreography remained correct, but when ordinary SPLIT
+entered its structural closing stage both clients could visually jump to
+opening-looking imagery and then hold that picture throughout the minimize.
+
+The investigation deliberately crossed every likely rendering boundary.
+Source-frame arithmetic was correct, the close stage requested the final
+authored source frame, and the current split painter was proved to be the
+visible surface. RepaintBoundary capture showed the wrong picture inside the
+Flutter raster rather than being introduced later by the desktop compositor.
+The decisive probe then dumped the compositor RGBA directly before ui.Image,
+CustomPainter, or Skia participation. Those raw dumps already contained the
+opening-looking picture for the requested final frame. Both source files also
+reported 1961 decodable video frames through ffprobe, so media frame 1960 was a
+valid request rather than a phantom frame beyond EOF. A cold exact render and a
+fresh decoder walked forward through the tail produced identical RGBA
+signatures, so a simple cold-seek-versus-warm-decoder explanation was also
+ruled out.
+
+That investigation was intentionally not converted into another decoder or
+renderer workaround. The product contract was simplified instead:
+
+- the EDIT owns any desired fade to black before the structural close;
+- the first SPLIT closing frame presents both client areas as solid black;
+- the two window shells then follow the already-proven reverse-entry geometry
+  and common shell opacity through the existing closing budget;
+- opening and seated SPLIT behavior are unchanged;
+- the close does not preload, snapshot, detach, canonicalize, or otherwise hold
+  a special final video raster.
+
+This makes editorial picture treatment explicit. If a seamless transition is
+wanted, the authored EDIT reaches black before its STRUCT content boundary.
+If it does not, the structural close cuts the remaining client picture to black
+and then minimizes the black windows.
+
+The final implementation intentionally removed the abandoned close preload,
+seated snapshot, PNG round-trip, image/readback probes, boundary capture,
+synthetic image probes, and GL diagnostic changes. The shipped code therefore
+keeps only the black-client close rule and the existing reverse-entry shell
+motion.
+
+Focused proof is:
+
+- `test/structural_sequence_preview_test.dart` verifies a closing SPLIT is
+  marked closed, stays on the existing final source-frame mapping, and receives
+  reverse-entry progress rather than the old independent exit painter path;
+- `test/structural_split_window_preview_test.dart` verifies resident pane
+  images are replaced by null client images during close, which makes the
+  shared window painter render its normal black client surface.
+
+The focused tests passed on Rocky Linux and the resulting GUI behavior was
+confirmed interactively before merge.
+
 ## Rocky Linux cold-entry readiness investigation
 
 After W0-W8 were merged and exercised on Ubuntu, Rocky Linux exposed a
