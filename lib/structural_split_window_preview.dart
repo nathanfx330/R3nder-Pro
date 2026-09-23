@@ -88,6 +88,8 @@ class _StructuralSplitWindowPreviewState
       bool.fromEnvironment('R3_SPLIT_CLOSE_OPAQUE_PROBE');
   static const bool _paintImageCloseProbe =
       bool.fromEnvironment('R3_SPLIT_CLOSE_IMAGE_PROBE');
+  static const bool _paintRgbaCloseProbe =
+      bool.fromEnvironment('R3_SPLIT_CLOSE_RGBA_PROBE');
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -104,6 +106,9 @@ class _StructuralSplitWindowPreviewState
   final List<ui.Image?> _closePreloadImages = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
   ui.Image? _closeImageProbe;
+  ui.Image? _closeRgbaProbe;
+  ui.Size? _closeRgbaProbeSize;
+  bool _closeRgbaProbeInFlight = false;
 
   ui.Size? _paneRenderSize;
   ui.Size? _closePreloadSize;
@@ -242,6 +247,9 @@ class _StructuralSplitWindowPreviewState
     _replaceImage(1, null);
     _closeImageProbe?.dispose();
     _closeImageProbe = null;
+    _closeRgbaProbe?.dispose();
+    _closeRgbaProbe = null;
+    _closeRgbaProbeSize = null;
     super.dispose();
   }
 
@@ -597,6 +605,55 @@ class _StructuralSplitWindowPreviewState
       'leaf1=${_leafFrameSummary(results[1])}',
     );
     if (mounted) setState(() {});
+  }
+
+  void _scheduleRgbaCloseProbe(ui.Size paneSize) {
+    if (!_paintRgbaCloseProbe || _closeRgbaProbeInFlight) return;
+    if (_closeRgbaProbe != null && _closeRgbaProbeSize == paneSize) return;
+
+    _closeRgbaProbeInFlight = true;
+    unawaited(_createRgbaCloseProbe(paneSize));
+  }
+
+  Future<void> _createRgbaCloseProbe(ui.Size paneSize) async {
+    final int width = paneSize.width.round().clamp(1, 1 << 30);
+    final int height = paneSize.height.round().clamp(1, 1 << 30);
+    final Uint8List rgba = Uint8List(width * height * 4);
+    const int cell = 24;
+
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final bool green = ((x ~/ cell) + (y ~/ cell)).isEven;
+        final int offset = (y * width + x) * 4;
+        rgba[offset] = green ? 0 : 255;
+        rgba[offset + 1] = green ? 255 : 0;
+        rgba[offset + 2] = green ? 0 : 255;
+        rgba[offset + 3] = 255;
+      }
+    }
+
+    ui.Image? image;
+    try {
+      image = await _decodeRgba(
+        rgba,
+        width,
+        height,
+        width * 4,
+      );
+      if (!mounted) {
+        image.dispose();
+        return;
+      }
+
+      _closeRgbaProbe?.dispose();
+      _closeRgbaProbe = image;
+      _closeRgbaProbeSize = paneSize;
+      image = null;
+      setState(() {});
+    } finally {
+      image?.dispose();
+      _closeRgbaProbeInFlight = false;
+    }
   }
 
   void _scheduleRender() {
@@ -960,6 +1017,9 @@ class _StructuralSplitWindowPreviewState
         if (widget.preloadCloseFrame) {
           _scheduleClosePreload(nextPaneSize);
         }
+        if (_paintRgbaCloseProbe) {
+          _scheduleRgbaCloseProbe(nextPaneSize);
+        }
 
         final bool closePreloadReady =
             _closePreloadImages[0] != null &&
@@ -1003,9 +1063,11 @@ class _StructuralSplitWindowPreviewState
               paintOpaqueCloseProbe:
                   widget.closing && _paintOpaqueCloseProbe,
               closeImageProbe:
-                  widget.closing && _paintImageCloseProbe
-                      ? _closeImageProbe
-                      : null,
+                  widget.closing && _paintRgbaCloseProbe
+                      ? _closeRgbaProbe
+                      : widget.closing && _paintImageCloseProbe
+                          ? _closeImageProbe
+                          : null,
             ),
             child: const SizedBox.expand(),
           ),
