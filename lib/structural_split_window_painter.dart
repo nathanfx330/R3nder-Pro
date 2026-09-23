@@ -6,7 +6,6 @@
 // only the final two-window raster projection and delegates each individual
 // desktop window to structural_window_painter.dart.
 
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -39,18 +38,6 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// Authored close progress. Null means this is not a closing frame.
   final double? exitProgress;
 
-  /// Temporary Rocky close diagnostic. When enabled, stamps the authored
-  /// source frame into each pane so stale display-list replay can be
-  /// distinguished from wrong image-texture content.
-  final bool showSourceFrameProbe;
-
-  /// During live close, paint the seated window once and transform the whole
-  /// finished surface instead of changing drawImageRect destination geometry.
-  final bool closeAsSurfaceTransform;
-  final bool paintOpaqueCloseProbe;
-  final ui.Image? closeImageProbe;
-  final ui.Image? seatedCloseSnapshot;
-
   const StructuralSplitWindowPainter({
     required this.geometry,
     required this.placement,
@@ -63,11 +50,6 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.opacity = 1.0,
     this.entryProgress = 1.0,
     this.exitProgress,
-    this.showSourceFrameProbe = false,
-    this.closeAsSurfaceTransform = false,
-    this.paintOpaqueCloseProbe = false,
-    this.closeImageProbe,
-    this.seatedCloseSnapshot,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -89,60 +71,6 @@ class StructuralSplitWindowPainter extends CustomPainter {
                   linearProgress: progress,
                   contentReady: true,
                 ).rect;
-      final Rect paintRect =
-          closeAsSurfaceTransform ? target : rect;
-
-      if (closeAsSurfaceTransform) {
-        final double sx = target.width <= 0.0 ? 1.0 : rect.width / target.width;
-        final double sy =
-            target.height <= 0.0 ? 1.0 : rect.height / target.height;
-        canvas.save();
-        canvas.translate(rect.left, rect.top);
-        canvas.scale(sx, sy);
-        canvas.translate(-target.left, -target.top);
-      }
-
-      if (seatedCloseSnapshot != null) {
-        final Rect snapshotSource = target;
-        canvas.save();
-        canvas.clipRect(rect);
-        canvas.drawImageRect(
-          seatedCloseSnapshot!,
-          snapshotSource,
-          rect,
-          Paint()..filterQuality = FilterQuality.low,
-        );
-        canvas.restore();
-
-        if (showSourceFrameProbe) {
-          final TextPainter probe = TextPainter(
-            text: TextSpan(
-              text: 'SF $sourceFrame  SEATED',
-              style: TextStyle(
-                fontFamily: fontFamily,
-                fontSize: math.max(14.0, 22.0 * chromeScale),
-                fontWeight: FontWeight.w700,
-                color: Colors.yellow,
-                backgroundColor: Colors.black,
-              ),
-            ),
-            textDirection: TextDirection.ltr,
-          )..layout();
-          probe.paint(
-            canvas,
-            Offset(
-              rect.left + 10.0 * chromeScale,
-              rect.top + 10.0 * chromeScale,
-            ),
-          );
-        }
-
-        if (closeAsSurfaceTransform) {
-          canvas.restore();
-        }
-        continue;
-      }
-
       paintStructuralWindow(
         canvas: canvas,
         theme: theme,
@@ -155,8 +83,8 @@ class StructuralSplitWindowPainter extends CustomPainter {
         topOverlay: placement.topOverlay,
         bottomOverlay: placement.bottomOverlay,
         defaultBottomOverlay: diagnosticLabels[paneIndex],
-        rect: paintRect,
-        sourceImage: closeImageProbe ?? images[paneIndex],
+        rect: rect,
+        sourceImage: images[paneIndex],
         outgoingSourceImage: null,
         outgoingPlacement: null,
         outgoingSourceFrame: 0,
@@ -164,52 +92,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         handoffSlideT: 1.0,
         opacity: opacity,
         windowChrome: 1.0,
-        imageFilterQuality: FilterQuality.low,
       );
-
-      if (paintOpaqueCloseProbe) {
-        final double barH = math.min(
-          38.0 * chromeScale,
-          paintRect.height,
-        );
-        final Rect client = Rect.fromLTRB(
-          paintRect.left,
-          paintRect.top + barH,
-          paintRect.right,
-          paintRect.bottom,
-        );
-        canvas.drawRect(
-          client,
-          Paint()..color = const Color(0xFFFF00FF),
-        );
-      }
-      if (showSourceFrameProbe) {
-        final TextPainter probe = TextPainter(
-          text: TextSpan(
-            text: 'SF $sourceFrame  IMG '
-                '${images[paneIndex] == null ? "null" : identityHashCode(images[paneIndex])}',
-            style: TextStyle(
-              fontFamily: fontFamily,
-              fontSize: math.max(14.0, 22.0 * chromeScale),
-              fontWeight: FontWeight.w700,
-              color: Colors.yellow,
-              backgroundColor: Colors.black,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        probe.paint(
-          canvas,
-          Offset(
-            paintRect.left + 10.0 * chromeScale,
-            paintRect.top + 48.0 * chromeScale,
-          ),
-        );
-      }
-
-      if (closeAsSurfaceTransform) {
-        canvas.restore();
-      }
     }
   }
 
@@ -224,11 +107,6 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.opacity != opacity ||
         oldDelegate.entryProgress != entryProgress ||
         oldDelegate.exitProgress != exitProgress ||
-        oldDelegate.showSourceFrameProbe != showSourceFrameProbe ||
-        oldDelegate.closeAsSurfaceTransform != closeAsSurfaceTransform ||
-        oldDelegate.paintOpaqueCloseProbe != paintOpaqueCloseProbe ||
-        oldDelegate.closeImageProbe != closeImageProbe ||
-        oldDelegate.seatedCloseSnapshot != seatedCloseSnapshot ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
