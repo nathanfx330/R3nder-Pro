@@ -229,12 +229,6 @@ void main() {
       final ui.Image leftHeld = before.images[0]!;
       final ui.Image rightHeld = before.images[1]!;
 
-      final int requestCountBefore = backend.decoders
-          .expand((_HoldRecordingDecoder d) => d.requested)
-          .length;
-      final int pollCountBefore = backend.decoders
-          .expand((_HoldRecordingDecoder d) => d.polled)
-          .length;
       backend.blockMovingFrame = true;
       await tester.pumpWidget(
         preview(sourceFrame: 8, holdRaster: false),
