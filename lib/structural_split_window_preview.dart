@@ -520,11 +520,18 @@ class _StructuralSplitWindowPreviewState
     _replaceClosePreloadImage(0, decoded[0]);
     _replaceClosePreloadImage(1, decoded[1]);
     _closePreloadSize = paneSize;
+
+    final String imageSig0 = await _imageSignature(_closePreloadImages[0]);
+    final String imageSig1 = await _imageSignature(_closePreloadImages[1]);
+    if (!mounted || generation != _closePreloadGeneration) return;
+
     debugPrint(
       '[split-close-preload] READY '
       'sf=$finalSourceFrame '
       'sig0=${_rgbaSignature(results[0].rgba)} '
       'sig1=${_rgbaSignature(results[1].rgba)} '
+      'imageSig0=$imageSig0 '
+      'imageSig1=$imageSig1 '
       'leaf0=${_leafFrameSummary(results[0])} '
       'leaf1=${_leafFrameSummary(results[1])}',
     );
@@ -760,6 +767,14 @@ class _StructuralSplitWindowPreviewState
       _readyReported = true;
       widget.onFirstFrameReady?.call();
     }
+  }
+
+  Future<String> _imageSignature(ui.Image? image) async {
+    if (image == null) return 'null';
+    final ByteData? data =
+        await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (data == null) return 'null';
+    return _rgbaSignature(data.buffer.asUint8List());
   }
 
   String _rgbaSignature(Uint8List? bytes) {
