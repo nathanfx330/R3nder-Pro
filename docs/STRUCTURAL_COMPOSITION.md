@@ -144,9 +144,13 @@ split boundary.
 
 The same rule now applies to ordinary SPLIT lifecycle choreography. On desktop
 entry each split window grows from its own standard 84% emergence rectangle
-while the common shell opacity ramps in; on close each window follows the exact
-reverse seated-to-emergence curve while shell opacity ramps out. The seated
-two-window geometry remains unchanged.
+while the common shell opacity ramps in. On close, the EDIT is responsible for
+any desired picture fade before its content boundary. As soon as the structural
+closing stage begins, both split client areas are solid black and the two window
+shells follow the exact reverse seated-to-emergence curve while common shell
+opacity ramps out. The close therefore never depends on preserving or
+re-decoding a final video raster. The seated two-window geometry and opening
+behavior remain unchanged.
 
 W8 adds optional `SPLIT:MAX`. It remains the same effective SPLIT presentation
 shape and uses the same open/close choreography, cue ownership, and readiness
