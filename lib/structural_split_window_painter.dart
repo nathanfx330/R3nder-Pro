@@ -44,6 +44,10 @@ class StructuralSplitWindowPainter extends CustomPainter {
   /// distinguished from wrong image-texture content.
   final bool showSourceFrameProbe;
 
+  /// During live close, paint the seated window once and transform the whole
+  /// finished surface instead of changing drawImageRect destination geometry.
+  final bool closeAsSurfaceTransform;
+
   const StructuralSplitWindowPainter({
     required this.geometry,
     required this.placement,
@@ -57,6 +61,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
     this.entryProgress = 1.0,
     this.exitProgress,
     this.showSourceFrameProbe = false,
+    this.closeAsSurfaceTransform = false,
   })  : assert(images.length == 2),
         assert(diagnosticLabels.length == 2);
 
@@ -78,6 +83,19 @@ class StructuralSplitWindowPainter extends CustomPainter {
                   linearProgress: progress,
                   contentReady: true,
                 ).rect;
+      final Rect paintRect =
+          closeAsSurfaceTransform ? target : rect;
+
+      if (closeAsSurfaceTransform) {
+        final double sx = target.width <= 0.0 ? 1.0 : rect.width / target.width;
+        final double sy =
+            target.height <= 0.0 ? 1.0 : rect.height / target.height;
+        canvas.save();
+        canvas.translate(rect.left, rect.top);
+        canvas.scale(sx, sy);
+        canvas.translate(-target.left, -target.top);
+      }
+
       paintStructuralWindow(
         canvas: canvas,
         theme: theme,
@@ -90,7 +108,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         topOverlay: placement.topOverlay,
         bottomOverlay: placement.bottomOverlay,
         defaultBottomOverlay: diagnosticLabels[paneIndex],
-        rect: rect,
+        rect: paintRect,
         sourceImage: images[paneIndex],
         outgoingSourceImage: null,
         outgoingPlacement: null,
@@ -117,10 +135,14 @@ class StructuralSplitWindowPainter extends CustomPainter {
         probe.paint(
           canvas,
           Offset(
-            rect.left + 10.0 * chromeScale,
-            rect.top + 48.0 * chromeScale,
+            paintRect.left + 10.0 * chromeScale,
+            paintRect.top + 48.0 * chromeScale,
           ),
         );
+      }
+
+      if (closeAsSurfaceTransform) {
+        canvas.restore();
       }
     }
   }
@@ -137,6 +159,7 @@ class StructuralSplitWindowPainter extends CustomPainter {
         oldDelegate.entryProgress != entryProgress ||
         oldDelegate.exitProgress != exitProgress ||
         oldDelegate.showSourceFrameProbe != showSourceFrameProbe ||
+        oldDelegate.closeAsSurfaceTransform != closeAsSurfaceTransform ||
         oldDelegate.images[0] != images[0] ||
         oldDelegate.images[1] != images[1] ||
         oldDelegate.diagnosticLabels[0] != diagnosticLabels[0] ||
