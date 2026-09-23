@@ -87,6 +87,7 @@ class _StructuralSplitWindowPreviewState
   final List<String> _diagnosticLabels = <String>['', ''];
   final List<int?> _firstLeafSignatures = <int?>[null, null];
   final List<int?> _firstLeafFrames = <int?>[null, null];
+  final List<int?> _residentRgbaSignatures = <int?>[null, null];
 
   ui.Size? _paneRenderSize;
   int _serial = 0;
@@ -132,11 +133,45 @@ class _StructuralSplitWindowPreviewState
       _firstLeafSignatures[1] = null;
       _firstLeafFrames[0] = null;
       _firstLeafFrames[1] = null;
+      _residentRgbaSignatures[0] = null;
+      _residentRgbaSignatures[1] = null;
       _readyReported = false;
     }
 
     final bool hasResidentPair =
         _images[0] != null && _images[1] != null;
+
+    if (widget.holdRaster && !oldWidget.holdRaster && hasResidentPair) {
+      for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+        final ui.Image image = _images[paneIndex]!;
+        unawaited(() async {
+          try {
+            final ByteData? bytes =
+                await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+            if (bytes == null) return;
+            final Uint8List rgba = bytes.buffer.asUint8List(
+              bytes.offsetInBytes,
+              bytes.lengthInBytes,
+            );
+            final int imageSig = _rgbaSignature(rgba);
+            final int? sourceSig = _residentRgbaSignatures[paneIndex];
+            debugPrint(
+              '[split-uiimage-probe] pane=$paneIndex '
+              'outer=${widget.sourceFrame} '
+              'image=${identityHashCode(image)} '
+              'sourceSig=${sourceSig == null ? "none" : sourceSig.toRadixString(16).padLeft(8, "0")} '
+              'imageSig=${imageSig.toRadixString(16).padLeft(8, "0")}',
+            );
+          } catch (error, stack) {
+            _reportRenderError(
+              error,
+              stack,
+              'while reading split resident ui.Image pixels',
+            );
+          }
+        }());
+      }
+    }
 
     if (widget.holdRaster && !runtimeChanged && hasResidentPair) {
       // Entering/remaining in closing choreography must preserve the exact
@@ -477,6 +512,9 @@ class _StructuralSplitWindowPreviewState
         );
       }
 
+      final Uint8List? composedRgba = results[paneIndex].rgba;
+      _residentRgbaSignatures[paneIndex] =
+          composedRgba == null ? null : _rgbaSignature(composedRgba);
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
           _diagnosticLabel(results[paneIndex], paneIndex);
