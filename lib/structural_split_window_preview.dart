@@ -85,6 +85,8 @@ class _StructuralSplitWindowPreviewState
 
   final List<ui.Image?> _images = <ui.Image?>[null, null];
   final List<String> _diagnosticLabels = <String>['', ''];
+  final List<int?> _firstLeafSignatures = <int?>[null, null];
+  final List<int?> _firstLeafFrames = <int?>[null, null];
 
   ui.Size? _paneRenderSize;
   int _serial = 0;
@@ -126,6 +128,10 @@ class _StructuralSplitWindowPreviewState
       _replaceImage(1, null);
       _diagnosticLabels[0] = '';
       _diagnosticLabels[1] = '';
+      _firstLeafSignatures[0] = null;
+      _firstLeafSignatures[1] = null;
+      _firstLeafFrames[0] = null;
+      _firstLeafFrames[1] = null;
       _readyReported = false;
     }
 
@@ -430,8 +436,27 @@ class _StructuralSplitWindowPreviewState
     }
 
     for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
-      if (widget.sourceFrame <= 2 ||
-          widget.sourceFrame >= widget.placement.sourceDurationFrames - 3) {
+      final List<MediaFrame> decodedLeaves = results[paneIndex]
+          .diagnosticFrames
+          .where(
+            (MediaFrame frame) =>
+                frame.isDecoded && frame.rgba != null,
+          )
+          .toList(growable: false);
+
+      if (_firstLeafSignatures[paneIndex] == null &&
+          decodedLeaves.isNotEmpty) {
+        final MediaFrame first = decodedLeaves.first;
+        _firstLeafSignatures[paneIndex] = _rgbaSignature(first.rgba!);
+        _firstLeafFrames[paneIndex] = first.actualSourceFrame;
+        debugPrint(
+          '[split-pixel-probe] FIRST pane=$paneIndex '
+          'outer=${widget.sourceFrame} leaf=${first.actualSourceFrame} '
+          'sig=${_firstLeafSignatures[paneIndex]!.toRadixString(16).padLeft(8, '0')}',
+        );
+      }
+
+      if (widget.sourceFrame >= widget.placement.sourceDurationFrames - 3) {
         final String leaves = results[paneIndex].diagnosticFrames
             .map((MediaFrame frame) {
           final Uint8List? rgba = frame.rgba;
@@ -442,11 +467,16 @@ class _StructuralSplitWindowPreviewState
               '${frame.requestedSourceFrame}/${frame.actualSourceFrame}:'
               '${frame.status.name}:sig=$sig';
         }).join(',');
+        final int? firstSig = _firstLeafSignatures[paneIndex];
         debugPrint(
-          '[split-pixel-probe] outer=${widget.sourceFrame} pane=$paneIndex '
+          '[split-pixel-probe] TAIL pane=$paneIndex '
+          'outer=${widget.sourceFrame} '
+          'firstLeaf=${_firstLeafFrames[paneIndex]} '
+          'firstSig=${firstSig == null ? "none" : firstSig.toRadixString(16).padLeft(8, "0")} '
           'leaves=[$leaves]',
         );
       }
+
       _replaceImage(paneIndex, decoded[paneIndex]);
       _diagnosticLabels[paneIndex] =
           _diagnosticLabel(results[paneIndex], paneIndex);
