@@ -360,7 +360,9 @@ void main() {
               )
               .painter! as StructuralSplitWindowPainter;
       final ui.Image oldPainterImage = first.images[0]!;
-      expect(oldPainterImage.debugDisposed, isFalse);
+      final ByteData? oldPixelsBefore =
+          await oldPainterImage.toByteData(format: ui.ImageByteFormat.rawRgba);
+      expect(oldPixelsBefore, isNotNull);
 
       await tester.pumpWidget(preview(4));
       for (int attempt = 0; attempt < 50; attempt++) {
@@ -389,8 +391,18 @@ void main() {
               )
               .painter! as StructuralSplitWindowPainter;
       expect(identical(second.images[0], oldPainterImage), isFalse);
-      expect(oldPainterImage.debugDisposed, isFalse);
-      expect(second.images[0]!.debugDisposed, isFalse);
+
+      // The old painter handle must remain readable after State installs the
+      // replacement. Older display lists can still reference that handle on
+      // the raster thread even though the State-owned image has advanced.
+      final ByteData? oldPixelsAfter =
+          await oldPainterImage.toByteData(format: ui.ImageByteFormat.rawRgba);
+      expect(oldPixelsAfter, isNotNull);
+      expect(oldPixelsAfter!.lengthInBytes, oldPixelsBefore!.lengthInBytes);
+
+      final ByteData? newPixels =
+          await second.images[0]!.toByteData(format: ui.ImageByteFormat.rawRgba);
+      expect(newPixels, isNotNull);
     },
   );
 
