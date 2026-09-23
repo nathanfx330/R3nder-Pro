@@ -142,11 +142,23 @@ class _StructuralSplitWindowPreviewState
 
     if (runtimeChanged) {
       _disposeRuntime();
+      _disposeClosePreload();
       _replaceImage(0, null);
       _replaceImage(1, null);
       _diagnosticLabels[0] = '';
       _diagnosticLabels[1] = '';
       _readyReported = false;
+    }
+
+    if (!runtimeChanged &&
+        (oldWidget.preloadCloseFrame != widget.preloadCloseFrame ||
+            oldWidget.chromeScale != widget.chromeScale ||
+            oldWidget.fontFamily != widget.fontFamily ||
+            oldWidget.placement.maximizeSplit !=
+                widget.placement.maximizeSplit ||
+            oldWidget.placement.splitClientAspect !=
+                widget.placement.splitClientAspect)) {
+      _resetClosePreload();
     }
 
     final bool hasResidentPair =
@@ -179,6 +191,7 @@ class _StructuralSplitWindowPreviewState
   void dispose() {
     _serial++;
     _disposeRuntime();
+    _disposeClosePreload();
     _replaceImage(0, null);
     _replaceImage(1, null);
     super.dispose();
@@ -194,6 +207,37 @@ class _StructuralSplitWindowPreviewState
     _runtimeModel = null;
     _cardImages?.dispose();
     _cardImages = null;
+  }
+
+  void _disposeClosePreload() {
+    _closePreloadGeneration++;
+    _closePreloadScheduled = false;
+    _closePreloadCompositor?.dispose();
+    _closePreloadCompositor = null;
+    _closePreloadLayer?.dispose();
+    _closePreloadLayer = null;
+    _closePreloadCardImages?.dispose();
+    _closePreloadCardImages = null;
+    _closePreloadSize = null;
+    for (int paneIndex = 0; paneIndex < 2; paneIndex++) {
+      final ui.Image? image = _closePreloadImages[paneIndex];
+      _closePreloadImages[paneIndex] = null;
+      image?.dispose();
+    }
+  }
+
+  void _resetClosePreload() {
+    _disposeClosePreload();
+    if (!widget.preloadCloseFrame) return;
+    final ui.Size? size = _paneRenderSize;
+    if (size != null) _scheduleClosePreload(size);
+  }
+
+  void _replaceClosePreloadImage(int paneIndex, ui.Image? next) {
+    final ui.Image? old = _closePreloadImages[paneIndex];
+    if (identical(old, next)) return;
+    _closePreloadImages[paneIndex] = next;
+    old?.dispose();
   }
 
   void _replaceImage(int paneIndex, ui.Image? next) {
