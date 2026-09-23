@@ -1173,7 +1173,7 @@ class _StructuralSplitWindowPreviewState
     return completer.future;
   }
 
-  void _captureSeatedCloseSnapshot(int sourceFrame) {
+  Future<void> _captureSeatedCloseSnapshot(int sourceFrame) async {
     final BuildContext? boundaryContext =
         _splitRasterBoundaryKey.currentContext;
     if (boundaryContext == null) return;
@@ -1358,6 +1358,8 @@ class _StructuralSplitWindowPreviewState
             widget.closing && closePreloadReady
                 ? _closePreloadImages
                 : _images;
+        final int finalSourceFrame =
+            math.max(0, widget.placement.sourceDurationFrames - 1);
 
         if (!widget.closing) {
           _closeBoundaryReported = false;
@@ -1401,8 +1403,6 @@ class _StructuralSplitWindowPreviewState
           });
         }
 
-        final int finalSourceFrame =
-            math.max(0, widget.placement.sourceDurationFrames - 1);
         if (_useSeatedCloseSnapshot &&
             !widget.closing &&
             widget.sourceFrame == finalSourceFrame &&
@@ -1412,7 +1412,7 @@ class _StructuralSplitWindowPreviewState
           final int captureFrame = widget.sourceFrame;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
-            _captureSeatedCloseSnapshot(captureFrame);
+            unawaited(_captureSeatedCloseSnapshot(captureFrame));
           });
         }
 
