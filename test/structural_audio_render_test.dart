@@ -271,6 +271,89 @@ void main() {
     expect(decoder.calls, hasLength(2));
   });
 
+  test('MOSAIC ONE mutes non-selected pane from the opening frame',
+      () async {
+    const String script = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:l:video/left.mp4:0:0:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
+[CLIP:r:video/right.mp4:0:0:2:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[LAYOUT_START:ONE:PANE=p1]
+[PANE:p1]
+[CLIP:leftCut:EDIT.left:0:0:2:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:rightCut:EDIT.right:0:0:2:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+    final _FakeLeafDecoder decoder = _FakeLeafDecoder(
+      sampleValue: (String path, int sample, int channel) =>
+          path.endsWith('left.mp4') ? 0.25 : 0.5,
+    );
+
+    final StructuralAudioSourceRender render =
+        await _renderer(script, decoder).render('MOSAIC.wall');
+
+    expect(_leftAt(render, 0), closeTo(0.25, 1e-7));
+    expect(_leftAt(render, 2 * 1600 - 1), closeTo(0.25, 1e-7));
+    expect(decoder.calls, <String>['/workspace/video/left.mp4']);
+  });
+
+  test('MOSAIC TWOUP to ONE mutes pane2 on the exact cue frame', () async {
+    const String script = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:l:video/left.mp4:0:0:4:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
+[CLIP:r:video/right.mp4:0:0:4:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[LAYOUT_START:TWOUP:A=p1:B=p2]
+[LAYOUT:2:ONE:PANE=p1:DUR=12]
+[PANE:p1]
+[CLIP:leftCut:EDIT.left:0:0:4:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:rightCut:EDIT.right:0:0:4:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+    final _FakeLeafDecoder decoder = _FakeLeafDecoder(
+      sampleValue: (String path, int sample, int channel) =>
+          path.endsWith('left.mp4') ? 0.25 : 0.5,
+    );
+
+    final StructuralAudioSourceRender render =
+        await _renderer(script, decoder).render('MOSAIC.wall');
+
+    expect(_leftAt(render, 0), closeTo(0.75, 1e-7));
+    expect(_leftAt(render, 2 * 1600 - 1), closeTo(0.75, 1e-7));
+    expect(_leftAt(render, 2 * 1600), closeTo(0.25, 1e-7));
+    expect(_leftAt(render, 4 * 1600 - 1), closeTo(0.25, 1e-7));
+    expect(decoder.calls, containsAll(<String>[
+      '/workspace/video/left.mp4',
+      '/workspace/video/right.mp4',
+    ]));
+  });
+
   test('nested structural IN and placement preserve source-relative timing', () async {
     const String script = '''[EDIT:child]
 [TRACK:V1]
