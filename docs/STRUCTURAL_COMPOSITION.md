@@ -131,11 +131,13 @@ on the shared MOSAIC source clock; hiding it is not pausing it.
 
 Preview and BAKE share layout evaluation and the actor-window painter. Live
 Preview may hold the last good resident actor image for as long as that actor
-remains continuously included while a nonblocking decoder catches up. Resident
-hold is therefore bounded by authored visibility continuity, not by a fixed
-frame-age budget. A pane recalled after any hidden interval paints empty until
-current pixels are resident, including a direct scrub or playback jump that
-skipped all intermediate hidden widget frames. Geometry/time still follow the
+remains continuously paintable while a nonblocking decoder catches up. Resident
+hold is therefore bounded by authored paintability continuity, not by a fixed
+frame-age budget. An actor stays paintable through an authored exit segment, so
+a minimizing/retreating pane keeps its last good picture until that exit
+actually settles. A pane recalled after a real absent interval paints empty
+until current pixels are resident, including a direct scrub or playback jump
+that skipped all intermediate hidden widget frames. Geometry/time still follow the
 exact current source frame. BAKE blocks for exact actor pixels at that same
 frame.
 
