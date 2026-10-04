@@ -334,7 +334,374 @@ List<MosaicLayoutCue> parseMosaicLayoutCues({
   );
   final List<MosaicLayoutCue> out = <MosaicLayoutCue>[];
   final RegExp canonicalLine = RegExp(
-    r'^(?<indent>[ \t]*)\\[LAYOUT:(?<body>[^\\]\\r\\n]+)\\][ \t]*(?<eol>\\r?\\n|$)$',
+    r'^(?<indent>[ \t]*)\[LAYOUT:(?<body>[^\]\r\n]+)\][ \t]*(?<eol>\r?\n|$),
+  );
+
+  int cursor = 0;
+  while (cursor < inner.length) {
+    final int newline = inner.indexOf('\n', cursor);
+    final int lineEnd = newline < 0 ? inner.length : newline + 1;
+    final String rawLine = inner.substring(cursor, lineEnd);
+    final int globalStart = mosaic.block.openEndOffset + cursor;
+    cursor = lineEnd;
+
+    if (_insideChildBlock(globalStart, mosaic.block.children)) continue;
+
+    final String leftTrimmed = rawLine.trimLeft();
+    if (!leftTrimmed.startsWith('[LAYOUT')) continue;
+
+    final RegExpMatch? match = canonicalLine.firstMatch(rawLine);
+    if (match == null) {
+      throw MosaicLayoutFormatException(
+        'Malformed direct MOSAIC LAYOUT directive.',
+        globalStart,
+      );
+    }
+
+    final String body = match.namedGroup('body')!;
+    final List<String> segments =
+        body.split(':').map((String token) => token.trim()).toList();
+    if (segments.length < 2 || segments.any((String token) => token.isEmpty)) {
+      throw MosaicLayoutFormatException(
+        'LAYOUT requires frame and state before optional tokens.',
+        globalStart,
+      );
+    }
+
+    final int? frame = int.tryParse(segments[0]);
+    if (frame == null || frame < 0) {
+      throw MosaicLayoutFormatException(
+        'LAYOUT frame must be a non-negative integer.',
+        globalStart,
+      );
+    }
+
+    final MosaicLayoutStateKind? kind = _stateKindFromToken(segments[1]);
+    if (kind == null) {
+      throw MosaicLayoutFormatException(
+        'Unknown LAYOUT state "${segments[1]}".',
+        globalStart,
+      );
+    }
+
+    final _ParsedLayoutOptions options = _parseOptions(
+      kind,
+      segments.skip(2),
+      globalStart,
+    );
+
+    final MosaicLayoutState state = switch (kind) {
+      MosaicLayoutStateKind.composite => const MosaicLayoutState.composite(),
+      MosaicLayoutStateKind.twoUp => MosaicLayoutState.twoUp(
+          paneA: options.paneA,
+          paneB: options.paneB,
+          aspect: options.aspect,
+          maximized: options.maximized,
+        ),
+      MosaicLayoutStateKind.one => MosaicLayoutState.one(options.paneId!),
+      MosaicLayoutStateKind.full => MosaicLayoutState.full(options.paneId!),
+    };
+
+    out.add(
+      MosaicLayoutCue(
+        frame: frame,
+        state: state,
+        durationFrames: options.durationFrames,
+        sourceSpan: MosaicLayoutSourceSpan(
+          startOffset: globalStart,
+          endOffset: globalStart + rawLine.length,
+          indent: match.namedGroup('indent') ?? '',
+          lineEnding: match.namedGroup('eol') ?? '',
+        ),
+      ),
+    );
+  }
+
+  return List<MosaicLayoutCue>.unmodifiable(out);
+}
+
+MosaicLayoutValidationResult validateMosaicLayoutCues({
+  required MosaicSequence mosaic,
+  required List<MosaicLayoutCue> cues,
+}) {
+  final List<MosaicLayoutIssue> issues = <MosaicLayoutIssue>[];
+  final Set<int> frames = <int>{};
+  final Set<String> paneIds =
+      mosaic.panes.map((MosaicPane pane) => pane.id).toSet();
+
+  for (final MosaicLayoutCue cue in cues) {
+    if (!frames.add(cue.frame)) {
+      issues.add(
+        MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.error,
+          code: MosaicLayoutIssueCode.duplicateFrame,
+          message: 'Two LAYOUT cues occupy frame ${cue.frame}.',
+          frame: cue.frame,
+        ),
+      );
+    }
+
+    if (cue.state.isBareTwoUp && mosaic.panes.length < 2) {
+      issues.add(
+        MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.error,
+          code: MosaicLayoutIssueCode.bareTwoUpNeedsTwoPanes,
+          message: 'Bare TWOUP at frame ${cue.frame} requires at least two panes.',
+          frame: cue.frame,
+        ),
+      );
+    }
+
+    if (cue.state.kind == MosaicLayoutStateKind.twoUp &&
+        cue.state.paneA != null &&
+        cue.state.paneA == cue.state.paneB) {
+      issues.add(
+        MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.error,
+          code: MosaicLayoutIssueCode.duplicateTwoUpPane,
+          message: 'TWOUP at frame ${cue.frame} names the same pane twice.',
+          frame: cue.frame,
+        ),
+      );
+    }
+
+    for (final String id in cue.state.referencedPaneIds) {
+      if (!paneIds.contains(id)) {
+        issues.add(
+          MosaicLayoutIssue(
+            severity: MosaicLayoutIssueSeverity.error,
+            code: MosaicLayoutIssueCode.unknownPane,
+            message: 'LAYOUT at frame ${cue.frame} references unknown PANE "$id".',
+            frame: cue.frame,
+          ),
+        );
+      }
+    }
+
+    if (cue.frame >= mosaic.projectFrameCount) {
+      issues.add(
+        MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.warning,
+          code: MosaicLayoutIssueCode.deadCue,
+          message: 'LAYOUT at frame ${cue.frame} is outside the MOSAIC duration.',
+          frame: cue.frame,
+        ),
+      );
+    }
+  }
+
+  return MosaicLayoutValidationResult._(
+    List<MosaicLayoutIssue>.unmodifiable(issues),
+  );
+}
+
+_ParsedLayoutOptions _parseOptions(
+  MosaicLayoutStateKind kind,
+  Iterable<String> rawTokens,
+  int offset,
+) {
+  String? paneA;
+  String? paneB;
+  String? paneId;
+  bool maximized = false;
+  bool sawMax = false;
+  MosaicSplitClientAspect aspect = MosaicSplitClientAspect.aspect16x9;
+  bool sawAspect = false;
+  int duration = kDefaultMosaicLayoutTransitionFrames;
+  bool sawDuration = false;
+
+  for (final String raw in rawTokens) {
+    final String token = raw.trim();
+    if (token.isEmpty) {
+      throw MosaicLayoutFormatException(
+        'LAYOUT optional tokens cannot be empty.',
+        offset,
+      );
+    }
+
+    if (token.toUpperCase() == 'MAX') {
+      if (kind != MosaicLayoutStateKind.twoUp || sawMax) {
+        throw MosaicLayoutFormatException(
+          'LAYOUT MAX is valid once and only on TWOUP.',
+          offset,
+        );
+      }
+      sawMax = true;
+      maximized = true;
+      continue;
+    }
+
+    final int equals = token.indexOf('=');
+    if (equals <= 0 || equals == token.length - 1) {
+      throw MosaicLayoutFormatException(
+        'Unknown LAYOUT token "$token".',
+        offset,
+      );
+    }
+    final String key = token.substring(0, equals).trim().toUpperCase();
+    final String value = token.substring(equals + 1).trim();
+
+    switch (key) {
+      case 'A':
+        if (kind != MosaicLayoutStateKind.twoUp || paneA != null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT A= is valid once and only on TWOUP.',
+            offset,
+          );
+        }
+        _validatePaneToken(value, offset);
+        paneA = value;
+        break;
+      case 'B':
+        if (kind != MosaicLayoutStateKind.twoUp || paneB != null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT B= is valid once and only on TWOUP.',
+            offset,
+          );
+        }
+        _validatePaneToken(value, offset);
+        paneB = value;
+        break;
+      case 'PANE':
+        if ((kind != MosaicLayoutStateKind.one &&
+                kind != MosaicLayoutStateKind.full) ||
+            paneId != null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT PANE= is valid once and only on ONE/FULL.',
+            offset,
+          );
+        }
+        _validatePaneToken(value, offset);
+        paneId = value;
+        break;
+      case 'ASPECT':
+        if (kind != MosaicLayoutStateKind.twoUp || sawAspect) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT ASPECT= is valid once and only on TWOUP.',
+            offset,
+          );
+        }
+        final MosaicSplitClientAspect? parsed = _aspectFromToken(value);
+        if (parsed == null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT ASPECT must be 16X9, 4X3, or 9X16.',
+            offset,
+          );
+        }
+        aspect = parsed;
+        sawAspect = true;
+        break;
+      case 'DUR':
+        if (sawDuration) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT DUR= may appear at most once.',
+            offset,
+          );
+        }
+        final int? parsed = int.tryParse(value);
+        if (parsed == null || parsed < 0) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT DUR must be a non-negative integer.',
+            offset,
+          );
+        }
+        duration = parsed;
+        sawDuration = true;
+        break;
+      default:
+        throw MosaicLayoutFormatException(
+          'Unknown LAYOUT option "$key".',
+          offset,
+        );
+    }
+  }
+
+  if (kind == MosaicLayoutStateKind.twoUp && (paneA == null) != (paneB == null)) {
+    throw MosaicLayoutFormatException(
+      'TWOUP requires both A=<pane> and B=<pane>, or neither.',
+      offset,
+    );
+  }
+  if ((kind == MosaicLayoutStateKind.one ||
+          kind == MosaicLayoutStateKind.full) &&
+      paneId == null) {
+    throw MosaicLayoutFormatException(
+      '${kind.token} requires PANE=<id>.',
+      offset,
+    );
+  }
+
+  return _ParsedLayoutOptions(
+    paneA: paneA,
+    paneB: paneB,
+    paneId: paneId,
+    maximized: maximized,
+    aspect: aspect,
+    durationFrames: duration,
+  );
+}
+
+bool _insideChildBlock(int offset, List<ScriptCstBlock> children) {
+  for (final ScriptCstBlock child in children) {
+    if (offset >= child.startOffset && offset < child.endOffset) return true;
+  }
+  return false;
+}
+
+void _validatePaneToken(String value, int offset) {
+  if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value)) {
+    throw MosaicLayoutFormatException(
+      'LAYOUT pane ids must use letters, numbers, underscore, or hyphen.',
+      offset,
+    );
+  }
+}
+
+MosaicLayoutStateKind? _stateKindFromToken(String raw) {
+  return switch (raw.trim().toUpperCase()) {
+    'COMPOSITE' => MosaicLayoutStateKind.composite,
+    'TWOUP' => MosaicLayoutStateKind.twoUp,
+    'ONE' => MosaicLayoutStateKind.one,
+    'FULL' => MosaicLayoutStateKind.full,
+    _ => null,
+  };
+}
+
+String _aspectToken(MosaicSplitClientAspect aspect) {
+  return switch (aspect) {
+    MosaicSplitClientAspect.aspect16x9 => '16X9',
+    MosaicSplitClientAspect.aspect4x3 => '4X3',
+    MosaicSplitClientAspect.aspect9x16 => '9X16',
+  };
+}
+
+MosaicSplitClientAspect? _aspectFromToken(String raw) {
+  return switch (raw.trim().toUpperCase()) {
+    '16X9' => MosaicSplitClientAspect.aspect16x9,
+    '4X3' => MosaicSplitClientAspect.aspect4x3,
+    '9X16' => MosaicSplitClientAspect.aspect9x16,
+    _ => null,
+  };
+}
+
+class _ParsedLayoutOptions {
+  final String? paneA;
+  final String? paneB;
+  final String? paneId;
+  final bool maximized;
+  final MosaicSplitClientAspect aspect;
+  final int durationFrames;
+
+  const _ParsedLayoutOptions({
+    required this.paneA,
+    required this.paneB,
+    required this.paneId,
+    required this.maximized,
+    required this.aspect,
+    required this.durationFrames,
+  });
+}
+,
   );
 
   int cursor = 0;
