@@ -1079,8 +1079,9 @@ schemas were bumped again, so a semantically different layout mix cannot reuse
 a stale WAV.
 
 This review follow-up is newer than the recorded 74-test / Rocky acceptance.
-Its fresh focused gate passed **110 tests** on Rocky. Live listening remains the
-final acceptance check before this resolver-driven audio head is marked fully
+Its fresh focused gate passed **110 tests** on Rocky. Live Rocky listening then
+confirmed the resolver-driven transition audio behaves correctly in practice,
+including nested EDIT gain carrying through MOSAIC. This follow-up is fully
 accepted.
 
 ---
