@@ -16,6 +16,7 @@
 
 import 'edit_linter.dart';
 import 'edit_model.dart';
+import 'mosaic_layout_cue.dart';
 
 String createEmptyMosaic({
   required String source,
@@ -170,6 +171,180 @@ class MosaicSurfaceDocument {
     return '${base}_$suffix';
   }
 
+  List<MosaicLayoutCue> get layoutCues => parseMosaicLayoutCues(
+        source: source,
+        mosaic: mosaic,
+      );
+
+  MosaicLayoutValidationResult get layoutValidation =>
+      validateMosaicLayoutCues(
+        mosaic: mosaic,
+        cues: layoutCues,
+      );
+
+  String addLayoutCue({
+    required int frame,
+    required MosaicLayoutState state,
+    int durationFrames = kDefaultMosaicLayoutTransitionFrames,
+  }) {
+    final MosaicLayoutCue cue = MosaicLayoutCue(
+      frame: frame,
+      state: _explicitLayoutState(state),
+      durationFrames: durationFrames,
+    );
+    final List<MosaicLayoutCue> existing = layoutCues;
+    if (existing.any((MosaicLayoutCue item) => item.frame == frame)) {
+      throw StateError('A LAYOUT cue already exists at frame $frame.');
+    }
+
+    final List<MosaicLayoutCue> candidate = <MosaicLayoutCue>[
+      ...existing,
+      cue,
+    ];
+    _throwLayoutErrors(
+      validateMosaicLayoutCues(mosaic: mosaic, cues: candidate),
+    );
+
+    final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+    final String indent = existing.isNotEmpty
+        ? (existing.first.sourceSpan?.indent ?? '')
+        : mosaic.panes.isNotEmpty
+            ? _lineIndentAt(source, mosaic.panes.first.block.startOffset)
+            : '${_lineIndentAt(source, mosaic.block.startOffset)}  ';
+
+    int insertionOffset;
+    final List<MosaicLayoutCue> after = existing
+        .where((MosaicLayoutCue item) => item.frame > frame)
+        .toList()
+      ..sort((MosaicLayoutCue a, MosaicLayoutCue b) => a.frame.compareTo(b.frame));
+    if (after.isNotEmpty) {
+      insertionOffset = after.first.sourceSpan!.startOffset;
+    } else if (mosaic.panes.isNotEmpty) {
+      insertionOffset = _lineStartAt(source, mosaic.panes.first.block.startOffset);
+    } else {
+      insertionOffset = _lineStartAt(source, mosaic.block.closeStartOffset);
+    }
+
+    final String next = source.replaceRange(
+      insertionOffset,
+      insertionOffset,
+      '$indent${cue.formatTag()}$newline',
+    );
+    _validateMosaicLayoutRenderable(next, mosaicId);
+    return next;
+  }
+
+  String updateLayoutCue(
+    int existingFrame, {
+    int? frame,
+    MosaicLayoutState? state,
+    int? durationFrames,
+  }) {
+    final List<MosaicLayoutCue> existing = layoutCues;
+    final MosaicLayoutCue selected = existing.singleWhere(
+      (MosaicLayoutCue cue) => cue.frame == existingFrame,
+      orElse: () => throw StateError(
+        'No LAYOUT cue exists at frame $existingFrame.',
+      ),
+    );
+    final MosaicLayoutCue replacement = MosaicLayoutCue(
+      frame: frame ?? selected.frame,
+      state: _explicitLayoutState(state ?? selected.state),
+      durationFrames: durationFrames ?? selected.durationFrames,
+    );
+
+    final List<MosaicLayoutCue> candidate = <MosaicLayoutCue>[
+      for (final MosaicLayoutCue cue in existing)
+        if (identical(cue, selected)) replacement else cue,
+    ];
+    _throwLayoutErrors(
+      validateMosaicLayoutCues(mosaic: mosaic, cues: candidate),
+    );
+
+    final MosaicLayoutSourceSpan span = selected.sourceSpan!;
+    final String next = source.replaceRange(
+      span.startOffset,
+      span.endOffset,
+      '${span.indent}${replacement.formatTag()}${span.lineEnding}',
+    );
+    _validateMosaicLayoutRenderable(next, mosaicId);
+    return next;
+  }
+
+  String removeLayoutCue(int frame) {
+    final MosaicLayoutCue selected = layoutCues.singleWhere(
+      (MosaicLayoutCue cue) => cue.frame == frame,
+      orElse: () => throw StateError('No LAYOUT cue exists at frame $frame.'),
+    );
+    final MosaicLayoutSourceSpan span = selected.sourceSpan!;
+    final String next = source.replaceRange(span.startOffset, span.endOffset, '');
+    _validateMosaicLayoutRenderable(next, mosaicId);
+    return next;
+  }
+
+  /// Renames one pane and atomically rewrites every explicit LAYOUT reference.
+  ///
+  /// Bare TWOUP deliberately remains bare: its meaning is authored pane order.
+  String renamePane(String oldId, String newId) {
+    _validateId('PANE', newId);
+    final MosaicPane target = pane(oldId);
+    if (mosaic.panes.any(
+      (MosaicPane candidate) =>
+          candidate.id == newId && candidate.id != target.id,
+    )) {
+      throw StateError('PANE "$newId" already exists in MOSAIC "$mosaicId".');
+    }
+    if (oldId == newId) return source;
+
+    final List<_SourceReplacement> replacements = <_SourceReplacement>[
+      _SourceReplacement(
+        startOffset: target.block.startOffset,
+        endOffset: target.block.openEndOffset,
+        replacement: '[PANE:$newId]',
+      ),
+    ];
+
+    for (final MosaicLayoutCue cue in layoutCues) {
+      if (!cue.state.referencesPane(oldId)) continue;
+      final MosaicLayoutSourceSpan span = cue.sourceSpan!;
+      final MosaicLayoutCue renamed = cue.copyWith(
+        state: cue.state.renamePane(oldId, newId),
+        clearSourceSpan: true,
+      );
+      replacements.add(
+        _SourceReplacement(
+          startOffset: span.startOffset,
+          endOffset: span.endOffset,
+          replacement:
+              '${span.indent}${renamed.formatTag()}${span.lineEnding}',
+        ),
+      );
+    }
+
+    replacements.sort(
+      (_SourceReplacement a, _SourceReplacement b) =>
+          b.startOffset.compareTo(a.startOffset),
+    );
+    String next = source;
+    for (final _SourceReplacement replacement in replacements) {
+      next = next.replaceRange(
+        replacement.startOffset,
+        replacement.endOffset,
+        replacement.replacement,
+      );
+    }
+
+    _validateMosaicLayoutRenderable(next, mosaicId);
+    return next;
+  }
+
+  MosaicLayoutState _explicitLayoutState(MosaicLayoutState state) {
+    if (!state.isBareTwoUp) return state;
+    return state.resolveBareTwoUp(
+      mosaic.panes.map((MosaicPane pane) => pane.id).toList(growable: false),
+    );
+  }
+
   List<StructuralSourceRef> availableStructuralSources() {
     return List<StructuralSourceRef>.unmodifiable(<StructuralSourceRef>[
       for (final EditSequence edit in model.edits)
@@ -197,8 +372,22 @@ class MosaicSurfaceDocument {
       final MosaicSurfaceDocument current =
           MosaicSurfaceDocument.parse(next, mosaicId);
       final MosaicPane remove = current.mosaic.panes.last;
+      final int remainingPaneCount = current.mosaic.panes.length - 1;
+      final List<MosaicLayoutCue> blocking = current.layoutCues
+          .where(
+            (MosaicLayoutCue cue) =>
+                cue.state.referencesPane(remove.id) ||
+                (cue.state.isBareTwoUp && remainingPaneCount < 2),
+          )
+          .toList(growable: false);
+      if (blocking.isNotEmpty) {
+        throw StateError(
+          'Cannot remove PANE "${remove.id}" while LAYOUT cues still '
+          'reference it or require two panes.',
+        );
+      }
       next = current.model.cst.replaceBlock(remove.block, '');
-      _validateRenderable(next);
+      _validateMosaicLayoutRenderable(next, mosaicId);
     }
 
     while (MosaicSurfaceDocument.parse(next, mosaicId).mosaic.panes.length <
@@ -611,6 +800,44 @@ class MosaicSurfaceDocument {
     return '$lineEnding$childIndent$directive$lineEnding$body';
   }
 }
+
+class _SourceReplacement {
+  final int startOffset;
+  final int endOffset;
+  final String replacement;
+
+  const _SourceReplacement({
+    required this.startOffset,
+    required this.endOffset,
+    required this.replacement,
+  });
+}
+
+void _throwLayoutErrors(MosaicLayoutValidationResult validation) {
+  final List<MosaicLayoutIssue> errors =
+      validation.errors.toList(growable: false);
+  if (errors.isEmpty) return;
+  throw StateError(errors.first.message);
+}
+
+void _validateMosaicLayoutRenderable(String source, String mosaicId) {
+  _validateRenderable(source);
+  final EditDocumentModel parsed = EditDocumentModel.parse(source);
+  final MosaicSequence mosaic = parsed.mosaic(mosaicId);
+  final List<MosaicLayoutCue> cues = parseMosaicLayoutCues(
+    source: source,
+    mosaic: mosaic,
+  );
+  _throwLayoutErrors(
+    validateMosaicLayoutCues(
+      mosaic: mosaic,
+      cues: cues,
+    ),
+  );
+}
+
+int _lineStartAt(String source, int offset) =>
+    source.lastIndexOf('\n', offset - 1) + 1;
 
 StructuralSourceRef _requireExistingStructuralSource(
   EditDocumentModel model,
