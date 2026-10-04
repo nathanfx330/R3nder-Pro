@@ -251,6 +251,35 @@ void main() {
       expect(resolved.evaluate(511).pane('B').rect, maximized.rightWindowRect);
     });
 
+    test('FULL -> TWOUP MAX 4X3 settles exact split geometry and z', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT:100:FULL:PANE=A:DUR=1]
+  [LAYOUT:500:TWOUP:A=A:B=B:MAX:ASPECT=4X3:DUR=12]''').resolve(context());
+
+      final MosaicSplitWindowGeometry target = splitGeometry(
+        aspect: MosaicSplitClientAspect.aspect4x3,
+        maximized: true,
+      );
+
+      final MosaicLayoutFrame start = resolved.evaluate(500);
+      expect(start.pane('A').activeSegment, isNotNull);
+      expect(start.pane('A').activeSegment!.startRect, programRect);
+      expect(start.pane('A').activeSegment!.targetRect, target.leftWindowRect);
+      expect(start.pane('A').z.band, MosaicLayoutZBand.fullTarget);
+      expect(start.pane('B').presence, MosaicLayoutPresence.entering);
+
+      final MosaicLayoutFrame settled = resolved.evaluate(511);
+      expect(settled.pane('A').activeSegment, isNull);
+      expect(settled.pane('B').activeSegment, isNull);
+      expect(settled.pane('A').rect, target.leftWindowRect);
+      expect(settled.pane('B').rect, target.rightWindowRect);
+      expect(settled.pane('A').z.band, MosaicLayoutZBand.stable);
+      expect(settled.pane('B').z.band, MosaicLayoutZBand.stable);
+      expect(settled.pane('A').z.roleRank, 0);
+      expect(settled.pane('B').z.roleRank, 1);
+      expect(settled.paintActors.last.actorId.paneId, 'B');
+    });
+
     test('TWOUP 16X9 -> 4X3 redirects both actors only by geometry', () {
       final MosaicResolvedLayoutProgram resolved = programFor('''
   [LAYOUT:500:TWOUP:A=A:B=B:ASPECT=4X3:DUR=12]''').resolve(
