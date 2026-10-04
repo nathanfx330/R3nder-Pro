@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_model.dart';
 import 'package:r3nder/mosaic_layout_cue.dart';
 import 'package:r3nder/mosaic_layout_program.dart';
+import 'package:r3nder/mosaic_overview_geometry.dart';
 import 'package:r3nder/mosaic_split_geometry.dart';
 
 void main() {
@@ -37,7 +38,7 @@ void main() {
     if (layoutLines.isNotEmpty) {
       out.writeln(layoutLines);
     }
-    const List<String> ids = <String>['A', 'B', 'C'];
+    const List<String> ids = <String>['A', 'B', 'C', 'D'];
     for (int i = 0; i < paneCount; i++) {
       final String id = ids[i];
       out
@@ -80,11 +81,23 @@ void main() {
         maximized: maximized,
       );
 
+  MosaicOverviewGeometry overviewGeometry({
+    MosaicSplitClientAspect aspect = MosaicSplitClientAspect.aspect16x9,
+    int thumbnailCount = 2,
+  }) =>
+      mosaicOverviewGeometry(
+        frame: programRect,
+        aspect: aspect,
+        titleHeight: titleHeight,
+        thumbnailCount: thumbnailCount,
+      );
+
   void expectAbsent(MosaicLayoutActorFrame actor) {
     expect(actor.presence, MosaicLayoutPresence.absent);
     expect(actor.activeSegment, isNull);
     expect(actor.rect, Rect.zero);
     expect(actor.opacity, 0.0);
+    expect(actor.labelOpacity, 0.0);
   }
 
   void expectCanonical(
@@ -132,6 +145,38 @@ void main() {
         expect(b.z.band, MosaicLayoutZBand.stable);
         expect(b.z.roleRank, 1);
         expectAbsent(c);
+        break;
+
+      case MosaicLayoutStateKind.overview:
+        final MosaicOverviewGeometry geometry = overviewGeometry(
+          aspect: state.splitAspect,
+          thumbnailCount: state.overviewOthers.length,
+        );
+        expectAbsent(composite);
+        final MosaicLayoutActorFrame main =
+            frame.pane(state.overviewMain!);
+        expect(main.presence, MosaicLayoutPresence.present);
+        expect(main.activeSegment, isNull);
+        expect(main.rect, geometry.mainWindowRect);
+        expect(main.chrome, 1.0);
+        expect(main.labelOpacity, 0.0);
+        expect(main.z.roleRank, 100);
+        for (int i = 0; i < state.overviewOthers.length; i++) {
+          final MosaicLayoutActorFrame thumb =
+              frame.pane(state.overviewOthers[i]);
+          expect(thumb.presence, MosaicLayoutPresence.present);
+          expect(thumb.activeSegment, isNull);
+          expect(thumb.rect, geometry.thumbnailRects[i]);
+          expect(thumb.chrome, 0.0);
+          expect(thumb.labelRect, geometry.labelRects[i]);
+          expect(thumb.labelOpacity, 1.0);
+          expect(thumb.z.roleRank, i);
+        }
+        for (final String paneId in <String>['A', 'B', 'C']) {
+          if (!state.referencedPaneIds.contains(paneId)) {
+            expectAbsent(frame.pane(paneId));
+          }
+        }
         break;
 
       case MosaicLayoutStateKind.one:
@@ -389,6 +434,307 @@ void main() {
       expect(b.activeSegment!.targetRect, newGeometry.rightWindowRect);
       expect(resolved.evaluate(511).pane('A').rect, newGeometry.leftWindowRect);
       expect(resolved.evaluate(511).pane('B').rect, newGeometry.rightWindowRect);
+    });
+  });
+
+  group('OVERVIEW matrix', () {
+    test('LAYOUT_START OVERVIEW settles MAIN +2 with MAIN-only audio', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]''').resolve(context());
+
+      final MosaicLayoutFrame frame = resolved.evaluate(0);
+      final MosaicLayoutState state = MosaicLayoutState.overview(
+        mainPane: 'A',
+        others: const <String>['B', 'C'],
+      );
+      expectCanonical(frame, state);
+      expect(resolved.paneAudioFrame('A', sourceFrame: 0).gain, 1.0);
+      expect(resolved.paneAudioFrame('B', sourceFrame: 0).gain, 0.0);
+      expect(resolved.paneAudioFrame('C', sourceFrame: 0).gain, 0.0);
+      expect(frame.paintActors.last.actorId.paneId, 'A');
+    });
+
+    test('MAIN swap redirects both focal actors and target dominance wins',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:OVERVIEW:MAIN=B:OTHERS=A,C:DUR=12]''').resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      final MosaicLayoutActorFrame a = start.pane('A');
+      final MosaicLayoutActorFrame b = start.pane('B');
+      final MosaicLayoutActorFrame c = start.pane('C');
+
+      expect(a.activeSegment, isNotNull);
+      expect(b.activeSegment, isNotNull);
+      expect(c.activeSegment, isNull);
+      expect(a.activeSegment!.startDominant, isTrue);
+      expect(a.activeSegment!.targetDominant, isFalse);
+      expect(a.dominantMorphPriority, 1);
+      expect(b.activeSegment!.startDominant, isFalse);
+      expect(b.activeSegment!.targetDominant, isTrue);
+      expect(b.dominantMorphPriority, 2);
+      expect(a.activeSegment!.startAudioGain, 1.0);
+      expect(a.activeSegment!.targetAudioGain, 0.0);
+      expect(b.activeSegment!.startAudioGain, 0.0);
+      expect(b.activeSegment!.targetAudioGain, 1.0);
+      expect(start.paintActors.last.actorId.paneId, 'B');
+
+      final MosaicLayoutFrame settled = resolved.evaluate(111);
+      expect(settled.pane('B').z.roleRank, 100);
+      expect(settled.pane('A').z.roleRank, 0);
+      expect(settled.pane('C').z.roleRank, 1);
+      expect(settled.pane('B').labelOpacity, 0.0);
+      expect(settled.pane('A').labelOpacity, 1.0);
+    });
+
+    test('thumbnail reorder redirects peers with zero gains and defers rank',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=C,B:DUR=12]''').resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('A').activeSegment, isNull);
+      expect(start.pane('B').activeSegment, isNotNull);
+      expect(start.pane('C').activeSegment, isNotNull);
+      expect(start.pane('B').activeSegment!.startAudioGain, 0.0);
+      expect(start.pane('B').activeSegment!.targetAudioGain, 0.0);
+      expect(start.pane('C').activeSegment!.startAudioGain, 0.0);
+      expect(start.pane('C').activeSegment!.targetAudioGain, 0.0);
+
+      for (int frame = 100; frame < 111; frame++) {
+        expect(resolved.evaluate(frame).pane('B').z.roleRank, 0);
+        expect(resolved.evaluate(frame).pane('C').z.roleRank, 1);
+      }
+      expect(resolved.evaluate(111).pane('B').z.roleRank, 1);
+      expect(resolved.evaluate(111).pane('C').z.roleRank, 0);
+    });
+
+    test('OVERVIEW +2 -> +3 creates only the new pane and keeps MAIN settled',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=B,C,D:DUR=12]''',
+          paneCount: 4)
+          .resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('A').activeSegment, isNull);
+      expect(start.pane('B').activeSegment, isNotNull);
+      expect(start.pane('C').activeSegment, isNotNull);
+      expect(start.pane('D').presence, MosaicLayoutPresence.entering);
+      expect(
+        start.pane('D').activeSegment!.startPresence,
+        MosaicLayoutPresence.absent,
+      );
+      expect(
+        start.pane('D').activeSegment!.targetPresence,
+        MosaicLayoutPresence.present,
+      );
+      expect(start.pane('D').activeSegment!.targetAudioGain, 0.0);
+      expect(start.pane('D').activeSegment!.targetLabelOpacity, 1.0);
+
+      final MosaicLayoutFrame settled = resolved.evaluate(111);
+      expect(settled.pane('A').activeSegment, isNull);
+      expect(settled.pane('D').presence, MosaicLayoutPresence.present);
+      expect(settled.pane('D').z.roleRank, 2);
+    });
+
+    test('OVERVIEW +3 -> +2 exits one pane without disturbing MAIN', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C,D]
+  [LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=B,C:DUR=12]''',
+          paneCount: 4)
+          .resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('A').activeSegment, isNull);
+      expect(start.pane('D').presence, MosaicLayoutPresence.exiting);
+      expect(
+        start.pane('D').activeSegment!.targetPresence,
+        MosaicLayoutPresence.absent,
+      );
+      expect(resolved.evaluate(111).pane('D').presence,
+          MosaicLayoutPresence.absent);
+    });
+
+    test('ASPECT-only OVERVIEW change redirects geometry with gains unchanged',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C:ASPECT=16X9]
+  [LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=B,C:ASPECT=4X3:DUR=12]''')
+          .resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      for (final String id in <String>['A', 'B', 'C']) {
+        final MosaicLayoutActiveSegment segment =
+            start.pane(id).activeSegment!;
+        expect(segment.startRect, isNot(segment.targetRect));
+        expect(segment.startAudioGain, segment.targetAudioGain);
+        expect(segment.startDominant, segment.targetDominant);
+        expect(segment.startZ.roleRank, segment.targetZ.roleRank);
+      }
+      expect(start.pane('A').activeSegment!.startAudioGain, 1.0);
+      expect(start.pane('B').activeSegment!.startAudioGain, 0.0);
+      expect(start.pane('C').activeSegment!.startAudioGain, 0.0);
+    });
+
+    test('COMPOSITE -> OVERVIEW fades thumbnail audio while keeping it visible',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:COMPOSITE]
+  [LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=B,C:DUR=12]''').resolve(context());
+
+      final double midB =
+          resolved.paneAudioFrame('B', sourceFrame: 105).gain;
+      expect(midB, greaterThan(0.0));
+      expect(midB, lessThan(1.0));
+      expect(resolved.evaluate(105).pane('B').presence,
+          isNot(MosaicLayoutPresence.absent));
+      expect(resolved.paneAudioFrame('A', sourceFrame: 111).gain, 1.0);
+      expect(resolved.paneAudioFrame('B', sourceFrame: 111).gain, 0.0);
+      expect(resolved.paneAudioFrame('C', sourceFrame: 111).gain, 0.0);
+    });
+
+    test('OVERVIEW -> COMPOSITE returns thumbnail audio through composite', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:COMPOSITE:DUR=12]''').resolve(context());
+
+      final double midB =
+          resolved.paneAudioFrame('B', sourceFrame: 105).gain;
+      expect(midB, greaterThan(0.0));
+      expect(midB, lessThan(1.0));
+      expect(resolved.paneAudioFrame('B', sourceFrame: 111).gain, 1.0);
+    });
+
+    test('OVERVIEW -> ONE/FULL promotes selected thumbnail immediately', () {
+      for (final String target in <String>['ONE', 'FULL']) {
+        final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:$target:PANE=B:DUR=12]''').resolve(context());
+
+        final MosaicLayoutFrame start = resolved.evaluate(100);
+        expect(start.pane('B').activeSegment!.targetDominant, isTrue);
+        expect(start.pane('B').dominantMorphPriority, 2);
+        expect(start.pane('A').dominantMorphPriority, 0);
+        expect(start.paintActors.last.actorId.paneId, 'B');
+      }
+    });
+
+    test('FULL A -> OVERVIEW MAIN=B gives target focus front ownership', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:FULL:PANE=A]
+  [LAYOUT:100:OVERVIEW:MAIN=B:OTHERS=A,C:DUR=12]''').resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('A').activeSegment!.startDominant, isTrue);
+      expect(start.pane('A').dominantMorphPriority, 1);
+      expect(start.pane('B').activeSegment!.targetDominant, isTrue);
+      expect(start.pane('B').dominantMorphPriority, 2);
+      expect(start.paintActors.last.actorId.paneId, 'B');
+    });
+
+    test('TWOUP and OVERVIEW cross without recreating surviving peers', () {
+      final MosaicResolvedLayoutProgram toOverview = programFor('''
+  [LAYOUT_START:TWOUP:A=A:B=B]
+  [LAYOUT:100:OVERVIEW:MAIN=B:OTHERS=A,C:DUR=12]''').resolve(context());
+
+      final MosaicLayoutFrame startOverview = toOverview.evaluate(100);
+      expect(
+        startOverview.pane('A').activeSegment!.startPresence,
+        MosaicLayoutPresence.present,
+      );
+      expect(
+        startOverview.pane('B').activeSegment!.startPresence,
+        MosaicLayoutPresence.present,
+      );
+      expect(
+        startOverview.pane('C').activeSegment!.startPresence,
+        MosaicLayoutPresence.absent,
+      );
+      expect(startOverview.pane('B').dominantMorphPriority, 2);
+
+      final MosaicResolvedLayoutProgram toTwoUp = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:TWOUP:A=A:B=B:DUR=12]''').resolve(context());
+      final MosaicLayoutFrame startTwoUp = toTwoUp.evaluate(100);
+      expect(
+        startTwoUp.pane('A').activeSegment!.startPresence,
+        MosaicLayoutPresence.present,
+      );
+      expect(
+        startTwoUp.pane('B').activeSegment!.startPresence,
+        MosaicLayoutPresence.present,
+      );
+      expect(startTwoUp.pane('A').dominantMorphPriority, 1);
+    });
+
+    test('absent pane can CREATE directly into MAIN with target dominance',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:OVERVIEW:MAIN=D:OTHERS=A,C:DUR=12]''',
+          paneCount: 4)
+          .resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('D').presence, MosaicLayoutPresence.entering);
+      expect(start.pane('D').activeSegment!.startDominant, isFalse);
+      expect(start.pane('D').activeSegment!.targetDominant, isTrue);
+      expect(start.pane('D').dominantMorphPriority, 2);
+      expect(start.paintActors.last.actorId.paneId, 'D');
+    });
+
+    test('three-stage interrupt snapshots B then ONE C takes ownership', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]
+  [LAYOUT:100:OVERVIEW:MAIN=B:OTHERS=A,C:DUR=20]
+  [LAYOUT:105:ONE:PANE=C:DUR=12]''').resolve(context());
+
+      expect(resolved.evaluate(104).pane('B').dominantMorphPriority, 2);
+
+      final MosaicLayoutFrame redirected = resolved.evaluate(105);
+      expect(redirected.pane('B').activeSegment!.startDominant, isTrue);
+      expect(
+        redirected.pane('B').activeSegment!.targetPresence,
+        MosaicLayoutPresence.absent,
+      );
+      expect(redirected.pane('B').dominantMorphPriority, 0);
+      expect(redirected.pane('C').activeSegment!.targetDominant, isTrue);
+      expect(redirected.pane('C').dominantMorphPriority, 2);
+      expect(redirected.paintActors.last.actorId.paneId, 'C');
+
+      for (int frame = 100; frame < 116; frame++) {
+        final MosaicLayoutFrame current = resolved.evaluate(frame);
+        final List<MosaicLayoutActiveSegment> segments = current.actors
+            .map((MosaicLayoutActorFrame actor) => actor.activeSegment)
+            .whereType<MosaicLayoutActiveSegment>()
+            .toList(growable: false);
+        expect(
+          segments.where((MosaicLayoutActiveSegment s) =>
+              s.targetDominant).length,
+          lessThanOrEqualTo(1),
+          reason: 'target dominance duplicated at F$frame',
+        );
+        expect(
+          current.actors
+              .where((MosaicLayoutActorFrame actor) =>
+                  actor.dominantMorphPriority > 0)
+              .map((MosaicLayoutActorFrame actor) =>
+                  actor.dominantMorphPriority)
+              .where((int priority) =>
+                  priority ==
+                  current.actors
+                      .map((MosaicLayoutActorFrame actor) =>
+                          actor.dominantMorphPriority)
+                      .reduce((int a, int b) => a > b ? a : b))
+              .length,
+          lessThanOrEqualTo(1),
+          reason: 'dominant owner duplicated at F$frame',
+        );
+      }
     });
   });
 

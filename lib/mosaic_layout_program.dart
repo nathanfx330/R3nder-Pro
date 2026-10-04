@@ -1447,7 +1447,9 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
-          roleRank: state.overviewOthers.length,
+          // MAIN must remain terminal-equal when +2 becomes +3. Its rank is
+          // therefore a stable focal tier, not a function of shelf count.
+          roleRank: 100,
           actorOrdinal: mainActor.actorOrdinal,
         ),
         dominant: true,
