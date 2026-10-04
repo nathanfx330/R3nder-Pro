@@ -152,6 +152,9 @@ void main() {
     await _mount(tester);
 
     expect(_key('mosaic-layout-lane'), findsOneWidget);
+    expect(find.text('START AS'), findsOneWidget);
+    expect(_key('mosaic-layout-start-bar'), findsOneWidget);
+    expect(find.text('COMPOSITE (IMPLICIT)'), findsOneWidget);
     expect(find.text('LAYOUT CUES'), findsOneWidget);
     expect(find.text('IMPLICIT COMPOSITE'), findsOneWidget);
     expect(_key('mosaic-layout-add-composite'), findsOneWidget);
@@ -162,6 +165,64 @@ void main() {
         findsNothing);
   });
 
+
+  testWidgets('START AS authors frame zero independently of playhead',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+    expect(host.currentState!.frame, 40);
+
+    await tester.tap(_key('mosaic-layout-start-one'));
+    await tester.pumpAndSettle();
+    await tester.tap(_key('mosaic-layout-start-one:pane2'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains('[LAYOUT:0:ONE:PANE=pane2]'),
+    );
+    expect(
+      host.currentState!.source,
+      isNot(contains('[LAYOUT:40:ONE:PANE=pane2]')),
+    );
+    expect(_key('mosaic-layout-cue:0'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('mosaic-layout-start-status')).data,
+      'ONE:PANE=pane2',
+    );
+    expect(host.currentState!.frame, 40);
+  });
+
+  testWidgets('START AS TWO UP reuses normal pair/aspect/MAX authoring at F0',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+
+    await tester.tap(_key('mosaic-layout-start-twoup'));
+    await tester.pumpAndSettle();
+    expect(find.text('Two Up'), findsOneWidget);
+
+    await tester.tap(_key('mosaic-layout-twoup-b'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane3').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-twoup-aspect'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('4:3').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-twoup-max'));
+    await tester.pump();
+    await tester.tap(_key('mosaic-layout-twoup-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains(
+        '[LAYOUT:0:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
+      ),
+    );
+    expect(host.currentState!.frame, 40);
+  });
 
   testWidgets('MOSAIC viewer switches to layout-aware actor Preview after cue',
       (WidgetTester tester) async {
