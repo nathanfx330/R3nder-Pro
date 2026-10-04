@@ -356,7 +356,98 @@ MosaicLayoutStart? parseMosaicLayoutStart({
     mosaic.block.closeStartOffset,
   );
   final RegExp canonicalLine = RegExp(
-    r'^(?<indent>[ \t]*)\[LAYOUT_START:(?<body>[^\]\r\n]+)\][ \t]*(?<eol>\r?\n|$)  required String source,
+    r'^(?<indent>[ \t]*)\[LAYOUT_START:(?<body>[^\]\r\n]+)\][ \t]*(?<eol>\r?\n|$)$',
+  );
+
+  MosaicLayoutStart? found;
+  int cursor = 0;
+  while (cursor < inner.length) {
+    final int newline = inner.indexOf('\n', cursor);
+    final int lineEnd = newline < 0 ? inner.length : newline + 1;
+    final String rawLine = inner.substring(cursor, lineEnd);
+    final int globalStart = mosaic.block.openEndOffset + cursor;
+    cursor = lineEnd;
+
+    if (_insideChildBlock(globalStart, mosaic.block.children)) continue;
+
+    final String leftTrimmed = rawLine.trimLeft();
+    if (!leftTrimmed.startsWith('[LAYOUT_START')) continue;
+
+    final RegExpMatch? match = canonicalLine.firstMatch(rawLine);
+    if (match == null) {
+      throw MosaicLayoutFormatException(
+        'Malformed direct MOSAIC LAYOUT_START directive.',
+        globalStart,
+      );
+    }
+    if (found != null) {
+      throw MosaicLayoutFormatException(
+        'Only one LAYOUT_START directive is allowed per MOSAIC.',
+        globalStart,
+      );
+    }
+
+    final List<String> segments = match
+        .namedGroup('body')!
+        .split(':')
+        .map((String token) => token.trim())
+        .toList();
+    if (segments.isEmpty || segments.any((String token) => token.isEmpty)) {
+      throw MosaicLayoutFormatException(
+        'LAYOUT_START requires a state before optional tokens.',
+        globalStart,
+      );
+    }
+    if (segments.skip(1).any(
+          (String token) => token.toUpperCase().startsWith('DUR='),
+        )) {
+      throw MosaicLayoutFormatException(
+        'LAYOUT_START does not accept DUR= because it is an initial condition, not a transition.',
+        globalStart,
+      );
+    }
+
+    final MosaicLayoutStateKind? kind = _stateKindFromToken(segments[0]);
+    if (kind == null) {
+      throw MosaicLayoutFormatException(
+        'Unknown LAYOUT_START state "${segments[0]}".',
+        globalStart,
+      );
+    }
+
+    final _ParsedLayoutOptions options = _parseOptions(
+      kind,
+      segments.skip(1),
+      globalStart,
+    );
+    final MosaicLayoutState state = switch (kind) {
+      MosaicLayoutStateKind.composite => const MosaicLayoutState.composite(),
+      MosaicLayoutStateKind.twoUp => MosaicLayoutState.twoUp(
+          paneA: options.paneA,
+          paneB: options.paneB,
+          aspect: options.aspect,
+          maximized: options.maximized,
+        ),
+      MosaicLayoutStateKind.one => MosaicLayoutState.one(options.paneId!),
+      MosaicLayoutStateKind.full => MosaicLayoutState.full(options.paneId!),
+    };
+
+    found = MosaicLayoutStart(
+      state: state,
+      sourceSpan: MosaicLayoutSourceSpan(
+        startOffset: globalStart,
+        endOffset: globalStart + rawLine.length,
+        indent: match.namedGroup('indent') ?? '',
+        lineEnding: match.namedGroup('eol') ?? '',
+      ),
+    );
+  }
+
+  return found;
+}
+
+List<MosaicLayoutCue> parseMosaicLayoutCues({
+  required String source,
   required MosaicSequence mosaic,
 }) {
   final String inner = source.substring(
