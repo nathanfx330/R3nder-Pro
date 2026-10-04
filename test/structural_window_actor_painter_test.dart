@@ -90,8 +90,8 @@ void main() {
       aspect: placement.splitClientAspect,
       titleHeight: 38.0 * chromeScale,
     );
-    final ui.Image red = await _solidImage(Colors.red);
-    final ui.Image blue = await _solidImage(Colors.blue);
+    final ui.Image red = await _solidImage(const Color(0xFFFF0000));
+    final ui.Image blue = await _solidImage(const Color(0xFF0000FF));
     addTearDown(() {
       red.dispose();
       blue.dispose();
@@ -156,8 +156,8 @@ void main() {
     const MosaicLayoutActorId actorA = MosaicLayoutActorId.pane('A', 1);
     const MosaicLayoutActorId actorB = MosaicLayoutActorId.pane('B', 2);
 
-    final ui.Image red = await _solidImage(Colors.red);
-    final ui.Image blue = await _solidImage(Colors.blue);
+    final ui.Image red = await _solidImage(const Color(0xFFFF0000));
+    final ui.Image blue = await _solidImage(const Color(0xFF0000FF));
     addTearDown(() {
       red.dispose();
       blue.dispose();
@@ -251,8 +251,8 @@ void main() {
     const MosaicLayoutActorId actorA = MosaicLayoutActorId.pane('A', 1);
     const MosaicLayoutActorId actorB = MosaicLayoutActorId.pane('B', 2);
 
-    final ui.Image red = await _solidImage(Colors.red);
-    final ui.Image blue = await _solidImage(Colors.blue);
+    final ui.Image red = await _solidImage(const Color(0xFFFF0000));
+    final ui.Image blue = await _solidImage(const Color(0xFF0000FF));
     addTearDown(() {
       red.dispose();
       blue.dispose();
