@@ -105,8 +105,9 @@ authoring shorthand. Explicit LAYOUT cues store pane ids, so later pane
 reordering does not silently retarget an already-authored explicit cue.
 
 MOSAIC duration remains authored content geometry: the maximum pane-local CLIP
-end. LAYOUT cues do not add frames, alter pane-local clip timing, or affect
-audio.
+end. LAYOUT cues do not add frames or alter pane-local clip timing. They do gate
+which pane audio contributes to the source mix: COMPOSITE admits all panes,
+TWOUP admits A/B, and ONE/FULL admit only the selected pane.
 
 A cue-bearing MOSAIC may also own a reusable source-relative desktop layout
 program:
@@ -131,7 +132,8 @@ That opening state is not a timeline cue. Later **LAYOUT CUES** remain
 playhead-relative transitions. A legacy frame-zero LAYOUT cue is still accepted
 when no LAYOUT_START exists. Persistent pane actor identity survives layout
 changes and cuts inside a pane. A hidden pane remains on the shared MOSAIC
-source clock; hiding it is not pausing it.
+source clock; hiding it is not pausing it. Hidden panes are muted in the MOSAIC
+source mix while their source time continues to advance.
 
 Preview and BAKE share layout evaluation and the actor-window painter. Live
 Preview may hold the last good resident actor image for as long as that actor
@@ -784,10 +786,11 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 The source-relative MOSAIC Layout Program residency milestone reached a
 52-test focused gate and live GUI acceptance covering continuous playback,
 TWO UP → ONE retreat, pane recall, lookahead warming, and scrubbing across
-hidden intervals. A later Rocky workflow pass added COME IN ON / LAYOUT_START
-as a post-milestone authoring correction; that newer head must pass its fresh
-gate before it inherits the same acceptance status. The underlying structural
-contracts remain the compatibility target.
+hidden intervals. A later Rocky workflow pass added COME IN ON / LAYOUT_START and then exposed
+the pane-audio gating gap in ONE. Those post-milestone authoring/audio
+corrections require their fresh gates before the new head inherits the earlier
+residency acceptance status. The underlying structural contracts remain the
+compatibility target.
 
 ---
 
@@ -796,7 +799,9 @@ contracts remain the compatibility target.
 - [ ] EDIT is reusable frame-producing content;
 - [ ] MOSAIC composes structural sources into deterministic pane geometry;
 - [ ] LAYOUT_START owns the initial MOSAIC presentation without becoming a timeline cue;
-- [ ] source-relative LAYOUT cues change later arrangement without changing content duration or audio;
+- [ ] source-relative LAYOUT cues change later arrangement without changing content duration or source time;
+- [ ] MOSAIC pane audio follows target layout at the exact cue-frame boundary: COMPOSITE=all, TWOUP=A/B, ONE/FULL=selected pane;
+- [ ] hidden pane audio is muted rather than paused, so recall remains on the shared source clock;
 - [ ] persistent pane actors survive layout changes without restarting source time;
 - [ ] hidden panes remain on the shared MOSAIC source clock;
 - [ ] Preview and BAKE derive the same `MosaicLayoutFrame` from source frame plus placement context;
