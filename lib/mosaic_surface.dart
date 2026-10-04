@@ -2050,6 +2050,9 @@ class _MosaicLayoutCueMarkerState extends State<_MosaicLayoutCueMarker> {
                           ),
                           child: Text(
                             'F$frame',
+                            key: ValueKey<String>(
+                              'mosaic-layout-cue-drag-frame:${widget.cue.frame}',
+                            ),
                             textAlign: TextAlign.center,
                             style: widget.theme.microAccent.copyWith(
                               color: markerColor,
