@@ -788,9 +788,10 @@ The source-relative MOSAIC Layout Program residency milestone reached a
 TWO UP → ONE retreat, pane recall, lookahead warming, and scrubbing across
 hidden intervals. A later Rocky workflow pass added COME IN ON / LAYOUT_START and then exposed
 the pane-audio gating gap in ONE. Those post-milestone authoring/audio
-corrections require their fresh gates before the new head inherits the earlier
-residency acceptance status. The underlying structural contracts remain the
-compatibility target.
+corrections passed a **74-test focused gate** and were accepted in live Rocky
+playback: TWO UP → ONE mutes the dismissed pane at the cue boundary while the
+surviving pane continues cleanly. The underlying structural contracts remain
+the compatibility target.
 
 ---
 
