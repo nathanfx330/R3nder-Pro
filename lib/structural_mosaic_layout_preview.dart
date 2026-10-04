@@ -637,10 +637,11 @@ class _StructuralMosaicLayoutPreviewState
         <MosaicLayoutActorId, StructuralWindowActorVisual>{};
     for (final MosaicLayoutActorFrame actor in frame.paintActors) {
       final MosaicLayoutActorId actorId = actor.actorId;
-      final ui.Image? image =
-          _imageFrames[actorId] == widget.sourceFrame
-              ? _images[actorId]
-              : null;
+      // Residency is deliberately independent from authored time. While a
+      // nonblocking decoder works on the requested source frame, keep painting
+      // the actor's last resident image. Geometry, opacity, chrome, and z still
+      // come from the exact current MosaicLayoutFrame.
+      final ui.Image? image = _images[actorId];
       out[actorId] = StructuralWindowActorVisual(
         sourceImage: image,
         sourceFrame: widget.sourceFrame,
@@ -649,9 +650,7 @@ class _StructuralMosaicLayoutPreviewState
         overlayMode: widget.placement.overlayMode,
         topOverlay: widget.placement.topOverlay,
         bottomOverlay: widget.placement.bottomOverlay,
-        defaultBottomOverlay: _imageFrames[actorId] == widget.sourceFrame
-            ? (_diagnosticLabels[actorId] ?? '')
-            : '',
+        defaultBottomOverlay: _diagnosticLabels[actorId] ?? '',
       );
     }
     return out;
