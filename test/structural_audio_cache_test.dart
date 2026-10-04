@@ -150,10 +150,11 @@ void main() {
 
     expect(one.cacheHit, isFalse);
     expect(one.key.digest, isNot(twoUp.key.digest));
-    expect(one.key.manifest, contains('lane_audibility_count=0'));
+    expect(one.key.manifest, contains('lane_layout_gain_frames=4'));
+    expect(twoUp.key.manifest, contains('lane_layout_gain_frames=4'));
     expect(
-      twoUp.key.manifest,
-      contains('lane_audible_span=0..4'),
+      one.key.manifest,
+      isNot(twoUp.key.manifest),
     );
   });
 
