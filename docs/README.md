@@ -244,7 +244,7 @@ The clip local shell transition journey: source relative MAXIMIZE timing, why th
 
 ## `MOSAIC_LAYOUT_PROGRAM_JOURNEY.md`
 
-The move from static STRUCT:SPLIT to reusable source-relative MOSAIC LAYOUT cues: persistent window actors, CONTINUE/REDIRECT/CREATE interruption semantics, shared Preview/BAKE evaluation, the first resident-frame black/flicker bug, stale hidden-pane recall, scrub residency, multi-frame playback lag, paintability through TWO UP → ONE exit motion, the missing MOSAIC-viewer and BAKE consumers, node-mode ownership cleanup, window-slot naming, and the FULL ↔ TWO UP front-layer correction found through repeated GUI abuse testing.
+The move from static STRUCT:SPLIT to reusable source-relative MOSAIC LAYOUT cues: persistent window actors, CONTINUE/REDIRECT/CREATE interruption semantics, shared Preview/BAKE evaluation, the first resident-frame black/flicker bug, stale hidden-pane recall, scrub residency, multi-frame playback lag, paintability through TWO UP → ONE exit motion, lookahead warm provenance at pane recall, the missing MOSAIC-viewer and BAKE consumers, node-mode ownership cleanup, window-slot naming, and the FULL ↔ TWO UP front-layer correction found through repeated GUI abuse testing.
 
 ## `EDIT_PLAYBACK_PERFORMANCE.md`
 
