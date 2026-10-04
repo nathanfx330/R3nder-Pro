@@ -423,6 +423,69 @@ The pane layout controls spatial composition. The clips inside each pane control
 
 The MOSAIC's total frame count comes from the authored structural sources and their project-time placement. It is not a second editable duration field.
 
+## Change the desktop layout over MOSAIC time
+
+A MOSAIC can also author **LAYOUT cues**. These change how the persistent pane
+windows are presented at a MOSAIC source frame without changing clip timing,
+MOSAIC duration, or audio.
+
+The GUI's **LAYOUT CUES** lane is the preferred authoring surface. The direct
+script forms are:
+
+```text
+[LAYOUT:300:TWOUP:A=pane1:B=pane3:ASPECT=4X3:DUR=12]
+[LAYOUT:600:TWOUP:A=pane1:B=pane3:MAX:DUR=12]
+[LAYOUT:900:ONE:PANE=pane1:DUR=12]
+[LAYOUT:1200:FULL:PANE=pane1:DUR=12]
+[LAYOUT:1400:COMPOSITE:DUR=12]
+```
+
+The first number is the **MOSAIC source frame** where the cue takes effect.
+
+The states are:
+
+* **COMPOSITE** — show the MOSAIC as one composite client.
+* **TWOUP** — show two pane windows. Use `A=<pane>` and `B=<pane>` to name
+  them explicitly. Bare `TWOUP` means the first two panes in authored order.
+* **ONE** — show one pane in the ordinary structural window. Requires
+  `PANE=<pane>`.
+* **FULL** — show one pane full frame. Requires `PANE=<pane>`.
+
+TWOUP options:
+
+* `ASPECT=16X9` — default when ASPECT is omitted.
+* `ASPECT=4X3`
+* `ASPECT=9X16`
+* `MAX` — use the horizontal-edge maximized two-window geometry.
+
+Transition duration:
+
+* `DUR=<frames>` is optional.
+* Default is **12 frames**.
+* `DUR=0` and `DUR=1` change immediately at the cue frame.
+* DUR controls only actors that are created or redirected by that cue. A
+  surviving actor whose destination did not change continues its existing
+  transition instead of being restarted.
+
+Important timing rules:
+
+* A LAYOUT cue does **not** lengthen the MOSAIC.
+* Hidden panes continue on the same MOSAIC source clock. Hiding a pane does not
+  pause its content.
+* A cue at frame 0 establishes the initial canonical layout immediately. It does
+  not animate out of an implicit COMPOSITE; the outer STRUCT entry owns the
+  opening motion.
+* An older cue-less `[STRUCT:MOSAIC.name:SPLIT...]` placement can act as a
+  legacy initial two-window seed before the first LAYOUT cue. A frame-zero
+  LAYOUT cue overrides that seed outright.
+* If both legacy SPLIT metadata and LAYOUT cues are authored, node mode labels
+  the SPLIT state as a **LEGACY TWO-WINDOW SEED** rather than pretending it
+  describes the whole placement.
+
+Window naming remains placement-owned. `PANENAMES`, `NAME1`, and `NAME2`
+name the two active TWOUP window slots (left/A and right/B). ONE and FULL use
+the base STRUCT title without a slot suffix.
+
 ### Trim pane endings together
 
 Choose **Trim to shortest** in the MOSAIC layout bar to end all populated panes
@@ -629,6 +692,10 @@ The structural video vocabulary is:
 [/EDIT]
 
 [MOSAIC:name]
+  [LAYOUT:0:COMPOSITE]
+  [LAYOUT:120:TWOUP:A=pane1:B=pane2:ASPECT=16X9:DUR=12]
+  [LAYOUT:240:ONE:PANE=pane1:DUR=12]
+  [LAYOUT:360:FULL:PANE=pane1:DUR=12]
   [PANE:pane1]
     [CLIP:id:EDIT.some_edit:at:in:duration:speed]
     [/CLIP]
@@ -639,7 +706,11 @@ The structural video vocabulary is:
 [STRUCT:MOSAIC.name]
 ```
 
-The GUI is the preferred way to author detailed EDIT and MOSAIC geometry. The markup exists so the project is inspectable, diffable, reconstructable, and not trapped inside widget state.
+The GUI is the preferred way to author detailed EDIT and MOSAIC geometry. LAYOUT
+directives live directly inside the MOSAIC body, use MOSAIC source frames, and
+accept COMPOSITE, TWOUP, ONE, or FULL as described in section 6. The markup
+exists so the project is inspectable, diffable, reconstructable, and not
+trapped inside widget state.
 
 For the terminal language and all traditional R3nder tags, use the complete reference:
 
