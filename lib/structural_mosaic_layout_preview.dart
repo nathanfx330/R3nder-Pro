@@ -197,9 +197,22 @@ class _StructuralMosaicLayoutPreviewState
     if (residentFrame == widget.sourceFrame) return image;
 
     // Parked/scrub Preview keeps the actor's current-run resident image until
-    // the exact requested frame finishes decoding. Hidden actors are evicted
-    // separately, so this cannot resurrect a pre-exit image on recall.
-    if (!widget.moving) return image;
+    // the exact requested frame finishes decoding. A direct scrub may skip all
+    // intermediate widget ticks, so also ask the immutable layout program
+    // whether this actor ever left and re-entered between the resident frame
+    // and the requested frame.
+    if (!widget.moving) {
+      final MosaicResolvedLayoutProgram? resolved = _resolved;
+      if (resolved == null ||
+          !resolved.actorStayedIncludedAcross(
+            actorId,
+            frameA: residentFrame,
+            frameB: widget.sourceFrame,
+          )) {
+        return null;
+      }
+      return image;
+    }
 
     // Moving playback is stricter: hold only a very recent frame so a far seek
     // or decode stall cannot leave visibly stale content under advancing layout
