@@ -539,6 +539,11 @@ class ProgramStructuralFrameRenderer {
           frame: layoutFrame,
           placement: displayPlacement,
         );
+        final Map<MosaicLayoutActorId, String> paneLabels =
+            structuralMosaicLayoutPaneLabels(
+          frame: layoutFrame,
+          placement: displayPlacement,
+        );
         for (final MosaicLayoutActorFrame actor in layoutFrame.paintActors) {
           final Size decodeSize =
               _layoutActorDecodeSize(actor, structuralChromeScale);
@@ -578,6 +583,7 @@ class ProgramStructuralFrameRenderer {
             topOverlay: displayPlacement.topOverlay,
             bottomOverlay: displayPlacement.bottomOverlay,
             defaultBottomOverlay: rendered.diagnosticLabel,
+            paneLabel: paneLabels[actor.actorId] ?? '',
           );
         }
         layoutVisuals = visuals;

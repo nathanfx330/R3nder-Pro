@@ -365,7 +365,26 @@ class StructuralSequencePlacement {
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
 
-  /// Placement-owned title for one of the two desktop window slots.
+  /// Placement-owned pane name for one presentation slot.
+  ///
+  /// NAME1/NAME2 remain the only authored custom slots. Higher slots use the
+  /// same canonical PANE N fallback, which lets OVERVIEW +3 reuse the existing
+  /// naming authority without introducing a second metadata system.
+  String paneNameForSlot(int slotIndex) {
+    if (slotIndex < 0) {
+      throw RangeError.value(slotIndex, 'slotIndex');
+    }
+    if (!showPaneNames) return '';
+
+    final String authored = switch (slotIndex) {
+      0 => pane1Name,
+      1 => pane2Name,
+      _ => '',
+    };
+    return authored.trim().isEmpty ? 'PANE ${slotIndex + 1}' : authored;
+  }
+
+  /// Placement-owned title for one of the two chrome window slots.
   ///
   /// NAME1/NAME2 predate frame-dependent MOSAIC LAYOUT cues, but their useful
   /// semantic is the presentation slot, not a permanent pane identity. A cue
@@ -376,11 +395,7 @@ class StructuralSequencePlacement {
       throw RangeError.range(slotIndex, 0, 1, 'slotIndex');
     }
     if (!showPaneNames) return effectiveWindowTitle;
-
-    final String authored = slotIndex == 0 ? pane1Name : pane2Name;
-    final String suffix =
-        authored.trim().isEmpty ? 'PANE ${slotIndex + 1}' : authored;
-    return '$effectiveWindowTitle · $suffix';
+    return '$effectiveWindowTitle · ${paneNameForSlot(slotIndex)}';
   }
 
   /// Legacy static-SPLIT adapter. Cue-bearing MOSAIC layouts use

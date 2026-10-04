@@ -670,6 +670,11 @@ class _StructuralMosaicLayoutPreviewState
       frame: frame,
       placement: widget.placement,
     );
+    final Map<MosaicLayoutActorId, String> paneLabels =
+        structuralMosaicLayoutPaneLabels(
+      frame: frame,
+      placement: widget.placement,
+    );
     for (final MosaicLayoutActorFrame actor in frame.paintActors) {
       final MosaicLayoutActorId actorId = actor.actorId;
       // Residency is deliberately independent from authored time, but the hold
@@ -689,6 +694,7 @@ class _StructuralMosaicLayoutPreviewState
         topOverlay: widget.placement.topOverlay,
         bottomOverlay: widget.placement.bottomOverlay,
         defaultBottomOverlay: _diagnosticLabels[actorId] ?? '',
+        paneLabel: paneLabels[actorId] ?? '',
       );
     }
     return out;

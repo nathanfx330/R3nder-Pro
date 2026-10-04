@@ -26,6 +26,7 @@ class StructuralWindowActorVisual {
   final String topOverlay;
   final String bottomOverlay;
   final String defaultBottomOverlay;
+  final String paneLabel;
 
   const StructuralWindowActorVisual({
     required this.sourceImage,
@@ -36,6 +37,7 @@ class StructuralWindowActorVisual {
     required this.topOverlay,
     required this.bottomOverlay,
     required this.defaultBottomOverlay,
+    this.paneLabel = '',
   });
 
   @override
@@ -48,7 +50,8 @@ class StructuralWindowActorVisual {
         other.overlayMode == overlayMode &&
         other.topOverlay == topOverlay &&
         other.bottomOverlay == bottomOverlay &&
-        other.defaultBottomOverlay == defaultBottomOverlay;
+        other.defaultBottomOverlay == defaultBottomOverlay &&
+        other.paneLabel == paneLabel;
   }
 
   @override
@@ -61,6 +64,7 @@ class StructuralWindowActorVisual {
         topOverlay,
         bottomOverlay,
         defaultBottomOverlay,
+        paneLabel,
       );
 }
 
@@ -98,6 +102,50 @@ void paintStructuralWindowActor({
   );
 }
 
+void paintStructuralPaneLabel({
+  required Canvas canvas,
+  required R3Theme theme,
+  required String fontFamily,
+  required double chromeScale,
+  required Rect rect,
+  required double opacity,
+  required String text,
+}) {
+  if (text.isEmpty ||
+      rect.width <= 0.0 ||
+      rect.height <= 0.0 ||
+      opacity <= 0.001) {
+    return;
+  }
+
+  final double s = chromeScale > 0.0 ? chromeScale : 1.0;
+  final TextPainter label = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: theme.value.copyWith(
+        fontFamily: fontFamily,
+        color: R3Theme.textMid.withValues(
+          alpha: opacity.clamp(0.0, 1.0),
+        ),
+        fontSize: 12.0 * s,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+    maxLines: 1,
+    ellipsis: '…',
+    textAlign: TextAlign.center,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: rect.width);
+
+  label.paint(
+    canvas,
+    Offset(
+      rect.left + (rect.width - label.width) / 2.0,
+      rect.top + (rect.height - label.height) / 2.0,
+    ),
+  );
+}
+
 class MosaicLayoutWindowPainter extends CustomPainter {
   final MosaicLayoutFrame layoutFrame;
   final Map<MosaicLayoutActorId, StructuralWindowActorVisual> visuals;
@@ -128,6 +176,15 @@ class MosaicLayoutWindowPainter extends CustomPainter {
         opacity: actor.opacity,
         windowChrome: actor.chrome,
         visual: visual,
+      );
+      paintStructuralPaneLabel(
+        canvas: canvas,
+        theme: theme,
+        fontFamily: fontFamily,
+        chromeScale: chromeScale,
+        rect: actor.labelRect,
+        opacity: actor.labelOpacity,
+        text: visual.paneLabel,
       );
     }
   }

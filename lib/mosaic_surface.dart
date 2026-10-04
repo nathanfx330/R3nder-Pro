@@ -1194,6 +1194,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     return switch (state.kind) {
       MosaicLayoutStateKind.composite => 'C',
       MosaicLayoutStateKind.twoUp => '2',
+      MosaicLayoutStateKind.overview => 'O',
       MosaicLayoutStateKind.one => '1',
       MosaicLayoutStateKind.full => 'F',
     };

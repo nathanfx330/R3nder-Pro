@@ -52,6 +52,21 @@ MosaicLayoutFrame structuralMosaicLayoutOuterFrame({
   final double opacity = shellOpacity.clamp(0.0, 1.0).toDouble();
   final double linear = stageProgress.clamp(0.0, 1.0).toDouble();
 
+  Rect transformedRect(MosaicLayoutActorFrame actor) {
+    return switch (stage) {
+      StructuralSequenceStage.opening => structuralShapeEntryFrameAt(
+          targetRect: actor.rect,
+          linearProgress: linear,
+          contentReady: true,
+        ).rect,
+      StructuralSequenceStage.closing => structuralShapeExitRectAt(
+          targetRect: actor.rect,
+          linearProgress: linear,
+        ),
+      _ => actor.rect,
+    };
+  }
+
   return MosaicLayoutFrame(
     sourceFrame: frame.sourceFrame,
     actors: <MosaicLayoutActorFrame>[
@@ -59,27 +74,43 @@ MosaicLayoutFrame structuralMosaicLayoutOuterFrame({
         if (actor.presence == MosaicLayoutPresence.absent)
           actor
         else
-          MosaicLayoutActorFrame(
-            actorId: actor.actorId,
-            presence: actor.presence,
-            rect: switch (stage) {
-              StructuralSequenceStage.opening => structuralShapeEntryFrameAt(
-                  targetRect: actor.rect,
-                  linearProgress: linear,
-                  contentReady: true,
-                ).rect,
-              StructuralSequenceStage.closing => structuralShapeExitRectAt(
-                  targetRect: actor.rect,
-                  linearProgress: linear,
-                ),
-              _ => actor.rect,
-            },
-            opacity: actor.opacity * opacity,
-            chrome: actor.chrome,
-            z: actor.z,
-            activeSegment: actor.activeSegment,
-          ),
+          (() {
+            final Rect nextRect = transformedRect(actor);
+            return MosaicLayoutActorFrame(
+              actorId: actor.actorId,
+              presence: actor.presence,
+              rect: nextRect,
+              opacity: actor.opacity * opacity,
+              labelRect: _mapCompanionRect(
+                actor.labelRect,
+                from: actor.rect,
+                to: nextRect,
+              ),
+              labelOpacity: actor.labelOpacity * opacity,
+              chrome: actor.chrome,
+              z: actor.z,
+              activeSegment: actor.activeSegment,
+            );
+          })(),
     ],
+  );
+}
+
+Rect _mapCompanionRect(
+  Rect rect, {
+  required Rect from,
+  required Rect to,
+}) {
+  if (rect == Rect.zero || from.width == 0.0 || from.height == 0.0) {
+    return rect;
+  }
+  final double scaleX = to.width / from.width;
+  final double scaleY = to.height / from.height;
+  return Rect.fromLTRB(
+    to.left + (rect.left - from.left) * scaleX,
+    to.top + (rect.top - from.top) * scaleY,
+    to.left + (rect.right - from.left) * scaleX,
+    to.top + (rect.bottom - from.top) * scaleY,
   );
 }
 
@@ -101,7 +132,7 @@ Map<MosaicLayoutActorId, String> structuralMosaicLayoutWindowTitles({
             actor.actorId.kind == MosaicLayoutActorKind.pane,
       )
       .toList(growable: false);
-  if (paneActors.length < 2) return titles;
+  if (paneActors.length != 2) return titles;
 
   Rect slotRect(MosaicLayoutActorFrame actor) {
     final MosaicLayoutActiveSegment? segment = actor.activeSegment;
@@ -128,5 +159,68 @@ Map<MosaicLayoutActorId, String> structuralMosaicLayoutWindowTitles({
     titles[ordered[slot].actorId] = placement.windowTitleForSlot(slot);
   }
   return titles;
+}
+
+Map<MosaicLayoutActorId, String> structuralMosaicLayoutPaneLabels({
+  required MosaicLayoutFrame frame,
+  required StructuralSequencePlacement placement,
+}) {
+  if (!placement.showPaneNames) {
+    return const <MosaicLayoutActorId, String>{};
+  }
+
+  final List<MosaicLayoutActorFrame> panes = frame.actors
+      .where(
+        (MosaicLayoutActorFrame actor) =>
+            actor.actorId.kind == MosaicLayoutActorKind.pane,
+      )
+      .toList(growable: false);
+
+  List<MosaicLayoutActorFrame> orderedBy(
+    bool Function(MosaicLayoutActorFrame actor) include,
+    Rect Function(MosaicLayoutActorFrame actor) rectFor,
+  ) {
+    final List<MosaicLayoutActorFrame> out =
+        panes.where(include).toList(growable: false)
+          ..sort((MosaicLayoutActorFrame a, MosaicLayoutActorFrame b) {
+            final Rect ar = rectFor(a);
+            final Rect br = rectFor(b);
+            final int byX = ar.center.dx.compareTo(br.center.dx);
+            if (byX != 0) return byX;
+            return a.actorId.actorOrdinal.compareTo(b.actorId.actorOrdinal);
+          });
+    return out;
+  }
+
+  final List<MosaicLayoutActorFrame> targetLabels = orderedBy(
+    (MosaicLayoutActorFrame actor) {
+      final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+      return segment == null
+          ? actor.labelOpacity > 0.0
+          : segment.targetLabelOpacity > 0.0;
+    },
+    (MosaicLayoutActorFrame actor) =>
+        actor.activeSegment?.targetLabelRect ?? actor.labelRect,
+  );
+  final List<MosaicLayoutActorFrame> startLabels = orderedBy(
+    (MosaicLayoutActorFrame actor) =>
+        actor.activeSegment?.startLabelOpacity != null &&
+        actor.activeSegment!.startLabelOpacity > 0.0,
+    (MosaicLayoutActorFrame actor) =>
+        actor.activeSegment?.startLabelRect ?? actor.labelRect,
+  );
+
+  final Map<MosaicLayoutActorId, String> out =
+      <MosaicLayoutActorId, String>{};
+  for (int slot = 0; slot < targetLabels.length; slot++) {
+    out[targetLabels[slot].actorId] = placement.paneNameForSlot(slot);
+  }
+  for (int slot = 0; slot < startLabels.length; slot++) {
+    out.putIfAbsent(
+      startLabels[slot].actorId,
+      () => placement.paneNameForSlot(slot),
+    );
+  }
+  return Map<MosaicLayoutActorId, String>.unmodifiable(out);
 }
 
