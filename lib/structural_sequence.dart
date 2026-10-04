@@ -263,8 +263,9 @@ class StructuralSequencePlacement {
   /// One shared authored client aspect for both split windows.
   final MosaicSplitClientAspect splitClientAspect;
 
-  /// Optional authored suffixes for effective two-window SPLIT titles.
-  /// Custom values remain placement metadata while hidden or unsupported.
+  /// Optional authored suffixes for the two pane-window presentation slots.
+  /// Legacy SPLIT and frame-dependent LAYOUT TWO UP share this placement
+  /// metadata; custom values remain authored while the switch is hidden/off.
   final bool showPaneNames;
   final String pane1Name;
   final String pane2Name;
@@ -364,22 +365,29 @@ class StructuralSequencePlacement {
   String get effectiveWindowTitle =>
       windowTitle.trim().isEmpty ? sourceRef.canonicalSource : windowTitle;
 
-  /// Shared title authority for both live Preview and BAKE split windows.
+  /// Placement-owned title for one of the two desktop window slots.
   ///
-  /// The existing placement title is the complete title by default. PANENAMES
-  /// opts into a stable suffix. Custom names never follow the active clip, so a
-  /// pane timeline cut cannot rename its window. Metadata remains dormant when
-  /// the authored SPLIT cannot currently render as two windows.
-  String splitWindowTitleForPane(int paneIndex) {
-    if (paneIndex < 0 || paneIndex > 1) {
-      throw RangeError.range(paneIndex, 0, 1, 'paneIndex');
+  /// NAME1/NAME2 predate frame-dependent MOSAIC LAYOUT cues, but their useful
+  /// semantic is the presentation slot, not a permanent pane identity. A cue
+  /// may put different pane ids into left/A and right/B over time while this
+  /// placement keeps the same chrome naming.
+  String windowTitleForSlot(int slotIndex) {
+    if (slotIndex < 0 || slotIndex > 1) {
+      throw RangeError.range(slotIndex, 0, 1, 'slotIndex');
     }
-    if (!splitWindow || !showPaneNames) return effectiveWindowTitle;
+    if (!showPaneNames) return effectiveWindowTitle;
 
-    final String authored = paneIndex == 0 ? pane1Name : pane2Name;
+    final String authored = slotIndex == 0 ? pane1Name : pane2Name;
     final String suffix =
-        authored.trim().isEmpty ? 'PANE ${paneIndex + 1}' : authored;
+        authored.trim().isEmpty ? 'PANE ${slotIndex + 1}' : authored;
     return '$effectiveWindowTitle · $suffix';
+  }
+
+  /// Legacy static-SPLIT adapter. Cue-bearing MOSAIC layouts use
+  /// [windowTitleForSlot] directly when two pane windows are visible.
+  String splitWindowTitleForPane(int paneIndex) {
+    if (!splitWindow) return effectiveWindowTitle;
+    return windowTitleForSlot(paneIndex);
   }
   int get effectiveDurationFrames => durationFrames > 0 ? durationFrames : 1;
 

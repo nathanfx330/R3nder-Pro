@@ -82,6 +82,9 @@ import 'edit_model.dart';
 import 'edit_video_preview.dart';
 import 'maximize_shell_state.dart';
 import 'media_layer.dart';
+import 'structural_mosaic_layout_preview.dart';
+import 'mosaic_layout_program.dart';
+import 'mosaic_layout_cue.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
@@ -166,6 +169,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
   bool _firstFrameReady = false;
   EditDocumentModel? _cardModel;
   String? _cardModelSource;
+  MosaicLayoutProgram? _mosaicLayoutProgram;
+  String? _mosaicLayoutProgramDocument;
+  String? _mosaicLayoutProgramSource;
 
   String? _handoffOutgoingSource;
   String? _handoffOutgoingRawDocument;
@@ -198,6 +204,46 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
       }
       return _cardModel;
     } catch (_) {
+      return null;
+    }
+  }
+
+  MosaicLayoutProgram? _layoutProgramForSource(String source) {
+    if (_mosaicLayoutProgramDocument == widget.rawDocument &&
+        _mosaicLayoutProgramSource == source) {
+      return _mosaicLayoutProgram;
+    }
+
+    _mosaicLayoutProgram = null;
+    _mosaicLayoutProgramDocument = widget.rawDocument;
+    _mosaicLayoutProgramSource = source;
+
+    try {
+      final EditDocumentModel? model = _modelForDocument();
+      final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+      if (model == null ||
+          root == null ||
+          root.kind != StructuralSourceKind.mosaic ||
+          root.id.isEmpty ||
+          !model.containsStructuralSource(root)) {
+        return null;
+      }
+
+      final MosaicSequence mosaic = model.mosaic(root.id);
+      final List<MosaicLayoutCue> cues = parseMosaicLayoutCues(
+        source: widget.rawDocument,
+        mosaic: mosaic,
+      );
+      if (cues.isEmpty) return null;
+
+      _mosaicLayoutProgram = MosaicLayoutProgram.fromMosaic(
+        source: widget.rawDocument,
+        mosaic: mosaic,
+      );
+      return _mosaicLayoutProgram;
+    } catch (_) {
+      // Invalid hand-authored layout source remains editable; Preview falls
+      // back to the existing placement path until the source is repaired.
       return null;
     }
   }
@@ -331,6 +377,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     if (oldWidget.rawDocument != widget.rawDocument) {
       _cardModel = null;
       _cardModelSource = null;
+      _mosaicLayoutProgram = null;
+      _mosaicLayoutProgramDocument = null;
+      _mosaicLayoutProgramSource = null;
     }
 
     final String oldSource = oldWidget.placement.sourceRef.canonicalSource;
@@ -416,6 +465,9 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     final StructuralSequenceStage stage = placement.stageAt(widget.localFrame);
     final double linear = placement.stageProgressAt(widget.localFrame);
     final int sourceFrame = placement.sourceFrameAt(widget.localFrame);
+    final MosaicLayoutProgram? mosaicLayoutProgram =
+        _layoutProgramForSource(source);
+    final bool usesMosaicLayout = mosaicLayoutProgram != null;
     final bool parentOwnsReadiness = widget.onFirstFrameReady != null;
 
     final bool externalOutgoing =
@@ -446,7 +498,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
               _StructuralWindow.titleHeight * chromeScale;
 
           final Rect fullTerminal = renderFrame;
-          final Rect terminalParkRect = _structuralTargetRect(
+          final Rect terminalParkRect = structuralWindowTargetRect(
             renderFrame,
             titleHeight: titleHeight,
           );
@@ -525,7 +577,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
             seamlessFromPrevious: placement.seamlessFromPrevious,
             chainedFromPrevious: placement.chainedFromPrevious,
             chainedToNext: placement.chainedToNext,
-            contentReady: _firstFrameReady,
+            contentReady: usesMosaicLayout ? true : _firstFrameReady,
           );
 
           Rect terminalRect = baseShell.terminalRect;
@@ -709,7 +761,36 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                   ),
               ],
 
-              if (structuralWindowPresent && placement.splitWindow)
+              if (structuralWindowPresent && usesMosaicLayout)
+                Positioned.fromRect(
+                  key: const ValueKey<String>(
+                    'structural-mosaic-layout-positioned',
+                  ),
+                  rect: renderFrame,
+                  child: StructuralMosaicLayoutPreview(
+                    key: ValueKey<String>(
+                      'sequence-mosaic-layout-preview:$source',
+                    ),
+                    rawDocument: widget.rawDocument,
+                    placement: placement,
+                    program: mosaicLayoutProgram,
+                    sourceFrame: sourceFrame,
+                    stage: stage,
+                    stageProgress: linear,
+                    shellOpacity: baseShell.structuralOpacity,
+                    theme: widget.theme,
+                    fontFamily:
+                        liveFont != null && liveFont.isNotEmpty
+                            ? liveFont
+                            : 'monospace',
+                    chromeScale: chromeScale,
+                    moving: widget.isPlaying,
+                    backend: widget.backend,
+                    resolveSource: widget.resolveSource,
+                    onFirstFrameReady: _handleFirstFrameReady,
+                  ),
+                )
+              else if (structuralWindowPresent && placement.splitWindow)
                 Positioned.fromRect(
                   key: const ValueKey<String>(
                     'structural-split-window-positioned',
@@ -886,29 +967,6 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
     );
   }
 
-  static Rect _structuralTargetRect(
-    Rect frame, {
-    double titleHeight = _StructuralWindow.titleHeight,
-  }) {
-    final double maxW = frame.width * 0.86;
-    final double maxH = frame.height * 0.78;
-
-    double clientW = maxW;
-    double clientH = clientW * 9.0 / 16.0;
-    if (clientH + titleHeight > maxH) {
-      clientH = math.max(1.0, maxH - titleHeight);
-      clientW = clientH * 16.0 / 9.0;
-    }
-
-    final double windowW = clientW;
-    final double windowH = clientH + titleHeight;
-    return Rect.fromLTWH(
-      frame.left + (frame.width - windowW) / 2.0,
-      frame.top + (frame.height - windowH) / 2.0,
-      windowW,
-      windowH,
-    );
-  }
 }
 
 class _DesktopPlate extends StatelessWidget {

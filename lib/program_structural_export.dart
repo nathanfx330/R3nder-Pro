@@ -30,12 +30,15 @@ import 'edit_model.dart';
 import 'maximize_shell_state.dart';
 import 'media_layer.dart';
 import 'mosaic_split_geometry.dart';
+import 'structural_mosaic_layout.dart';
+import 'mosaic_layout_program.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
 import 'structural_split_window_painter.dart';
 import 'structural_shell_geometry.dart';
+import 'structural_window_actor_painter.dart';
 import 'structural_source_export.dart';
 import 'structural_window_painter.dart';
 import 'ui_theme.dart';
@@ -126,6 +129,10 @@ class ProgramStructuralFrameRenderer {
   final DossierOverlayImageCache _dossierImages;
   final Map<String, StructuralSourceFrameRenderer> _sourceRenderers =
       <String, StructuralSourceFrameRenderer>{};
+  final Map<String, MosaicLayoutProgram?> _layoutPrograms =
+      <String, MosaicLayoutProgram?>{};
+  final Map<String, MosaicResolvedLayoutProgram> _resolvedLayoutPrograms =
+      <String, MosaicResolvedLayoutProgram>{};
 
   String? _cachedSource;
   int? _cachedSourceFrame;
@@ -243,6 +250,66 @@ class ProgramStructuralFrameRenderer {
 
   int _dossierPageCount(request) =>
       structuralDossierCenterPageCount(request, resolveSource);
+
+  MosaicLayoutProgram? _layoutProgramFor(
+    StructuralSequencePlacement placement,
+  ) {
+    final String source = placement.sourceRef.canonicalSource;
+    if (_layoutPrograms.containsKey(source)) return _layoutPrograms[source];
+
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null || root.kind != StructuralSourceKind.mosaic) {
+      _layoutPrograms[source] = null;
+      return null;
+    }
+
+    final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
+      source: rawDocument,
+      mosaic: _editModel.mosaic(root.id),
+    );
+    final MosaicLayoutProgram? result = program.cues.isEmpty ? null : program;
+    _layoutPrograms[source] = result;
+    return result;
+  }
+
+  MosaicResolvedLayoutProgram _resolvedLayoutFor({
+    required StructuralSequencePlacement placement,
+    required MosaicLayoutProgram program,
+    required double chromeScale,
+  }) {
+    final MosaicLayoutEvaluationContext context =
+        structuralMosaicLayoutContext(
+      programRect: Rect.fromLTWH(
+        0,
+        0,
+        width.toDouble(),
+        height.toDouble(),
+      ),
+      placement: placement,
+      program: program,
+      chromeScale: chromeScale,
+    );
+    final String key =
+        '${placement.sourceRef.canonicalSource}|${context.toJson()}';
+    return _resolvedLayoutPrograms.putIfAbsent(
+      key,
+      () => program.resolve(context),
+    );
+  }
+
+  Size _layoutActorDecodeSize(
+    MosaicLayoutActorFrame actor,
+    double chromeScale,
+  ) {
+    final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+    final Rect anchor = segment?.anchorRect ?? actor.rect;
+    final double targetChrome = segment?.targetChrome ?? actor.chrome;
+    final double barHeight = 38.0 * chromeScale * targetChrome;
+    return Size(
+      math.max(1.0, anchor.width.roundToDouble()),
+      math.max(1.0, (anchor.height - barHeight).roundToDouble()),
+    );
+  }
 
   StructuralDossierOverlayPlacement? _dossierAtSourceFrame(
     StructuralSequencePlacement placement,
@@ -413,6 +480,12 @@ class ProgramStructuralFrameRenderer {
     final _StructuralBakeHandoff? handoff =
         _handoffFor(marker, placement, visual.sourceFrame);
     final int displaySourceFrame = visual.sourceFrame;
+    final double structuralEngineWidth =
+        scene.width > 0.0 ? scene.width : width.toDouble();
+    final double structuralChromeScale =
+        scene.terminal.scale * width.toDouble() / structuralEngineWidth;
+    final MosaicLayoutProgram? layoutProgram =
+        _layoutProgramFor(displayPlacement);
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
@@ -439,15 +512,77 @@ class ProgramStructuralFrameRenderer {
     ui.Image? outgoingSourceImage;
     MosaicSplitWindowGeometry? splitGeometry;
     List<_RenderedStructuralSourceImage>? splitPaneImages;
+    MosaicLayoutFrame? displayLayoutFrame;
+    Map<MosaicLayoutActorId, StructuralWindowActorVisual>? layoutVisuals;
     String defaultBottomOverlay = '';
     String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      if (displayPlacement.splitWindow) {
-        final double engineWidth =
-            scene.width > 0.0 ? scene.width : width.toDouble();
-        final double chromeScale =
-            scene.terminal.scale * width.toDouble() / engineWidth;
-        final double titleHeight = 38.0 * chromeScale;
+      if (layoutProgram != null) {
+        final MosaicResolvedLayoutProgram resolved = _resolvedLayoutFor(
+          placement: displayPlacement,
+          program: layoutProgram,
+          chromeScale: structuralChromeScale,
+        );
+        final MosaicLayoutFrame layoutFrame =
+            resolved.evaluate(displaySourceFrame);
+        displayLayoutFrame = structuralMosaicLayoutOuterFrame(
+          frame: layoutFrame,
+          stage: stage,
+          stageProgress: placement.stageProgressAt(localFrame),
+          shellOpacity: visual.structuralOpacity,
+        );
+
+        final Map<MosaicLayoutActorId, StructuralWindowActorVisual> visuals =
+            <MosaicLayoutActorId, StructuralWindowActorVisual>{};
+        final Map<MosaicLayoutActorId, String> titles =
+            structuralMosaicLayoutWindowTitles(
+          frame: layoutFrame,
+          placement: displayPlacement,
+        );
+        for (final MosaicLayoutActorFrame actor in layoutFrame.paintActors) {
+          final Size decodeSize =
+              _layoutActorDecodeSize(actor, structuralChromeScale);
+          final int imageWidth = math.max(1, decodeSize.width.round());
+          final int imageHeight = math.max(1, decodeSize.height.round());
+
+          final _RenderedStructuralSourceImage rendered;
+          if (actor.actorId.kind == MosaicLayoutActorKind.composite) {
+            rendered = await _renderSourceFrameImageAtSize(
+              displayPlacement.sourceRef.canonicalSource,
+              displaySourceFrame,
+              imageWidth,
+              imageHeight,
+              fontFamily,
+            );
+          } else {
+            final int paneIndex =
+                layoutProgram.paneIds.indexOf(actor.actorId.paneId!);
+            if (paneIndex < 0) continue;
+            rendered = await _renderSplitPaneFrameImage(
+              displayPlacement.sourceRef.canonicalSource,
+              paneIndex,
+              displaySourceFrame,
+              imageWidth,
+              imageHeight,
+              fontFamily,
+            );
+          }
+
+          visuals[actor.actorId] = StructuralWindowActorVisual(
+            sourceImage: rendered.image,
+            sourceFrame: displaySourceFrame,
+            sourceDurationFrames: displayPlacement.sourceDurationFrames,
+            windowTitle: titles[actor.actorId] ??
+                displayPlacement.effectiveWindowTitle,
+            overlayMode: displayPlacement.overlayMode,
+            topOverlay: displayPlacement.topOverlay,
+            bottomOverlay: displayPlacement.bottomOverlay,
+            defaultBottomOverlay: rendered.diagnosticLabel,
+          );
+        }
+        layoutVisuals = visuals;
+      } else if (displayPlacement.splitWindow) {
+        final double titleHeight = 38.0 * structuralChromeScale;
         splitGeometry = mosaicSplitWindowGeometry(
           frame: Rect.fromLTWH(
             0,
@@ -595,10 +730,6 @@ class ProgramStructuralFrameRenderer {
       structuralChrome = maximizeGeometry.windowChrome;
     }
 
-    final double structuralEngineWidth =
-        scene.width > 0.0 ? scene.width : width.toDouble();
-    final double structuralChromeScale =
-        scene.terminal.scale * width.toDouble() / structuralEngineWidth;
     final R3Theme structuralTheme = R3Theme.of(scene.terminal.fontColor);
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -689,7 +820,21 @@ class ProgramStructuralFrameRenderer {
       final bool splitBlackClose =
           displayPlacement.splitWindow &&
           stage == StructuralSequenceStage.closing;
-      if (displayPlacement.splitWindow &&
+      final MosaicLayoutFrame? actorFrame = displayLayoutFrame;
+      final Map<MosaicLayoutActorId, StructuralWindowActorVisual>?
+          actorVisuals = layoutVisuals;
+      if (actorFrame != null && actorVisuals != null) {
+        MosaicLayoutWindowPainter(
+          layoutFrame: actorFrame,
+          visuals: actorVisuals,
+          theme: structuralTheme,
+          fontFamily: fontFamily,
+          chromeScale: structuralChromeScale,
+        ).paint(
+          canvas,
+          Size(width.toDouble(), height.toDouble()),
+        );
+      } else if (displayPlacement.splitWindow &&
           geometry != null &&
           (panes != null || splitBlackClose)) {
         final double splitProgress = stage == StructuralSequenceStage.opening
@@ -818,6 +963,13 @@ class ProgramStructuralFrameRenderer {
           pane.image.dispose();
         }
       }
+      final Map<MosaicLayoutActorId, StructuralWindowActorVisual>? visuals =
+          layoutVisuals;
+      if (visuals != null) {
+        for (final StructuralWindowActorVisual visual in visuals.values) {
+          visual.sourceImage?.dispose();
+        }
+      }
     }
   }
 
@@ -930,6 +1082,67 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
+  Future<_RenderedStructuralSourceImage> _renderSourceFrameImageAtSize(
+    String source,
+    int sourceFrame,
+    int imageWidth,
+    int imageHeight,
+    String fontFamily,
+  ) async {
+    final String rendererKey =
+        '$source|layout-composite|${imageWidth}x$imageHeight';
+    final StructuralSourceFrameRenderer renderer =
+        _sourceRenderers.putIfAbsent(
+      rendererKey,
+      () => StructuralSourceFrameRenderer.create(
+        source: rawDocument,
+        structuralSource: source,
+        width: imageWidth,
+        height: imageHeight,
+        backend: backend,
+        resolveSource: resolveSource,
+      ),
+    );
+
+    final StructuralSourceRenderedFrame rendered =
+        renderer.renderFrameDetailed(sourceFrame);
+    final ui.Image decoded = await _decodeRgba(
+      rendered.rgba,
+      imageWidth,
+      imageHeight,
+    );
+
+    ui.Image finalImage = decoded;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (root != null &&
+        root.id.isNotEmpty &&
+        _editModel.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacements(_editModel, root, sourceFrame)
+              .where(
+                (StructuralCardOverlayPlacement placement) =>
+                    !placement.isSideCard,
+              )
+              .toList(growable: false);
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: decoded,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        finalImage = composited;
+        decoded.dispose();
+      }
+    }
+
+    return _RenderedStructuralSourceImage(
+      image: finalImage,
+      diagnosticLabel: rendered.diagnosticLabel(source),
+    );
+  }
+
   Future<_RenderedStructuralSourceImage> _renderSourceFrameImage(
     String source,
     int sourceFrame,
@@ -1019,6 +1232,8 @@ class ProgramStructuralFrameRenderer {
       renderer.dispose();
     }
     _sourceRenderers.clear();
+    _layoutPrograms.clear();
+    _resolvedLayoutPrograms.clear();
   }
 }
 

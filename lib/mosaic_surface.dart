@@ -10,18 +10,18 @@
 
 import 'dart:math' as math;
 
-import 'package:flutter/gestures.dart'
-    show
-        PointerCancelEvent,
-        PointerDownEvent,
-        PointerMoveEvent,
-        PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
 import 'edit_source_history.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
+import 'mosaic_layout_cue.dart';
+import 'mosaic_layout_program.dart';
+import 'mosaic_split_geometry.dart';
+import 'structural_chrome.dart';
+import 'structural_sequence.dart';
+import 'structural_mosaic_layout_preview.dart';
 import 'mosaic_surface_model.dart';
 import 'mosaic_trim.dart';
 import 'mosaic_trim_impact.dart';
@@ -471,6 +471,676 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     });
   }
 
+  void _setLayoutCueAtPlayhead(
+    MosaicLayoutState state,
+    int frame,
+  ) {
+    _commit((MosaicSurfaceDocument current) {
+      MosaicLayoutCue? existing;
+      for (final MosaicLayoutCue cue in current.layoutCues) {
+        if (cue.frame == frame) {
+          existing = cue;
+          break;
+        }
+      }
+      if (existing != null) {
+        return current.updateLayoutCue(
+          frame,
+          state: state,
+        );
+      }
+      return current.addLayoutCue(
+        frame: frame,
+        state: state,
+      );
+    });
+  }
+
+  Future<void> _configureTwoUp(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame,
+  ) async {
+    if (mosaic.panes.length < 2) return;
+
+    MosaicLayoutCue? existing;
+    for (final MosaicLayoutCue cue in document.layoutCues) {
+      if (cue.frame == frame &&
+          cue.state.kind == MosaicLayoutStateKind.twoUp) {
+        existing = cue;
+        break;
+      }
+    }
+
+    String paneA = existing?.state.paneA ?? mosaic.panes[0].id;
+    String paneB = existing?.state.paneB ?? mosaic.panes[1].id;
+    MosaicSplitClientAspect aspect =
+        existing?.state.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
+    bool maximized = existing?.state.maximizeSplit ?? false;
+
+    final MosaicLayoutState? state = await showDialog<MosaicLayoutState>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            BuildContext context,
+            StateSetter setDialogState,
+          ) {
+            final bool validPair = paneA != paneB;
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Two Up', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Set the two persistent pane windows at F$frame.',
+                      style: widget.theme.fine,
+                    ),
+                    SizedBox(height: sc(12)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>('mosaic-layout-twoup-a'),
+                      initialValue: paneA,
+                      decoration: const InputDecoration(labelText: 'Window A'),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => paneA = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>('mosaic-layout-twoup-b'),
+                      initialValue: paneB,
+                      decoration: const InputDecoration(labelText: 'Window B'),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => paneB = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<MosaicSplitClientAspect>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-twoup-aspect',
+                      ),
+                      initialValue: aspect,
+                      decoration: const InputDecoration(
+                        labelText: 'Client aspect',
+                      ),
+                      items: <DropdownMenuItem<MosaicSplitClientAspect>>[
+                        for (final MosaicSplitClientAspect value
+                            in MosaicSplitClientAspect.values)
+                          DropdownMenuItem<MosaicSplitClientAspect>(
+                            value: value,
+                            child: Text(_layoutAspectLabel(value)),
+                          ),
+                      ],
+                      onChanged: (MosaicSplitClientAspect? value) {
+                        if (value == null) return;
+                        setDialogState(() => aspect = value);
+                      },
+                    ),
+                    SizedBox(height: sc(4)),
+                    SwitchListTile(
+                      key: const ValueKey<String>('mosaic-layout-twoup-max'),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(
+                        'MAX horizontal split',
+                        style: widget.theme.fine,
+                      ),
+                      subtitle: Text(
+                        'Remove margins and gap; each client takes half width.',
+                        style: widget.theme.micro,
+                      ),
+                      value: maximized,
+                      onChanged: (bool value) {
+                        setDialogState(() => maximized = value);
+                      },
+                    ),
+                    if (!validPair)
+                      Text(
+                        'Window A and Window B must be different panes.',
+                        style: widget.theme.micro.copyWith(
+                          color: R3Theme.danger,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  key: const ValueKey<String>('mosaic-layout-twoup-apply'),
+                  onPressed: !validPair
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(
+                            MosaicLayoutState.twoUp(
+                              paneA: paneA,
+                              paneB: paneB,
+                              aspect: aspect,
+                              maximized: maximized,
+                            ),
+                          ),
+                  child: const Text('SET TWO UP'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || state == null) return;
+    _setLayoutCueAtPlayhead(state, frame);
+  }
+
+  String _layoutAspectLabel(MosaicSplitClientAspect aspect) {
+    return switch (aspect) {
+      MosaicSplitClientAspect.aspect16x9 => '16:9',
+      MosaicSplitClientAspect.aspect4x3 => '4:3',
+      MosaicSplitClientAspect.aspect9x16 => '9:16',
+    };
+  }
+
+  Future<void> _editLayoutCue(MosaicLayoutCue cue) async {
+    String frameDraft = '${cue.frame}';
+    String durationDraft = '${cue.durationFrames}';
+    final _LayoutCueEditAction? action =
+        await showDialog<_LayoutCueEditAction>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: R3Theme.panel,
+          title: Text('Edit layout cue', style: widget.theme.value),
+          content: SizedBox(
+            width: sc(420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  cue.state.formatTokens(),
+                  style: widget.theme.microAccent,
+                ),
+                SizedBox(height: sc(12)),
+                TextFormField(
+                  key: const ValueKey<String>('mosaic-layout-edit-frame'),
+                  initialValue: frameDraft,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Frame'),
+                  style: widget.theme.value,
+                  onChanged: (String value) => frameDraft = value,
+                ),
+                SizedBox(height: sc(10)),
+                TextFormField(
+                  key: const ValueKey<String>('mosaic-layout-edit-duration'),
+                  initialValue: durationDraft,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Transition frames',
+                  ),
+                  style: widget.theme.value,
+                  onChanged: (String value) => durationDraft = value,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey<String>('mosaic-layout-edit-delete'),
+              onPressed: () => Navigator.of(dialogContext).pop(
+                const _LayoutCueEditAction.delete(),
+              ),
+              child: Text(
+                'DELETE',
+                style: TextStyle(color: R3Theme.danger),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              key: const ValueKey<String>('mosaic-layout-edit-apply'),
+              onPressed: () {
+                final int? nextFrame = int.tryParse(frameDraft.trim());
+                final int? nextDuration =
+                    int.tryParse(durationDraft.trim());
+                if (nextFrame == null ||
+                    nextFrame < 0 ||
+                    nextDuration == null ||
+                    nextDuration < 0) {
+                  return;
+                }
+                Navigator.of(dialogContext).pop(
+                  _LayoutCueEditAction.apply(
+                    frame: nextFrame,
+                    durationFrames: nextDuration,
+                  ),
+                );
+              },
+              child: const Text('APPLY'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || action == null) return;
+    if (action.delete) {
+      _commit(
+        (MosaicSurfaceDocument current) =>
+            current.removeLayoutCue(cue.frame),
+      );
+      return;
+    }
+    _commit(
+      (MosaicSurfaceDocument current) => current.updateLayoutCue(
+        cue.frame,
+        frame: action.frame,
+        durationFrames: action.durationFrames,
+      ),
+    );
+  }
+
+  Widget _layoutActionChip({
+    required String label,
+    required String keyName,
+    required bool enabled,
+  }) {
+    return Container(
+      key: ValueKey<String>(keyName),
+      padding: EdgeInsets.symmetric(horizontal: sc(8), vertical: sc(5)),
+      decoration: BoxDecoration(
+        color: enabled ? R3Theme.panelHi : R3Theme.panel,
+        border: Border.all(
+          color: enabled ? widget.theme.accentDim : R3Theme.hairline,
+        ),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        label,
+        style: widget.theme.micro.copyWith(
+          color: enabled ? R3Theme.textBright : R3Theme.textDim,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLayoutLane(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame,
+  ) {
+    final List<MosaicLayoutCue> cues =
+        List<MosaicLayoutCue>.from(document.layoutCues)
+          ..sort(
+            (MosaicLayoutCue a, MosaicLayoutCue b) =>
+                a.frame.compareTo(b.frame),
+          );
+    final int lastCueFrame = cues.isEmpty ? -1 : cues.last.frame;
+    final int timelineFrames = math.max(
+      1,
+      math.max(
+        mosaic.projectFrameCount,
+        math.max(frame + 1, lastCueFrame + 1),
+      ),
+    );
+    final Map<int, int> cueFrameCounts = <int, int>{};
+    for (final MosaicLayoutCue cue in cues) {
+      cueFrameCounts[cue.frame] = (cueFrameCounts[cue.frame] ?? 0) + 1;
+    }
+    int cueIndex = 0;
+
+    return Container(
+      key: const ValueKey<String>('mosaic-layout-lane'),
+      height: sc(92),
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: R3Theme.bg,
+        border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: sc(34),
+            padding: EdgeInsets.symmetric(horizontal: sc(8)),
+            decoration: const BoxDecoration(
+              color: R3Theme.panel,
+              border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+            ),
+            child: Row(
+              children: [
+                R3MicroLabel(
+                  'LAYOUT CUES',
+                  theme: widget.theme,
+                  accent: true,
+                ),
+                SizedBox(width: sc(10)),
+                R3Button(
+                  'COMPOSITE',
+                  key: const ValueKey<String>('mosaic-layout-add-composite'),
+                  theme: widget.theme,
+                  compact: true,
+                  onPressed: widget.isPlaying
+                      ? null
+                      : () => _setLayoutCueAtPlayhead(
+                            const MosaicLayoutState.composite(),
+                            frame,
+                          ),
+                ),
+                SizedBox(width: sc(6)),
+                InkWell(
+                  key: const ValueKey<String>('mosaic-layout-add-twoup'),
+                  onTap: widget.isPlaying || mosaic.panes.length < 2
+                      ? null
+                      : () => _configureTwoUp(document, mosaic, frame),
+                  child: _layoutActionChip(
+                    label: 'TWO UP',
+                    keyName: 'mosaic-layout-add-twoup-chip',
+                    enabled: !widget.isPlaying && mosaic.panes.length >= 2,
+                  ),
+                ),
+                SizedBox(width: sc(6)),
+                PopupMenuButton<String>(
+                  key: const ValueKey<String>('mosaic-layout-add-one'),
+                  tooltip: 'Set ONE window at playhead',
+                  enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+                  color: R3Theme.panelHi,
+                  onSelected: (String paneId) {
+                    _setLayoutCueAtPlayhead(
+                      MosaicLayoutState.one(paneId),
+                      frame,
+                    );
+                  },
+                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    for (final MosaicPane pane in mosaic.panes)
+                      PopupMenuItem<String>(
+                        key: ValueKey<String>(
+                          'mosaic-layout-one:${pane.id}',
+                        ),
+                        value: pane.id,
+                        child: Text(pane.id),
+                      ),
+                  ],
+                  child: _layoutActionChip(
+                    label: 'ONE',
+                    keyName: 'mosaic-layout-add-one-chip',
+                    enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+                  ),
+                ),
+                SizedBox(width: sc(6)),
+                PopupMenuButton<String>(
+                  key: const ValueKey<String>('mosaic-layout-add-full'),
+                  tooltip: 'Set pane FULL at playhead',
+                  enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+                  color: R3Theme.panelHi,
+                  onSelected: (String paneId) {
+                    _setLayoutCueAtPlayhead(
+                      MosaicLayoutState.full(paneId),
+                      frame,
+                    );
+                  },
+                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    for (final MosaicPane pane in mosaic.panes)
+                      PopupMenuItem<String>(
+                        key: ValueKey<String>(
+                          'mosaic-layout-full:${pane.id}',
+                        ),
+                        value: pane.id,
+                        child: Text(pane.id),
+                      ),
+                  ],
+                  child: _layoutActionChip(
+                    label: 'FULL',
+                    keyName: 'mosaic-layout-add-full-chip',
+                    enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  cues.isEmpty
+                      ? 'IMPLICIT COMPOSITE'
+                      : '${cues.length} CUE${cues.length == 1 ? '' : 'S'}',
+                  style: widget.theme.micro,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (
+                BuildContext context,
+                BoxConstraints constraints,
+              ) {
+                final double viewportWidth = constraints.maxWidth.isFinite
+                    ? constraints.maxWidth
+                    : sc(500);
+                final double timelineWidth = math.max(
+                  viewportWidth,
+                  timelineFrames * _pixelsPerFrame + sc(36),
+                );
+                return ClipRect(
+                  child: SingleChildScrollView(
+                    key: const ValueKey<String>(
+                      'mosaic-layout-lane-scroll',
+                    ),
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: timelineWidth,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: GestureDetector(
+                              key: const ValueKey<String>(
+                                'mosaic-layout-ruler',
+                              ),
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: widget.isPlaying
+                                  ? null
+                                  : (TapDownDetails details) {
+                                      final int seek =
+                                          (details.localPosition.dx /
+                                                  _pixelsPerFrame)
+                                              .floor()
+                                              .clamp(
+                                                0,
+                                                math.max(
+                                                  0,
+                                                  timelineFrames - 1,
+                                                ),
+                                              );
+                                      widget.onSeek(seek);
+                                    },
+                              child: CustomPaint(
+                                painter: _MosaicRulerPainter(
+                                  pixelsPerFrame: _pixelsPerFrame,
+                                  frames: timelineFrames,
+                                  theme: widget.theme,
+                                ),
+                              ),
+                            ),
+                          ),
+                          for (final MosaicLayoutCue cue in cues)
+                            _buildLayoutCueMarker(
+                              cue: cue,
+                              markerIndex: cueIndex++,
+                              duplicateFrame:
+                                  (cueFrameCounts[cue.frame] ?? 0) > 1,
+                            ),
+                          Positioned(
+                            left: frame * _pixelsPerFrame,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                            child: IgnorePointer(
+                              child: Container(color: widget.theme.accent),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLayoutCueMarker({
+    required MosaicLayoutCue cue,
+    required int markerIndex,
+    required bool duplicateFrame,
+  }) {
+    final String keyName = duplicateFrame
+        ? 'mosaic-layout-cue:${cue.frame}:$markerIndex'
+        : 'mosaic-layout-cue:${cue.frame}';
+    return Positioned(
+      left: math.max(
+        0.0,
+        cue.frame * _pixelsPerFrame - sc(7),
+      ),
+      top: sc(23),
+      child: Tooltip(
+        message:
+            '${cue.state.formatTokens()} · F${cue.frame} · ${cue.durationFrames}F',
+        child: InkWell(
+          key: ValueKey<String>(keyName),
+          onTap: widget.isPlaying ? null : () => _editLayoutCue(cue),
+          child: Container(
+            width: sc(15),
+            height: sc(28),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: duplicateFrame
+                  ? R3Theme.danger.withValues(alpha: 0.16)
+                  : widget.theme.accentFaint,
+              border: Border.all(
+                color: duplicateFrame ? R3Theme.danger : widget.theme.accent,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Text(
+              _layoutCueGlyph(cue.state),
+              style: widget.theme.microAccent.copyWith(
+                color: duplicateFrame
+                    ? R3Theme.danger
+                    : widget.theme.accent,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _layoutCueGlyph(MosaicLayoutState state) {
+    return switch (state.kind) {
+      MosaicLayoutStateKind.composite => 'C',
+      MosaicLayoutStateKind.twoUp => '2',
+      MosaicLayoutStateKind.one => '1',
+      MosaicLayoutStateKind.full => 'F',
+    };
+  }
+
+  Widget _buildMosaicViewer(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame,
+  ) {
+    if (document.layoutCues.isEmpty || !document.layoutValidation.isValid) {
+      return EditVideoPreview(
+        source: _workingSource,
+        structuralSource: 'MOSAIC.${mosaic.id}',
+        currentFrame: frame,
+        isPlaying: widget.isPlaying,
+        fastPreview: widget.isPlaying,
+        theme: widget.theme,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      );
+    }
+
+    final MosaicLayoutProgram program;
+    try {
+      program = MosaicLayoutProgram.fromMosaic(
+        source: _workingSource,
+        mosaic: mosaic,
+      );
+    } catch (_) {
+      return EditVideoPreview(
+        source: _workingSource,
+        structuralSource: 'MOSAIC.${mosaic.id}',
+        currentFrame: frame,
+        isPlaying: widget.isPlaying,
+        fastPreview: widget.isPlaying,
+        theme: widget.theme,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      );
+    }
+
+    final StructuralSourceRef sourceRef =
+        StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!;
+    final int duration = math.max(1, mosaic.projectFrameCount);
+    final StructuralSequencePlacement placement =
+        StructuralSequencePlacement(
+      sourceRef: sourceRef,
+      lineIndex: -1,
+      startOffset: 0,
+      endOffset: 0,
+      sourceDurationFrames: duration,
+      durationFrames: duration,
+      overlayMode: StructuralOverlayMode.none,
+    );
+
+    return ColoredBox(
+      color: R3Theme.bg,
+      child: StructuralMosaicLayoutPreview(
+        key: ValueKey<String>('mosaic-layout-viewer:${mosaic.id}'),
+        rawDocument: _workingSource,
+        placement: placement,
+        program: program,
+        sourceFrame: frame,
+        stage: StructuralSequenceStage.showing,
+        stageProgress: 1.0,
+        shellOpacity: 1.0,
+        theme: widget.theme,
+        fontFamily: 'monospace',
+        chromeScale: 1.0,
+        moving: widget.isPlaying,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final MosaicSurfaceDocument? document = _parse();
@@ -494,18 +1164,10 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
           children: [
             SizedBox(
               height: previewHeight,
-              child: EditVideoPreview(
-                source: _workingSource,
-                structuralSource: 'MOSAIC.${mosaic.id}',
-                currentFrame: frame,
-                isPlaying: widget.isPlaying,
-                fastPreview: widget.isPlaying,
-                theme: widget.theme,
-                backend: widget.backend,
-                resolveSource: widget.resolveSource,
-              ),
+              child: _buildMosaicViewer(document, mosaic, frame),
             ),
             _buildLayoutBar(mosaic),
+            _buildLayoutLane(document, mosaic, frame),
             if (_error != null)
               Container(
                 width: double.infinity,
@@ -1099,6 +1761,22 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       ),
     );
   }
+}
+
+class _LayoutCueEditAction {
+  final bool delete;
+  final int? frame;
+  final int? durationFrames;
+
+  const _LayoutCueEditAction.delete()
+      : delete = true,
+        frame = null,
+        durationFrames = null;
+
+  const _LayoutCueEditAction.apply({
+    required this.frame,
+    required this.durationFrames,
+  }) : delete = false;
 }
 
 class _MosaicTimelineClip extends StatefulWidget {
