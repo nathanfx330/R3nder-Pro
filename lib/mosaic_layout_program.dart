@@ -6,7 +6,8 @@
 // [MosaicLayoutEvaluationContext] supplies placement-specific geometry and any
 // legacy SPLIT seed. Resolution walks authored cue boundaries once, preserving
 // independent per-actor segments; random frame evaluation is then a binary
-// search plus interpolation. No decoder/readiness/audio fact enters this layer.
+// search plus interpolation. Audio presentation intent is resolved here; no
+// decoder/readiness fact enters this layer.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -144,6 +145,9 @@ class MosaicLayoutActiveSegment {
   final double startOpacity;
   final double targetOpacity;
 
+  final double startAudioGain;
+  final double targetAudioGain;
+
   final double startChrome;
   final double targetChrome;
 
@@ -166,6 +170,8 @@ class MosaicLayoutActiveSegment {
     required this.anchorRect,
     required this.startOpacity,
     required this.targetOpacity,
+    required this.startAudioGain,
+    required this.targetAudioGain,
     required this.startChrome,
     required this.targetChrome,
     required this.startZ,
@@ -176,6 +182,8 @@ class MosaicLayoutActiveSegment {
     required this.targetDominant,
     required this.opacityCurve,
   }) : assert(durationFrames > 1),
+       assert(startAudioGain >= 0.0 && startAudioGain <= 1.0),
+       assert(targetAudioGain >= 0.0 && targetAudioGain <= 1.0),
        assert(
          !targetDominant ||
              targetPresence != MosaicLayoutPresence.absent,
@@ -231,6 +239,8 @@ class MosaicLayoutActiveSegment {
         other.anchorRect == anchorRect &&
         other.startOpacity == startOpacity &&
         other.targetOpacity == targetOpacity &&
+        other.startAudioGain == startAudioGain &&
+        other.targetAudioGain == targetAudioGain &&
         other.startChrome == startChrome &&
         other.targetChrome == targetChrome &&
         other.startZ == startZ &&
@@ -251,6 +261,8 @@ class MosaicLayoutActiveSegment {
         anchorRect,
         startOpacity,
         targetOpacity,
+        startAudioGain,
+        targetAudioGain,
         startChrome,
         targetChrome,
         startZ,
@@ -270,6 +282,8 @@ class MosaicLayoutActiveSegment {
         'anchorRect': _rectJson(anchorRect),
         'startOpacity': startOpacity,
         'targetOpacity': targetOpacity,
+        'startAudioGain': startAudioGain,
+        'targetAudioGain': targetAudioGain,
         'startChrome': startChrome,
         'targetChrome': targetChrome,
         'startZ': startZ.toJson(),
@@ -802,19 +816,36 @@ class MosaicResolvedLayoutProgram {
     String paneId, {
     required int sourceFrame,
   }) {
-    final MosaicLayoutFrame frame = evaluate(sourceFrame);
-    final MosaicLayoutActorFrame composite = frame.composite;
-    final MosaicLayoutActorFrame pane = frame.pane(paneId);
+    if (sourceFrame < 0) {
+      throw ArgumentError.value(
+        sourceFrame,
+        'sourceFrame',
+        'MOSAIC layout source frame must be non-negative.',
+      );
+    }
+
+    final MosaicLayoutActorId compositeId = actorIds.first;
+    final MosaicLayoutActorId paneActorId = actorIds.singleWhere(
+      (MosaicLayoutActorId actorId) =>
+          actorId.kind == MosaicLayoutActorKind.pane &&
+          actorId.paneId == paneId,
+      orElse: () => throw StateError('Unknown MOSAIC PANE "$paneId".'),
+    );
+    final _ResolvedBoundary boundary = _boundaryFor(sourceFrame);
+    final _ResolvedActorState composite =
+        boundary.states[compositeId]!.evaluateAt(sourceFrame);
+    final _ResolvedActorState pane =
+        boundary.states[paneActorId]!.evaluateAt(sourceFrame);
 
     // COMPOSITE represents the whole MOSAIC, including every pane. Direct pane
     // actors represent that pane when the desktop is decomposed. During
     // COMPOSITE <-> pane transitions both representations overlap; summing and
-    // clamping preserves unity for a pane that remains represented while still
-    // allowing panes that enter/exit to follow the exact visual opacity segment.
+    // clamping preserves unity while audio intent remains independent from
+    // visual opacity.
     final double gain =
-        (composite.opacity + pane.opacity).clamp(0.0, 1.0).toDouble();
+        (composite.audioGain + pane.audioGain).clamp(0.0, 1.0).toDouble();
 
-    bool transitioning(MosaicLayoutActorFrame actor) {
+    bool transitioning(_ResolvedActorState actor) {
       final MosaicLayoutActiveSegment? segment = actor.activeSegment;
       return segment != null && segment.endFrame > sourceFrame;
     }
@@ -1015,6 +1046,7 @@ class _TerminalCondition {
   final bool included;
   final Rect? anchorRect;
   final double restingChrome;
+  final double restingAudioGain;
   final MosaicLayoutZ restingZ;
   final bool dominant;
 
@@ -1022,9 +1054,11 @@ class _TerminalCondition {
     required this.included,
     required this.anchorRect,
     required this.restingChrome,
+    required this.restingAudioGain,
     required this.restingZ,
     required this.dominant,
-  }) : assert(!dominant || included, 'dominant requires inclusion');
+  }) : assert(!dominant || included, 'dominant requires inclusion'),
+       assert(restingAudioGain >= 0.0 && restingAudioGain <= 1.0);
 
   @override
   bool operator ==(Object other) {
@@ -1032,18 +1066,26 @@ class _TerminalCondition {
         other.included == included &&
         other.anchorRect == anchorRect &&
         other.restingChrome == restingChrome &&
+        other.restingAudioGain == restingAudioGain &&
         other.restingZ == restingZ &&
         other.dominant == dominant;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(included, anchorRect, restingChrome, restingZ, dominant);
+  int get hashCode => Object.hash(
+        included,
+        anchorRect,
+        restingChrome,
+        restingAudioGain,
+        restingZ,
+        dominant,
+      );
 
   Map<String, Object?> toJson() => <String, Object?>{
         'included': included,
         'anchorRect': anchorRect == null ? null : _rectJson(anchorRect!),
         'restingChrome': restingChrome,
+        'restingAudioGain': restingAudioGain,
         'restingZ': restingZ.toJson(),
         'dominant': dominant,
       };
@@ -1055,6 +1097,7 @@ class _ResolvedActorState {
   final MosaicLayoutPresence presence;
   final Rect rect;
   final double opacity;
+  final double audioGain;
   final double chrome;
   final MosaicLayoutZ z;
   final MosaicLayoutActiveSegment? activeSegment;
@@ -1065,6 +1108,7 @@ class _ResolvedActorState {
     required this.presence,
     required this.rect,
     required this.opacity,
+    required this.audioGain,
     required this.chrome,
     required this.z,
     required this.activeSegment,
@@ -1081,6 +1125,7 @@ class _ResolvedActorState {
         presence: MosaicLayoutPresence.absent,
         rect: Rect.zero,
         opacity: 0.0,
+        audioGain: terminal.restingAudioGain,
         chrome: 0.0,
         z: terminal.restingZ,
         activeSegment: null,
@@ -1093,6 +1138,7 @@ class _ResolvedActorState {
       presence: MosaicLayoutPresence.present,
       rect: terminal.anchorRect!,
       opacity: 1.0,
+      audioGain: terminal.restingAudioGain,
       chrome: terminal.restingChrome,
       z: terminal.restingZ,
       activeSegment: null,
@@ -1123,7 +1169,8 @@ class _ResolvedActorState {
       segment.targetRect,
       eased,
     )!;
-    double opacity;
+    final double opacityProgress;
+    final double opacity;
     if (segment.opacityCurve == MosaicLayoutOpacityCurve.shellEntry) {
       final StructuralShapeEntryFrame shell = structuralShapeEntryFrameAt(
         targetRect: segment.anchorRect,
@@ -1131,14 +1178,21 @@ class _ResolvedActorState {
         contentReady: true,
       );
       rect = shell.rect;
+      opacityProgress = shell.opacity;
       opacity = shell.opacity;
     } else {
+      opacityProgress = eased;
       opacity = _lerp(
         segment.startOpacity,
         segment.targetOpacity,
-        eased,
+        opacityProgress,
       );
     }
+    final double audioGain = _lerp(
+      segment.startAudioGain,
+      segment.targetAudioGain,
+      opacityProgress,
+    );
 
     return _ResolvedActorState(
       actorId: actorId,
@@ -1146,6 +1200,7 @@ class _ResolvedActorState {
       presence: segment.transitionalPresence,
       rect: rect,
       opacity: opacity,
+      audioGain: audioGain,
       chrome: _lerp(
         segment.startChrome,
         segment.targetChrome,
@@ -1168,6 +1223,7 @@ class _ResolvedActorState {
 
   Map<String, Object?> toJson() => <String, Object?>{
         'terminal': terminal.toJson(),
+        'audioGain': audioGain,
         'frame': toFrame().toJson(),
       };
 }
@@ -1240,6 +1296,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         included: true,
         anchorRect: context.compositeRect,
         restingChrome: context.compositeChrome,
+        restingAudioGain: 1.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1264,6 +1321,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         included: true,
         anchorRect: geometry.leftWindowRect,
         restingChrome: 1.0,
+        restingAudioGain: 1.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1275,6 +1333,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         included: true,
         anchorRect: geometry.rightWindowRect,
         restingChrome: 1.0,
+        restingAudioGain: 1.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 1,
@@ -1290,6 +1349,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         included: true,
         anchorRect: context.ordinaryWindowRect,
         restingChrome: 1.0,
+        restingAudioGain: 1.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1305,6 +1365,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         included: true,
         anchorRect: context.programRect,
         restingChrome: 0.0,
+        restingAudioGain: 1.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.fullTarget,
           roleRank: 0,
@@ -1323,6 +1384,7 @@ _TerminalCondition _absentTerminal(MosaicLayoutActorId actorId) {
     included: false,
     anchorRect: null,
     restingChrome: 0.0,
+    restingAudioGain: 0.0,
     restingZ: MosaicLayoutZ(
       band: MosaicLayoutZBand.exiting,
       roleRank: 0,
@@ -1404,6 +1466,8 @@ _ResolvedActorState _createActor({
     anchorRect: anchor,
     startOpacity: 0.0,
     targetOpacity: 1.0,
+    startAudioGain: 0.0,
+    targetAudioGain: desired.restingAudioGain,
     startChrome: desired.restingChrome,
     targetChrome: desired.restingChrome,
     startZ: MosaicLayoutZ(
@@ -1425,6 +1489,7 @@ _ResolvedActorState _createActor({
     presence: MosaicLayoutPresence.entering,
     rect: segment.startRect,
     opacity: 0.0,
+    audioGain: 0.0,
     chrome: desired.restingChrome,
     z: segment.startZ,
     activeSegment: segment,
@@ -1493,6 +1558,8 @@ _ResolvedActorState _redirectActor({
     anchorRect: anchor,
     startOpacity: old.opacity,
     targetOpacity: targetOpacity,
+    startAudioGain: old.audioGain,
+    targetAudioGain: desired.restingAudioGain,
     startChrome: old.chrome,
     targetChrome: targetChrome,
     startZ: old.z,
@@ -1510,6 +1577,7 @@ _ResolvedActorState _redirectActor({
     presence: segment.transitionalPresence,
     rect: old.rect,
     opacity: old.opacity,
+    audioGain: old.audioGain,
     chrome: old.chrome,
     z: old.z,
     activeSegment: segment,

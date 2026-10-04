@@ -544,6 +544,99 @@ $layoutLines
     });
   });
 
+  group('Audio intent refactor', () {
+    test('PR2 preserves every legacy opacity-derived pane audio envelope', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:COMPOSITE]
+  [LAYOUT:20:TWOUP:A=A:B=B:DUR=12]
+  [LAYOUT:45:ONE:PANE=A:DUR=20]
+  [LAYOUT:52:TWOUP:A=A:B=C:DUR=7]
+  [LAYOUT:80:FULL:PANE=C:DUR=12]
+  [LAYOUT:95:ONE:PANE=B:DUR=11]
+  [LAYOUT:120:COMPOSITE:DUR=12]''', durationFrames: 150).resolve(context());
+
+      for (int frameNumber = 0; frameNumber < 150; frameNumber++) {
+        final MosaicLayoutFrame visual = resolved.evaluate(frameNumber);
+        for (final String paneId in <String>['A', 'B', 'C']) {
+          final double legacyGain =
+              (visual.composite.opacity + visual.pane(paneId).opacity)
+                  .clamp(0.0, 1.0)
+                  .toDouble();
+          final MosaicPaneAudioFrame audio = resolved.paneAudioFrame(
+            paneId,
+            sourceFrame: frameNumber,
+          );
+
+          expect(
+            audio.gain,
+            legacyGain,
+            reason:
+                'PR2 changed the legacy audio envelope for $paneId '
+                'at F$frameNumber',
+          );
+        }
+      }
+    });
+
+    test('audio uses the segment-kind opacity progress curve', () {
+      final MosaicResolvedLayoutProgram create = programFor('''
+  [LAYOUT_START:ONE:PANE=A]
+  [LAYOUT:100:TWOUP:A=A:B=B:DUR=12]''').resolve(context());
+
+      final MosaicLayoutActiveSegment createSegment =
+          create.evaluate(100).pane('B').activeSegment!;
+      expect(createSegment.opacityCurve, MosaicLayoutOpacityCurve.shellEntry);
+      expect(createSegment.startAudioGain, 0.0);
+      expect(createSegment.targetAudioGain, 1.0);
+      for (int frameNumber = 100; frameNumber < 111; frameNumber++) {
+        final MosaicLayoutFrame visual = create.evaluate(frameNumber);
+        expect(
+          create.paneAudioFrame('B', sourceFrame: frameNumber).gain,
+          visual.pane('B').opacity,
+          reason:
+              'CREATE audio diverged from shell visibility at F$frameNumber',
+        );
+      }
+
+      final MosaicResolvedLayoutProgram exit = programFor('''
+  [LAYOUT_START:TWOUP:A=A:B=B]
+  [LAYOUT:100:ONE:PANE=A:DUR=12]''').resolve(context());
+
+      final MosaicLayoutActiveSegment exitSegment =
+          exit.evaluate(100).pane('B').activeSegment!;
+      expect(exitSegment.opacityCurve, MosaicLayoutOpacityCurve.easedLerp);
+      expect(exitSegment.startAudioGain, 1.0);
+      expect(exitSegment.targetAudioGain, 0.0);
+      for (int frameNumber = 100; frameNumber < 111; frameNumber++) {
+        final MosaicLayoutFrame visual = exit.evaluate(frameNumber);
+        expect(
+          exit.paneAudioFrame('B', sourceFrame: frameNumber).gain,
+          visual.pane('B').opacity,
+          reason: 'exit audio diverged from eased opacity at F$frameNumber',
+        );
+      }
+    });
+
+    test('geometry-only focal redirect keeps unity audio endpoints', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:ONE:PANE=A]
+  [LAYOUT:100:FULL:PANE=A:DUR=12]''').resolve(context());
+
+      final MosaicLayoutActiveSegment segment =
+          resolved.evaluate(100).pane('A').activeSegment!;
+      expect(segment.startAudioGain, 1.0);
+      expect(segment.targetAudioGain, 1.0);
+
+      for (int frameNumber = 100; frameNumber < 112; frameNumber++) {
+        expect(
+          resolved.paneAudioFrame('A', sourceFrame: frameNumber).gain,
+          1.0,
+          reason: 'geometry-only redirect changed audio at F$frameNumber',
+        );
+      }
+    });
+  });
+
   group('Family 6 - placement context and canonical settlement', () {
     test('different seeds converge only when ONE settles', () {
       final MosaicLayoutProgram program = programFor('''
