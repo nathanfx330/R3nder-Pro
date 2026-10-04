@@ -54,10 +54,12 @@ class _Decoder implements MediaDecoder {
 
 class _Harness extends StatefulWidget {
   final bool playing;
+  final String initialSource;
 
   const _Harness({
     super.key,
     this.playing = false,
+    this.initialSource = _source,
   });
 
   @override
@@ -65,9 +67,15 @@ class _Harness extends StatefulWidget {
 }
 
 class _HarnessState extends State<_Harness> {
-  String source = _source;
+  late String source;
   int frame = 40;
   final List<String> changes = <String>[];
+
+  @override
+  void initState() {
+    super.initState();
+    source = widget.initialSource;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,12 +107,19 @@ Finder _key(String value) => find.byKey(ValueKey<String>(value));
 Future<GlobalKey<_HarnessState>> _mount(
   WidgetTester tester, {
   bool playing = false,
+  String source = _source,
 }) async {
   await tester.binding.setSurfaceSize(const Size(1500, 1000));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   final GlobalKey<_HarnessState> key = GlobalKey<_HarnessState>();
-  await tester.pumpWidget(_Harness(key: key, playing: playing));
+  await tester.pumpWidget(
+    _Harness(
+      key: key,
+      playing: playing,
+      initialSource: source,
+    ),
+  );
   await tester.pump(const Duration(milliseconds: 200));
   return key;
 }
@@ -251,6 +266,32 @@ void main() {
     expect(host.currentState!.source, isNot(contains('[LAYOUT:')));
     expect(_key('mosaic-layout-cue:40'), findsNothing);
     expect(find.text('IMPLICIT COMPOSITE'), findsOneWidget);
+  });
+
+
+  testWidgets('dead cue remains visible for repair beyond composition end',
+      (WidgetTester tester) async {
+    final String source = _source.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n[LAYOUT:350:FULL:PANE=pane1]\n',
+    );
+    await _mount(tester, source: source);
+
+    expect(_key('mosaic-layout-cue:350'), findsOneWidget);
+  });
+
+  testWidgets('duplicate-frame source renders distinct repair markers',
+      (WidgetTester tester) async {
+    final String source = _source.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n'
+          '[LAYOUT:40:ONE:PANE=pane1]\n'
+          '[LAYOUT:40:FULL:PANE=pane2]\n',
+    );
+    await _mount(tester, source: source);
+
+    expect(_key('mosaic-layout-cue:40:0'), findsOneWidget);
+    expect(_key('mosaic-layout-cue:40:1'), findsOneWidget);
   });
 
   testWidgets('layout authoring controls are disabled during playback',
