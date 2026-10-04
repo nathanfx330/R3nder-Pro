@@ -644,7 +644,7 @@ class MosaicLayoutProgram {
         actorIds: actors,
         boundaries: frozenBoundaries,
       ),
-      inclusionChangeFramesByActor: _inclusionChangeFramesByActor(
+      paintabilityChangeFramesByActor: _paintabilityChangeFramesByActor(
         actorIds: actors,
         boundaries: frozenBoundaries,
       ),
@@ -658,7 +658,7 @@ class MosaicResolvedLayoutProgram {
   final List<MosaicLayoutActorId> actorIds;
   final List<_ResolvedBoundary> _boundaries;
   final Map<String, List<int>> _appearanceFramesByPane;
-  final Map<MosaicLayoutActorId, List<int>> _inclusionChangeFramesByActor;
+  final Map<MosaicLayoutActorId, List<int>> _paintabilityChangeFramesByActor;
   final List<MosaicLayoutIssue> issues;
 
   const MosaicResolvedLayoutProgram._({
@@ -666,11 +666,11 @@ class MosaicResolvedLayoutProgram {
     required this.actorIds,
     required List<_ResolvedBoundary> boundaries,
     required Map<String, List<int>> appearanceFramesByPane,
-    required Map<MosaicLayoutActorId, List<int>> inclusionChangeFramesByActor,
+    required Map<MosaicLayoutActorId, List<int>> paintabilityChangeFramesByActor,
     required this.issues,
   })  : _boundaries = boundaries,
         _appearanceFramesByPane = appearanceFramesByPane,
-        _inclusionChangeFramesByActor = inclusionChangeFramesByActor;
+        _paintabilityChangeFramesByActor = paintabilityChangeFramesByActor;
 
   MosaicLayoutFrame evaluate(int sourceFrame) {
     if (sourceFrame < 0) {
@@ -712,12 +712,12 @@ class MosaicResolvedLayoutProgram {
     return low < appearances.length ? appearances[low] : null;
   }
 
-  bool actorStayedIncludedAcross(
+  bool actorStayedPaintableAcross(
     MosaicLayoutActorId actorId, {
     required int frameA,
     required int frameB,
   }) {
-    final List<int>? changes = _inclusionChangeFramesByActor[actorId];
+    final List<int>? changes = _paintabilityChangeFramesByActor[actorId];
     if (changes == null) {
       throw StateError('Unknown MOSAIC actor "$actorId".');
     }
@@ -818,7 +818,7 @@ Map<String, List<int>> _appearanceFramesByPane({
   );
 }
 
-Map<MosaicLayoutActorId, List<int>> _inclusionChangeFramesByActor({
+Map<MosaicLayoutActorId, List<int>> _paintabilityChangeFramesByActor({
   required List<MosaicLayoutActorId> actorIds,
   required List<_ResolvedBoundary> boundaries,
 }) {
@@ -826,19 +826,46 @@ Map<MosaicLayoutActorId, List<int>> _inclusionChangeFramesByActor({
       <MosaicLayoutActorId, List<int>>{
     for (final MosaicLayoutActorId actorId in actorIds) actorId: <int>[],
   };
-  final Map<MosaicLayoutActorId, bool> included =
+  final Map<MosaicLayoutActorId, bool> paintable =
       <MosaicLayoutActorId, bool>{
     for (final MosaicLayoutActorId actorId in actorIds) actorId: false,
   };
 
-  for (final _ResolvedBoundary boundary in boundaries) {
+  for (int boundaryIndex = 0;
+      boundaryIndex < boundaries.length;
+      boundaryIndex++) {
+    final _ResolvedBoundary boundary = boundaries[boundaryIndex];
+    final int? nextBoundaryFrame = boundaryIndex + 1 < boundaries.length
+        ? boundaries[boundaryIndex + 1].frame
+        : null;
+
     for (final MosaicLayoutActorId actorId in actorIds) {
-      final bool nextIncluded =
-          boundary.states[actorId]!.terminal.included;
-      if ((included[actorId] ?? false) != nextIncluded) {
+      final _ResolvedActorState state = boundary.states[actorId]!;
+      final bool boundaryPaintable =
+          state.presence != MosaicLayoutPresence.absent;
+      if ((paintable[actorId] ?? false) != boundaryPaintable &&
+          boundary.frame >= 0) {
         out[actorId]!.add(boundary.frame);
       }
-      included[actorId] = nextIncluded;
+      paintable[actorId] = boundaryPaintable;
+
+      final MosaicLayoutActiveSegment? segment = state.activeSegment;
+      if (segment == null) continue;
+
+      // Settlement is a real paintability boundary only when the segment is
+      // allowed to finish before the next cue. If another cue lands at or
+      // before endFrame, reconciliation interrupts/redirects the actor without
+      // an authored absent frame in between.
+      if (nextBoundaryFrame != null &&
+          segment.endFrame >= nextBoundaryFrame) {
+        continue;
+      }
+
+      final bool settledPaintable = state.terminal.included;
+      if ((paintable[actorId] ?? false) != settledPaintable) {
+        out[actorId]!.add(segment.endFrame);
+        paintable[actorId] = settledPaintable;
+      }
     }
   }
 
