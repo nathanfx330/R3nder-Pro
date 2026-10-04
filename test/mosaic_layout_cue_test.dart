@@ -62,6 +62,101 @@ void main() {
     expect(cues.single.sourceSpan, isNotNull);
   });
 
+  test('parses LAYOUT_START separately from timeline cues', () {
+    const String source = '''[MOSAIC:wall]
+  [LAYOUT_START:TWOUP:A=left:B=third:MAX:ASPECT=4X3]
+  [LAYOUT:30:ONE:PANE=left]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+  [PANE:right]
+    [CLIP:r:video/right.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+  [PANE:third]
+    [CLIP:t:video/third.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final MosaicSequence mosaic = model.mosaic('wall');
+    final MosaicLayoutStart? start =
+        parseMosaicLayoutStart(source: source, mosaic: mosaic);
+    final List<MosaicLayoutCue> cues =
+        parseMosaicLayoutCues(source: source, mosaic: mosaic);
+
+    expect(start, isNotNull);
+    expect(start!.state.kind, MosaicLayoutStateKind.twoUp);
+    expect(start.state.paneA, 'left');
+    expect(start.state.paneB, 'third');
+    expect(start.state.maximizeSplit, isTrue);
+    expect(start.state.splitAspect, MosaicSplitClientAspect.aspect4x3);
+    expect(
+      start.formatTag(),
+      '[LAYOUT_START:TWOUP:A=left:B=third:MAX:ASPECT=4X3]',
+    );
+    expect(cues, hasLength(1));
+    expect(cues.single.frame, 30);
+  });
+
+  test('COME IN ON authoring migrates legacy F0 cue to LAYOUT_START', () {
+    final String legacy = baseSource.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n  [LAYOUT:0:ONE:PANE=left]\n',
+    );
+    final MosaicSurfaceDocument document =
+        MosaicSurfaceDocument.parse(legacy, 'wall');
+
+    final String next = document.setInitialLayout(
+      const MosaicLayoutState.one('right'),
+    );
+
+    expect(next, contains('[LAYOUT_START:ONE:PANE=right]'));
+    expect(next, isNot(contains('[LAYOUT:0:')));
+    final MosaicSurfaceDocument reparsed =
+        MosaicSurfaceDocument.parse(next, 'wall');
+    expect(reparsed.initialLayout!.state, const MosaicLayoutState.one('right'));
+    expect(reparsed.layoutCues, isEmpty);
+  });
+
+  test('initial layout follows pane rename and blocks orphaning', () {
+    final MosaicSurfaceDocument document =
+        MosaicSurfaceDocument.parse(baseSource, 'wall');
+    final String withStart = document.setInitialLayout(
+      const MosaicLayoutState.full('third'),
+    );
+
+    final MosaicSurfaceDocument started =
+        MosaicSurfaceDocument.parse(withStart, 'wall');
+    expect(() => started.setPaneCount(2), throwsStateError);
+
+    final String renamed = started.renamePane('third', 'witness');
+    expect(renamed, contains('[LAYOUT_START:FULL:PANE=witness]'));
+    expect(renamed, isNot(contains('[LAYOUT_START:FULL:PANE=third]')));
+  });
+
+  test('LAYOUT_START rejects transition duration', () {
+    const String source = '''[MOSAIC:wall]
+  [LAYOUT_START:ONE:PANE=left:DUR=12]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    expect(
+      () => parseMosaicLayoutStart(
+        source: source,
+        mosaic: model.mosaic('wall'),
+      ),
+      throwsA(isA<MosaicLayoutFormatException>()),
+    );
+  });
+
   test('unknown pane stays parseable but is a semantic error', () {
     const String source = '''[MOSAIC:wall]
   [LAYOUT:30:ONE:PANE=missing]
