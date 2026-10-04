@@ -1081,8 +1081,11 @@ a stale WAV.
 This review follow-up is newer than the recorded 74-test / Rocky acceptance.
 Its fresh focused gate passed **110 tests** on Rocky. Live Rocky listening then
 confirmed the resolver-driven transition audio behaves correctly in practice,
-including nested EDIT gain carrying through MOSAIC. This follow-up is fully
-accepted.
+including nested EDIT gain carrying through MOSAIC. A final reviewer hardening
+guard now resolves the same layout program under deliberately different output
+geometries and asserts identical pane-audio gain/interpolation for every pane
+and frame, pinning the assumption behind the synthetic geometry used by
+`resolveForStructuralAudio()`. This follow-up is fully accepted.
 
 ---
 
