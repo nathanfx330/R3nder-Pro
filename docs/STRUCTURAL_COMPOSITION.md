@@ -779,6 +779,9 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 - [ ] persistent pane actors survive layout changes without restarting source time;
 - [ ] hidden panes remain on the shared MOSAIC source clock;
 - [ ] Preview and BAKE derive the same `MosaicLayoutFrame` from source frame plus placement context;
+- [ ] live resident pixels may lag authored time only within one continuous actor paintability run;
+- [ ] an exiting actor keeps resident pixels until its visual exit settles;
+- [ ] a real absent interval breaks residency so recalled panes cannot reuse pre-hide pixels;
 - [ ] source duration is authored in source definitions;
 - [ ] STRUCT places a source into the main program without a duplicate duration field;
 - [ ] presentation mode and chrome belong to STRUCT;
