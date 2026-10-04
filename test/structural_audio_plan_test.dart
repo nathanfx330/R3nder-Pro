@@ -168,18 +168,16 @@ void main() {
       expect(secondary.nestedPlan!.sourceRef.canonicalSource, 'EDIT.main');
     });
 
-    test('MOSAIC layout program gates pane audibility at cue boundaries', () {
+    test('MOSAIC audio envelope follows resolver exit segment', () {
       const String source = '''[MOSAIC:wall]
 [LAYOUT_START:TWOUP:A=pane1:B=pane2]
-[LAYOUT:10:ONE:PANE=pane1]
-[LAYOUT:20:FULL:PANE=pane2]
-[LAYOUT:30:COMPOSITE]
+[LAYOUT:10:ONE:PANE=pane1:DUR=12]
 [PANE:pane1]
-[CLIP:a:video/a.mp4:0:0:40:1]
+[CLIP:a:video/a.mp4:0:0:30:1]
 [/CLIP]
 [/PANE]
 [PANE:pane2]
-[CLIP:b:video/b.mp4:0:0:40:1]
+[CLIP:b:video/b.mp4:0:0:30:1]
 [/CLIP]
 [/PANE]
 [/MOSAIC]
@@ -187,18 +185,62 @@ void main() {
 
       final StructuralAudioPlan plan =
           StructuralAudioPlanner.parse(source).plan('MOSAIC.wall');
+      final StructuralAudioLayoutGainEnvelope pane1 =
+          plan.lane('pane1').layoutGainEnvelope!;
+      final StructuralAudioLayoutGainEnvelope pane2 =
+          plan.lane('pane2').layoutGainEnvelope!;
+
+      expect(pane1.frameGains.every((double gain) => gain == 1.0), isTrue);
+      expect(pane2.frameGains[9], 1.0);
+      expect(pane2.frameGains[10], 1.0);
+      expect(pane2.interpolateToNextFrame[10], isTrue);
+      expect(pane2.frameGains[15], inExclusiveRange(0.0, 1.0));
+      expect(pane2.frameGains[21], 0.0);
+      expect(pane2.interpolateToNextFrame[21], isFalse);
+    });
+
+    test('MOSAIC planner accepts placement-specific legacy SPLIT context', () {
+      const String source = '''[MOSAIC:wall]
+[PANE:pane1]
+[CLIP:a:video/a.mp4:0:0:10:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:b:video/b.mp4:0:0:10:1]
+[/CLIP]
+[/PANE]
+[PANE:pane3]
+[CLIP:c:video/c.mp4:0:0:10:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+      final StructuralAudioPlanner planner =
+          StructuralAudioPlanner.parse(source);
+
+      final StructuralAudioPlan composite = planner.plan('MOSAIC.wall');
+      final StructuralAudioPlan split = planner.plan(
+        'MOSAIC.wall',
+        context: const StructuralAudioSourceContext(
+          legacySplitWindow: true,
+        ),
+      );
 
       expect(
-        plan.lane('pane1').audibleFrameSpans!
-            .map((StructuralAudioFrameSpan span) =>
-                (span.startFrame, span.endFrameExclusive)),
-        <(int, int)>[(0, 20), (30, 40)],
+        composite.lane('pane3').layoutGainEnvelope!.frameGains,
+        everyElement(1.0),
       );
       expect(
-        plan.lane('pane2').audibleFrameSpans!
-            .map((StructuralAudioFrameSpan span) =>
-                (span.startFrame, span.endFrameExclusive)),
-        <(int, int)>[(0, 10), (20, 40)],
+        split.lane('pane1').layoutGainEnvelope!.frameGains,
+        everyElement(1.0),
+      );
+      expect(
+        split.lane('pane2').layoutGainEnvelope!.frameGains,
+        everyElement(1.0),
+      );
+      expect(
+        split.lane('pane3').layoutGainEnvelope!.frameGains,
+        everyElement(0.0),
       );
     });
 
