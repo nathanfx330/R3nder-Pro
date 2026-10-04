@@ -78,6 +78,36 @@ StructuralMaximizeGeometryFrame structuralMaximizeGeometryFrameAt({
   );
 }
 
+/// Canonical ordinary structural desktop-window rectangle inside [frame].
+///
+/// This is the same 86% width / 78% height authority historically used by
+/// Preview. Keeping it here lets frame-dependent MOSAIC layout evaluation use
+/// the identical W geometry without reaching into widget-private code.
+Rect structuralWindowTargetRect(
+  Rect frame, {
+  required double titleHeight,
+}) {
+  if (frame.width <= 0.0 || frame.height <= 0.0) return Rect.zero;
+
+  final double maxW = frame.width * 0.86;
+  final double maxH = frame.height * 0.78;
+
+  double clientW = maxW;
+  double clientH = clientW * 9.0 / 16.0;
+  if (clientH + titleHeight > maxH) {
+    clientH = math.max(1.0, maxH - titleHeight);
+    clientW = clientH * 16.0 / 9.0;
+  }
+
+  final double windowH = clientH + titleHeight;
+  return Rect.fromLTWH(
+    frame.left + (frame.width - clientW) / 2.0,
+    frame.top + (frame.height - windowH) / 2.0,
+    clientW,
+    windowH,
+  );
+}
+
 /// Shared emergence rectangle used before/after the seated structural window.
 ///
 /// Works in any coordinate space. Preview passes fitted-program pixels; BAKE
