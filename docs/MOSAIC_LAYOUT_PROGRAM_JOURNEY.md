@@ -483,8 +483,30 @@ Same-frame authoring updates the existing cue rather than manufacturing an
 illegal duplicate. Markers are seekable/editable and dead cues remain visible
 for repair instead of disappearing.
 
-When no cues exist, the lane communicates the implicit COMPOSITE/static legacy
-state rather than pretending a hidden frame-zero cue exists.
+When no cues exist, the source still has an implicit COMPOSITE initial state
+rather than a hidden frame-zero cue.
+
+A later Rocky workflow pass exposed one remaining authoring mismatch: the
+runtime supported frame-zero TWO UP / ONE / FULL correctly, but the editor made
+the starting state look like just another playhead cue. In practice that made a
+fresh MOSAIC feel forced to enter as COMPOSITE unless the user deliberately
+returned to F0.
+
+The editor now presents two separate concepts:
+
+```text
+START AS
+    always writes/updates LAYOUT at F0
+    defines the canonical opening arrangement
+
+LAYOUT CUES
+    writes at the current playhead
+    shows/counts only transitions after F0
+```
+
+No grammar or evaluator change was needed. A frame-zero LAYOUT remains the file
+representation of the starting condition; the UI now exposes that semantic
+directly.
 
 This was the point where the data model became understandable as an editing
 feature rather than only an evaluator.
