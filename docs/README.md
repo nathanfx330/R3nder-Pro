@@ -242,6 +242,10 @@ The post M24 presentation journey: source relative CUE ownership, fullscreen CAR
 
 The clip local shell transition journey: source relative MAXIMIZE timing, why the cue is not a PresentationRequest, 12 + hold + 12 explicit timing, STRUCT geometry ownership, same decoder continuity, showing stage gating, SIDECARD/DOSSIER shell precedence, source end close continuity, shell IN/OUT landmarks, inspector authoring, the viewport-assumption test failure, the standalone EDIT return mismatch, fake-shell authoring, external-texture fallback, stable resolver identity in persistence tests, and final live verification in both TEXT/STRUCT and EDIT modes.
 
+## `MOSAIC_LAYOUT_PROGRAM_JOURNEY.md`
+
+The move from static STRUCT:SPLIT to reusable source-relative MOSAIC LAYOUT cues: persistent window actors, CONTINUE/REDIRECT/CREATE interruption semantics, shared Preview/BAKE evaluation, the live resident-frame black/flicker bug, the missing MOSAIC-viewer and BAKE consumers, node-mode ownership cleanup, window-slot naming, and the FULL ↔ TWO UP front-layer correction found during final GUI abuse testing.
+
 ## `EDIT_PLAYBACK_PERFORMANCE.md`
 
 Measured EDIT playback performance and separation of native decode timing from Flutter UI repaint cost.
