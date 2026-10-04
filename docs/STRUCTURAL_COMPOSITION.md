@@ -810,6 +810,7 @@ target.
 - [ ] animated pane-audio gain follows the same resolver actor segment as picture rather than hard-switching at the cue;
 - [ ] immediate DUR=0/1 layout audio edges use the pinned 5 ms declick ramp;
 - [ ] STRUCT placement legacy SPLIT context reaches structural audio through the same resolver seed as picture;
+- [ ] resolver-derived pane-audio gain is geometry-invariant; synthetic audio geometry is valid only while different real geometry contexts produce identical gain/interpolation state;
 - [ ] hidden pane audio is muted rather than paused, so recall remains on the shared source clock;
 - [ ] persistent pane actors survive layout changes without restarting source time;
 - [ ] hidden panes remain on the shared MOSAIC source clock;
