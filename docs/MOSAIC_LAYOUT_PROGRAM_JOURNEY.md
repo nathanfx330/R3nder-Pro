@@ -544,11 +544,15 @@ authored geometry/time
     follows the exact current source frame
 
 pixels
-    hold the last resident image until the requested frame arrives
+    may hold a recent resident image while the next nearby frame is pending
+    but a long-hidden pane is blank until current pixels arrive
 ```
 
 Readiness and pending decode may affect which pixels are resident. They may not
-change the semantic layout frame.
+change the semantic layout frame. The current live implementation bounds
+resident hold to two source frames and evicts hidden actor images that are
+neither visible nor being warmed. Lookahead may keep a hidden actor requested,
+but an ancient pre-exit image is still not paintable when that pane returns.
 
 BAKE is different: it is exact and blocking, so it renders the requested frame's
 pixels rather than using resident hold.
@@ -863,8 +867,8 @@ The feature's useful debugging history can be summarized as six failures.
 
 Cause: actor images were gated on resident frame equaling requested frame.
 
-Fix: layout follows authored source time; pixels hold the last resident image
-until the requested frame arrives.
+Fix: layout follows authored source time; pixels may briefly hold a recent
+resident image while the next frame is pending.
 
 ### Failure 2: the residency regression would not terminate cleanly
 
@@ -899,6 +903,23 @@ FULL-morphing pane.
 
 Fix: a pane participating in a FULL morph remains on the front layer for the
 whole morph, then ordinary z ordering resumes after settlement.
+
+### Failure 7: a long-hidden pane could recall an ancient but plausible image
+
+Cause: resident images were retained by actor id indefinitely. The 24-frame
+lookahead normally refreshed a returning pane, but if playback jumped into the
+warm window or decode stayed pending under load, a pane hidden hundreds of
+frames earlier could return showing its pre-exit image.
+
+Fix: resident hold is now bounded to recent live frames. A hidden actor that is
+neither visible nor requested is evicted, and a recalled pane may not paint a
+resident image more than two source frames behind the authored source frame.
+If current decode is still pending after a long absence, the client is empty
+until current or near-current pixels become resident.
+
+The regression deliberately hides a pane, jumps into its lookahead window with
+the recall decode held pending, then returns the pane and proves the old
+pre-exit image is not supplied to the actor painter.
 
 None of these failures required changing authored project time.
 
@@ -993,8 +1014,9 @@ Live pixels may lag authored time. The timeline and layout evaluator do not.
 
 ### Preview and BAKE should share meaning, not necessarily delivery policy
 
-Preview may hold resident pixels. BAKE renders exact pixels. Both consume the
-same `MosaicLayoutFrame`.
+Preview may briefly hold recent resident pixels. A long-hidden recalled pane
+waits for current/near-current pixels rather than reusing ancient content.
+BAKE renders exact pixels. Both consume the same `MosaicLayoutFrame`.
 
 ### A UI control is part of the architecture
 
