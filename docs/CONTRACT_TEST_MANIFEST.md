@@ -329,6 +329,7 @@ A MOSAIC may own one LAYOUT_START initial presentation state plus later LAYOUT c
 - `test/structural_audio_plan_test.dart`
 - `test/structural_audio_render_test.dart`
 - `test/structural_audio_cache_test.dart`
+- `test/program_structural_audio_test.dart`
 - `test/program_structural_split_bake_test.dart`
 - `test/editor_structural_split_node_test.dart`
 - `test/structural_window_actor_painter_test.dart`
