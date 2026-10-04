@@ -36,6 +36,19 @@ String _script({int sourceIn = 0}) => '''[EDIT:main]
 [/EDIT]
 ''';
 
+String _mosaicScript({required String layout}) => '''[MOSAIC:wall]
+$layout
+[PANE:p1]
+[CLIP:left:video/left.mp4:0:0:4:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:right:video/right.mp4:0:0:4:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
 void main() {
   test('dependency-free SHA-256 matches the standard abc vector', () {
     expect(
@@ -93,6 +106,55 @@ void main() {
     expect(File(first.path).existsSync(), isTrue);
     expect(decoder.calls, 1);
     expect(versionCalls, 1);
+  });
+
+  test('MOSAIC layout audibility changes invalidate SourceAudioKey', () async {
+    final Directory workspace =
+        await Directory.systemTemp.createTemp('r3nder_mosaic_audio_key_');
+    addTearDown(() async {
+      if (workspace.existsSync()) {
+        await workspace.delete(recursive: true);
+      }
+    });
+
+    final Directory video = Directory(
+      '${workspace.path}${Platform.pathSeparator}video',
+    )..createSync(recursive: true);
+    File('${video.path}${Platform.pathSeparator}left.mp4')
+        .writeAsBytesSync(<int>[1, 2, 3]);
+    File('${video.path}${Platform.pathSeparator}right.mp4')
+        .writeAsBytesSync(<int>[4, 5, 6]);
+
+    final _CountingNoAudioDecoder decoder = _CountingNoAudioDecoder();
+    final StructuralSourceAudioCache cache = StructuralSourceAudioCache(
+      workspaceRoot: workspace.path,
+      resolveSource: (String source) =>
+          '${workspace.path}${Platform.pathSeparator}'
+          '${source.replaceAll('/', Platform.pathSeparator)}',
+      leafDecoder: decoder,
+      ffmpegVersionResolver: () async => 'ffmpeg test build',
+    );
+
+    final StructuralSourceAudioArtifact twoUp = await cache.prepare(
+      rawDocument: _mosaicScript(
+        layout: '[LAYOUT_START:TWOUP:A=p1:B=p2]',
+      ),
+      structuralSource: 'MOSAIC.wall',
+    );
+    final StructuralSourceAudioArtifact one = await cache.prepare(
+      rawDocument: _mosaicScript(
+        layout: '[LAYOUT_START:ONE:PANE=p1]',
+      ),
+      structuralSource: 'MOSAIC.wall',
+    );
+
+    expect(one.cacheHit, isFalse);
+    expect(one.key.digest, isNot(twoUp.key.digest));
+    expect(one.key.manifest, contains('lane_audibility_count=0'));
+    expect(
+      twoUp.key.manifest,
+      contains('lane_audible_span=0..4'),
+    );
   });
 
   test('clip trim and leaf mtime each invalidate SourceAudioKey', () async {
