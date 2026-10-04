@@ -4,7 +4,8 @@
 //
 // W1 owns geometry. W2 owns placement/title/aspect semantics. This class owns
 // only the final two-window raster projection and delegates each individual
-// desktop window to structural_window_painter.dart.
+// desktop window through structural_window_actor_painter.dart into the shared
+// structural_window_painter.dart raster primitive.
 
 import 'dart:ui' as ui;
 
