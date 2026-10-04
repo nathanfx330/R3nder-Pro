@@ -172,4 +172,44 @@ void main() {
     expect(removed, isNot(contains('[LAYOUT:')));
     expect(EditDocumentModel.parse(removed).mosaic('wall').panes, hasLength(3));
   });
+  test('malformed direct LAYOUT is rejected instead of silently ignored', () {
+    const String source = '''[MOSAIC:wall]
+  [LAYOUT:30:ONE:PANE=left
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    expect(
+      () => parseMosaicLayoutCues(
+        source: source,
+        mosaic: model.mosaic('wall'),
+      ),
+      throwsA(isA<MosaicLayoutFormatException>()),
+    );
+  });
+
+  test('LAYOUT-looking text inside a PANE body is not MOSAIC metadata', () {
+    const String source = '''[MOSAIC:wall]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+[LAYOUT:30:ONE:PANE=missing]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    expect(
+      parseMosaicLayoutCues(
+        source: source,
+        mosaic: model.mosaic('wall'),
+      ),
+      isEmpty,
+    );
+  });
+
 }
