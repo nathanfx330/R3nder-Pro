@@ -23,6 +23,7 @@ import 'edit_source_history.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'mosaic_layout_cue.dart';
+import 'mosaic_split_geometry.dart';
 import 'mosaic_surface_model.dart';
 import 'mosaic_trim.dart';
 import 'mosaic_trim_impact.dart';
@@ -497,6 +498,172 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     });
   }
 
+  Future<void> _configureTwoUp(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame,
+  ) async {
+    if (mosaic.panes.length < 2) return;
+
+    MosaicLayoutCue? existing;
+    for (final MosaicLayoutCue cue in document.layoutCues) {
+      if (cue.frame == frame &&
+          cue.state.kind == MosaicLayoutStateKind.twoUp) {
+        existing = cue;
+        break;
+      }
+    }
+
+    String paneA = existing?.state.paneA ?? mosaic.panes[0].id;
+    String paneB = existing?.state.paneB ?? mosaic.panes[1].id;
+    MosaicSplitClientAspect aspect =
+        existing?.state.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
+    bool maximized = existing?.state.maximizeSplit ?? false;
+
+    final MosaicLayoutState? state = await showDialog<MosaicLayoutState>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            BuildContext context,
+            void Function(void Function()) setDialogState,
+          ) {
+            final bool validPair = paneA != paneB;
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Two Up', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Set the two persistent pane windows at F$frame.',
+                      style: widget.theme.fine,
+                    ),
+                    SizedBox(height: sc(12)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>('mosaic-layout-twoup-a'),
+                      initialValue: paneA,
+                      decoration: const InputDecoration(labelText: 'Window A'),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => paneA = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>('mosaic-layout-twoup-b'),
+                      initialValue: paneB,
+                      decoration: const InputDecoration(labelText: 'Window B'),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => paneB = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<MosaicSplitClientAspect>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-twoup-aspect',
+                      ),
+                      initialValue: aspect,
+                      decoration: const InputDecoration(
+                        labelText: 'Client aspect',
+                      ),
+                      items: <DropdownMenuItem<MosaicSplitClientAspect>>[
+                        for (final MosaicSplitClientAspect value
+                            in MosaicSplitClientAspect.values)
+                          DropdownMenuItem<MosaicSplitClientAspect>(
+                            value: value,
+                            child: Text(_layoutAspectLabel(value)),
+                          ),
+                      ],
+                      onChanged: (MosaicSplitClientAspect? value) {
+                        if (value == null) return;
+                        setDialogState(() => aspect = value);
+                      },
+                    ),
+                    SizedBox(height: sc(4)),
+                    SwitchListTile(
+                      key: const ValueKey<String>('mosaic-layout-twoup-max'),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(
+                        'MAX horizontal split',
+                        style: widget.theme.fine,
+                      ),
+                      subtitle: Text(
+                        'Remove margins and gap; each client takes half width.',
+                        style: widget.theme.micro,
+                      ),
+                      value: maximized,
+                      onChanged: (bool value) {
+                        setDialogState(() => maximized = value);
+                      },
+                    ),
+                    if (!validPair)
+                      Text(
+                        'Window A and Window B must be different panes.',
+                        style: widget.theme.micro.copyWith(
+                          color: R3Theme.danger,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  key: const ValueKey<String>('mosaic-layout-twoup-apply'),
+                  onPressed: !validPair
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(
+                            MosaicLayoutState.twoUp(
+                              paneA: paneA,
+                              paneB: paneB,
+                              aspect: aspect,
+                              maximized: maximized,
+                            ),
+                          ),
+                  child: const Text('SET TWO UP'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || state == null) return;
+    _setLayoutCueAtPlayhead(state, frame);
+  }
+
+  String _layoutAspectLabel(MosaicSplitClientAspect aspect) {
+    return switch (aspect) {
+      MosaicSplitClientAspect.aspect16x9 => '16:9',
+      MosaicSplitClientAspect.aspect4x3 => '4:3',
+      MosaicSplitClientAspect.aspect9x16 => '9:16',
+    };
+  }
+
   Future<void> _editLayoutCue(MosaicLayoutCue cue) async {
     String frameDraft = '${cue.frame}';
     String durationDraft = '${cue.durationFrames}';
@@ -678,42 +845,11 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                           ),
                 ),
                 SizedBox(width: sc(6)),
-                PopupMenuButton<_LayoutPanePair>(
+                InkWell(
                   key: const ValueKey<String>('mosaic-layout-add-twoup'),
-                  tooltip: 'Set TWO UP at playhead',
-                  enabled: !widget.isPlaying && mosaic.panes.length >= 2,
-                  color: R3Theme.panelHi,
-                  onSelected: (_LayoutPanePair pair) {
-                    _setLayoutCueAtPlayhead(
-                      MosaicLayoutState.twoUp(
-                        paneA: pair.a,
-                        paneB: pair.b,
-                      ),
-                      frame,
-                    );
-                  },
-                  itemBuilder: (_) {
-                    final List<PopupMenuEntry<_LayoutPanePair>> items =
-                        <PopupMenuEntry<_LayoutPanePair>>[];
-                    for (int a = 0; a < mosaic.panes.length; a++) {
-                      for (int b = a + 1; b < mosaic.panes.length; b++) {
-                        final _LayoutPanePair pair = _LayoutPanePair(
-                          mosaic.panes[a].id,
-                          mosaic.panes[b].id,
-                        );
-                        items.add(
-                          PopupMenuItem<_LayoutPanePair>(
-                            key: ValueKey<String>(
-                              'mosaic-layout-twoup:${pair.a}:${pair.b}',
-                            ),
-                            value: pair,
-                            child: Text('${pair.a}  +  ${pair.b}'),
-                          ),
-                        );
-                      }
-                    }
-                    return items;
-                  },
+                  onTap: widget.isPlaying || mosaic.panes.length < 2
+                      ? null
+                      : () => _configureTwoUp(document, mosaic, frame),
                   child: _layoutActionChip(
                     label: 'TWO UP',
                     keyName: 'mosaic-layout-add-twoup-chip',
@@ -1538,13 +1674,6 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       ),
     );
   }
-}
-
-class _LayoutPanePair {
-  final String a;
-  final String b;
-
-  const _LayoutPanePair(this.a, this.b);
 }
 
 class _LayoutCueEditAction {
