@@ -17,6 +17,7 @@ const int kDefaultMosaicLayoutTransitionFrames = 12;
 enum MosaicLayoutStateKind {
   composite,
   twoUp,
+  overview,
   one,
   full,
 }
@@ -25,6 +26,7 @@ extension MosaicLayoutStateKindToken on MosaicLayoutStateKind {
   String get token => switch (this) {
         MosaicLayoutStateKind.composite => 'COMPOSITE',
         MosaicLayoutStateKind.twoUp => 'TWOUP',
+        MosaicLayoutStateKind.overview => 'OVERVIEW',
         MosaicLayoutStateKind.one => 'ONE',
         MosaicLayoutStateKind.full => 'FULL',
       };
@@ -35,6 +37,8 @@ class MosaicLayoutState {
   final String? paneA;
   final String? paneB;
   final String? paneId;
+  final String? overviewMain;
+  final List<String> overviewOthers;
   final MosaicSplitClientAspect splitAspect;
   final bool maximizeSplit;
 
@@ -43,6 +47,8 @@ class MosaicLayoutState {
     this.paneA,
     this.paneB,
     this.paneId,
+    this.overviewMain,
+    this.overviewOthers = const <String>[],
     this.splitAspect = MosaicSplitClientAspect.aspect16x9,
     this.maximizeSplit = false,
   });
@@ -62,6 +68,40 @@ class MosaicLayoutState {
           splitAspect: aspect,
           maximizeSplit: maximized,
         );
+
+  factory MosaicLayoutState.overview({
+    required String mainPane,
+    required List<String> others,
+    MosaicSplitClientAspect aspect = MosaicSplitClientAspect.aspect16x9,
+  }) {
+    if (mainPane.isEmpty) {
+      throw ArgumentError.value(
+        mainPane,
+        'mainPane',
+        'OVERVIEW MAIN is required.',
+      );
+    }
+    if (others.length < 2 || others.length > 3) {
+      throw ArgumentError.value(
+        others,
+        'others',
+        'OVERVIEW requires two or three OTHERS panes.',
+      );
+    }
+    final Set<String> unique = <String>{mainPane, ...others};
+    if (unique.length != others.length + 1 ||
+        others.any((String id) => id.isEmpty)) {
+      throw ArgumentError(
+        'OVERVIEW MAIN and OTHERS must be distinct non-empty pane ids.',
+      );
+    }
+    return MosaicLayoutState._(
+      kind: MosaicLayoutStateKind.overview,
+      overviewMain: mainPane,
+      overviewOthers: List<String>.unmodifiable(others),
+      splitAspect: aspect,
+    );
+  }
 
   const MosaicLayoutState.one(String paneId)
       : this._(
@@ -86,6 +126,10 @@ class MosaicLayoutState {
         if (paneA != null) yield paneA!;
         if (paneB != null) yield paneB!;
         return;
+      case MosaicLayoutStateKind.overview:
+        if (overviewMain != null) yield overviewMain!;
+        yield* overviewOthers;
+        return;
       case MosaicLayoutStateKind.one:
       case MosaicLayoutStateKind.full:
         if (paneId != null) yield paneId!;
@@ -105,6 +149,15 @@ class MosaicLayoutState {
           paneB: paneB == oldId ? newId : paneB,
           aspect: splitAspect,
           maximized: maximizeSplit,
+        );
+      case MosaicLayoutStateKind.overview:
+        return MosaicLayoutState.overview(
+          mainPane: overviewMain == oldId ? newId : overviewMain!,
+          others: <String>[
+            for (final String id in overviewOthers)
+              id == oldId ? newId : id,
+          ],
+          aspect: splitAspect,
         );
       case MosaicLayoutStateKind.one:
         return MosaicLayoutState.one(paneId == oldId ? newId : paneId!);
@@ -147,6 +200,20 @@ class MosaicLayoutState {
           out.add('ASPECT=${_aspectToken(splitAspect)}');
         }
         break;
+      case MosaicLayoutStateKind.overview:
+        if (overviewMain == null || overviewMain!.isEmpty) {
+          throw StateError('OVERVIEW requires MAIN=<id>.');
+        }
+        if (overviewOthers.length < 2 || overviewOthers.length > 3) {
+          throw StateError('OVERVIEW requires two or three OTHERS panes.');
+        }
+        out
+          ..add('MAIN=$overviewMain')
+          ..add('OTHERS=${overviewOthers.join(',')}');
+        if (splitAspect != MosaicSplitClientAspect.aspect16x9) {
+          out.add('ASPECT=${_aspectToken(splitAspect)}');
+        }
+        break;
       case MosaicLayoutStateKind.one:
       case MosaicLayoutStateKind.full:
         if (paneId == null || paneId!.isEmpty) {
@@ -165,6 +232,8 @@ class MosaicLayoutState {
         other.paneA == paneA &&
         other.paneB == paneB &&
         other.paneId == paneId &&
+        other.overviewMain == overviewMain &&
+        _stringListsEqual(other.overviewOthers, overviewOthers) &&
         other.splitAspect == splitAspect &&
         other.maximizeSplit == maximizeSplit;
   }
@@ -175,12 +244,23 @@ class MosaicLayoutState {
         paneA,
         paneB,
         paneId,
+        overviewMain,
+        Object.hashAll(overviewOthers),
         splitAspect,
         maximizeSplit,
       );
 
   @override
   String toString() => formatTokens();
+}
+
+bool _stringListsEqual(List<String> a, List<String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (int i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 class MosaicLayoutSourceSpan {
@@ -314,6 +394,7 @@ enum MosaicLayoutIssueCode {
   unknownPane,
   duplicateTwoUpPane,
   bareTwoUpNeedsTwoPanes,
+  overviewNeedsThreePanes,
   deadCue,
   legacyWithCues,
   initialWithFrameZeroCue,
@@ -428,6 +509,11 @@ MosaicLayoutStart? parseMosaicLayoutStart({
           aspect: options.aspect,
           maximized: options.maximized,
         ),
+      MosaicLayoutStateKind.overview => MosaicLayoutState.overview(
+          mainPane: options.overviewMain!,
+          others: options.overviewOthers,
+          aspect: options.aspect,
+        ),
       MosaicLayoutStateKind.one => MosaicLayoutState.one(options.paneId!),
       MosaicLayoutStateKind.full => MosaicLayoutState.full(options.paneId!),
     };
@@ -520,6 +606,11 @@ List<MosaicLayoutCue> parseMosaicLayoutCues({
           aspect: options.aspect,
           maximized: options.maximized,
         ),
+      MosaicLayoutStateKind.overview => MosaicLayoutState.overview(
+          mainPane: options.overviewMain!,
+          others: options.overviewOthers,
+          aspect: options.aspect,
+        ),
       MosaicLayoutStateKind.one => MosaicLayoutState.one(options.paneId!),
       MosaicLayoutStateKind.full => MosaicLayoutState.full(options.paneId!),
     };
@@ -569,6 +660,19 @@ MosaicLayoutValidationResult validateMosaicLayoutCues({
           severity: MosaicLayoutIssueSeverity.error,
           code: MosaicLayoutIssueCode.bareTwoUpNeedsTwoPanes,
           message: 'Bare TWOUP at frame ${cue.frame} requires at least two panes.',
+          frame: cue.frame,
+        ),
+      );
+    }
+
+    if (cue.state.kind == MosaicLayoutStateKind.overview &&
+        mosaic.panes.length < 3) {
+      issues.add(
+        MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.error,
+          code: MosaicLayoutIssueCode.overviewNeedsThreePanes,
+          message:
+              'OVERVIEW at frame ${cue.frame} requires at least three panes.',
           frame: cue.frame,
         ),
       );
@@ -625,6 +729,8 @@ _ParsedLayoutOptions _parseOptions(
   String? paneA;
   String? paneB;
   String? paneId;
+  String? overviewMain;
+  List<String>? overviewOthers;
   bool maximized = false;
   bool sawMax = false;
   MosaicSplitClientAspect aspect = MosaicSplitClientAspect.aspect16x9;
@@ -684,6 +790,42 @@ _ParsedLayoutOptions _parseOptions(
         _validatePaneToken(value, offset);
         paneB = value;
         break;
+      case 'MAIN':
+        if (kind != MosaicLayoutStateKind.overview || overviewMain != null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT MAIN= is valid once and only on OVERVIEW.',
+            offset,
+          );
+        }
+        _validatePaneToken(value, offset);
+        overviewMain = value;
+        break;
+      case 'OTHERS':
+        if (kind != MosaicLayoutStateKind.overview || overviewOthers != null) {
+          throw MosaicLayoutFormatException(
+            'LAYOUT OTHERS= is valid once and only on OVERVIEW.',
+            offset,
+          );
+        }
+        final List<String> ids =
+            value.split(',').map((String id) => id.trim()).toList();
+        if (ids.length < 2 || ids.length > 3) {
+          throw MosaicLayoutFormatException(
+            'OVERVIEW OTHERS must name two or three panes.',
+            offset,
+          );
+        }
+        for (final String id in ids) {
+          _validatePaneToken(id, offset);
+        }
+        if (ids.toSet().length != ids.length) {
+          throw MosaicLayoutFormatException(
+            'OVERVIEW OTHERS cannot contain duplicate panes.',
+            offset,
+          );
+        }
+        overviewOthers = List<String>.unmodifiable(ids);
+        break;
       case 'PANE':
         if ((kind != MosaicLayoutStateKind.one &&
                 kind != MosaicLayoutStateKind.full) ||
@@ -697,9 +839,11 @@ _ParsedLayoutOptions _parseOptions(
         paneId = value;
         break;
       case 'ASPECT':
-        if (kind != MosaicLayoutStateKind.twoUp || sawAspect) {
+        if ((kind != MosaicLayoutStateKind.twoUp &&
+                kind != MosaicLayoutStateKind.overview) ||
+            sawAspect) {
           throw MosaicLayoutFormatException(
-            'LAYOUT ASPECT= is valid once and only on TWOUP.',
+            'LAYOUT ASPECT= is valid once and only on TWOUP/OVERVIEW.',
             offset,
           );
         }
@@ -744,6 +888,20 @@ _ParsedLayoutOptions _parseOptions(
       offset,
     );
   }
+  if (kind == MosaicLayoutStateKind.overview) {
+    if (overviewMain == null || overviewOthers == null) {
+      throw MosaicLayoutFormatException(
+        'OVERVIEW requires MAIN=<pane> and OTHERS=<pane>,<pane>[,<pane>].',
+        offset,
+      );
+    }
+    if (overviewOthers.contains(overviewMain)) {
+      throw MosaicLayoutFormatException(
+        'OVERVIEW MAIN cannot also appear in OTHERS.',
+        offset,
+      );
+    }
+  }
   if ((kind == MosaicLayoutStateKind.one ||
           kind == MosaicLayoutStateKind.full) &&
       paneId == null) {
@@ -757,6 +915,8 @@ _ParsedLayoutOptions _parseOptions(
     paneA: paneA,
     paneB: paneB,
     paneId: paneId,
+    overviewMain: overviewMain,
+    overviewOthers: overviewOthers ?? const <String>[],
     maximized: maximized,
     aspect: aspect,
     durationFrames: duration,
@@ -783,6 +943,7 @@ MosaicLayoutStateKind? _stateKindFromToken(String raw) {
   return switch (raw.trim().toUpperCase()) {
     'COMPOSITE' => MosaicLayoutStateKind.composite,
     'TWOUP' => MosaicLayoutStateKind.twoUp,
+    'OVERVIEW' => MosaicLayoutStateKind.overview,
     'ONE' => MosaicLayoutStateKind.one,
     'FULL' => MosaicLayoutStateKind.full,
     _ => null,
@@ -810,6 +971,8 @@ class _ParsedLayoutOptions {
   final String? paneA;
   final String? paneB;
   final String? paneId;
+  final String? overviewMain;
+  final List<String> overviewOthers;
   final bool maximized;
   final MosaicSplitClientAspect aspect;
   final int durationFrames;
@@ -818,6 +981,8 @@ class _ParsedLayoutOptions {
     required this.paneA,
     required this.paneB,
     required this.paneId,
+    required this.overviewMain,
+    required this.overviewOthers,
     required this.maximized,
     required this.aspect,
     required this.durationFrames,
