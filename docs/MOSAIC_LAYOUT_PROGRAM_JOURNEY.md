@@ -861,7 +861,7 @@ There is no second layout database in the widgets.
 
 ## 21. The bugs that mattered most
 
-The feature's useful debugging history can be summarized as six failures.
+The feature's useful debugging history can be summarized as seven failures.
 
 ### Failure 1: black/flickering windows during live playback
 
@@ -1048,7 +1048,7 @@ The merged milestone leaves R3nder with:
 - persistent pane actor identity;
 - hidden-pane source-clock continuity;
 - shared Preview/BAKE layout evaluation;
-- resident-frame hold for nonblocking live decode;
+- bounded recent-frame hold for nonblocking live decode without stale hidden-pane recall;
 - exact actor rendering for BAKE;
 - layout-aware MOSAIC editor viewer;
 - layout-aware TEXT/STRUCT Preview;
