@@ -105,9 +105,11 @@ authoring shorthand. Explicit LAYOUT cues store pane ids, so later pane
 reordering does not silently retarget an already-authored explicit cue.
 
 MOSAIC duration remains authored content geometry: the maximum pane-local CLIP
-end. LAYOUT cues do not add frames or alter pane-local clip timing. They do gate
-which pane audio contributes to the source mix: COMPOSITE admits all panes,
-TWOUP admits A/B, and ONE/FULL admit only the selected pane.
+end. LAYOUT cues do not add frames or alter pane-local clip timing. Stable
+states define which pane audio belongs in the source mix: COMPOSITE includes all
+panes, TWOUP includes A/B, and ONE/FULL include only the selected pane. Gain
+during a layout transition is derived from the same resolved actor opacity
+segments as picture rather than from a second cue interpreter.
 
 A cue-bearing MOSAIC may also own a reusable source-relative desktop layout
 program:
@@ -787,11 +789,12 @@ The source-relative MOSAIC Layout Program residency milestone reached a
 52-test focused gate and live GUI acceptance covering continuous playback,
 TWO UP → ONE retreat, pane recall, lookahead warming, and scrubbing across
 hidden intervals. A later Rocky workflow pass added COME IN ON / LAYOUT_START and then exposed
-the pane-audio gating gap in ONE. Those post-milestone authoring/audio
-corrections passed a **74-test focused gate** and were accepted in live Rocky
-playback: TWO UP → ONE mutes the dismissed pane at the cue boundary while the
-surviving pane continues cleanly. The underlying structural contracts remain
-the compatibility target.
+the pane-audio gating gap in ONE. That hard-gate version passed a **74-test
+focused gate** and was accepted in live Rocky playback. A subsequent review
+found that exact-sample gating could click and that audio had become a second
+layout interpreter. The newer resolver-driven gain-envelope / placement-context
+correction is pending a fresh gate and live listen before acceptance. The
+underlying structural contracts remain the compatibility target.
 
 ---
 
@@ -801,7 +804,10 @@ the compatibility target.
 - [ ] MOSAIC composes structural sources into deterministic pane geometry;
 - [ ] LAYOUT_START owns the initial MOSAIC presentation without becoming a timeline cue;
 - [ ] source-relative LAYOUT cues change later arrangement without changing content duration or source time;
-- [ ] MOSAIC pane audio follows target layout at the exact cue-frame boundary: COMPOSITE=all, TWOUP=A/B, ONE/FULL=selected pane;
+- [ ] stable MOSAIC pane audio membership is COMPOSITE=all, TWOUP=A/B, ONE/FULL=selected pane;
+- [ ] animated pane-audio gain follows the same resolver actor segment as picture rather than hard-switching at the cue;
+- [ ] immediate DUR=0/1 layout audio edges use the pinned 5 ms declick ramp;
+- [ ] STRUCT placement legacy SPLIT context reaches structural audio through the same resolver seed as picture;
 - [ ] hidden pane audio is muted rather than paused, so recall remains on the shared source clock;
 - [ ] persistent pane actors survive layout changes without restarting source time;
 - [ ] hidden panes remain on the shared MOSAIC source clock;
