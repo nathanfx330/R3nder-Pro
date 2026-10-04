@@ -1078,8 +1078,10 @@ persistent source-audio cache hashes the resolver-derived gain envelope and its
 schemas were bumped again, so a semantically different layout mix cannot reuse
 a stale WAV.
 
-This review follow-up is newer than the recorded 74-test / Rocky acceptance and
-must pass a fresh gate and live listen before it inherits accepted status.
+This review follow-up is newer than the recorded 74-test / Rocky acceptance.
+Its fresh focused gate passed **110 tests** on Rocky. Live listening remains the
+final acceptance check before this resolver-driven audio head is marked fully
+accepted.
 
 ---
 
