@@ -707,6 +707,157 @@ void main() {
     },
   );
 
+  test('BAKE follows authored MOSAIC LAYOUT cues at source time', () async {
+    const String source = '''[SPEED:MAX]
+[MOSAIC:wall]
+[LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
+[LAYOUT:4:ONE:PANE=left:DUR=1]
+[LAYOUT:6:TWOUP:A=left:B=right:MAX:ASPECT=4X3:DUR=1]
+[PANE:left]
+[CLIP:red:red.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:blue:blue.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:OVERLAY=NONE]
+''';
+
+    const int outputWidth = 640;
+    const int outputHeight = 360;
+    final Directory root = await Directory.systemTemp
+        .createTemp('r3nder_program_layout_bake_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+
+    final CompiledScript compiled = compileScript(source, lineMarkers: false);
+    final SceneEngine scene = SceneEngine();
+    await scene.setup(
+      templateText: compiled.engineText,
+      fontColor: Colors.green,
+      bgColor: Colors.black,
+      width: 1920,
+      height: 1080,
+      scale: 1,
+      fontPath: 'monospace',
+      fontSize: 12,
+      lineSpacing: 16,
+      tracking: 0,
+      marginTop: 10,
+      marginSide: 10,
+      imagesDir: images.path,
+      spritesDir: sprites.path,
+      paneLifeConfig: compiled.paneLife,
+      captionConfig: compiled.caption,
+      appSwitchConfig: compiled.appSwitch,
+    );
+
+    final ProgramStructuralFrameRenderer renderer =
+        ProgramStructuralFrameRenderer(
+      rawDocument: source,
+      width: outputWidth,
+      height: outputHeight,
+      backend: _PaneColorBackend(),
+      resolveSource: (String value) => value,
+    );
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(source).single;
+
+    addTearDown(() {
+      renderer.dispose();
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    Future<Uint8List> renderSourceFrame(int sourceFrame) async {
+      final int localFrame = placement.contentStartFrame + sourceFrame;
+      final int projectFrame = _findProjectFrame(
+        scene,
+        placementIndex: 0,
+        localFrame: localFrame,
+      );
+      expect(
+        scene.evaluate(
+          ProjectTime(frame: projectFrame, mode: ProjectClockMode.scrub),
+        ).exact,
+        isTrue,
+      );
+      return _renderRgba(renderer, scene);
+    }
+
+    final Uint8List twoUp = await renderSourceFrame(0);
+    final Rect? twoUpRed = _paneColorBounds(
+      twoUp,
+      outputWidth,
+      outputHeight,
+      red: true,
+    );
+    final Rect? twoUpBlue = _paneColorBounds(
+      twoUp,
+      outputWidth,
+      outputHeight,
+      red: false,
+    );
+    expect(twoUpRed, isNotNull);
+    expect(twoUpBlue, isNotNull);
+    expect(twoUpRed!.right, lessThan(twoUpBlue!.left));
+
+    final Uint8List one = await renderSourceFrame(4);
+    final Rect? oneRed = _paneColorBounds(
+      one,
+      outputWidth,
+      outputHeight,
+      red: true,
+    );
+    final Rect? oneBlue = _paneColorBounds(
+      one,
+      outputWidth,
+      outputHeight,
+      red: false,
+    );
+    expect(oneRed, isNotNull);
+    expect(oneBlue, isNull);
+    expect(oneRed!.width, greaterThan(twoUpRed.width));
+
+    final Uint8List max43 = await renderSourceFrame(6);
+    final Rect? maxRed = _paneColorBounds(
+      max43,
+      outputWidth,
+      outputHeight,
+      red: true,
+    );
+    final Rect? maxBlue = _paneColorBounds(
+      max43,
+      outputWidth,
+      outputHeight,
+      red: false,
+    );
+    expect(maxRed, isNotNull);
+    expect(maxBlue, isNotNull);
+
+    final double chromeScale =
+        scene.terminal.scale * outputWidth / scene.width;
+    final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
+      frame: const Rect.fromLTWH(
+        0,
+        0,
+        outputWidth.toDouble(),
+        outputHeight.toDouble(),
+      ),
+      aspect: MosaicSplitClientAspect.aspect4x3,
+      titleHeight: 38.0 * chromeScale,
+      maximized: true,
+    );
+    expect(maxRed!.left, closeTo(geometry.leftClientRect.left, 2.0));
+    expect(maxRed.right, closeTo(geometry.leftClientRect.right, 2.0));
+    expect(maxBlue!.left, closeTo(geometry.rightClientRect.left, 2.0));
+    expect(maxBlue.right, closeTo(geometry.rightClientRect.right, 2.0));
+  });
+
   test('unsupported authored SPLIT keeps ordinary BAKE path', () async {
     const String source = '''[SPEED:MAX]
 [MOSAIC:wall]
