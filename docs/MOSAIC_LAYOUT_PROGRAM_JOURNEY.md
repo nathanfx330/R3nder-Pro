@@ -495,18 +495,20 @@ returned to F0.
 The editor now presents two separate concepts:
 
 ```text
-START AS
-    always writes/updates LAYOUT at F0
+COME IN ON
+    writes LAYOUT_START MOSAIC metadata
     defines the canonical opening arrangement
+    is independent of playhead time
 
 LAYOUT CUES
-    writes at the current playhead
-    shows/counts only transitions after F0
+    writes LAYOUT at the current playhead
+    every authored cue remains visible
 ```
 
-No grammar or evaluator change was needed. A frame-zero LAYOUT remains the file
-representation of the starting condition; the UI now exposes that semantic
-directly.
+The first UI-only correction still encoded the start as a hidden frame-zero
+cue. Rocky testing showed that this was the wrong abstraction. LAYOUT_START is
+now a separate grammar element consumed by the same evaluator as the initial
+seed. Existing frame-zero LAYOUT cues remain a backward-compatible fallback.
 
 This was the point where the data model became understandable as an editing
 feature rather than only an evaluator.
@@ -893,7 +895,7 @@ There is no second layout database in the widgets.
 
 ## 21. The bugs that mattered most
 
-The feature's useful debugging history can be summarized as nine failures.
+The feature's useful debugging history can be summarized as ten failures.
 
 ### Failure 1: black/flickering windows during live playback
 
@@ -1004,6 +1006,27 @@ geometry, and requires the recalled pane to paint a different non-null image
 than its old pre-hide F0 resident image.
 
 None of these failures required changing authored project time.
+
+### Failure 10: the opening state was masquerading as a timeline cue
+
+A Rocky workflow pass exposed that the runtime semantics were better than the
+authoring model. A frame-zero LAYOUT cue could already make the MOSAIC enter as
+TWO UP / ONE / FULL, but the editor treated that opening condition like an
+ordinary playhead cue. Hiding the F0 marker made the source look cue-less while
+still carrying authored F0 state; showing it made the user author a transition
+just to choose how the application should first appear.
+
+Fix: opening arrangement is now first-class MOSAIC metadata:
+
+```text
+[LAYOUT_START:TWOUP:A=pane1:B=pane2]
+```
+
+The editor exposes this as a single **COME IN ON** dropdown. It is not tied to
+the playhead and does not appear in the cue lane. Later `[LAYOUT:F:...]`
+directives remain timeline transitions and every one of them stays visible.
+Legacy F0 cues remain readable and visible until COME IN ON migrates them to
+LAYOUT_START.
 
 That is the architectural success worth preserving.
 
