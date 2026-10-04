@@ -377,7 +377,10 @@ void main() {
 
     expect(host.currentState!.source, isNot(contains('[LAYOUT:')));
     expect(_key('mosaic-layout-cue:40'), findsNothing);
-    expect(find.text('COMPOSITE (IMPLICIT)'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('mosaic-layout-start-status')).data,
+      'DEFAULT',
+    );
     expect(find.text('NO TRANSITIONS'), findsOneWidget);
   });
 
