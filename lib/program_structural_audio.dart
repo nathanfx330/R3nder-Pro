@@ -31,7 +31,7 @@ import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 import 'structural_sequence.dart';
 
-const int kProgramStructuralAudioSchemaVersion = 1;
+const int kProgramStructuralAudioSchemaVersion = 2;
 
 typedef StructuralAudioSourceRenderCallback =
     Future<StructuralAudioSourceRender> Function(
@@ -443,9 +443,10 @@ class ProgramStructuralAudioRender {
 
 /// Assembles source-relative EDIT/MOSAIC renders into one program-time bed.
 ///
-/// The same source is rendered at most once per call even when several STRUCT
-/// placements reference it. Persistent reuse belongs to the later cache stage;
-/// this memo is intentionally process-local and cannot become stale on disk.
+/// The same source + placement-audio context is rendered at most once per call.
+/// Two placements of one MOSAIC may require distinct renders when legacy SPLIT
+/// seed context differs. Persistent reuse belongs to the later cache stage; this
+/// memo is intentionally process-local and cannot become stale on disk.
 class ProgramStructuralAudioRenderer {
   final ProgramStructuralAudioTimeline timeline;
   final StructuralAudioSourceRenderCallback renderSource;
