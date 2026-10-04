@@ -77,6 +77,74 @@ $layoutLines
         maximized: maximized,
       ).rightWindowRect;
 
+  group('Initial layout metadata', () {
+    test('LAYOUT_START establishes opening TWOUP without a frame-zero cue', () {
+      final MosaicLayoutProgram program = programFor('''
+  [LAYOUT_START:TWOUP:A=A:B=B:ASPECT=4X3]''');
+      final MosaicResolvedLayoutProgram resolved = program.resolve(
+        context(
+          legacySeed: const MosaicLayoutState.full('C'),
+        ),
+      );
+
+      final MosaicLayoutFrame frame0 = resolved.evaluate(0);
+      expect(frame0.pane('A').presence, MosaicLayoutPresence.present);
+      expect(frame0.pane('B').presence, MosaicLayoutPresence.present);
+      expect(frame0.pane('A').rect, leftRect(
+        aspect: MosaicSplitClientAspect.aspect4x3,
+      ));
+      expect(frame0.pane('B').rect, rightRect(
+        aspect: MosaicSplitClientAspect.aspect4x3,
+      ));
+      expect(frame0.composite.presence, MosaicLayoutPresence.absent);
+      expect(frame0.pane('C').presence, MosaicLayoutPresence.absent);
+    });
+
+    test('LAYOUT_START is the seed and later cues remain transitions', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:ONE:PANE=A]
+  [LAYOUT:100:TWOUP:A=A:B=B:DUR=12]''').resolve(context());
+
+      final MosaicLayoutFrame before = resolved.evaluate(99);
+      expect(before.pane('A').presence, MosaicLayoutPresence.present);
+      expect(before.pane('A').rect, windowRect);
+      expect(before.pane('B').presence, MosaicLayoutPresence.absent);
+
+      final MosaicLayoutFrame atCue = resolved.evaluate(100);
+      expect(atCue.pane('A').activeSegment, isNotNull);
+      expect(atCue.pane('B').presence, MosaicLayoutPresence.entering);
+    });
+
+    test('legacy frame-zero cue still establishes initial layout when no start metadata exists',
+        () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT:0:FULL:PANE=B]''').resolve(context());
+
+      final MosaicLayoutFrame frame0 = resolved.evaluate(0);
+      expect(frame0.pane('B').presence, MosaicLayoutPresence.present);
+      expect(frame0.pane('B').rect, programRect);
+      expect(frame0.composite.presence, MosaicLayoutPresence.absent);
+    });
+
+    test('LAYOUT_START wins over legacy frame-zero cue and reports it', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:ONE:PANE=A]
+  [LAYOUT:0:FULL:PANE=B]''').resolve(context());
+
+      final MosaicLayoutFrame frame0 = resolved.evaluate(0);
+      expect(frame0.pane('A').presence, MosaicLayoutPresence.present);
+      expect(frame0.pane('A').rect, windowRect);
+      expect(frame0.pane('B').presence, MosaicLayoutPresence.absent);
+      expect(
+        resolved.issues.any(
+          (MosaicLayoutIssue issue) =>
+              issue.code == MosaicLayoutIssueCode.initialWithFrameZeroCue,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('Family 3 - per-actor interruption', () {
     test('A is a CONTINUE sentinel across TWOUP A/B to TWOUP A/C', () {
       final MosaicResolvedLayoutProgram resolved = programFor('''
