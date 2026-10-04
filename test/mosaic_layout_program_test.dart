@@ -307,6 +307,49 @@ $layoutLines
     });
   });
 
+  test('FULL -> TWOUP -> FULL keeps the morphing pane above its peer',
+      () {
+    final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT:100:FULL:PANE=A:DUR=1]
+  [LAYOUT:200:TWOUP:A=A:B=B:DUR=12]
+  [LAYOUT:300:FULL:PANE=A:DUR=12]''').resolve(context());
+
+    for (int frame = 200; frame < 211; frame++) {
+      final MosaicLayoutFrame layout = resolved.evaluate(frame);
+      final MosaicLayoutActorFrame a = layout.pane('A');
+      final MosaicLayoutActorFrame b = layout.pane('B');
+      expect(a.activeSegment, isNotNull);
+      expect(a.z.band, MosaicLayoutZBand.fullTarget);
+      expect(
+        layout.paintActors.last.actorId,
+        a.actorId,
+        reason: 'shrinking FULL pane fell behind peer at F$frame',
+      );
+      expect(b.presence, isNot(MosaicLayoutPresence.absent));
+    }
+
+    final MosaicLayoutFrame settledTwoUp = resolved.evaluate(211);
+    expect(settledTwoUp.pane('A').z.band, MosaicLayoutZBand.stable);
+    expect(settledTwoUp.paintActors.last.actorId.paneId, 'B');
+
+    for (int frame = 300; frame < 311; frame++) {
+      final MosaicLayoutFrame layout = resolved.evaluate(frame);
+      final MosaicLayoutActorFrame a = layout.pane('A');
+      expect(a.activeSegment, isNotNull);
+      expect(a.z.band, MosaicLayoutZBand.fullTarget);
+      expect(
+        layout.paintActors.last.actorId,
+        a.actorId,
+        reason: 'expanding FULL pane fell behind peer at F$frame',
+      );
+    }
+
+    final MosaicLayoutFrame settledFull = resolved.evaluate(311);
+    expect(settledFull.pane('A').activeSegment, isNull);
+    expect(settledFull.pane('A').z.band, MosaicLayoutZBand.fullTarget);
+    expect(settledFull.pane('B').presence, MosaicLayoutPresence.absent);
+  });
+
   group('Duration edge pin', () {
     test('D=2 has no transitional target-z-only frame', () {
       final MosaicResolvedLayoutProgram resolved = programFor('''
