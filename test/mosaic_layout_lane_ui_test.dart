@@ -375,6 +375,10 @@ void main() {
       kind: PointerDeviceKind.mouse,
     );
 
+    // The first move crosses Flutter's horizontal-drag slop and starts the
+    // recognizer. A subsequent pointer move supplies the first drag update.
+    await gesture.moveBy(const Offset(24, 0));
+    await tester.pump();
     await gesture.moveBy(const Offset(60, 0));
     await tester.pump();
 
