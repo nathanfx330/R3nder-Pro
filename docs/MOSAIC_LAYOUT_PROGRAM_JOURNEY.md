@@ -544,13 +544,13 @@ authored geometry/time
     follows the exact current source frame
 
 pixels
-    hold the last good image while that actor remains continuously included
+    hold the last good image while that actor remains continuously paintable
     but a recalled pane is blank until current pixels arrive
 ```
 
 Readiness and pending decode may affect which pixels are resident. They may not
 change the semantic layout frame. Preview holds the last good actor image for
-as long as that actor remains continuously included, because a decoder may
+as long as that actor remains continuously paintable, because a decoder may
 legitimately lag several frames under load and black is not an acceptable
 fallback. Hidden actors that are neither visible nor being warmed are evicted.
 The resolved program also records inclusion changes, so a direct scrub or
@@ -864,7 +864,7 @@ There is no second layout database in the widgets.
 
 ## 21. The bugs that mattered most
 
-The feature's useful debugging history can be summarized as seven failures.
+The feature's useful debugging history can be summarized as eight failures.
 
 ### Failure 1: black/flickering windows during live playback
 
@@ -914,9 +914,9 @@ lookahead normally refreshed a returning pane, but if playback jumped into the
 warm window or decode stayed pending under load, a pane hidden hundreds of
 frames earlier could return showing its pre-exit image.
 
-Fix: resident hold is bounded by authored visibility continuity rather than
+Fix: resident hold is bounded by authored paintability continuity rather than
 frame age. A hidden actor that is neither visible nor requested is evicted, and
-any cached image is paintable only while its actor has remained included from
+any cached image is paintable only while its actor has remained paintable from
 the resident frame through the current source frame. This lets playback survive
 multi-frame decoder lag without black frames while still rejecting a pre-exit
 image after any authored hidden interval, including intervals skipped by a
@@ -927,6 +927,25 @@ window with recall decode held pending, then proves the old pre-exit image is
 not supplied; another scrubs directly from a visible frame to a later visible
 frame across the hidden interval and requires the cached pre-hide image to be
 rejected at rebuild time.
+
+### Failure 8: terminal absence was confused with visual exit
+
+Cause: the first visibility-continuity table tracked each actor's terminal
+`included` flag at cue boundaries. On TWO UP → ONE, the retiring pane's new
+terminal condition is absent at the cue frame, but the actor remains in
+`paintActors` as `exiting` until its transition settles. Residency therefore
+became ineligible at the beginning of the minimizing animation and the retiring
+window flashed black while shrinking away.
+
+Fix: residency continuity is now based on **paintability**, not terminal
+inclusion. An exiting actor remains in the same paintability run through the
+last transitional frame. The run changes to absent only when the exit segment
+actually settles. If a later cue interrupts that exit before settlement, no
+absent frame is invented.
+
+The regression drives TWO UP → ONE with decode deliberately pending at the
+middle of the exit and requires the retiring pane to retain its last good image
+until the exact settlement frame removes it from paint.
 
 None of these failures required changing authored project time.
 
@@ -1022,7 +1041,7 @@ Live pixels may lag authored time. The timeline and layout evaluator do not.
 ### Preview and BAKE should share meaning, not necessarily delivery policy
 
 Preview may hold the last good resident pixels through decoder lag while the
-actor remains in one continuous visibility run. A recalled pane waits for
+actor remains in one continuous paintability run. A recalled pane waits for
 current pixels rather than reusing pre-hide content. BAKE renders exact pixels.
 Both consume the same `MosaicLayoutFrame`.
 
