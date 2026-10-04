@@ -788,6 +788,129 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     );
   }
 
+  MosaicLayoutCue? _initialLayoutCue(MosaicSurfaceDocument document) {
+    for (final MosaicLayoutCue cue in document.layoutCues) {
+      if (cue.frame == 0) return cue;
+    }
+    return null;
+  }
+
+  Widget _buildInitialLayoutBar(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+  ) {
+    final MosaicLayoutCue? initial = _initialLayoutCue(document);
+    final String status = initial == null
+        ? 'COMPOSITE (IMPLICIT)'
+        : initial.state.formatTokens();
+
+    return Container(
+      key: const ValueKey<String>('mosaic-layout-start-bar'),
+      height: sc(34),
+      padding: EdgeInsets.symmetric(horizontal: sc(8)),
+      decoration: const BoxDecoration(
+        color: R3Theme.panel,
+        border: Border(bottom: BorderSide(color: R3Theme.hairline)),
+      ),
+      child: Row(
+        children: [
+          R3MicroLabel(
+            'START AS',
+            theme: widget.theme,
+            accent: true,
+          ),
+          SizedBox(width: sc(10)),
+          R3Button(
+            'COMPOSITE',
+            key: const ValueKey<String>('mosaic-layout-start-composite'),
+            theme: widget.theme,
+            compact: true,
+            onPressed: widget.isPlaying
+                ? null
+                : () => _setLayoutCueAtPlayhead(
+                      const MosaicLayoutState.composite(),
+                      0,
+                    ),
+          ),
+          SizedBox(width: sc(6)),
+          InkWell(
+            key: const ValueKey<String>('mosaic-layout-start-twoup'),
+            onTap: widget.isPlaying || mosaic.panes.length < 2
+                ? null
+                : () => _configureTwoUp(document, mosaic, 0),
+            child: _layoutActionChip(
+              label: 'TWO UP',
+              keyName: 'mosaic-layout-start-twoup-chip',
+              enabled: !widget.isPlaying && mosaic.panes.length >= 2,
+            ),
+          ),
+          SizedBox(width: sc(6)),
+          PopupMenuButton<String>(
+            key: const ValueKey<String>('mosaic-layout-start-one'),
+            tooltip: 'Set initial ONE window at frame 0',
+            enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+            color: R3Theme.panelHi,
+            onSelected: (String paneId) {
+              _setLayoutCueAtPlayhead(
+                MosaicLayoutState.one(paneId),
+                0,
+              );
+            },
+            itemBuilder: (_) => <PopupMenuEntry<String>>[
+              for (final MosaicPane pane in mosaic.panes)
+                PopupMenuItem<String>(
+                  key: ValueKey<String>(
+                    'mosaic-layout-start-one:${pane.id}',
+                  ),
+                  value: pane.id,
+                  child: Text(pane.id),
+                ),
+            ],
+            child: _layoutActionChip(
+              label: 'ONE',
+              keyName: 'mosaic-layout-start-one-chip',
+              enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+            ),
+          ),
+          SizedBox(width: sc(6)),
+          PopupMenuButton<String>(
+            key: const ValueKey<String>('mosaic-layout-start-full'),
+            tooltip: 'Set initial FULL pane at frame 0',
+            enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+            color: R3Theme.panelHi,
+            onSelected: (String paneId) {
+              _setLayoutCueAtPlayhead(
+                MosaicLayoutState.full(paneId),
+                0,
+              );
+            },
+            itemBuilder: (_) => <PopupMenuEntry<String>>[
+              for (final MosaicPane pane in mosaic.panes)
+                PopupMenuItem<String>(
+                  key: ValueKey<String>(
+                    'mosaic-layout-start-full:${pane.id}',
+                  ),
+                  value: pane.id,
+                  child: Text(pane.id),
+                ),
+            ],
+            child: _layoutActionChip(
+              label: 'FULL',
+              keyName: 'mosaic-layout-start-full-chip',
+              enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            status,
+            key: const ValueKey<String>('mosaic-layout-start-status'),
+            style: widget.theme.micro,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLayoutLane(
     MosaicSurfaceDocument document,
     MosaicSequence mosaic,
@@ -815,7 +938,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
 
     return Container(
       key: const ValueKey<String>('mosaic-layout-lane'),
-      height: sc(92),
+      height: sc(126),
       width: double.infinity,
       decoration: const BoxDecoration(
         color: R3Theme.bg,
@@ -824,6 +947,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _buildInitialLayoutBar(document, mosaic),
           Container(
             height: sc(34),
             padding: EdgeInsets.symmetric(horizontal: sc(8)),
