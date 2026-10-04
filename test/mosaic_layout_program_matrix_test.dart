@@ -292,7 +292,8 @@ void main() {
     }
 
     for (final int duration in <int>[11, 12]) {
-      test('D=$duration uses the frozen midpoint formula', () {
+      test('D=$duration preserves midpoint metadata while FULL morph stays front',
+          () {
         final int switchFrame = 500 + duration ~/ 2;
         final int endFrame = 500 + duration - 1;
         final MosaicResolvedLayoutProgram resolved = programFor('''
@@ -303,11 +304,16 @@ void main() {
         expect(start.activeSegment, isNotNull);
         expect(start.activeSegment!.zSwitchFrame, switchFrame);
         expect(start.activeSegment!.endFrame, endFrame);
-        expect(start.z.band, MosaicLayoutZBand.stable);
+        expect(start.activeSegment!.startZ.band, MosaicLayoutZBand.stable);
+        expect(start.activeSegment!.targetZ.band, MosaicLayoutZBand.fullTarget);
 
+        // FULL is a presentation-depth exception: the survivor owns the front
+        // layer from the first morph frame, while the segment still records the
+        // ordinary frozen midpoint for deterministic interruption/history.
+        expect(start.z.band, MosaicLayoutZBand.fullTarget);
         expect(
           resolved.evaluate(switchFrame - 1).pane('A').z.band,
-          MosaicLayoutZBand.stable,
+          MosaicLayoutZBand.fullTarget,
         );
         expect(
           resolved.evaluate(switchFrame).pane('A').z.band,
