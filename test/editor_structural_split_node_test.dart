@@ -33,6 +33,21 @@ const String _source = '''[EDIT:left]
 [STRUCT:MOSAIC.wall:FULL]
 ''';
 
+const String _layoutSource = '''[MOSAIC:wall]
+[LAYOUT:0:TWOUP:A=pane1:B=pane2:DUR=1]
+[LAYOUT:10:ONE:PANE=pane1:DUR=1]
+[PANE:pane1]
+[CLIP:left:video/left.mp4:0:0:30:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:right:video/right.mp4:0:0:30:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall]
+''';
+
 void main() {
   testWidgets('STRUCT node authors SPLIT aspect and keeps FULL exclusive',
       (WidgetTester tester) async {
@@ -222,4 +237,85 @@ void main() {
     expect(changed, isNot(contains(':ASPECT=')));
     expect(find.text('CLIENT ASPECT'), findsNothing);
   });
+  testWidgets('LAYOUT-driven STRUCT hides legacy split controls but keeps names',
+      (WidgetTester tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(() {
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    });
+
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_struct_layout_node_');
+    final Directory images = Directory('${root.path}/images')..createSync();
+    final Directory sprites = Directory('${root.path}/sprites')..createSync();
+    addTearDown(() {
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    final List<ScriptNode> parsed = parseScriptToNodes(_layoutSource);
+    final int structIndex =
+        parsed.indexWhere((ScriptNode node) => node.type == 'STRUCT');
+    expect(structIndex, greaterThanOrEqualTo(0));
+
+    String changed = _layoutSource;
+    final R3Theme theme = R3Theme.of(const Color(0xFF00FF00));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme.materialTheme(),
+        home: Scaffold(
+          body: EditorNodeWorkspace(
+            initialText: _layoutSource,
+            theme: theme,
+            highlightedLine: -1,
+            imagesDir: images.path,
+            spritesDir: sprites.path,
+            initialSelectedNodeIndex: structIndex,
+            onTextChanged: (String value) => changed = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('LAYOUT PROGRAM'), findsOneWidget);
+    expect(find.text('TWO WINDOWS'), findsNothing);
+    expect(find.text('MAXIMIZE SPLIT'), findsNothing);
+    expect(find.text('CLIENT ASPECT'), findsNothing);
+    expect(find.text('SHOW WINDOW NAMES'), findsOneWidget);
+
+    final Finder showWindowNames = find.text('SHOW WINDOW NAMES');
+    await tester.ensureVisible(showWindowNames);
+    await tester.tap(showWindowNames);
+    await tester.pump();
+
+    expect(changed, contains('[STRUCT:MOSAIC.wall:PANENAMES]'));
+    expect(changed, isNot(contains(':SPLIT')));
+    expect(find.text('NAME 1'), findsOneWidget);
+    expect(find.text('NAME 2'), findsOneWidget);
+
+    Finder textFieldForLabel(String label) {
+      final Finder labelFinder = find.text(label);
+      final Finder column = find
+          .ancestor(of: labelFinder, matching: find.byType(Column))
+          .first;
+      return find.descendant(of: column, matching: find.byType(TextField));
+    }
+
+    await tester.enterText(textFieldForLabel('NAME 1'), 'Camera A');
+    await tester.pump();
+    await tester.enterText(textFieldForLabel('NAME 2'), 'Witness');
+    await tester.pump();
+
+    expect(
+      changed,
+      contains(
+        '[STRUCT:MOSAIC.wall:PANENAMES:NAME1="Camera A":NAME2="Witness"]',
+      ),
+    );
+    expect(changed, isNot(contains(':SPLIT')));
+  });
+
 }
