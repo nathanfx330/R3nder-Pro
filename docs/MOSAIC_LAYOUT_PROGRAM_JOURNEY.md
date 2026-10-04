@@ -1210,20 +1210,26 @@ assertion inside an already-green lower-level test.
 
 ## 25. Completion state
 
-**Milestone reached and closed.** The accepted implementation is on `main`,
-the residency-focused regression gate passed 52 tests, and the live GUI pass
-was accepted after exercising continuous playback, TWO UP → ONE retreat, pane
-recall, lookahead warming, and scrub crossings. The later COME IN ON / LAYOUT_START workflow and layout-driven pane-audio
-follow-up subsequently passed a 74-test focused gate and Rocky live acceptance.
+**Milestone reached and closed.** The accepted implementation is on `main`.
+The residency-focused regression gate first closed at 52 tests with successful
+live GUI verification of continuous playback, TWO UP → ONE retreat, pane recall,
+lookahead warming, and scrub crossings. The later COME IN ON / LAYOUT_START and
+first pane-audio follow-up then reached a 74-test focused gate and Rocky live
+acceptance. Review subsequently exposed the hard cue-boundary audio cut and the
+second-interpreter problem recorded in Failure 11. The resolver-driven audio
+correction then passed a **110-test focused Rocky gate** and a successful live
+Rocky listen, including nested EDIT gain carrying through MOSAIC. That is the
+current accepted state.
 
 The completed milestone leaves R3nder with:
 
 - reusable source-relative MOSAIC LAYOUT cues;
+- first-class COME IN ON / LAYOUT_START opening state;
 - COMPOSITE, TWO UP, ONE, and FULL states;
 - explicit pane assignment;
 - 16:9 / 4:3 / 9:16 split geometry;
 - MAX;
-- deterministic transition interruption;
+- deterministic CREATE / CONTINUE / REDIRECT interruption semantics;
 - persistent pane actor identity;
 - hidden-pane source-clock continuity;
 - shared Preview/BAKE layout evaluation;
@@ -1238,21 +1244,27 @@ The completed milestone leaves R3nder with:
 - node-mode ownership that distinguishes dynamic layout from legacy SPLIT;
 - dynamic placement-owned window-slot naming;
 - FULL-morph front-layer depth;
+- layout-driven MOSAIC pane audio derived from the same resolved actor program as picture;
+- pane-audio gain that follows visual transition segments instead of hard-switching at cue boundaries;
+- a pinned 5 ms declick for true DUR=0/1 layout edges;
+- placement-owned legacy SPLIT / aspect / MAX context propagated into structural audio;
+- nested EDIT clip GAIN and MUTE preserved when the EDIT is used inside a MOSAIC pane;
+- placement-aware program-audio memoization and source-audio cache identity;
 - legacy cue-less SPLIT compatibility.
 
 The initial feature merged after manual Preview and BAKE acceptance in addition
-to the focused automated gates. Post-merge GUI testing then found the residency
-edge cases recorded above. Those fixes were accepted only after the live player
-was exercised again. The focused suite reached 51 passing tests after the
-paintability correction and 52 after the warm-recall bridge regression. The
-final GUI pass was successful, so no follow-up work remains inside this
-milestone unless a new defect is discovered.
+to the focused automated gates. Post-merge GUI testing then found the residency,
+opening-state, and audio-ownership edge cases recorded above. Each correction
+was accepted only after the relevant focused gate and another live Rocky pass.
+The acceptance progression is therefore 52 tests for the closed residency
+milestone, 74 tests for COME IN ON plus the first pane-audio behavior, and
+**110 tests plus live listening** for the final resolver-driven audio
+architecture.
 
-The most important final rule remains the one the implementation was built
-around:
+The most important final rule is now broader than picture alone:
 
-> At source frame F, authored cues plus placement context fully determine the
-> visual actor arrangement.
+> At source frame F, authored MOSAIC state plus placement context fully determine
+> both the visual actor arrangement and the pane-audio presentation state.
 
-Everything else—decode readiness, UI lifecycle, playback direction, and whether
-the frame is live or being baked—is downstream of that fact.
+Decode readiness, UI lifecycle, playback direction, cache lifetime, and whether
+the frame is live or being baked are downstream of that semantic authority.
