@@ -333,15 +333,30 @@ List<MosaicLayoutCue> parseMosaicLayoutCues({
     mosaic.block.closeStartOffset,
   );
   final List<MosaicLayoutCue> out = <MosaicLayoutCue>[];
-
-  final RegExp line = RegExp(
-    r'^(?<indent>[ 	]*)\[LAYOUT:(?<body>[^\]\r\n]+)\][ 	]*(?<eol>\r?\n|$)',
-    multiLine: true,
+  final RegExp canonicalLine = RegExp(
+    r'^(?<indent>[ \t]*)\\[LAYOUT:(?<body>[^\\]\\r\\n]+)\\][ \t]*(?<eol>\\r?\\n|$)$',
   );
 
-  for (final RegExpMatch match in line.allMatches(inner)) {
-    final int globalStart = mosaic.block.openEndOffset + match.start;
+  int cursor = 0;
+  while (cursor < inner.length) {
+    final int newline = inner.indexOf('\n', cursor);
+    final int lineEnd = newline < 0 ? inner.length : newline + 1;
+    final String rawLine = inner.substring(cursor, lineEnd);
+    final int globalStart = mosaic.block.openEndOffset + cursor;
+    cursor = lineEnd;
+
     if (_insideChildBlock(globalStart, mosaic.block.children)) continue;
+
+    final String leftTrimmed = rawLine.trimLeft();
+    if (!leftTrimmed.startsWith('[LAYOUT')) continue;
+
+    final RegExpMatch? match = canonicalLine.firstMatch(rawLine);
+    if (match == null) {
+      throw MosaicLayoutFormatException(
+        'Malformed direct MOSAIC LAYOUT directive.',
+        globalStart,
+      );
+    }
 
     final String body = match.namedGroup('body')!;
     final List<String> segments =
@@ -394,7 +409,7 @@ List<MosaicLayoutCue> parseMosaicLayoutCues({
         durationFrames: options.durationFrames,
         sourceSpan: MosaicLayoutSourceSpan(
           startOffset: globalStart,
-          endOffset: mosaic.block.openEndOffset + match.end,
+          endOffset: globalStart + rawLine.length,
           indent: match.namedGroup('indent') ?? '',
           lineEnding: match.namedGroup('eol') ?? '',
         ),
