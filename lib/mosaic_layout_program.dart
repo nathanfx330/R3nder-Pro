@@ -373,8 +373,9 @@ class MosaicLayoutEvaluationContext {
 
   /// Legacy placement-owned seed. Null means implicit COMPOSITE.
   ///
-  /// If an authored cue exists at frame zero, the legacy seed is ignored and
-  /// the cue reconciles from the ordinary implicit COMPOSITE seed instead.
+  /// If an authored cue exists at frame zero, the legacy seed is not visible
+  /// in source time: the frame-zero cue establishes the canonical initial
+  /// layout immediately.
   final MosaicLayoutState? legacySeed;
 
   const MosaicLayoutEvaluationContext({
