@@ -633,10 +633,16 @@ class MosaicLayoutProgram {
       );
     }
 
+    final List<_ResolvedBoundary> frozenBoundaries =
+        List<_ResolvedBoundary>.unmodifiable(boundaries);
     return MosaicResolvedLayoutProgram._(
       context: context,
       actorIds: List<MosaicLayoutActorId>.unmodifiable(actors),
-      boundaries: List<_ResolvedBoundary>.unmodifiable(boundaries),
+      boundaries: frozenBoundaries,
+      appearanceFramesByPane: _appearanceFramesByPane(
+        actorIds: actors,
+        boundaries: frozenBoundaries,
+      ),
       issues: List<MosaicLayoutIssue>.unmodifiable(issues),
     );
   }
@@ -646,14 +652,17 @@ class MosaicResolvedLayoutProgram {
   final MosaicLayoutEvaluationContext context;
   final List<MosaicLayoutActorId> actorIds;
   final List<_ResolvedBoundary> _boundaries;
+  final Map<String, List<int>> _appearanceFramesByPane;
   final List<MosaicLayoutIssue> issues;
 
   const MosaicResolvedLayoutProgram._({
     required this.context,
     required this.actorIds,
     required List<_ResolvedBoundary> boundaries,
+    required Map<String, List<int>> appearanceFramesByPane,
     required this.issues,
-  }) : _boundaries = boundaries;
+  })  : _boundaries = boundaries,
+        _appearanceFramesByPane = appearanceFramesByPane;
 
   MosaicLayoutFrame evaluate(int sourceFrame) {
     if (sourceFrame < 0) {
@@ -677,23 +686,22 @@ class MosaicResolvedLayoutProgram {
   }
 
   int? nextAppearanceFrame(String paneId, {required int afterFrame}) {
-    final MosaicLayoutActorId actorId = actorIds.singleWhere(
-      (MosaicLayoutActorId id) =>
-          id.kind == MosaicLayoutActorKind.pane && id.paneId == paneId,
-      orElse: () => throw StateError('Unknown MOSAIC PANE "$paneId".'),
-    );
-
-    bool included = false;
-    for (final _ResolvedBoundary boundary in _boundaries) {
-      final bool nextIncluded = boundary.states[actorId]!.terminal.included;
-      if (boundary.frame <= afterFrame) {
-        included = nextIncluded;
-        continue;
-      }
-      if (!included && nextIncluded) return boundary.frame;
-      included = nextIncluded;
+    final List<int>? appearances = _appearanceFramesByPane[paneId];
+    if (appearances == null) {
+      throw StateError('Unknown MOSAIC PANE "$paneId".');
     }
-    return null;
+
+    int low = 0;
+    int high = appearances.length;
+    while (low < high) {
+      final int mid = low + ((high - low) >> 1);
+      if (appearances[mid] <= afterFrame) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low < appearances.length ? appearances[low] : null;
   }
 
   Set<String> paneIdsEnteringBetween({
@@ -738,6 +746,40 @@ class MosaicResolvedLayoutProgram {
     }
     return _boundaries[high < 0 ? 0 : high];
   }
+}
+
+Map<String, List<int>> _appearanceFramesByPane({
+  required List<MosaicLayoutActorId> actorIds,
+  required List<_ResolvedBoundary> boundaries,
+}) {
+  final Map<String, List<int>> out = <String, List<int>>{
+    for (final MosaicLayoutActorId actorId in actorIds)
+      if (actorId.paneId != null) actorId.paneId!: <int>[],
+  };
+  final Map<MosaicLayoutActorId, bool> included =
+      <MosaicLayoutActorId, bool>{
+    for (final MosaicLayoutActorId actorId in actorIds) actorId: false,
+  };
+
+  for (final _ResolvedBoundary boundary in boundaries) {
+    for (final MosaicLayoutActorId actorId in actorIds) {
+      final String? paneId = actorId.paneId;
+      if (paneId == null) continue;
+      final bool nextIncluded =
+          boundary.states[actorId]!.terminal.included;
+      if (!(included[actorId] ?? false) && nextIncluded) {
+        out[paneId]!.add(boundary.frame);
+      }
+      included[actorId] = nextIncluded;
+    }
+  }
+
+  return Map<String, List<int>>.unmodifiable(
+    <String, List<int>>{
+      for (final MapEntry<String, List<int>> entry in out.entries)
+        entry.key: List<int>.unmodifiable(entry.value),
+    },
+  );
 }
 
 class _TerminalCondition {
