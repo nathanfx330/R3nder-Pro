@@ -433,6 +433,40 @@ void main() {
     );
   });
 
+  test('immediate declick does not leak a clip that starts on the mute boundary',
+      () async {
+    const String script = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:l:video/left.mp4:0:0:6:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[LAYOUT_START:TWOUP:A=p1:B=p2]
+[LAYOUT:2:ONE:PANE=p1:DUR=1]
+[PANE:p1]
+[CLIP:leftCut:EDIT.left:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:rightStartsAtMute:video/right.mp4:2:0:4:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+    final _FakeLeafDecoder decoder = _FakeLeafDecoder(
+      sampleValue: (String path, int sample, int channel) =>
+          path.endsWith('left.mp4') ? 0.25 : 0.5,
+    );
+
+    final StructuralAudioSourceRender render =
+        await _renderer(script, decoder).render('MOSAIC.wall');
+
+    expect(_leftAt(render, 2 * 1600), closeTo(0.25, 1e-7));
+    expect(_leftAt(render, 2 * 1600 + 100), closeTo(0.25, 1e-7));
+    expect(decoder.calls, <String>['/workspace/video/left.mp4']);
+  });
+
   test('nested structural IN and placement preserve source-relative timing', () async {
     const String script = '''[EDIT:child]
 [TRACK:V1]
