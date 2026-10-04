@@ -35,6 +35,7 @@ import 'dart:math' as math;
 
 import 'edit_linter.dart';
 import 'edit_model.dart';
+import 'mosaic_layout_cue.dart';
 
 const int kStructuralAudioSampleRate = 48000;
 const int kStructuralAudioProjectFps = 30;
@@ -219,17 +220,41 @@ class StructuralAudioSegment {
   int get sourceBoundaryDenominator => speed.denominator;
 }
 
+class StructuralAudioFrameSpan {
+  final int startFrame;
+  final int endFrameExclusive;
+
+  const StructuralAudioFrameSpan({
+    required this.startFrame,
+    required this.endFrameExclusive,
+  });
+
+  int get startSample => structuralAudioSampleAtProjectFrame(startFrame);
+  int get endSampleExclusive =>
+      structuralAudioSampleAtProjectFrame(endFrameExclusive);
+
+  bool get isEmpty => endFrameExclusive <= startFrame;
+}
+
 class StructuralAudioLanePlan {
   final StructuralAudioLaneKind kind;
   final String id;
   final int authoredIndex;
   final List<StructuralAudioSegment> segments;
 
+  /// Null means this lane is unrestricted by presentation state.
+  ///
+  /// MOSAIC pane lanes use a sorted list of source-frame spans. An empty list
+  /// means the pane is never audible. Hidden panes remain on the shared source
+  /// clock; this gate controls contribution to the mix only.
+  final List<StructuralAudioFrameSpan>? audibleFrameSpans;
+
   const StructuralAudioLanePlan({
     required this.kind,
     required this.id,
     required this.authoredIndex,
     required this.segments,
+    this.audibleFrameSpans,
   });
 
   StructuralAudioSegment segment(String clipId) => segments.singleWhere(
@@ -382,6 +407,8 @@ class StructuralAudioPlanner {
 
   StructuralAudioPlan _buildMosaic(StructuralSourceRef ref) {
     final MosaicSequence mosaic = document.mosaic(ref.id);
+    final Map<String, List<StructuralAudioFrameSpan>>? paneAudibility =
+        _mosaicPaneAudibility(mosaic);
     final List<StructuralAudioLanePlan> lanes = <StructuralAudioLanePlan>[
       for (int i = 0; i < mosaic.panes.length; i++)
         _buildLane(
@@ -389,6 +416,7 @@ class StructuralAudioPlanner {
           laneId: mosaic.panes[i].id,
           authoredIndex: i,
           clips: mosaic.panes[i].clips,
+          audibleFrameSpans: paneAudibility?[mosaic.panes[i].id],
         ),
     ];
 
@@ -404,6 +432,7 @@ class StructuralAudioPlanner {
     required String laneId,
     required int authoredIndex,
     required List<EditClip> clips,
+    List<StructuralAudioFrameSpan>? audibleFrameSpans,
   }) {
     final List<StructuralAudioSegment> segments = <StructuralAudioSegment>[];
     for (int i = 0; i < clips.length; i++) {
@@ -415,7 +444,128 @@ class StructuralAudioPlanner {
       id: laneId,
       authoredIndex: authoredIndex,
       segments: List<StructuralAudioSegment>.unmodifiable(segments),
+      audibleFrameSpans: audibleFrameSpans == null
+          ? null
+          : List<StructuralAudioFrameSpan>.unmodifiable(audibleFrameSpans),
     );
+  }
+
+  Map<String, List<StructuralAudioFrameSpan>>? _mosaicPaneAudibility(
+    MosaicSequence mosaic,
+  ) {
+    final MosaicLayoutStart? start = parseMosaicLayoutStart(
+      source: document.source,
+      mosaic: mosaic,
+    );
+    final List<MosaicLayoutCue> cues = parseMosaicLayoutCues(
+      source: document.source,
+      mosaic: mosaic,
+    ).toList(growable: false)
+      ..sort(
+        (MosaicLayoutCue a, MosaicLayoutCue b) =>
+            a.frame.compareTo(b.frame),
+      );
+
+    if (start == null && cues.isEmpty) return null;
+
+    final List<String> paneIds =
+        mosaic.panes.map((MosaicPane pane) => pane.id).toList(growable: false);
+    final Map<String, List<StructuralAudioFrameSpan>> result =
+        <String, List<StructuralAudioFrameSpan>>{
+      for (final String paneId in paneIds)
+        paneId: <StructuralAudioFrameSpan>[],
+    };
+
+    MosaicLayoutState state = (start?.state ??
+            cues
+                .where((MosaicLayoutCue cue) => cue.frame == 0)
+                .map((MosaicLayoutCue cue) => cue.state)
+                .firstOrNull ??
+            const MosaicLayoutState.composite())
+        .resolveBareTwoUp(paneIds);
+
+    int spanStart = 0;
+    for (final MosaicLayoutCue cue in cues) {
+      if (cue.frame == 0) {
+        if (start == null) {
+          state = cue.state.resolveBareTwoUp(paneIds);
+        }
+        continue;
+      }
+      if (cue.frame <= spanStart) continue;
+
+      final int boundary = math.min(cue.frame, mosaic.projectFrameCount);
+      if (boundary > spanStart) {
+        _appendAudibleStateSpans(
+          result: result,
+          paneIds: paneIds,
+          state: state,
+          startFrame: spanStart,
+          endFrameExclusive: boundary,
+        );
+      }
+      if (cue.frame >= mosaic.projectFrameCount) {
+        spanStart = mosaic.projectFrameCount;
+        break;
+      }
+      spanStart = cue.frame;
+      state = cue.state.resolveBareTwoUp(paneIds);
+    }
+
+    if (spanStart < mosaic.projectFrameCount) {
+      _appendAudibleStateSpans(
+        result: result,
+        paneIds: paneIds,
+        state: state,
+        startFrame: spanStart,
+        endFrameExclusive: mosaic.projectFrameCount,
+      );
+    }
+
+    return result;
+  }
+
+  void _appendAudibleStateSpans({
+    required Map<String, List<StructuralAudioFrameSpan>> result,
+    required List<String> paneIds,
+    required MosaicLayoutState state,
+    required int startFrame,
+    required int endFrameExclusive,
+  }) {
+    if (endFrameExclusive <= startFrame) return;
+
+    final Set<String> audible = switch (state.kind) {
+      MosaicLayoutStateKind.composite => paneIds.toSet(),
+      MosaicLayoutStateKind.twoUp => <String>{
+          state.paneA!,
+          state.paneB!,
+        },
+      MosaicLayoutStateKind.one ||
+      MosaicLayoutStateKind.full =>
+        <String>{state.paneId!},
+    };
+
+    for (final String paneId in audible) {
+      final List<StructuralAudioFrameSpan>? spans = result[paneId];
+      if (spans == null) continue;
+      if (spans.isNotEmpty &&
+          spans.last.endFrameExclusive == startFrame) {
+        final StructuralAudioFrameSpan previous = spans.removeLast();
+        spans.add(
+          StructuralAudioFrameSpan(
+            startFrame: previous.startFrame,
+            endFrameExclusive: endFrameExclusive,
+          ),
+        );
+      } else {
+        spans.add(
+          StructuralAudioFrameSpan(
+            startFrame: startFrame,
+            endFrameExclusive: endFrameExclusive,
+          ),
+        );
+      }
+    }
   }
 
   StructuralAudioSegment _buildSegment(
