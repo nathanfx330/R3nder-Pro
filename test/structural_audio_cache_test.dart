@@ -49,6 +49,22 @@ $layout
 [/MOSAIC]
 ''';
 
+String _threePaneMosaicScript() => '''[MOSAIC:wall]
+[PANE:p1]
+[CLIP:left:video/left.mp4:0:0:4:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:right:video/right.mp4:0:0:4:1]
+[/CLIP]
+[/PANE]
+[PANE:p3]
+[CLIP:third:video/third.mp4:0:0:4:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
 void main() {
   test('dependency-free SHA-256 matches the standard abc vector', () {
     expect(
@@ -156,6 +172,53 @@ void main() {
       one.key.manifest,
       isNot(twoUp.key.manifest),
     );
+  });
+
+  test('placement layout context participates in MOSAIC source audio key',
+      () async {
+    final Directory workspace =
+        await Directory.systemTemp.createTemp('r3nder_mosaic_context_key_');
+    addTearDown(() async {
+      if (workspace.existsSync()) {
+        await workspace.delete(recursive: true);
+      }
+    });
+
+    final Directory video = Directory(
+      '${workspace.path}${Platform.pathSeparator}video',
+    )..createSync(recursive: true);
+    File('${video.path}${Platform.pathSeparator}left.mp4')
+        .writeAsBytesSync(<int>[1]);
+    File('${video.path}${Platform.pathSeparator}right.mp4')
+        .writeAsBytesSync(<int>[2]);
+    File('${video.path}${Platform.pathSeparator}third.mp4')
+        .writeAsBytesSync(<int>[3]);
+
+    final StructuralSourceAudioCache cache = StructuralSourceAudioCache(
+      workspaceRoot: workspace.path,
+      resolveSource: (String source) =>
+          '${workspace.path}${Platform.pathSeparator}'
+          '${source.replaceAll('/', Platform.pathSeparator)}',
+      leafDecoder: _CountingNoAudioDecoder(),
+      ffmpegVersionResolver: () async => 'ffmpeg test build',
+    );
+
+    final String raw = _threePaneMosaicScript();
+    final StructuralSourceAudioArtifact composite = await cache.prepare(
+      rawDocument: raw,
+      structuralSource: 'MOSAIC.wall',
+    );
+    final StructuralSourceAudioArtifact split = await cache.prepare(
+      rawDocument: raw,
+      structuralSource: 'MOSAIC.wall',
+      context: const StructuralAudioSourceContext(
+        legacySplitWindow: true,
+      ),
+    );
+
+    expect(split.cacheHit, isFalse);
+    expect(split.key.digest, isNot(composite.key.digest));
+    expect(split.key.manifest, isNot(composite.key.manifest));
   });
 
   test('clip trim and leaf mtime each invalidate SourceAudioKey', () async {
