@@ -355,6 +355,52 @@ $layoutLines
       expect(placementB.evaluate(911).composite.rect, programRect);
     });
 
+    test('pane audio gain is independent of resolved geometry', () {
+      final MosaicLayoutProgram program = programFor('''
+  [LAYOUT_START:COMPOSITE]
+  [LAYOUT:100:TWOUP:A=A:B=B:DUR=12]
+  [LAYOUT:140:ONE:PANE=A:DUR=20]
+  [LAYOUT:190:FULL:PANE=A:DUR=12]
+  [LAYOUT:230:COMPOSITE:DUR=12]''', durationFrames: 280);
+
+      const MosaicLayoutEvaluationContext landscape =
+          MosaicLayoutEvaluationContext(
+        programRect: Rect.fromLTWH(0, 0, 1920, 1080),
+        ordinaryWindowRect: Rect.fromLTWH(400, 200, 1120, 680),
+        compositeRect: Rect.fromLTWH(400, 200, 1120, 680),
+        compositeChrome: 1.0,
+        titleHeight: 36,
+      );
+      const MosaicLayoutEvaluationContext portrait =
+          MosaicLayoutEvaluationContext(
+        programRect: Rect.fromLTWH(0, 0, 720, 1440),
+        ordinaryWindowRect: Rect.fromLTWH(40, 600, 640, 360),
+        compositeRect: Rect.fromLTWH(10, 20, 700, 1400),
+        compositeChrome: 0.0,
+        titleHeight: 84,
+      );
+
+      final MosaicResolvedLayoutProgram a = program.resolve(landscape);
+      final MosaicResolvedLayoutProgram b = program.resolve(portrait);
+
+      // Prove the two resolutions really are using different geometry.
+      expect(a.evaluate(110).pane('A').rect, isNot(b.evaluate(110).pane('A').rect));
+      expect(
+        a.evaluate(235).composite.rect,
+        isNot(b.evaluate(235).composite.rect),
+      );
+
+      for (int frame = 0; frame < 280; frame++) {
+        for (final String paneId in <String>['A', 'B', 'C']) {
+          expect(
+            a.paneAudioFrame(paneId, sourceFrame: frame),
+            b.paneAudioFrame(paneId, sourceFrame: frame),
+            reason: 'pane audio became geometry-dependent for $paneId at F$frame',
+          );
+        }
+      }
+    });
+
     test('separate resolution builds serialize identically', () {
       final MosaicLayoutEvaluationContext placement = context();
       final MosaicLayoutProgram previewProgram = programFor('''
