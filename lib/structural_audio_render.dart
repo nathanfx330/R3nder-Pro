@@ -34,7 +34,7 @@ import 'dart:typed_data';
 import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 
-const int kStructuralAudioSourceRendererSchemaVersion = 3;
+const int kStructuralAudioSourceRendererSchemaVersion = 4;
 const int _kFloatWavFormatCode = 3;
 const int _kFloatWavBitsPerSample = 32;
 const int _kFloatWavHeaderBytes = 44;
@@ -100,23 +100,36 @@ class StructuralAudioSourceRenderer {
     required this.resolveSource,
   });
 
-  Future<StructuralAudioSourceRender> render(String structuralSource) async {
-    final StructuralAudioPlan root = planner.plan(structuralSource);
+  Future<StructuralAudioSourceRender> render(
+    String structuralSource, {
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
+  }) async {
+    final StructuralAudioPlan root =
+        planner.plan(structuralSource, context: context);
     final Map<String, Future<StructuralAudioSourceRender>> memo =
         <String, Future<StructuralAudioSourceRender>>{};
     return _renderPlan(root, memo);
   }
 
-  Future<Uint8List> renderWav(String structuralSource) async {
-    final StructuralAudioSourceRender rendered = await render(structuralSource);
+  Future<Uint8List> renderWav(
+    String structuralSource, {
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
+  }) async {
+    final StructuralAudioSourceRender rendered =
+        await render(structuralSource, context: context);
     return rendered.toWavBytes();
   }
 
   Future<void> writeWav(
     String structuralSource,
-    String outputPath,
-  ) async {
-    final Uint8List bytes = await renderWav(structuralSource);
+    String outputPath, {
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
+  }) async {
+    final Uint8List bytes =
+        await renderWav(structuralSource, context: context);
     await File(outputPath).writeAsBytes(bytes, flush: true);
   }
 
@@ -246,24 +259,22 @@ class StructuralAudioSourceRenderer {
         speedDenominator *
         source.sourceFpsNumerator;
 
-    final _StructuralAudioLaneAudibilityCursor audibility =
-        _StructuralAudioLaneAudibilityCursor(
-      lane.audibleFrameSpans,
-      startSample: segment.projectStartSample,
-    );
-
     for (int localSample = 0;
         localSample < segment.sampleCount;
         localSample++) {
       final int absoluteProjectSample =
           segment.projectStartSample + localSample;
-      if (!audibility.isAudible(absoluteProjectSample)) {
-        continue;
-      }
+      final double layoutGain =
+          lane.layoutGainEnvelope?.gainAtProjectSample(
+                absoluteProjectSample,
+              ) ??
+              1.0;
+      if (layoutGain == 0.0) continue;
 
       final int sourceNumerator =
           baseNumerator + localSample * stepNumerator;
-      final double gain = _segmentGain(segment, localSample);
+      final double gain =
+          _segmentGain(segment, localSample) * layoutGain;
       if (gain == 0.0) {
         continue;
       }
@@ -309,24 +320,22 @@ class StructuralAudioSourceRenderer {
         kStructuralAudioSamplesPerProjectFrame *
         speedDenominator;
 
-    final _StructuralAudioLaneAudibilityCursor audibility =
-        _StructuralAudioLaneAudibilityCursor(
-      lane.audibleFrameSpans,
-      startSample: segment.projectStartSample,
-    );
-
     for (int localSample = 0;
         localSample < segment.sampleCount;
         localSample++) {
       final int absoluteProjectSample =
           segment.projectStartSample + localSample;
-      if (!audibility.isAudible(absoluteProjectSample)) {
-        continue;
-      }
+      final double layoutGain =
+          lane.layoutGainEnvelope?.gainAtProjectSample(
+                absoluteProjectSample,
+              ) ??
+              1.0;
+      if (layoutGain == 0.0) continue;
 
       final int sourceNumerator =
           baseNumerator + localSample * speedNumerator;
-      final double gain = _segmentGain(segment, localSample);
+      final double gain =
+          _segmentGain(segment, localSample) * layoutGain;
       if (gain == 0.0) {
         continue;
       }
@@ -359,47 +368,13 @@ bool _laneHasAudibleOverlap(
   StructuralAudioLanePlan lane,
   StructuralAudioSegment segment,
 ) {
-  final List<StructuralAudioFrameSpan>? spans = lane.audibleFrameSpans;
-  if (spans == null) return true;
-  if (spans.isEmpty) return false;
-
-  final int segmentStart = segment.projectStartSample;
-  final int segmentEnd = segment.projectEndSampleExclusive;
-  for (final StructuralAudioFrameSpan span in spans) {
-    if (span.endSampleExclusive <= segmentStart) continue;
-    if (span.startSample >= segmentEnd) return false;
-    return true;
-  }
-  return false;
-}
-
-class _StructuralAudioLaneAudibilityCursor {
-  final List<StructuralAudioFrameSpan>? spans;
-  int _index = 0;
-
-  _StructuralAudioLaneAudibilityCursor(
-    this.spans, {
-    required int startSample,
-  }) {
-    final List<StructuralAudioFrameSpan>? current = spans;
-    if (current == null) return;
-    while (_index < current.length &&
-        current[_index].endSampleExclusive <= startSample) {
-      _index++;
-    }
-  }
-
-  bool isAudible(int projectSample) {
-    final List<StructuralAudioFrameSpan>? current = spans;
-    if (current == null) return true;
-
-    while (_index < current.length &&
-        projectSample >= current[_index].endSampleExclusive) {
-      _index++;
-    }
-    if (_index >= current.length) return false;
-    return projectSample >= current[_index].startSample;
-  }
+  final StructuralAudioLayoutGainEnvelope? envelope =
+      lane.layoutGainEnvelope;
+  if (envelope == null) return true;
+  return envelope.hasAudibleOverlap(
+    startFrame: segment.projectStartFrame,
+    endFrameExclusive: segment.projectEndFrameExclusive,
+  );
 }
 
 double _segmentGain(
