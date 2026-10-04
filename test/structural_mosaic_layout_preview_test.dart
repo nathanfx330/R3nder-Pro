@@ -179,6 +179,60 @@ class _ControlledPendingDecoder implements NonBlockingMediaDecoder {
   void dispose() {}
 }
 
+class _PlaybackLagBackend implements MediaDecoderBackend {
+  bool releaseLag = false;
+
+  @override
+  MediaDecoder open(String resolvedPath) =>
+      _PlaybackLagDecoder(this, resolvedPath);
+}
+
+class _PlaybackLagDecoder implements NonBlockingMediaDecoder {
+  final _PlaybackLagBackend owner;
+  final String resolvedPath;
+
+  _PlaybackLagDecoder(this.owner, this.resolvedPath);
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {}
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    if (requestedSourceFrame > 0 && !owner.releaseLag) return null;
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final List<int> color = resolvedPath.contains('right')
+        ? const <int>[0, 0, 255, 255]
+        : const <int>[255, 0, 0, 255];
+    for (int at = 0; at < rgba.length; at += 4) {
+      rgba.setRange(at, at + 4, color);
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    throw StateError('Playback-lag test must remain on nonblocking decode.');
+  }
+
+  @override
+  void dispose() {}
+}
+
 class _LongRecallPendingBackend implements MediaDecoderBackend {
   bool releaseRecall = false;
 
@@ -586,6 +640,61 @@ void main() {
           'parked scrub must not bridge across an authored hidden interval',
     );
 
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+      'playback decode lag keeps same-run resident pixels beyond two frames',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_longRecallSource).single;
+    final _PlaybackLagBackend backend = _PlaybackLagBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 5,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    final MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 5);
+    expect(
+      painter.visuals.values.every(
+        (StructuralWindowActorVisual visual) => visual.sourceImage != null,
+      ),
+      isTrue,
+      reason:
+          'continuous visible actors must hold the last good image through multi-frame decode lag',
+    );
+
+    backend.releaseLag = true;
+    for (int attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      });
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
