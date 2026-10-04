@@ -168,6 +168,40 @@ void main() {
       expect(secondary.nestedPlan!.sourceRef.canonicalSource, 'EDIT.main');
     });
 
+    test('MOSAIC layout program gates pane audibility at cue boundaries', () {
+      const String source = '''[MOSAIC:wall]
+[LAYOUT_START:TWOUP:A=pane1:B=pane2]
+[LAYOUT:10:ONE:PANE=pane1]
+[LAYOUT:20:FULL:PANE=pane2]
+[LAYOUT:30:COMPOSITE]
+[PANE:pane1]
+[CLIP:a:video/a.mp4:0:0:40:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:b:video/b.mp4:0:0:40:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+      final StructuralAudioPlan plan =
+          StructuralAudioPlanner.parse(source).plan('MOSAIC.wall');
+
+      expect(
+        plan.lane('pane1').audibleFrameSpans!
+            .map((StructuralAudioFrameSpan span) =>
+                (span.startFrame, span.endFrameExclusive)),
+        <(int, int)>[(0, 20), (30, 40)],
+      );
+      expect(
+        plan.lane('pane2').audibleFrameSpans!
+            .map((StructuralAudioFrameSpan span) =>
+                (span.startFrame, span.endFrameExclusive)),
+        <(int, int)>[(0, 10), (20, 40)],
+      );
+    });
+
     test('graph errors fail before a recursive audio plan is built', () {
       const String source = '''[EDIT:a]
 [TRACK:V1]
