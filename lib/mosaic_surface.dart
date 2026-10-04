@@ -801,10 +801,19 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             (MosaicLayoutCue a, MosaicLayoutCue b) =>
                 a.frame.compareTo(b.frame),
           );
+    final int lastCueFrame = cues.isEmpty ? -1 : cues.last.frame;
     final int timelineFrames = math.max(
       1,
-      math.max(mosaic.projectFrameCount, frame + 1),
+      math.max(
+        mosaic.projectFrameCount,
+        math.max(frame + 1, lastCueFrame + 1),
+      ),
     );
+    final Map<int, int> cueFrameCounts = <int, int>{};
+    for (final MosaicLayoutCue cue in cues) {
+      cueFrameCounts[cue.frame] = (cueFrameCounts[cue.frame] ?? 0) + 1;
+    }
+    int cueIndex = 0;
 
     return Container(
       key: const ValueKey<String>('mosaic-layout-lane'),
@@ -977,42 +986,11 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                             ),
                           ),
                           for (final MosaicLayoutCue cue in cues)
-                            Positioned(
-                              left: math.max(
-                                0.0,
-                                cue.frame * _pixelsPerFrame - sc(7),
-                              ),
-                              top: sc(23),
-                              child: Tooltip(
-                                message:
-                                    '${cue.state.formatTokens()} · F${cue.frame} · ${cue.durationFrames}F',
-                                child: InkWell(
-                                  key: ValueKey<String>(
-                                    'mosaic-layout-cue:${cue.frame}',
-                                  ),
-                                  onTap: widget.isPlaying
-                                      ? null
-                                      : () => _editLayoutCue(cue),
-                                  child: Container(
-                                    width: sc(15),
-                                    height: sc(28),
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: widget.theme.accentFaint,
-                                      border: Border.all(
-                                        color: widget.theme.accent,
-                                      ),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                    child: Text(
-                                      _layoutCueGlyph(cue.state),
-                                      style: widget.theme.microAccent.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
+                            _buildLayoutCueMarker(
+                              cue: cue,
+                              markerIndex: cueIndex++,
+                              duplicateFrame:
+                                  (cueFrameCounts[cue.frame] ?? 0) > 1,
                             ),
                           Positioned(
                             left: frame * _pixelsPerFrame,
@@ -1032,6 +1010,54 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLayoutCueMarker({
+    required MosaicLayoutCue cue,
+    required int markerIndex,
+    required bool duplicateFrame,
+  }) {
+    final String keyName = duplicateFrame
+        ? 'mosaic-layout-cue:${cue.frame}:$markerIndex'
+        : 'mosaic-layout-cue:${cue.frame}';
+    return Positioned(
+      left: math.max(
+        0.0,
+        cue.frame * _pixelsPerFrame - sc(7),
+      ),
+      top: sc(23),
+      child: Tooltip(
+        message:
+            '${cue.state.formatTokens()} · F${cue.frame} · ${cue.durationFrames}F',
+        child: InkWell(
+          key: ValueKey<String>(keyName),
+          onTap: widget.isPlaying ? null : () => _editLayoutCue(cue),
+          child: Container(
+            width: sc(15),
+            height: sc(28),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: duplicateFrame
+                  ? R3Theme.danger.withValues(alpha: 0.16)
+                  : widget.theme.accentFaint,
+              border: Border.all(
+                color: duplicateFrame ? R3Theme.danger : widget.theme.accent,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Text(
+              _layoutCueGlyph(cue.state),
+              style: widget.theme.microAccent.copyWith(
+                color: duplicateFrame
+                    ? R3Theme.danger
+                    : widget.theme.accent,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
