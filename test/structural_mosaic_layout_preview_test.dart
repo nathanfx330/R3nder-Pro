@@ -248,6 +248,74 @@ class _PlaybackLagDecoder implements NonBlockingMediaDecoder {
   void dispose() {}
 }
 
+class _WarmRecallBackend implements MediaDecoderBackend {
+  bool releaseRecall = false;
+  final Map<String, List<int>> deliveredFrames = <String, List<int>>{};
+  final Map<String, List<Size>> deliveredSizes = <String, List<Size>>{};
+
+  @override
+  MediaDecoder open(String resolvedPath) =>
+      _WarmRecallDecoder(this, resolvedPath);
+}
+
+class _WarmRecallDecoder implements NonBlockingMediaDecoder {
+  final _WarmRecallBackend owner;
+  final String resolvedPath;
+
+  _WarmRecallDecoder(this.owner, this.resolvedPath);
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {}
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    if (resolvedPath.contains('right') &&
+        requestedSourceFrame >= 400 &&
+        !owner.releaseRecall) {
+      return null;
+    }
+
+    owner.deliveredFrames
+        .putIfAbsent(resolvedPath, () => <int>[])
+        .add(requestedSourceFrame);
+    owner.deliveredSizes
+        .putIfAbsent(resolvedPath, () => <Size>[])
+        .add(Size(width.toDouble(), height.toDouble()));
+
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final List<int> color = resolvedPath.contains('right')
+        ? const <int>[0, 0, 255, 255]
+        : const <int>[255, 0, 0, 255];
+    for (int at = 0; at < rgba.length; at += 4) {
+      rgba.setRange(at, at + 4, color);
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    throw StateError('Warm-recall test must remain on nonblocking decode.');
+  }
+
+  @override
+  void dispose() {}
+}
+
 class _LongRecallPendingBackend implements MediaDecoderBackend {
   bool releaseRecall = false;
 
@@ -868,6 +936,115 @@ void main() {
       )) {
         break;
       }
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('warmed hidden pane bridges pending recall frame',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_longRecallSource).single;
+    final _WarmRecallBackend backend = _WarmRecallBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final Object initialRightImage = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value
+        .sourceImage!;
+
+    // F399 is hidden but inside the 24-frame warm window for the F400 recall.
+    // The warm render must use the upcoming appearance geometry, not the absent
+    // actor's zero-size geometry.
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 399,
+        backend: backend,
+        playing: true,
+      ),
+    );
+
+    for (int attempt = 0; attempt < 20; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      });
+      if ((backend.deliveredFrames['right.mp4'] ?? const <int>[])
+          .contains(399)) {
+        break;
+      }
+    }
+
+    expect(
+      backend.deliveredFrames['right.mp4'],
+      contains(399),
+      reason: 'hidden pane must deliver a warm F399 image for F400 recall',
+    );
+    final Size warmSize = backend.deliveredSizes['right.mp4']!.last;
+    expect(warmSize.width, greaterThan(1));
+    expect(warmSize.height, greaterThan(1));
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 400,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 400);
+    expect(
+      painter.layoutFrame.pane('right').presence,
+      MosaicLayoutPresence.present,
+    );
+    final StructuralWindowActorVisual recalledRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(
+      recalledRight.sourceImage,
+      isNotNull,
+      reason:
+          'the F399 warm image must bridge the pending F400 recall decode',
+    );
+    expect(
+      identical(recalledRight.sourceImage, initialRightImage),
+      isFalse,
+      reason: 'recall must use the warmed image, not the old pre-hide F0 image',
+    );
+
+    backend.releaseRecall = true;
+    for (int attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      });
     }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
