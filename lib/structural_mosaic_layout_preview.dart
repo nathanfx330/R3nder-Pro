@@ -85,6 +85,8 @@ class _StructuralMosaicLayoutPreviewState
       <MosaicLayoutActorId, ui.Image?>{};
   final Map<MosaicLayoutActorId, int> _imageFrames =
       <MosaicLayoutActorId, int>{};
+  final Map<MosaicLayoutActorId, int> _warmAppearanceFrames =
+      <MosaicLayoutActorId, int>{};
   final Map<MosaicLayoutActorId, String> _diagnosticLabels =
       <MosaicLayoutActorId, String>{};
 
@@ -166,6 +168,7 @@ class _StructuralMosaicLayoutPreviewState
     }
     _images.clear();
     _imageFrames.clear();
+    _warmAppearanceFrames.clear();
     _diagnosticLabels.clear();
   }
 
@@ -173,6 +176,7 @@ class _StructuralMosaicLayoutPreviewState
     final ui.Image? image = _images.remove(actorId);
     image?.dispose();
     _imageFrames.remove(actorId);
+    _warmAppearanceFrames.remove(actorId);
     _diagnosticLabels.remove(actorId);
   }
 
@@ -204,28 +208,53 @@ class _StructuralMosaicLayoutPreviewState
     // layout records real absent intervals, including intervals skipped by a
     // direct scrub or playback jump.
     final MosaicResolvedLayoutProgram? resolved = _resolved;
-    if (resolved == null ||
-        !resolved.actorStayedPaintableAcross(
+    if (resolved == null) return null;
+
+    if (resolved.actorStayedPaintableAcross(
+      actorId,
+      frameA: residentFrame,
+      frameB: widget.sourceFrame,
+    )) {
+      return image;
+    }
+
+    // A hidden pane may be deliberately warmed on the shared source clock for
+    // its next appearance. The appearance boundary itself is a paintability
+    // change, so ordinary continuity rejects that image. Warm provenance lets
+    // this one intentional bridge cross the appearance boundary, then normal
+    // paintability continuity applies from the appearance frame forward.
+    final int? warmAppearanceFrame = _warmAppearanceFrames[actorId];
+    if (warmAppearanceFrame != null &&
+        residentFrame < warmAppearanceFrame &&
+        widget.sourceFrame >= warmAppearanceFrame &&
+        resolved.actorStayedPaintableAcross(
           actorId,
-          frameA: residentFrame,
+          frameA: warmAppearanceFrame,
           frameB: widget.sourceFrame,
         )) {
-      return null;
+      return image;
     }
-    return image;
+
+    return null;
   }
 
   void _replaceImage(
     MosaicLayoutActorId actorId,
     ui.Image? next,
-    int sourceFrame,
-  ) {
+    int sourceFrame, {
+    int? warmAppearanceFrame,
+  }) {
     final ui.Image? old = _images[actorId];
     if (!identical(old, next)) {
       _images[actorId] = next;
       old?.dispose();
     }
     _imageFrames[actorId] = sourceFrame;
+    if (next != null && warmAppearanceFrame != null) {
+      _warmAppearanceFrames[actorId] = warmAppearanceFrame;
+    } else {
+      _warmAppearanceFrames.remove(actorId);
+    }
   }
 
   void _reportRenderError(Object error, StackTrace stack, String phase) {
@@ -369,13 +398,22 @@ class _StructuralMosaicLayoutPreviewState
     for (final MosaicLayoutActorId actorId in requestedIds) {
       if (!mounted || serial != _serial) return;
 
+      final bool visible = visibleIds.contains(actorId);
       final MosaicLayoutActorFrame? currentActor =
-          _actorFromFrame(layoutFrame, actorId);
+          visible ? _actorFromFrame(layoutFrame, actorId) : null;
+      final int? warmAppearanceFrame =
+          !visible && actorId.kind == MosaicLayoutActorKind.pane
+              ? resolved.nextAppearanceFrame(
+                  actorId.paneId!,
+                  afterFrame: sourceFrame,
+                )
+              : null;
       final MosaicLayoutActorFrame sizingActor = currentActor ??
           _lookAheadActor(
             resolved: resolved,
             actorId: actorId,
             sourceFrame: sourceFrame,
+            appearanceFrame: warmAppearanceFrame,
           );
       final ui.Size decodeSize = _decodeSizeForActor(
         sizingActor,
@@ -458,7 +496,12 @@ class _StructuralMosaicLayoutPreviewState
         return;
       }
 
-      _replaceImage(actorId, decoded, sourceFrame);
+      _replaceImage(
+        actorId,
+        decoded,
+        sourceFrame,
+        warmAppearanceFrame: decoded == null ? null : warmAppearanceFrame,
+      );
       _diagnosticLabels[actorId] = _diagnosticLabel(result, actorId);
     }
 
@@ -491,14 +534,12 @@ class _StructuralMosaicLayoutPreviewState
     required MosaicResolvedLayoutProgram resolved,
     required MosaicLayoutActorId actorId,
     required int sourceFrame,
+    required int? appearanceFrame,
   }) {
-    final String paneId = actorId.paneId!;
-    final int? appearance =
-        resolved.nextAppearanceFrame(paneId, afterFrame: sourceFrame);
-    if (appearance == null) {
-      return resolved.evaluate(sourceFrame).pane(paneId);
+    if (appearanceFrame == null) {
+      return resolved.evaluate(sourceFrame).actor(actorId);
     }
-    return resolved.evaluate(appearance).pane(paneId);
+    return resolved.evaluate(appearanceFrame).actor(actorId);
   }
 
   ui.Size _decodeSizeForActor(
