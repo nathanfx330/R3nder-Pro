@@ -1,8 +1,6 @@
 // ./test/structural_mosaic_layout_preview_test.dart
 
 import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/media_layer.dart';
@@ -198,12 +196,19 @@ void main() {
       findsNothing,
     );
 
-    final MosaicLayoutFrame frame = _layoutPainter(tester).layoutFrame;
+    final MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final MosaicLayoutFrame frame = painter.layoutFrame;
     expect(frame.sourceFrame, 0);
     expect(frame.pane('left').presence, MosaicLayoutPresence.present);
     expect(frame.pane('right').presence, MosaicLayoutPresence.present);
     expect(frame.composite.presence, MosaicLayoutPresence.absent);
     expect(frame.paintActors, hasLength(2));
+    expect(
+      painter.visuals.values
+          .where((StructuralWindowActorVisual visual) =>
+              visual.sourceImage != null),
+      hasLength(2),
+    );
   });
 
   testWidgets('source-frame cue changes live actor set without recreating source',
