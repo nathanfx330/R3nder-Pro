@@ -346,7 +346,8 @@ void main() {
 
     expect(host.currentState!.source, isNot(contains('[LAYOUT:')));
     expect(_key('mosaic-layout-cue:40'), findsNothing);
-    expect(find.text('IMPLICIT COMPOSITE'), findsOneWidget);
+    expect(find.text('COMPOSITE (IMPLICIT)'), findsOneWidget);
+    expect(find.text('NO TRANSITIONS'), findsOneWidget);
   });
 
 
