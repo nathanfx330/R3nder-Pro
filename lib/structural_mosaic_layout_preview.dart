@@ -195,15 +195,17 @@ class _StructuralMosaicLayoutPreviewState
     if (image == null || residentFrame == null) return null;
     if (residentFrame == widget.sourceFrame) return image;
 
-    // Resident hold is tied to one continuous authored visibility run, not to
-    // a frame-age budget. A decoder may legitimately lag several frames under
-    // load; painting black during that lag is worse than holding the last good
-    // picture. Hidden/recalled actors remain safe because the resolved layout
-    // records every inclusion change, including intervals skipped by a direct
-    // scrub or playback jump.
+    // Resident hold is tied to one continuous authored paintability run, not
+    // to a frame-age budget. A decoder may legitimately lag several frames
+    // under load; painting black during that lag is worse than holding the last
+    // good picture. An actor remains paintable through its exit segment, so a
+    // minimizing/retreating window keeps its resident pixels until the exit
+    // actually settles. Hidden/recalled actors remain safe because the resolved
+    // layout records real absent intervals, including intervals skipped by a
+    // direct scrub or playback jump.
     final MosaicResolvedLayoutProgram? resolved = _resolved;
     if (resolved == null ||
-        !resolved.actorStayedIncludedAcross(
+        !resolved.actorStayedPaintableAcross(
           actorId,
           frameA: residentFrame,
           frameB: widget.sourceFrame,
