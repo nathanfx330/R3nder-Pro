@@ -28,19 +28,22 @@ void main() {
     );
   }
 
-  MosaicLayoutProgram programFor(String layoutLines) {
+  MosaicLayoutProgram programFor(
+    String layoutLines, {
+    int durationFrames = 1200,
+  }) {
     final String source = '''[MOSAIC:wall]
 $layoutLines
   [PANE:A]
-    [CLIP:a:video/a.mp4:0:0:1200:1]
+    [CLIP:a:video/a.mp4:0:0:$durationFrames:1]
     [/CLIP]
   [/PANE]
   [PANE:B]
-    [CLIP:b:video/b.mp4:0:0:1200:1]
+    [CLIP:b:video/b.mp4:0:0:$durationFrames:1]
     [/CLIP]
   [/PANE]
   [PANE:C]
-    [CLIP:c:video/c.mp4:0:0:1200:1]
+    [CLIP:c:video/c.mp4:0:0:$durationFrames:1]
     [/CLIP]
   [/PANE]
 [/MOSAIC]
@@ -285,16 +288,20 @@ $layoutLines
     });
 
     test('separate resolution builds serialize identically', () {
-      final MosaicLayoutProgram program = programFor('''
+      final MosaicLayoutEvaluationContext placement = context();
+      final MosaicLayoutProgram previewProgram = programFor('''
   [LAYOUT:500:TWOUP:A=A:B=B:DUR=20]
   [LAYOUT:505:TWOUP:A=A:B=C:DUR=4]
   [LAYOUT:700:FULL:PANE=A:DUR=12]''');
-      final MosaicLayoutEvaluationContext placement = context();
+      final MosaicLayoutProgram bakeProgram = programFor('''
+  [LAYOUT:500:TWOUP:A=A:B=B:DUR=20]
+  [LAYOUT:505:TWOUP:A=A:B=C:DUR=4]
+  [LAYOUT:700:FULL:PANE=A:DUR=12]''');
 
       final String previewCopy =
-          program.resolve(placement).canonicalSerialization();
+          previewProgram.resolve(placement).canonicalSerialization();
       final String bakeCopy =
-          program.resolve(placement).canonicalSerialization();
+          bakeProgram.resolve(placement).canonicalSerialization();
 
       expect(previewCopy, bakeCopy);
     });
