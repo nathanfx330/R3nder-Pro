@@ -526,7 +526,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
         return StatefulBuilder(
           builder: (
             BuildContext context,
-            void Function(void Function()) setDialogState,
+            StateSetter setDialogState,
           ) {
             final bool validPair = paneA != paneB;
             return AlertDialog(
