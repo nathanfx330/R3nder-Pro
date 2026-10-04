@@ -496,27 +496,52 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     });
   }
 
+  MosaicLayoutState _effectiveInitialLayoutState(
+    MosaicSurfaceDocument document,
+  ) {
+    final MosaicLayoutStart? start = document.initialLayout;
+    if (start != null) return start.state;
+    for (final MosaicLayoutCue cue in document.layoutCues) {
+      if (cue.frame == 0) return cue.state;
+    }
+    return const MosaicLayoutState.composite();
+  }
+
+  void _setInitialLayout(MosaicLayoutState state) {
+    _commit((MosaicSurfaceDocument current) {
+      return current.setInitialLayout(state);
+    });
+  }
+
   Future<void> _configureTwoUp(
     MosaicSurfaceDocument document,
     MosaicSequence mosaic,
-    int frame,
-  ) async {
+    int frame, {
+    bool initial = false,
+  }) async {
     if (mosaic.panes.length < 2) return;
 
-    MosaicLayoutCue? existing;
-    for (final MosaicLayoutCue cue in document.layoutCues) {
-      if (cue.frame == frame &&
-          cue.state.kind == MosaicLayoutStateKind.twoUp) {
-        existing = cue;
-        break;
+    MosaicLayoutState? existingState;
+    if (initial) {
+      final MosaicLayoutState current = _effectiveInitialLayoutState(document);
+      if (current.kind == MosaicLayoutStateKind.twoUp) {
+        existingState = current;
+      }
+    } else {
+      for (final MosaicLayoutCue cue in document.layoutCues) {
+        if (cue.frame == frame &&
+            cue.state.kind == MosaicLayoutStateKind.twoUp) {
+          existingState = cue.state;
+          break;
+        }
       }
     }
 
-    String paneA = existing?.state.paneA ?? mosaic.panes[0].id;
-    String paneB = existing?.state.paneB ?? mosaic.panes[1].id;
+    String paneA = existingState?.paneA ?? mosaic.panes[0].id;
+    String paneB = existingState?.paneB ?? mosaic.panes[1].id;
     MosaicSplitClientAspect aspect =
-        existing?.state.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
-    bool maximized = existing?.state.maximizeSplit ?? false;
+        existingState?.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
+    bool maximized = existingState?.maximizeSplit ?? false;
 
     final MosaicLayoutState? state = await showDialog<MosaicLayoutState>(
       context: context,
@@ -537,7 +562,9 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Set the two persistent pane windows at F$frame.',
+                      initial
+                          ? 'Choose the two windows this MOSAIC comes in on.'
+                          : 'Set the two persistent pane windows at F$frame.',
                       style: widget.theme.fine,
                     ),
                     SizedBox(height: sc(12)),
@@ -651,7 +678,11 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     );
 
     if (!mounted || state == null) return;
-    _setLayoutCueAtPlayhead(state, frame);
+    if (initial) {
+      _setInitialLayout(state);
+    } else {
+      _setLayoutCueAtPlayhead(state, frame);
+    }
   }
 
   String _layoutAspectLabel(MosaicSplitClientAspect aspect) {
@@ -788,21 +819,12 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     );
   }
 
-  MosaicLayoutCue? _initialLayoutCue(MosaicSurfaceDocument document) {
-    for (final MosaicLayoutCue cue in document.layoutCues) {
-      if (cue.frame == 0) return cue;
-    }
-    return null;
-  }
-
   Widget _buildInitialLayoutBar(
     MosaicSurfaceDocument document,
     MosaicSequence mosaic,
   ) {
-    final MosaicLayoutCue? initial = _initialLayoutCue(document);
-    final String status = initial == null
-        ? 'COMPOSITE (IMPLICIT)'
-        : initial.state.formatTokens();
+    final MosaicLayoutState initial = _effectiveInitialLayoutState(document);
+    final String status = initial.formatTokens();
 
     return Container(
       key: const ValueKey<String>('mosaic-layout-start-bar'),
@@ -815,94 +837,69 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       child: Row(
         children: [
           R3MicroLabel(
-            'START AS',
+            'COME IN ON',
             theme: widget.theme,
             accent: true,
           ),
           SizedBox(width: sc(10)),
-          R3Button(
-            'COMPOSITE',
-            key: const ValueKey<String>('mosaic-layout-start-composite'),
-            theme: widget.theme,
-            compact: true,
-            onPressed: widget.isPlaying
-                ? null
-                : () => _setLayoutCueAtPlayhead(
-                      const MosaicLayoutState.composite(),
-                      0,
-                    ),
-          ),
-          SizedBox(width: sc(6)),
-          InkWell(
-            key: const ValueKey<String>('mosaic-layout-start-twoup'),
-            onTap: widget.isPlaying || mosaic.panes.length < 2
-                ? null
-                : () => _configureTwoUp(document, mosaic, 0),
-            child: _layoutActionChip(
-              label: 'TWO UP',
-              keyName: 'mosaic-layout-start-twoup-chip',
-              enabled: !widget.isPlaying && mosaic.panes.length >= 2,
-            ),
-          ),
-          SizedBox(width: sc(6)),
           PopupMenuButton<String>(
-            key: const ValueKey<String>('mosaic-layout-start-one'),
-            tooltip: 'Set initial ONE window at frame 0',
-            enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+            key: const ValueKey<String>('mosaic-layout-come-in-on'),
+            tooltip: 'Choose the MOSAIC opening layout',
+            enabled: !widget.isPlaying,
             color: R3Theme.panelHi,
-            onSelected: (String paneId) {
-              _setLayoutCueAtPlayhead(
-                MosaicLayoutState.one(paneId),
-                0,
-              );
+            onSelected: (String value) {
+              if (value == 'composite') {
+                _setInitialLayout(const MosaicLayoutState.composite());
+                return;
+              }
+              if (value == 'twoup') {
+                _configureTwoUp(document, mosaic, 0, initial: true);
+                return;
+              }
+              if (value.startsWith('one:')) {
+                _setInitialLayout(MosaicLayoutState.one(value.substring(4)));
+                return;
+              }
+              if (value.startsWith('full:')) {
+                _setInitialLayout(MosaicLayoutState.full(value.substring(5)));
+              }
             },
             itemBuilder: (_) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'composite',
+                child: Text('COMPOSITE'),
+              ),
+              if (mosaic.panes.length >= 2)
+                const PopupMenuItem<String>(
+                  value: 'twoup',
+                  child: Text('TWO UP…'),
+                ),
               for (final MosaicPane pane in mosaic.panes)
                 PopupMenuItem<String>(
-                  key: ValueKey<String>(
-                    'mosaic-layout-start-one:${pane.id}',
-                  ),
-                  value: pane.id,
-                  child: Text(pane.id),
+                  value: 'one:${pane.id}',
+                  child: Text('ONE · ${pane.id}'),
+                ),
+              for (final MosaicPane pane in mosaic.panes)
+                PopupMenuItem<String>(
+                  value: 'full:${pane.id}',
+                  child: Text('FULL · ${pane.id}'),
                 ),
             ],
             child: _layoutActionChip(
-              label: 'ONE',
-              keyName: 'mosaic-layout-start-one-chip',
-              enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
-            ),
-          ),
-          SizedBox(width: sc(6)),
-          PopupMenuButton<String>(
-            key: const ValueKey<String>('mosaic-layout-start-full'),
-            tooltip: 'Set initial FULL pane at frame 0',
-            enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
-            color: R3Theme.panelHi,
-            onSelected: (String paneId) {
-              _setLayoutCueAtPlayhead(
-                MosaicLayoutState.full(paneId),
-                0,
-              );
-            },
-            itemBuilder: (_) => <PopupMenuEntry<String>>[
-              for (final MosaicPane pane in mosaic.panes)
-                PopupMenuItem<String>(
-                  key: ValueKey<String>(
-                    'mosaic-layout-start-full:${pane.id}',
-                  ),
-                  value: pane.id,
-                  child: Text(pane.id),
-                ),
-            ],
-            child: _layoutActionChip(
-              label: 'FULL',
-              keyName: 'mosaic-layout-start-full-chip',
-              enabled: !widget.isPlaying && mosaic.panes.isNotEmpty,
+              label: status,
+              keyName: 'mosaic-layout-come-in-on-chip',
+              enabled: !widget.isPlaying,
             ),
           ),
           const Spacer(),
           Text(
-            status,
+            document.initialLayout == null
+                ? (document.layoutCues.any(
+                        (MosaicLayoutCue cue) => cue.frame == 0,
+                      )
+                    ? 'LEGACY F0 CUE'
+                    : 'DEFAULT')
+                : 'INITIAL STATE',
             key: const ValueKey<String>('mosaic-layout-start-status'),
             style: widget.theme.micro,
           ),
@@ -916,13 +913,12 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     MosaicSequence mosaic,
     int frame,
   ) {
-    final List<MosaicLayoutCue> cues = document.layoutCues
-        .where((MosaicLayoutCue cue) => cue.frame > 0)
-        .toList(growable: false)
-      ..sort(
-        (MosaicLayoutCue a, MosaicLayoutCue b) =>
-            a.frame.compareTo(b.frame),
-      );
+    final List<MosaicLayoutCue> cues =
+        List<MosaicLayoutCue>.from(document.layoutCues)
+          ..sort(
+            (MosaicLayoutCue a, MosaicLayoutCue b) =>
+                a.frame.compareTo(b.frame),
+          );
     final int lastCueFrame = cues.isEmpty ? -1 : cues.last.frame;
     final int timelineFrames = math.max(
       1,
@@ -1199,7 +1195,8 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     MosaicSequence mosaic,
     int frame,
   ) {
-    if (document.layoutCues.isEmpty || !document.layoutValidation.isValid) {
+    if ((document.initialLayout == null && document.layoutCues.isEmpty) ||
+        !document.layoutValidation.isValid) {
       return EditVideoPreview(
         source: _workingSource,
         structuralSource: 'MOSAIC.${mosaic.id}',
