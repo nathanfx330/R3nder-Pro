@@ -1085,7 +1085,8 @@ including nested EDIT gain carrying through MOSAIC. A final reviewer hardening
 guard now resolves the same layout program under deliberately different output
 geometries and asserts identical pane-audio gain/interpolation for every pane
 and frame, pinning the assumption behind the synthetic geometry used by
-`resolveForStructuralAudio()`. This follow-up is fully accepted.
+`resolveForStructuralAudio()`. That focused resolver guard passed **14 tests**
+on Rocky. This follow-up is fully accepted.
 
 ---
 
