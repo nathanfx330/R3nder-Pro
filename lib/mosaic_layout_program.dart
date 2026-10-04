@@ -15,6 +15,7 @@ import 'package:flutter/animation.dart';
 
 import 'edit_model.dart';
 import 'mosaic_layout_cue.dart';
+import 'mosaic_overview_geometry.dart';
 import 'mosaic_split_geometry.dart';
 import 'structural_shell_geometry.dart';
 
@@ -145,6 +146,11 @@ class MosaicLayoutActiveSegment {
   final double startOpacity;
   final double targetOpacity;
 
+  final Rect startLabelRect;
+  final Rect targetLabelRect;
+  final double startLabelOpacity;
+  final double targetLabelOpacity;
+
   final double startAudioGain;
   final double targetAudioGain;
 
@@ -170,6 +176,10 @@ class MosaicLayoutActiveSegment {
     required this.anchorRect,
     required this.startOpacity,
     required this.targetOpacity,
+    this.startLabelRect = Rect.zero,
+    this.targetLabelRect = Rect.zero,
+    this.startLabelOpacity = 0.0,
+    this.targetLabelOpacity = 0.0,
     required this.startAudioGain,
     required this.targetAudioGain,
     required this.startChrome,
@@ -182,6 +192,8 @@ class MosaicLayoutActiveSegment {
     required this.targetDominant,
     required this.opacityCurve,
   }) : assert(durationFrames > 1),
+       assert(startLabelOpacity >= 0.0 && startLabelOpacity <= 1.0),
+       assert(targetLabelOpacity >= 0.0 && targetLabelOpacity <= 1.0),
        assert(startAudioGain >= 0.0 && startAudioGain <= 1.0),
        assert(targetAudioGain >= 0.0 && targetAudioGain <= 1.0),
        assert(
@@ -239,6 +251,10 @@ class MosaicLayoutActiveSegment {
         other.anchorRect == anchorRect &&
         other.startOpacity == startOpacity &&
         other.targetOpacity == targetOpacity &&
+        other.startLabelRect == startLabelRect &&
+        other.targetLabelRect == targetLabelRect &&
+        other.startLabelOpacity == startLabelOpacity &&
+        other.targetLabelOpacity == targetLabelOpacity &&
         other.startAudioGain == startAudioGain &&
         other.targetAudioGain == targetAudioGain &&
         other.startChrome == startChrome &&
@@ -261,6 +277,10 @@ class MosaicLayoutActiveSegment {
         anchorRect,
         startOpacity,
         targetOpacity,
+        startLabelRect,
+        targetLabelRect,
+        startLabelOpacity,
+        targetLabelOpacity,
         startAudioGain,
         targetAudioGain,
         startChrome,
@@ -282,6 +302,10 @@ class MosaicLayoutActiveSegment {
         'anchorRect': _rectJson(anchorRect),
         'startOpacity': startOpacity,
         'targetOpacity': targetOpacity,
+        'startLabelRect': _rectJson(startLabelRect),
+        'targetLabelRect': _rectJson(targetLabelRect),
+        'startLabelOpacity': startLabelOpacity,
+        'targetLabelOpacity': targetLabelOpacity,
         'startAudioGain': startAudioGain,
         'targetAudioGain': targetAudioGain,
         'startChrome': startChrome,
@@ -301,6 +325,8 @@ class MosaicLayoutActorFrame {
   final MosaicLayoutPresence presence;
   final Rect rect;
   final double opacity;
+  final Rect labelRect;
+  final double labelOpacity;
   final double chrome;
   final MosaicLayoutZ z;
   final MosaicLayoutActiveSegment? activeSegment;
@@ -310,6 +336,8 @@ class MosaicLayoutActorFrame {
     required this.presence,
     required this.rect,
     required this.opacity,
+    this.labelRect = Rect.zero,
+    this.labelOpacity = 0.0,
     required this.chrome,
     required this.z,
     required this.activeSegment,
@@ -328,6 +356,8 @@ class MosaicLayoutActorFrame {
         other.presence == presence &&
         other.rect == rect &&
         other.opacity == opacity &&
+        other.labelRect == labelRect &&
+        other.labelOpacity == labelOpacity &&
         other.chrome == chrome &&
         other.z == z &&
         other.activeSegment == activeSegment;
@@ -339,6 +369,8 @@ class MosaicLayoutActorFrame {
         presence,
         rect,
         opacity,
+        labelRect,
+        labelOpacity,
         chrome,
         z,
         activeSegment,
@@ -349,6 +381,8 @@ class MosaicLayoutActorFrame {
         'presence': presence.name,
         'rect': _rectJson(rect),
         'opacity': opacity,
+        'labelRect': _rectJson(labelRect),
+        'labelOpacity': labelOpacity,
         'chrome': chrome,
         'z': z.toJson(),
         'activeSegment': activeSegment?.toJson(),
@@ -1047,6 +1081,8 @@ class _TerminalCondition {
   final Rect? anchorRect;
   final double restingChrome;
   final double restingAudioGain;
+  final Rect restingLabelRect;
+  final double restingLabelOpacity;
   final MosaicLayoutZ restingZ;
   final bool dominant;
 
@@ -1055,10 +1091,13 @@ class _TerminalCondition {
     required this.anchorRect,
     required this.restingChrome,
     required this.restingAudioGain,
+    required this.restingLabelRect,
+    required this.restingLabelOpacity,
     required this.restingZ,
     required this.dominant,
   }) : assert(!dominant || included, 'dominant requires inclusion'),
-       assert(restingAudioGain >= 0.0 && restingAudioGain <= 1.0);
+       assert(restingAudioGain >= 0.0 && restingAudioGain <= 1.0),
+       assert(restingLabelOpacity >= 0.0 && restingLabelOpacity <= 1.0);
 
   @override
   bool operator ==(Object other) {
@@ -1067,6 +1106,8 @@ class _TerminalCondition {
         other.anchorRect == anchorRect &&
         other.restingChrome == restingChrome &&
         other.restingAudioGain == restingAudioGain &&
+        other.restingLabelRect == restingLabelRect &&
+        other.restingLabelOpacity == restingLabelOpacity &&
         other.restingZ == restingZ &&
         other.dominant == dominant;
   }
@@ -1077,6 +1118,8 @@ class _TerminalCondition {
         anchorRect,
         restingChrome,
         restingAudioGain,
+        restingLabelRect,
+        restingLabelOpacity,
         restingZ,
         dominant,
       );
@@ -1086,6 +1129,8 @@ class _TerminalCondition {
         'anchorRect': anchorRect == null ? null : _rectJson(anchorRect!),
         'restingChrome': restingChrome,
         'restingAudioGain': restingAudioGain,
+        'restingLabelRect': _rectJson(restingLabelRect),
+        'restingLabelOpacity': restingLabelOpacity,
         'restingZ': restingZ.toJson(),
         'dominant': dominant,
       };
@@ -1097,6 +1142,8 @@ class _ResolvedActorState {
   final MosaicLayoutPresence presence;
   final Rect rect;
   final double opacity;
+  final Rect labelRect;
+  final double labelOpacity;
   final double audioGain;
   final double chrome;
   final MosaicLayoutZ z;
@@ -1108,6 +1155,8 @@ class _ResolvedActorState {
     required this.presence,
     required this.rect,
     required this.opacity,
+    required this.labelRect,
+    required this.labelOpacity,
     required this.audioGain,
     required this.chrome,
     required this.z,
@@ -1125,6 +1174,8 @@ class _ResolvedActorState {
         presence: MosaicLayoutPresence.absent,
         rect: Rect.zero,
         opacity: 0.0,
+        labelRect: terminal.restingLabelRect,
+        labelOpacity: terminal.restingLabelOpacity,
         audioGain: terminal.restingAudioGain,
         chrome: 0.0,
         z: terminal.restingZ,
@@ -1138,6 +1189,8 @@ class _ResolvedActorState {
       presence: MosaicLayoutPresence.present,
       rect: terminal.anchorRect!,
       opacity: 1.0,
+      labelRect: terminal.restingLabelRect,
+      labelOpacity: terminal.restingLabelOpacity,
       audioGain: terminal.restingAudioGain,
       chrome: terminal.restingChrome,
       z: terminal.restingZ,
@@ -1188,6 +1241,16 @@ class _ResolvedActorState {
         opacityProgress,
       );
     }
+    final Rect labelRect = Rect.lerp(
+      segment.startLabelRect,
+      segment.targetLabelRect,
+      eased,
+    )!;
+    final double labelOpacity = _lerp(
+      segment.startLabelOpacity,
+      segment.targetLabelOpacity,
+      opacityProgress,
+    );
     final double audioGain = _lerp(
       segment.startAudioGain,
       segment.targetAudioGain,
@@ -1200,6 +1263,8 @@ class _ResolvedActorState {
       presence: segment.transitionalPresence,
       rect: rect,
       opacity: opacity,
+      labelRect: labelRect,
+      labelOpacity: labelOpacity,
       audioGain: audioGain,
       chrome: _lerp(
         segment.startChrome,
@@ -1216,6 +1281,8 @@ class _ResolvedActorState {
         presence: presence,
         rect: rect,
         opacity: opacity,
+        labelRect: labelRect,
+        labelOpacity: labelOpacity,
         chrome: chrome,
         z: z,
         activeSegment: activeSegment,
@@ -1223,6 +1290,8 @@ class _ResolvedActorState {
 
   Map<String, Object?> toJson() => <String, Object?>{
         'terminal': terminal.toJson(),
+        'labelRect': _rectJson(labelRect),
+        'labelOpacity': labelOpacity,
         'audioGain': audioGain,
         'frame': toFrame().toJson(),
       };
@@ -1297,6 +1366,11 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         anchorRect: context.compositeRect,
         restingChrome: context.compositeChrome,
         restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          context.compositeRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1322,6 +1396,11 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         anchorRect: geometry.leftWindowRect,
         restingChrome: 1.0,
         restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          geometry.leftWindowRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1334,6 +1413,11 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         anchorRect: geometry.rightWindowRect,
         restingChrome: 1.0,
         restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          geometry.rightWindowRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 1,
@@ -1343,6 +1427,51 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
       );
       break;
 
+    case MosaicLayoutStateKind.overview:
+      final MosaicOverviewGeometry geometry = mosaicOverviewGeometry(
+        frame: context.programRect,
+        aspect: state.splitAspect,
+        titleHeight: context.titleHeight,
+        thumbnailCount: state.overviewOthers.length,
+      );
+      final MosaicLayoutActorId mainActor = paneActor(state.overviewMain!);
+      out[mainActor] = _TerminalCondition(
+        included: true,
+        anchorRect: geometry.mainWindowRect,
+        restingChrome: 1.0,
+        restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          geometry.mainWindowRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
+        restingZ: MosaicLayoutZ(
+          band: MosaicLayoutZBand.stable,
+          roleRank: state.overviewOthers.length,
+          actorOrdinal: mainActor.actorOrdinal,
+        ),
+        dominant: true,
+      );
+      for (int index = 0; index < state.overviewOthers.length; index++) {
+        final MosaicLayoutActorId actor =
+            paneActor(state.overviewOthers[index]);
+        out[actor] = _TerminalCondition(
+          included: true,
+          anchorRect: geometry.thumbnailRects[index],
+          restingChrome: 0.0,
+          restingAudioGain: 0.0,
+          restingLabelRect: geometry.labelRects[index],
+          restingLabelOpacity: 1.0,
+          restingZ: MosaicLayoutZ(
+            band: MosaicLayoutZBand.stable,
+            roleRank: index,
+            actorOrdinal: actor.actorOrdinal,
+          ),
+          dominant: false,
+        );
+      }
+      break;
+
     case MosaicLayoutStateKind.one:
       final MosaicLayoutActorId actor = paneActor(state.paneId!);
       out[actor] = _TerminalCondition(
@@ -1350,6 +1479,11 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         anchorRect: context.ordinaryWindowRect,
         restingChrome: 1.0,
         restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          context.ordinaryWindowRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.stable,
           roleRank: 0,
@@ -1366,6 +1500,11 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
         anchorRect: context.programRect,
         restingChrome: 0.0,
         restingAudioGain: 1.0,
+        restingLabelRect: _hiddenLabelRect(
+          context.programRect,
+          context.titleHeight,
+        ),
+        restingLabelOpacity: 0.0,
         restingZ: MosaicLayoutZ(
           band: MosaicLayoutZBand.fullTarget,
           roleRank: 0,
@@ -1385,6 +1524,8 @@ _TerminalCondition _absentTerminal(MosaicLayoutActorId actorId) {
     anchorRect: null,
     restingChrome: 0.0,
     restingAudioGain: 0.0,
+    restingLabelRect: Rect.zero,
+    restingLabelOpacity: 0.0,
     restingZ: MosaicLayoutZ(
       band: MosaicLayoutZBand.exiting,
       roleRank: 0,
@@ -1466,6 +1607,10 @@ _ResolvedActorState _createActor({
     anchorRect: anchor,
     startOpacity: 0.0,
     targetOpacity: 1.0,
+    startLabelRect: structuralShellEmergenceRect(desired.restingLabelRect),
+    targetLabelRect: desired.restingLabelRect,
+    startLabelOpacity: 0.0,
+    targetLabelOpacity: desired.restingLabelOpacity,
     startAudioGain: 0.0,
     targetAudioGain: desired.restingAudioGain,
     startChrome: desired.restingChrome,
@@ -1489,6 +1634,8 @@ _ResolvedActorState _createActor({
     presence: MosaicLayoutPresence.entering,
     rect: segment.startRect,
     opacity: 0.0,
+    labelRect: segment.startLabelRect,
+    labelOpacity: 0.0,
     audioGain: 0.0,
     chrome: desired.restingChrome,
     z: segment.startZ,
@@ -1558,6 +1705,10 @@ _ResolvedActorState _redirectActor({
     anchorRect: anchor,
     startOpacity: old.opacity,
     targetOpacity: targetOpacity,
+    startLabelRect: old.labelRect,
+    targetLabelRect: desired.restingLabelRect,
+    startLabelOpacity: old.labelOpacity,
+    targetLabelOpacity: desired.restingLabelOpacity,
     startAudioGain: old.audioGain,
     targetAudioGain: desired.restingAudioGain,
     startChrome: old.chrome,
@@ -1577,10 +1728,22 @@ _ResolvedActorState _redirectActor({
     presence: segment.transitionalPresence,
     rect: old.rect,
     opacity: old.opacity,
+    labelRect: old.labelRect,
+    labelOpacity: old.labelOpacity,
     audioGain: old.audioGain,
     chrome: old.chrome,
     z: old.z,
     activeSegment: segment,
+  );
+}
+
+Rect _hiddenLabelRect(Rect anchor, double titleHeight) {
+  final double scale = titleHeight > 0.0 ? titleHeight / 38.0 : 1.0;
+  return Rect.fromLTWH(
+    anchor.left,
+    anchor.bottom + 8.0 * scale,
+    anchor.width,
+    24.0 * scale,
   );
 }
 
