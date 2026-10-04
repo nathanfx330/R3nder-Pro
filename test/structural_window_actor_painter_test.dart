@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/mosaic_layout_program.dart';
 import 'package:r3nder/mosaic_split_geometry.dart';
+import 'package:r3nder/structural_chrome.dart';
 import 'package:r3nder/structural_sequence.dart';
 import 'package:r3nder/structural_split_window_painter.dart';
 import 'package:r3nder/structural_window_actor_painter.dart';
