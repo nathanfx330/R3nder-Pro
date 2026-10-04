@@ -121,7 +121,7 @@ Map<MosaicLayoutActorId, String> structuralMosaicLayoutWindowTitles({
           if (byX != 0) return byX;
           final int byY = ar.center.dy.compareTo(br.center.dy);
           if (byY != 0) return byY;
-          return a.actorId.ordinal.compareTo(b.actorId.ordinal);
+          return a.actorId.actorOrdinal.compareTo(b.actorId.actorOrdinal);
         });
 
   for (int slot = 0; slot < ordered.length && slot < 2; slot++) {
