@@ -314,7 +314,25 @@ When the product is wrong but parser/painter/compositor tests are green, the nex
 
 ---
 
-## 16. The written proof map cannot silently detach from the repository
+## 16. MOSAIC LAYOUT is source-relative presentation state with shared Preview/BAKE semantics
+
+**Contract**
+
+Direct MOSAIC LAYOUT cues may change COMPOSITE / TWO UP / ONE / FULL arrangement, pane selection, split aspect, MAX, and transition duration at a MOSAIC source frame without adding project duration, changing audio, pausing hidden panes, or restarting surviving pane actors. Cue-bearing MOSAIC Preview and whole-program BAKE must derive the same `MosaicLayoutFrame` from authored cues plus placement context. Live nonblocking decode may hold the last resident actor pixels while requested pixels are pending, but readiness cannot change layout geometry/time. A pane morphing between FULL and an ordinary window remains on the front layer for the entire active morph.
+
+**Proof**
+
+- `test/mosaic_layout_program_test.dart`
+- `test/mosaic_layout_program_matrix_test.dart`
+- `test/mosaic_layout_lane_ui_test.dart`
+- `test/structural_mosaic_layout_preview_test.dart`
+- `test/program_structural_split_bake_test.dart`
+- `test/editor_structural_split_node_test.dart`
+- `test/structural_window_actor_painter_test.dart`
+
+---
+
+## 17. The written proof map cannot silently detach from the repository
 
 **Contract**
 
