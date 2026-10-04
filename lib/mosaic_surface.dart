@@ -17,7 +17,10 @@ import 'edit_source_history.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
 import 'mosaic_layout_cue.dart';
+import 'mosaic_layout_program.dart';
 import 'mosaic_split_geometry.dart';
+import 'structural_sequence.dart';
+import 'structural_mosaic_layout_preview.dart';
 import 'mosaic_surface_model.dart';
 import 'mosaic_trim.dart';
 import 'mosaic_trim_impact.dart';
@@ -1065,6 +1068,77 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     };
   }
 
+  Widget _buildMosaicViewer(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame,
+  ) {
+    if (document.layoutCues.isEmpty || !document.layoutValidation.isValid) {
+      return EditVideoPreview(
+        source: _workingSource,
+        structuralSource: 'MOSAIC.${mosaic.id}',
+        currentFrame: frame,
+        isPlaying: widget.isPlaying,
+        fastPreview: widget.isPlaying,
+        theme: widget.theme,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      );
+    }
+
+    final MosaicLayoutProgram program;
+    try {
+      program = MosaicLayoutProgram.fromMosaic(
+        source: _workingSource,
+        mosaic: mosaic,
+      );
+    } catch (_) {
+      return EditVideoPreview(
+        source: _workingSource,
+        structuralSource: 'MOSAIC.${mosaic.id}',
+        currentFrame: frame,
+        isPlaying: widget.isPlaying,
+        fastPreview: widget.isPlaying,
+        theme: widget.theme,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      );
+    }
+
+    final StructuralSourceRef sourceRef =
+        StructuralSourceRef.tryParse('MOSAIC.${mosaic.id}')!;
+    final int duration = math.max(1, mosaic.projectFrameCount);
+    final StructuralSequencePlacement placement =
+        StructuralSequencePlacement(
+      sourceRef: sourceRef,
+      lineIndex: -1,
+      startOffset: 0,
+      endOffset: 0,
+      sourceDurationFrames: duration,
+      durationFrames: duration,
+    );
+
+    return ColoredBox(
+      color: R3Theme.bg,
+      child: StructuralMosaicLayoutPreview(
+        key: ValueKey<String>('mosaic-layout-viewer:${mosaic.id}'),
+        rawDocument: _workingSource,
+        placement: placement,
+        program: program,
+        sourceFrame: frame,
+        stage: StructuralSequenceStage.showing,
+        stageProgress: 1.0,
+        shellOpacity: 1.0,
+        theme: widget.theme,
+        fontFamily: 'monospace',
+        chromeScale: 1.0,
+        moving: widget.isPlaying,
+        backend: widget.backend,
+        resolveSource: widget.resolveSource,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final MosaicSurfaceDocument? document = _parse();
@@ -1088,16 +1162,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
           children: [
             SizedBox(
               height: previewHeight,
-              child: EditVideoPreview(
-                source: _workingSource,
-                structuralSource: 'MOSAIC.${mosaic.id}',
-                currentFrame: frame,
-                isPlaying: widget.isPlaying,
-                fastPreview: widget.isPlaying,
-                theme: widget.theme,
-                backend: widget.backend,
-                resolveSource: widget.resolveSource,
-              ),
+              child: _buildMosaicViewer(document, mosaic, frame),
             ),
             _buildLayoutBar(mosaic),
             _buildLayoutLane(document, mosaic, frame),
