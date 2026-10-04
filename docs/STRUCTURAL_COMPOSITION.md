@@ -130,9 +130,11 @@ identity survives layout changes and cuts inside a pane. A hidden pane remains
 on the shared MOSAIC source clock; hiding it is not pausing it.
 
 Preview and BAKE share layout evaluation and the actor-window painter. Live
-Preview may hold the last resident actor image while a nonblocking decoder
-catches up, but geometry/time still follow the exact current source frame.
-BAKE blocks for exact actor pixels at that same frame.
+Preview may hold only a recent resident actor image while a nonblocking decoder
+catches up; the current implementation allows at most two source frames of lag.
+A pane recalled after a long hidden interval paints empty until current or
+near-current pixels are resident. Geometry/time still follow the exact current
+source frame. BAKE blocks for exact actor pixels at that same frame.
 
 The complete development path, including interruption semantics, residency
 bugs, missing runtime consumers, node-mode ownership cleanup, and the
