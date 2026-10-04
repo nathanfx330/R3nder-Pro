@@ -814,7 +814,21 @@ class ProgramStructuralFrameRenderer {
       final bool splitBlackClose =
           displayPlacement.splitWindow &&
           stage == StructuralSequenceStage.closing;
-      if (displayPlacement.splitWindow &&
+      final MosaicLayoutFrame? actorFrame = displayLayoutFrame;
+      final Map<MosaicLayoutActorId, StructuralWindowActorVisual>?
+          actorVisuals = layoutVisuals;
+      if (actorFrame != null && actorVisuals != null) {
+        MosaicLayoutWindowPainter(
+          layoutFrame: actorFrame,
+          visuals: actorVisuals,
+          theme: structuralTheme,
+          fontFamily: fontFamily,
+          chromeScale: structuralChromeScale,
+        ).paint(
+          canvas,
+          Size(width.toDouble(), height.toDouble()),
+        );
+      } else if (displayPlacement.splitWindow &&
           geometry != null &&
           (panes != null || splitBlackClose)) {
         final double splitProgress = stage == StructuralSequenceStage.opening
@@ -941,6 +955,13 @@ class ProgramStructuralFrameRenderer {
       if (panes != null) {
         for (final _RenderedStructuralSourceImage pane in panes) {
           pane.image.dispose();
+        }
+      }
+      final Map<MosaicLayoutActorId, StructuralWindowActorVisual>? visuals =
+          layoutVisuals;
+      if (visuals != null) {
+        for (final StructuralWindowActorVisual visual in visuals.values) {
+          visual.sourceImage?.dispose();
         }
       }
     }
