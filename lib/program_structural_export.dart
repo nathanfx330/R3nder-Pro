@@ -534,6 +534,11 @@ class ProgramStructuralFrameRenderer {
 
         final Map<MosaicLayoutActorId, StructuralWindowActorVisual> visuals =
             <MosaicLayoutActorId, StructuralWindowActorVisual>{};
+        final Map<MosaicLayoutActorId, String> titles =
+            structuralMosaicLayoutWindowTitles(
+          frame: layoutFrame,
+          placement: displayPlacement,
+        );
         for (final MosaicLayoutActorFrame actor in layoutFrame.paintActors) {
           final Size decodeSize =
               _layoutActorDecodeSize(actor, structuralChromeScale);
@@ -567,7 +572,8 @@ class ProgramStructuralFrameRenderer {
             sourceImage: rendered.image,
             sourceFrame: displaySourceFrame,
             sourceDurationFrames: displayPlacement.sourceDurationFrames,
-            windowTitle: displayPlacement.effectiveWindowTitle,
+            windowTitle: titles[actor.actorId] ??
+                displayPlacement.effectiveWindowTitle,
             overlayMode: displayPlacement.overlayMode,
             topOverlay: displayPlacement.topOverlay,
             bottomOverlay: displayPlacement.bottomOverlay,
