@@ -145,7 +145,11 @@ void main() {
     final ProgramStructuralAudioRender rendered =
         await ProgramStructuralAudioRenderer(
       timeline: timeline,
-      renderSource: sourceRenderer.render,
+      renderSource: (
+        String source,
+        StructuralAudioSourceContext context,
+      ) =>
+          sourceRenderer.render(source, context: context),
     ).render();
 
     final int first = occurrence.programStartSample * kStructuralAudioChannels;
