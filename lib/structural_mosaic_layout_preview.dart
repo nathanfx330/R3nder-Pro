@@ -69,6 +69,7 @@ class _StructuralMosaicLayoutPreviewState
     extends State<StructuralMosaicLayoutPreview> {
   static const int _movingDecodePixelBudget = 480 * 270;
   static const int _lookAheadFrames = 24;
+  static const int _residentHoldMaxLagFrames = 2;
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -167,6 +168,41 @@ class _StructuralMosaicLayoutPreviewState
     _images.clear();
     _imageFrames.clear();
     _diagnosticLabels.clear();
+  }
+
+  void _evictImage(MosaicLayoutActorId actorId) {
+    final ui.Image? image = _images.remove(actorId);
+    image?.dispose();
+    _imageFrames.remove(actorId);
+    _diagnosticLabels.remove(actorId);
+  }
+
+  void _evictUnrequestedHiddenImages({
+    required Set<MosaicLayoutActorId> visibleIds,
+    required Set<MosaicLayoutActorId> requestedIds,
+  }) {
+    final List<MosaicLayoutActorId> cachedIds =
+        _images.keys.toList(growable: false);
+    for (final MosaicLayoutActorId actorId in cachedIds) {
+      if (!visibleIds.contains(actorId) && !requestedIds.contains(actorId)) {
+        _evictImage(actorId);
+      }
+    }
+  }
+
+  ui.Image? _residentImageFor(MosaicLayoutActorId actorId) {
+    final ui.Image? image = _images[actorId];
+    final int? residentFrame = _imageFrames[actorId];
+    if (image == null || residentFrame == null) return null;
+    if (residentFrame == widget.sourceFrame) return image;
+
+    // Resident hold is a short live-playback bridge, not long-term pane memory.
+    // A pane recalled after a long hidden interval must not flash its old
+    // pre-exit picture while the current decode is still pending.
+    if (!widget.moving) return null;
+    final int lag = widget.sourceFrame - residentFrame;
+    if (lag < 0 || lag > _residentHoldMaxLagFrames) return null;
+    return image;
   }
 
   void _replaceImage(
@@ -417,6 +453,10 @@ class _StructuralMosaicLayoutPreviewState
     }
 
     if (!mounted || serial != _serial) return;
+    _evictUnrequestedHiddenImages(
+      visibleIds: visibleIds,
+      requestedIds: requestedIds,
+    );
     setState(() {});
 
     final bool currentResolved = visibleIds.every(
@@ -581,11 +621,14 @@ class _StructuralMosaicLayoutPreviewState
     );
     for (final MosaicLayoutActorFrame actor in frame.paintActors) {
       final MosaicLayoutActorId actorId = actor.actorId;
-      // Residency is deliberately independent from authored time. While a
-      // nonblocking decoder works on the requested source frame, keep painting
-      // the actor's last resident image. Geometry, opacity, chrome, and z still
-      // come from the exact current MosaicLayoutFrame.
-      final ui.Image? image = _images[actorId];
+      // Residency is deliberately independent from authored time, but the hold
+      // is intentionally short. While a nonblocking decoder works on the next
+      // nearby frame, keep painting the actor's recent resident image. A pane
+      // recalled after a long hidden interval paints empty until a current or
+      // near-current image is resident; it must never flash its stale pre-exit
+      // picture. Geometry, opacity, chrome, and z still come from the exact
+      // current MosaicLayoutFrame.
+      final ui.Image? image = _residentImageFor(actorId);
       out[actorId] = StructuralWindowActorVisual(
         sourceImage: image,
         sourceFrame: widget.sourceFrame,
