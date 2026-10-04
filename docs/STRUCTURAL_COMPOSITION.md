@@ -26,12 +26,19 @@ Primary files:
 - `lib/structural_chrome.dart`
 - `lib/structural_source_export.dart`
 - `lib/structural_sequence_preview.dart`
+- `lib/mosaic_layout_cue.dart`
+- `lib/mosaic_layout_program.dart`
+- `lib/structural_mosaic_layout.dart`
+- `lib/structural_mosaic_layout_preview.dart`
+- `lib/structural_window_actor_painter.dart`
 
 History:
 
 - `docs/R3NDER_PRO_JOURNEY_TO_STRUCTURAL_VIDEO.md`
 - `docs/M18_M19_STRUCTURAL_PRESENTATION_JOURNEY.md`
 - `docs/M20_M21_PRESENTATION_AND_RENDER_IDENTITY_JOURNEY.md`
+- `docs/MOSAIC_TWO_WINDOW_COMPARISON.md`
+- `docs/MOSAIC_LAYOUT_PROGRAM_JOURNEY.md`
 
 ---
 
@@ -42,13 +49,15 @@ Structural composition must guarantee:
 - EDIT and MOSAIC definitions are reusable sources;
 - defining a source does not consume top-level program time;
 - STRUCT is the main-sequence placement mechanism;
-- the source owns content duration and composition;
-- the placement owns presentation mode and chrome;
+- the source owns content duration, pane composition, and source-relative MOSAIC LAYOUT cues;
+- the placement owns presentation context, chrome, audio intent, optional window-slot names, and legacy SPLIT seed compatibility;
 - the same source can be placed multiple times with different presentation metadata;
 - nested structural evaluation maps exact local frames downward without wall time;
 - recursive graphs are linted and runtime depth is bounded;
 - adjacent STRUCT placement planning is based on executable program adjacency, not merely raw text position;
-- Preview and BAKE use the same placement plan.
+- Preview and BAKE use the same placement plan;
+- cue-bearing MOSAIC Preview and BAKE evaluate the same placement-context-resolved `MosaicLayoutFrame`;
+- decode readiness may change resident live pixels but never authored MOSAIC layout time or geometry.
 
 ---
 
@@ -91,17 +100,52 @@ Conceptually:
 [/MOSAIC]
 ```
 
-Pane order determines layout.
+Pane order still matters for legacy/default composition and for bare TWOUP
+authoring shorthand. Explicit LAYOUT cues store pane ids, so later pane
+reordering does not silently retarget an already-authored explicit cue.
 
-The current model supports one composition rather than paged MOSAIC presentation. More panes than the supported geometry are rejected rather than silently moved elsewhere.
+MOSAIC duration remains authored content geometry: the maximum pane-local CLIP
+end. LAYOUT cues do not add frames, alter pane-local clip timing, or affect
+audio.
 
-MOSAIC duration is authored geometry: the maximum pane-local CLIP end.
+A cue-bearing MOSAIC may also own a reusable source-relative desktop layout
+program:
 
-The planned two-window STRUCT presentation and its measured geometry are recorded in
-[`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). That work
-changes placement presentation, not reusable MOSAIC content geometry.
+```text
+[LAYOUT:300:TWOUP:A=left:B=right:ASPECT=4X3:DUR=12]
+[LAYOUT:600:ONE:PANE=left:DUR=12]
+[LAYOUT:900:FULL:PANE=left:DUR=12]
+[LAYOUT:1200:COMPOSITE:DUR=12]
+```
 
-W1 of that milestone adds `lib/mosaic_split_geometry.dart` as a pure seated
+The authored program stores desired arrangement, not output rectangles. Each
+STRUCT placement supplies an evaluation context containing program geometry,
+ordinary-window geometry, placement-level COMPOSITE mode, title-bar scale, and
+any legacy SPLIT seed. At source frame F that context plus the authored cues
+deterministically produces one `MosaicLayoutFrame`.
+
+The layout states are COMPOSITE, TWO UP, ONE, and FULL. TWO UP may carry an
+explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. Persistent pane actor
+identity survives layout changes and cuts inside a pane. A hidden pane remains
+on the shared MOSAIC source clock; hiding it is not pausing it.
+
+Preview and BAKE share layout evaluation and the actor-window painter. Live
+Preview may hold the last resident actor image while a nonblocking decoder
+catches up, but geometry/time still follow the exact current source frame.
+BAKE blocks for exact actor pixels at that same frame.
+
+The complete development path, including interruption semantics, residency
+bugs, missing runtime consumers, node-mode ownership cleanup, and the
+FULL/TWO-UP z-order correction, is recorded in
+[`MOSAIC_LAYOUT_PROGRAM_JOURNEY.md`](MOSAIC_LAYOUT_PROGRAM_JOURNEY.md).
+
+The earlier static two-window STRUCT milestone remains supported for cue-less
+projects and is documented in
+[`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). Its
+SPLIT/SPLIT:MAX metadata may also act as a legacy initial seed until the first
+LAYOUT cue; a frame-zero LAYOUT cue wins immediately.
+
+W1 of that earlier milestone added `lib/mosaic_split_geometry.dart` as a pure seated
 split-window geometry authority.
 
 W2 locks placement syntax to `:SPLIT` plus optional keyed
@@ -705,6 +749,12 @@ Important proof includes:
 - `test/structural_split_placement_test.dart`;
 - `test/mosaic_split_pane_compositor_test.dart`;
 - `test/program_structural_split_bake_test.dart`;
+- `test/mosaic_layout_program_test.dart`;
+- `test/mosaic_layout_program_matrix_test.dart`;
+- `test/mosaic_layout_lane_ui_test.dart`;
+- `test/structural_mosaic_layout_preview_test.dart`;
+- `test/editor_structural_split_node_test.dart`;
+- `test/structural_window_actor_painter_test.dart`;
 - structural chrome parser/round-trip tests;
 - structural marker alignment tests;
 - Program Preview runtime tests;
@@ -718,6 +768,10 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 
 - [ ] EDIT is reusable frame-producing content;
 - [ ] MOSAIC composes structural sources into deterministic pane geometry;
+- [ ] source-relative LAYOUT cues change arrangement without changing content duration or audio;
+- [ ] persistent pane actors survive layout changes without restarting source time;
+- [ ] hidden panes remain on the shared MOSAIC source clock;
+- [ ] Preview and BAKE derive the same `MosaicLayoutFrame` from source frame plus placement context;
 - [ ] source duration is authored in source definitions;
 - [ ] STRUCT places a source into the main program without a duplicate duration field;
 - [ ] presentation mode and chrome belong to STRUCT;
