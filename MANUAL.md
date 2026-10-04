@@ -429,8 +429,17 @@ A MOSAIC can also author **LAYOUT cues**. These change how the persistent pane
 windows are presented at a MOSAIC source frame without changing clip timing,
 MOSAIC duration, or audio.
 
-The GUI's **LAYOUT CUES** lane is the preferred authoring surface. The direct
-script forms are:
+The GUI separates the initial condition from later transitions:
+
+* **START AS** always authors/updates frame 0, regardless of the current
+  playhead. Use it when the MOSAIC should enter directly as COMPOSITE, TWO UP,
+  ONE, or FULL.
+* **LAYOUT CUES** authors later changes at the current playhead. Its lane shows
+  transition cues after frame 0; the starting state is shown separately above
+  it.
+
+Both surfaces write the same source-relative LAYOUT grammar. The direct script
+forms are:
 
 ```text
 [LAYOUT:300:TWOUP:A=pane1:B=pane3:ASPECT=4X3:DUR=12]
@@ -474,7 +483,9 @@ Important timing rules:
   pause its content.
 * A cue at frame 0 establishes the initial canonical layout immediately. It does
   not animate out of an implicit COMPOSITE; the outer STRUCT entry owns the
-  opening motion.
+  opening motion. In the GUI, **START AS** is the dedicated frame-zero authoring
+  control, so choosing TWO UP or ONE does not require moving the playhead back
+  to frame 0 first.
 * An older cue-less `[STRUCT:MOSAIC.name:SPLIT...]` placement can act as a
   legacy initial two-window seed before the first LAYOUT cue. A frame-zero
   LAYOUT cue overrides that seed outright.
