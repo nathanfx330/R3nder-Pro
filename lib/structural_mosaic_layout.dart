@@ -203,9 +203,10 @@ Map<MosaicLayoutActorId, String> structuralMosaicLayoutPaneLabels({
         actor.activeSegment?.targetLabelRect ?? actor.labelRect,
   );
   final List<MosaicLayoutActorFrame> startLabels = orderedBy(
-    (MosaicLayoutActorFrame actor) =>
-        actor.activeSegment?.startLabelOpacity != null &&
-        actor.activeSegment!.startLabelOpacity > 0.0,
+    (MosaicLayoutActorFrame actor) {
+      final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+      return segment != null && segment.startLabelOpacity > 0.0;
+    },
     (MosaicLayoutActorFrame actor) =>
         actor.activeSegment?.startLabelRect ?? actor.labelRect,
   );

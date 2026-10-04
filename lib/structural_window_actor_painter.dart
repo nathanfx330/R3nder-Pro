@@ -125,7 +125,7 @@ void paintStructuralPaneLabel({
       style: theme.value.copyWith(
         fontFamily: fontFamily,
         color: R3Theme.textMid.withValues(
-          alpha: opacity.clamp(0.0, 1.0),
+          alpha: opacity.clamp(0.0, 1.0).toDouble(),
         ),
         fontSize: 12.0 * s,
         fontWeight: FontWeight.w600,
