@@ -318,7 +318,7 @@ When the product is wrong but parser/painter/compositor tests are green, the nex
 
 **Contract**
 
-A MOSAIC may own one LAYOUT_START initial presentation state plus later LAYOUT cues. LAYOUT_START selects COMPOSITE / TWO UP / ONE / FULL without creating a timeline transition or DUR; later LAYOUT cues may change arrangement, pane selection, split aspect, MAX, and transition duration at a MOSAIC source frame without adding project duration, changing audio, pausing hidden panes, or restarting surviving pane actors. Cue-bearing MOSAIC Preview and whole-program BAKE must derive the same `MosaicLayoutFrame` from authored cues plus placement context. Nonblocking Preview may hold the last good resident actor pixels while requested pixels are pending only when that actor remained continuously paintable across the authored frame interval; an exiting actor must keep its resident image through its visual exit segment, and a pane recalled across a real absent interval must not reuse a pre-exit image even when a scrub or playback jump skipped all intermediate hidden widget frames. A hidden pane explicitly warmed on the shared source clock for its next appearance may bridge that one intended appearance boundary while the exact recall-frame decode is pending, and the warm render must be sized from the upcoming appearance actor rather than absent geometry. Readiness cannot change layout geometry/time. A pane morphing between FULL and an ordinary window remains on the front layer for the entire active morph.
+A MOSAIC may own one LAYOUT_START initial presentation state plus later LAYOUT cues. LAYOUT_START selects COMPOSITE / TWO UP / ONE / FULL without creating a timeline transition or DUR; later LAYOUT cues may change arrangement, pane selection, split aspect, MAX, and transition duration at a MOSAIC source frame without adding project duration, pausing hidden panes, or restarting surviving pane actors. The same authored target state gates MOSAIC pane audio at the exact cue-frame boundary: COMPOSITE mixes all panes, TWOUP mixes only A/B, and ONE/FULL mix only the selected pane. Muted panes continue on the shared source clock. Cue-bearing MOSAIC Preview and whole-program BAKE must derive the same `MosaicLayoutFrame` from authored cues plus placement context. Nonblocking Preview may hold the last good resident actor pixels while requested pixels are pending only when that actor remained continuously paintable across the authored frame interval; an exiting actor must keep its resident image through its visual exit segment, and a pane recalled across a real absent interval must not reuse a pre-exit image even when a scrub or playback jump skipped all intermediate hidden widget frames. A hidden pane explicitly warmed on the shared source clock for its next appearance may bridge that one intended appearance boundary while the exact recall-frame decode is pending, and the warm render must be sized from the upcoming appearance actor rather than absent geometry. Readiness cannot change layout geometry/time. A pane morphing between FULL and an ordinary window remains on the front layer for the entire active morph.
 
 **Proof**
 
@@ -326,6 +326,9 @@ A MOSAIC may own one LAYOUT_START initial presentation state plus later LAYOUT c
 - `test/mosaic_layout_program_matrix_test.dart`
 - `test/mosaic_layout_lane_ui_test.dart`
 - `test/structural_mosaic_layout_preview_test.dart`
+- `test/structural_audio_plan_test.dart`
+- `test/structural_audio_render_test.dart`
+- `test/structural_audio_cache_test.dart`
 - `test/program_structural_split_bake_test.dart`
 - `test/editor_structural_split_node_test.dart`
 - `test/structural_window_actor_painter_test.dart`
