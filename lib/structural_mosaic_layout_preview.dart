@@ -22,6 +22,7 @@ import 'media_layer.dart';
 import 'mosaic_layout_cue.dart';
 import 'mosaic_layout_program.dart';
 import 'project_clock.dart';
+import 'structural_mosaic_layout.dart';
 import 'structural_sequence.dart';
 import 'structural_shell_geometry.dart';
 import 'structural_window_actor_painter.dart';
@@ -243,33 +244,12 @@ class _StructuralMosaicLayoutPreviewState
   }
 
   MosaicResolvedLayoutProgram _ensureResolved(ui.Size size) {
-    final Rect programRect =
-        Rect.fromLTWH(0, 0, size.width, size.height);
-    final double titleHeight = 38.0 * widget.chromeScale;
-    final Rect ordinaryWindowRect = structuralWindowTargetRect(
-      programRect,
-      titleHeight: titleHeight,
-    );
-
-    MosaicLayoutState? legacySeed;
-    if (widget.placement.splitWindow && widget.program.paneIds.length >= 2) {
-      legacySeed = MosaicLayoutState.twoUp(
-        paneA: widget.program.paneIds[0],
-        paneB: widget.program.paneIds[1],
-        aspect: widget.placement.splitClientAspect,
-        maximized: widget.placement.maximizeSplit,
-      );
-    }
-
     final MosaicLayoutEvaluationContext context =
-        MosaicLayoutEvaluationContext(
-      programRect: programRect,
-      ordinaryWindowRect: ordinaryWindowRect,
-      compositeRect:
-          widget.placement.fullscreen ? programRect : ordinaryWindowRect,
-      compositeChrome: widget.placement.fullscreen ? 0.0 : 1.0,
-      titleHeight: titleHeight,
-      legacySeed: legacySeed,
+        structuralMosaicLayoutContext(
+      programRect: Rect.fromLTWH(0, 0, size.width, size.height),
+      placement: widget.placement,
+      program: widget.program,
+      chromeScale: widget.chromeScale,
     );
 
     final MosaicResolvedLayoutProgram? existing = _resolved;
@@ -591,45 +571,6 @@ class _StructuralMosaicLayoutPreviewState
     widget.onFirstFrameReady?.call();
   }
 
-  MosaicLayoutFrame _outerFrame(MosaicLayoutFrame frame) {
-    final double shellOpacity =
-        widget.shellOpacity.clamp(0.0, 1.0).toDouble();
-    final double linear =
-        widget.stageProgress.clamp(0.0, 1.0).toDouble();
-
-    return MosaicLayoutFrame(
-      sourceFrame: frame.sourceFrame,
-      actors: <MosaicLayoutActorFrame>[
-        for (final MosaicLayoutActorFrame actor in frame.actors)
-          if (actor.presence == MosaicLayoutPresence.absent)
-            actor
-          else
-            MosaicLayoutActorFrame(
-              actorId: actor.actorId,
-              presence: actor.presence,
-              rect: switch (widget.stage) {
-                StructuralSequenceStage.opening =>
-                  structuralShapeEntryFrameAt(
-                    targetRect: actor.rect,
-                    linearProgress: linear,
-                    contentReady: true,
-                  ).rect,
-                StructuralSequenceStage.closing =>
-                  structuralShapeExitRectAt(
-                    targetRect: actor.rect,
-                    linearProgress: linear,
-                  ),
-                _ => actor.rect,
-              },
-              opacity: actor.opacity * shellOpacity,
-              chrome: actor.chrome,
-              z: actor.z,
-              activeSegment: actor.activeSegment,
-            ),
-      ],
-    );
-  }
-
   Map<MosaicLayoutActorId, StructuralWindowActorVisual> _visualsFor(
     MosaicLayoutFrame frame,
   ) {
@@ -672,7 +613,13 @@ class _StructuralMosaicLayoutPreviewState
         final MosaicResolvedLayoutProgram resolved = _ensureResolved(size);
         final MosaicLayoutFrame layoutFrame =
             resolved.evaluate(widget.sourceFrame);
-        final MosaicLayoutFrame displayFrame = _outerFrame(layoutFrame);
+        final MosaicLayoutFrame displayFrame =
+            structuralMosaicLayoutOuterFrame(
+          frame: layoutFrame,
+          stage: widget.stage,
+          stageProgress: widget.stageProgress,
+          shellOpacity: widget.shellOpacity,
+        );
 
         final bool requestChanged =
             _programRenderSize != size ||
