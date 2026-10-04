@@ -171,6 +171,11 @@ class MosaicSurfaceDocument {
     return '${base}_$suffix';
   }
 
+  MosaicLayoutStart? get initialLayout => parseMosaicLayoutStart(
+        source: source,
+        mosaic: mosaic,
+      );
+
   List<MosaicLayoutCue> get layoutCues => parseMosaicLayoutCues(
         source: source,
         mosaic: mosaic,
@@ -181,6 +186,126 @@ class MosaicSurfaceDocument {
         mosaic: mosaic,
         cues: layoutCues,
       );
+
+  String setInitialLayout(MosaicLayoutState state) {
+    final MosaicLayoutState explicit = _explicitLayoutState(state);
+    _throwLayoutErrors(
+      validateMosaicLayoutCues(
+        mosaic: mosaic,
+        cues: <MosaicLayoutCue>[
+          MosaicLayoutCue(frame: 0, state: explicit),
+        ],
+      ),
+    );
+
+    final MosaicLayoutStart? existingStart = initialLayout;
+    final List<MosaicLayoutCue> frameZeroCues = layoutCues
+        .where((MosaicLayoutCue cue) => cue.frame == 0)
+        .toList(growable: false);
+    final List<_SourceReplacement> replacements = <_SourceReplacement>[];
+
+    if (explicit.kind == MosaicLayoutStateKind.composite) {
+      if (existingStart != null) {
+        final MosaicLayoutSourceSpan span = existingStart.sourceSpan!;
+        replacements.add(
+          _SourceReplacement(
+            startOffset: span.startOffset,
+            endOffset: span.endOffset,
+            replacement: '',
+          ),
+        );
+      }
+      for (final MosaicLayoutCue cue in frameZeroCues) {
+        final MosaicLayoutSourceSpan span = cue.sourceSpan!;
+        replacements.add(
+          _SourceReplacement(
+            startOffset: span.startOffset,
+            endOffset: span.endOffset,
+            replacement: '',
+          ),
+        );
+      }
+      if (replacements.isEmpty) return source;
+    } else {
+      final MosaicLayoutStart replacement = MosaicLayoutStart(state: explicit);
+      if (existingStart != null) {
+        final MosaicLayoutSourceSpan span = existingStart.sourceSpan!;
+        replacements.add(
+          _SourceReplacement(
+            startOffset: span.startOffset,
+            endOffset: span.endOffset,
+            replacement:
+                '${span.indent}${replacement.formatTag()}${span.lineEnding}',
+          ),
+        );
+        for (final MosaicLayoutCue cue in frameZeroCues) {
+          final MosaicLayoutSourceSpan cueSpan = cue.sourceSpan!;
+          replacements.add(
+            _SourceReplacement(
+              startOffset: cueSpan.startOffset,
+              endOffset: cueSpan.endOffset,
+              replacement: '',
+            ),
+          );
+        }
+      } else if (frameZeroCues.isNotEmpty) {
+        final MosaicLayoutSourceSpan span = frameZeroCues.first.sourceSpan!;
+        replacements.add(
+          _SourceReplacement(
+            startOffset: span.startOffset,
+            endOffset: span.endOffset,
+            replacement:
+                '${span.indent}${replacement.formatTag()}${span.lineEnding}',
+          ),
+        );
+        for (final MosaicLayoutCue cue in frameZeroCues.skip(1)) {
+          final MosaicLayoutSourceSpan cueSpan = cue.sourceSpan!;
+          replacements.add(
+            _SourceReplacement(
+              startOffset: cueSpan.startOffset,
+              endOffset: cueSpan.endOffset,
+              replacement: '',
+            ),
+          );
+        }
+      } else {
+        final String newline = source.contains('\r\n') ? '\r\n' : '\n';
+        final List<MosaicLayoutCue> existingCues = layoutCues;
+        final String indent = existingCues.isNotEmpty
+            ? (existingCues.first.sourceSpan?.indent ?? '')
+            : mosaic.panes.isNotEmpty
+                ? _lineIndentAt(source, mosaic.panes.first.block.startOffset)
+                : '${_lineIndentAt(source, mosaic.block.startOffset)}  ';
+        final int insertionOffset = existingCues.isNotEmpty
+            ? existingCues.first.sourceSpan!.startOffset
+            : mosaic.panes.isNotEmpty
+                ? _lineStartAt(source, mosaic.panes.first.block.startOffset)
+                : _lineStartAt(source, mosaic.block.closeStartOffset);
+        replacements.add(
+          _SourceReplacement(
+            startOffset: insertionOffset,
+            endOffset: insertionOffset,
+            replacement: '$indent${replacement.formatTag()}$newline',
+          ),
+        );
+      }
+    }
+
+    replacements.sort(
+      (_SourceReplacement a, _SourceReplacement b) =>
+          b.startOffset.compareTo(a.startOffset),
+    );
+    String next = source;
+    for (final _SourceReplacement replacement in replacements) {
+      next = next.replaceRange(
+        replacement.startOffset,
+        replacement.endOffset,
+        replacement.replacement,
+      );
+    }
+    _validateMosaicLayoutRenderable(next, mosaicId);
+    return next;
+  }
 
   String addLayoutCue({
     required int frame,
@@ -312,6 +437,22 @@ class MosaicSurfaceDocument {
       ),
     ];
 
+    final MosaicLayoutStart? start = initialLayout;
+    if (start != null && start.state.referencesPane(oldId)) {
+      final MosaicLayoutSourceSpan span = start.sourceSpan!;
+      final MosaicLayoutStart renamed = MosaicLayoutStart(
+        state: start.state.renamePane(oldId, newId),
+      );
+      replacements.add(
+        _SourceReplacement(
+          startOffset: span.startOffset,
+          endOffset: span.endOffset,
+          replacement:
+              '${span.indent}${renamed.formatTag()}${span.lineEnding}',
+        ),
+      );
+    }
+
     for (final MosaicLayoutCue cue in layoutCues) {
       if (!cue.state.referencesPane(oldId)) continue;
       final MosaicLayoutSourceSpan span = cue.sourceSpan!;
@@ -388,10 +529,14 @@ class MosaicSurfaceDocument {
                 (cue.state.isBareTwoUp && remainingPaneCount < 2),
           )
           .toList(growable: false);
-      if (blocking.isNotEmpty) {
+      final MosaicLayoutStart? start = current.initialLayout;
+      final bool initialBlocks = start != null &&
+          (start.state.referencesPane(remove.id) ||
+              (start.state.isBareTwoUp && remainingPaneCount < 2));
+      if (blocking.isNotEmpty || initialBlocks) {
         throw StateError(
-          'Cannot remove PANE "${remove.id}" while LAYOUT cues still '
-          'reference it or require two panes.',
+          'Cannot remove PANE "${remove.id}" while MOSAIC layout state still '
+          'references it or requires two panes.',
         );
       }
       next = current.model.cst.replaceBlock(remove.block, '');
@@ -832,6 +977,10 @@ void _validateMosaicLayoutRenderable(String source, String mosaicId) {
   _validateRenderable(source);
   final EditDocumentModel parsed = EditDocumentModel.parse(source);
   final MosaicSequence mosaic = parsed.mosaic(mosaicId);
+  final MosaicLayoutStart? start = parseMosaicLayoutStart(
+    source: source,
+    mosaic: mosaic,
+  );
   final List<MosaicLayoutCue> cues = parseMosaicLayoutCues(
     source: source,
     mosaic: mosaic,
@@ -842,6 +991,16 @@ void _validateMosaicLayoutRenderable(String source, String mosaicId) {
       cues: cues,
     ),
   );
+  if (start != null) {
+    _throwLayoutErrors(
+      validateMosaicLayoutCues(
+        mosaic: mosaic,
+        cues: <MosaicLayoutCue>[
+          MosaicLayoutCue(frame: 0, state: start.state),
+        ],
+      ),
+    );
+  }
 }
 
 int _lineStartAt(String source, int offset) =>
