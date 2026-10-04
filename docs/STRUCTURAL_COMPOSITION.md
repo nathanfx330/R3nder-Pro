@@ -774,6 +774,17 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 
 ---
 
+## MOSAIC Layout Program milestone status
+
+The source-relative MOSAIC Layout Program milestone is complete on `main`.
+Its final focused gate passes 52 tests, and live GUI acceptance covers
+continuous playback, TWO UP → ONE retreat, pane recall, lookahead warming, and
+scrubbing across hidden intervals. Treat this behavior as the current structural
+composition contract; future changes should preserve these guarantees unless a
+new milestone deliberately supersedes them.
+
+---
+
 # Reconstruction checklist
 
 - [ ] EDIT is reusable frame-producing content;
