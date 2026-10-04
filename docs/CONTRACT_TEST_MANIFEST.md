@@ -318,7 +318,7 @@ When the product is wrong but parser/painter/compositor tests are green, the nex
 
 **Contract**
 
-Direct MOSAIC LAYOUT cues may change COMPOSITE / TWO UP / ONE / FULL arrangement, pane selection, split aspect, MAX, and transition duration at a MOSAIC source frame without adding project duration, changing audio, pausing hidden panes, or restarting surviving pane actors. Cue-bearing MOSAIC Preview and whole-program BAKE must derive the same `MosaicLayoutFrame` from authored cues plus placement context. Live nonblocking decode may hold the last resident actor pixels while requested pixels are pending, but readiness cannot change layout geometry/time. A pane morphing between FULL and an ordinary window remains on the front layer for the entire active morph.
+Direct MOSAIC LAYOUT cues may change COMPOSITE / TWO UP / ONE / FULL arrangement, pane selection, split aspect, MAX, and transition duration at a MOSAIC source frame without adding project duration, changing audio, pausing hidden panes, or restarting surviving pane actors. Cue-bearing MOSAIC Preview and whole-program BAKE must derive the same `MosaicLayoutFrame` from authored cues plus placement context. Live nonblocking decode may hold only recent resident actor pixels while requested pixels are pending; a pane recalled after a long hidden interval must not reuse an ancient pre-exit image. Readiness cannot change layout geometry/time. A pane morphing between FULL and an ordinary window remains on the front layer for the entire active morph.
 
 **Proof**
 
