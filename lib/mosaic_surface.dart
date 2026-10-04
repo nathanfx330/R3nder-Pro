@@ -10,12 +10,6 @@
 
 import 'dart:math' as math;
 
-import 'package:flutter/gestures.dart'
-    show
-        PointerCancelEvent,
-        PointerDownEvent,
-        PointerMoveEvent,
-        PointerUpEvent;
 import 'package:flutter/material.dart';
 
 import 'edit_model.dart';
@@ -1713,11 +1707,9 @@ class _LayoutCueEditAction {
         durationFrames = null;
 
   const _LayoutCueEditAction.apply({
-    required int frame,
-    required int durationFrames,
-  })  : delete = false,
-        frame = frame,
-        durationFrames = durationFrames;
+    required this.frame,
+    required this.durationFrames,
+  }) : delete = false;
 }
 
 class _MosaicTimelineClip extends StatefulWidget {
