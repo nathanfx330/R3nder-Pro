@@ -36,6 +36,8 @@ import 'dart:math' as math;
 import 'edit_linter.dart';
 import 'edit_model.dart';
 import 'mosaic_layout_cue.dart';
+import 'mosaic_layout_program.dart';
+import 'mosaic_split_geometry.dart';
 
 const int kStructuralAudioSampleRate = 48000;
 const int kStructuralAudioProjectFps = 30;
@@ -220,20 +222,130 @@ class StructuralAudioSegment {
   int get sourceBoundaryDenominator => speed.denominator;
 }
 
-class StructuralAudioFrameSpan {
-  final int startFrame;
-  final int endFrameExclusive;
+const int kStructuralAudioDeclickSamples = 240; // 5 ms at 48 kHz.
 
-  const StructuralAudioFrameSpan({
-    required this.startFrame,
-    required this.endFrameExclusive,
+class StructuralAudioSourceContext {
+  final bool legacySplitWindow;
+  final MosaicSplitClientAspect legacySplitAspect;
+  final bool legacyMaximizeSplit;
+
+  const StructuralAudioSourceContext({
+    this.legacySplitWindow = false,
+    this.legacySplitAspect = MosaicSplitClientAspect.aspect16x9,
+    this.legacyMaximizeSplit = false,
   });
 
-  int get startSample => structuralAudioSampleAtProjectFrame(startFrame);
-  int get endSampleExclusive =>
-      structuralAudioSampleAtProjectFrame(endFrameExclusive);
+  bool get isDefault =>
+      !legacySplitWindow &&
+      legacySplitAspect == MosaicSplitClientAspect.aspect16x9 &&
+      !legacyMaximizeSplit;
 
-  bool get isEmpty => endFrameExclusive <= startFrame;
+  String get cacheKey =>
+      'split=${legacySplitWindow ? 1 : 0};'
+      'aspect=${legacySplitAspect.name};'
+      'max=${legacyMaximizeSplit ? 1 : 0}';
+
+  @override
+  bool operator ==(Object other) =>
+      other is StructuralAudioSourceContext &&
+      other.legacySplitWindow == legacySplitWindow &&
+      other.legacySplitAspect == legacySplitAspect &&
+      other.legacyMaximizeSplit == legacyMaximizeSplit;
+
+  @override
+  int get hashCode => Object.hash(
+        legacySplitWindow,
+        legacySplitAspect,
+        legacyMaximizeSplit,
+      );
+}
+
+class StructuralAudioLayoutGainEnvelope {
+  final List<double> frameGains;
+  final List<bool> interpolateToNextFrame;
+
+  StructuralAudioLayoutGainEnvelope({
+    required List<double> frameGains,
+    required List<bool> interpolateToNextFrame,
+  })  : frameGains = List<double>.unmodifiable(frameGains),
+        interpolateToNextFrame =
+            List<bool>.unmodifiable(interpolateToNextFrame) {
+    if (this.frameGains.length != this.interpolateToNextFrame.length) {
+      throw ArgumentError(
+        'Layout gain frame and interpolation arrays must have equal length.',
+      );
+    }
+  }
+
+  int get durationFrames => frameGains.length;
+
+  double gainAtProjectSample(int projectSample) {
+    if (projectSample < 0 ||
+        projectSample >=
+            structuralAudioSamplesForProjectFrames(durationFrames)) {
+      throw RangeError.range(
+        projectSample,
+        0,
+        math.max(
+          0,
+          structuralAudioSamplesForProjectFrames(durationFrames) - 1,
+        ),
+        'projectSample',
+      );
+    }
+
+    final int frame =
+        projectSample ~/ kStructuralAudioSamplesPerProjectFrame;
+    final int inFrame =
+        projectSample % kStructuralAudioSamplesPerProjectFrame;
+    final double current = frameGains[frame];
+
+    if (interpolateToNextFrame[frame] &&
+        frame + 1 < frameGains.length) {
+      final double next = frameGains[frame + 1];
+      final double t =
+          inFrame / kStructuralAudioSamplesPerProjectFrame;
+      return current + (next - current) * t;
+    }
+
+    if (frame > 0 &&
+        !interpolateToNextFrame[frame - 1] &&
+        frameGains[frame - 1] != current &&
+        inFrame < kStructuralAudioDeclickSamples) {
+      final double previous = frameGains[frame - 1];
+      final double t =
+          (inFrame + 0.5) / kStructuralAudioDeclickSamples;
+      return previous + (current - previous) * t;
+    }
+
+    return current;
+  }
+
+  bool hasAudibleOverlap({
+    required int startFrame,
+    required int endFrameExclusive,
+  }) {
+    if (endFrameExclusive <= startFrame || frameGains.isEmpty) return false;
+    final int first = startFrame.clamp(0, frameGains.length).toInt();
+    final int last =
+        endFrameExclusive.clamp(0, frameGains.length).toInt();
+
+    for (int frame = first; frame < last; frame++) {
+      if (frameGains[frame] > 0.0) return true;
+      if (frame > 0 &&
+          !interpolateToNextFrame[frame - 1] &&
+          frameGains[frame - 1] > 0.0 &&
+          frameGains[frame - 1] != frameGains[frame]) {
+        return true;
+      }
+      if (interpolateToNextFrame[frame] &&
+          frame + 1 < frameGains.length &&
+          frameGains[frame + 1] > 0.0) {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 class StructuralAudioLanePlan {
@@ -242,19 +354,19 @@ class StructuralAudioLanePlan {
   final int authoredIndex;
   final List<StructuralAudioSegment> segments;
 
-  /// Null means this lane is unrestricted by presentation state.
+  /// Null means this lane is unrestricted by MOSAIC presentation state.
   ///
-  /// MOSAIC pane lanes use a sorted list of source-frame spans. An empty list
-  /// means the pane is never audible. Hidden panes remain on the shared source
-  /// clock; this gate controls contribution to the mix only.
-  final List<StructuralAudioFrameSpan>? audibleFrameSpans;
+  /// MOSAIC pane lanes carry a resolver-derived source-frame gain envelope.
+  /// Hidden panes remain on the shared source clock; this changes contribution
+  /// to the mix only.
+  final StructuralAudioLayoutGainEnvelope? layoutGainEnvelope;
 
   const StructuralAudioLanePlan({
     required this.kind,
     required this.id,
     required this.authoredIndex,
     required this.segments,
-    this.audibleFrameSpans,
+    this.layoutGainEnvelope,
   });
 
   StructuralAudioSegment segment(String clipId) => segments.singleWhere(
@@ -306,8 +418,10 @@ class StructuralAudioPlanner {
   final EditDocumentModel document;
   final int maxNesting;
 
-  final Map<StructuralSourceRef, StructuralAudioPlan> _memo =
-      <StructuralSourceRef, StructuralAudioPlan>{};
+  final Map<(StructuralSourceRef, StructuralAudioSourceContext),
+          StructuralAudioPlan> _memo =
+      <(StructuralSourceRef, StructuralAudioSourceContext),
+          StructuralAudioPlan>{};
   bool _validated = false;
 
   StructuralAudioPlanner(
@@ -325,7 +439,11 @@ class StructuralAudioPlanner {
     );
   }
 
-  StructuralAudioPlan plan(String source) {
+  StructuralAudioPlan plan(
+    String source, {
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
+  }) {
     _validateGraph();
 
     final StructuralSourceRef? ref = StructuralSourceRef.tryParse(source);
@@ -340,7 +458,7 @@ class StructuralAudioPlanner {
       throw StateError('No structural source named "${ref.canonicalSource}".');
     }
 
-    return _build(ref);
+    return _build(ref, context: context);
   }
 
   void _validateGraph() {
@@ -358,15 +476,21 @@ class StructuralAudioPlanner {
     _validated = true;
   }
 
-  StructuralAudioPlan _build(StructuralSourceRef ref) {
-    final StructuralAudioPlan? cached = _memo[ref];
+  StructuralAudioPlan _build(
+    StructuralSourceRef ref, {
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
+  }) {
+    final (StructuralSourceRef, StructuralAudioSourceContext) key =
+        (ref, context);
+    final StructuralAudioPlan? cached = _memo[key];
     if (cached != null) return cached;
 
     final StructuralAudioPlan plan = switch (ref.kind) {
       StructuralSourceKind.edit => _buildEdit(ref),
-      StructuralSourceKind.mosaic => _buildMosaic(ref),
+      StructuralSourceKind.mosaic => _buildMosaic(ref, context),
     };
-    _memo[ref] = plan;
+    _memo[key] = plan;
     return plan;
   }
 
@@ -405,10 +529,28 @@ class StructuralAudioPlanner {
     );
   }
 
-  StructuralAudioPlan _buildMosaic(StructuralSourceRef ref) {
+  StructuralAudioPlan _buildMosaic(
+    StructuralSourceRef ref,
+    StructuralAudioSourceContext sourceContext,
+  ) {
     final MosaicSequence mosaic = document.mosaic(ref.id);
-    final Map<String, List<StructuralAudioFrameSpan>>? paneAudibility =
-        _mosaicPaneAudibility(mosaic);
+    final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
+      source: document.source,
+      mosaic: mosaic,
+    );
+
+    MosaicLayoutState? legacySeed;
+    if (sourceContext.legacySplitWindow && program.paneIds.length >= 2) {
+      legacySeed = MosaicLayoutState.twoUp(
+        paneA: program.paneIds[0],
+        paneB: program.paneIds[1],
+        aspect: sourceContext.legacySplitAspect,
+        maximized: sourceContext.legacyMaximizeSplit,
+      );
+    }
+
+    final MosaicResolvedLayoutProgram resolved =
+        program.resolveForStructuralAudio(legacySeed: legacySeed);
     final List<StructuralAudioLanePlan> lanes = <StructuralAudioLanePlan>[
       for (int i = 0; i < mosaic.panes.length; i++)
         _buildLane(
@@ -416,7 +558,11 @@ class StructuralAudioPlanner {
           laneId: mosaic.panes[i].id,
           authoredIndex: i,
           clips: mosaic.panes[i].clips,
-          audibleFrameSpans: paneAudibility?[mosaic.panes[i].id],
+          layoutGainEnvelope: _mosaicPaneGainEnvelope(
+            resolved: resolved,
+            paneId: mosaic.panes[i].id,
+            durationFrames: mosaic.projectFrameCount,
+          ),
         ),
     ];
 
@@ -432,7 +578,7 @@ class StructuralAudioPlanner {
     required String laneId,
     required int authoredIndex,
     required List<EditClip> clips,
-    List<StructuralAudioFrameSpan>? audibleFrameSpans,
+    StructuralAudioLayoutGainEnvelope? layoutGainEnvelope,
   }) {
     final List<StructuralAudioSegment> segments = <StructuralAudioSegment>[];
     for (int i = 0; i < clips.length; i++) {
@@ -444,131 +590,31 @@ class StructuralAudioPlanner {
       id: laneId,
       authoredIndex: authoredIndex,
       segments: List<StructuralAudioSegment>.unmodifiable(segments),
-      audibleFrameSpans: audibleFrameSpans == null
-          ? null
-          : List<StructuralAudioFrameSpan>.unmodifiable(audibleFrameSpans),
+      layoutGainEnvelope: layoutGainEnvelope,
     );
   }
 
-  Map<String, List<StructuralAudioFrameSpan>>? _mosaicPaneAudibility(
-    MosaicSequence mosaic,
-  ) {
-    final MosaicLayoutStart? start = parseMosaicLayoutStart(
-      source: document.source,
-      mosaic: mosaic,
-    );
-    final List<MosaicLayoutCue> cues = parseMosaicLayoutCues(
-      source: document.source,
-      mosaic: mosaic,
-    ).toList(growable: false)
-      ..sort(
-        (MosaicLayoutCue a, MosaicLayoutCue b) =>
-            a.frame.compareTo(b.frame),
-      );
-
-    if (start == null && cues.isEmpty) return null;
-
-    final List<String> paneIds =
-        mosaic.panes.map((MosaicPane pane) => pane.id).toList(growable: false);
-    final Map<String, List<StructuralAudioFrameSpan>> result =
-        <String, List<StructuralAudioFrameSpan>>{
-      for (final String paneId in paneIds)
-        paneId: <StructuralAudioFrameSpan>[],
-    };
-
-    MosaicLayoutState? legacyFrameZero;
-    for (final MosaicLayoutCue cue in cues) {
-      if (cue.frame == 0) {
-        legacyFrameZero = cue.state;
-        break;
-      }
-    }
-    MosaicLayoutState state =
-        (start?.state ?? legacyFrameZero ?? const MosaicLayoutState.composite())
-            .resolveBareTwoUp(paneIds);
-
-    int spanStart = 0;
-    for (final MosaicLayoutCue cue in cues) {
-      if (cue.frame == 0) {
-        if (start == null) {
-          state = cue.state.resolveBareTwoUp(paneIds);
-        }
-        continue;
-      }
-      if (cue.frame <= spanStart) continue;
-
-      final int boundary = math.min(cue.frame, mosaic.projectFrameCount);
-      if (boundary > spanStart) {
-        _appendAudibleStateSpans(
-          result: result,
-          paneIds: paneIds,
-          state: state,
-          startFrame: spanStart,
-          endFrameExclusive: boundary,
-        );
-      }
-      if (cue.frame >= mosaic.projectFrameCount) {
-        spanStart = mosaic.projectFrameCount;
-        break;
-      }
-      spanStart = cue.frame;
-      state = cue.state.resolveBareTwoUp(paneIds);
-    }
-
-    if (spanStart < mosaic.projectFrameCount) {
-      _appendAudibleStateSpans(
-        result: result,
-        paneIds: paneIds,
-        state: state,
-        startFrame: spanStart,
-        endFrameExclusive: mosaic.projectFrameCount,
-      );
-    }
-
-    return result;
-  }
-
-  void _appendAudibleStateSpans({
-    required Map<String, List<StructuralAudioFrameSpan>> result,
-    required List<String> paneIds,
-    required MosaicLayoutState state,
-    required int startFrame,
-    required int endFrameExclusive,
+  StructuralAudioLayoutGainEnvelope _mosaicPaneGainEnvelope({
+    required MosaicResolvedLayoutProgram resolved,
+    required String paneId,
+    required int durationFrames,
   }) {
-    if (endFrameExclusive <= startFrame) return;
+    final List<double> gains = <double>[];
+    final List<bool> interpolate = <bool>[];
 
-    final Set<String> audible = switch (state.kind) {
-      MosaicLayoutStateKind.composite => paneIds.toSet(),
-      MosaicLayoutStateKind.twoUp => <String>{
-          state.paneA!,
-          state.paneB!,
-        },
-      MosaicLayoutStateKind.one ||
-      MosaicLayoutStateKind.full =>
-        <String>{state.paneId!},
-    };
-
-    for (final String paneId in audible) {
-      final List<StructuralAudioFrameSpan>? spans = result[paneId];
-      if (spans == null) continue;
-      if (spans.isNotEmpty &&
-          spans.last.endFrameExclusive == startFrame) {
-        final StructuralAudioFrameSpan previous = spans.removeLast();
-        spans.add(
-          StructuralAudioFrameSpan(
-            startFrame: previous.startFrame,
-            endFrameExclusive: endFrameExclusive,
-          ),
-        );
-      } else {
-        spans.add(
-          StructuralAudioFrameSpan(
-            startFrame: startFrame,
-            endFrameExclusive: endFrameExclusive,
-          ),
-        );
-      }
+    for (int frame = 0; frame < durationFrames; frame++) {
+      final MosaicPaneAudioFrame audio = resolved.paneAudioFrame(
+        paneId,
+        sourceFrame: frame,
+      );
+      gains.add(audio.gain);
+      interpolate.add(audio.interpolateToNextFrame);
     }
+
+    return StructuralAudioLayoutGainEnvelope(
+      frameGains: gains,
+      interpolateToNextFrame: interpolate,
+    );
   }
 
   StructuralAudioSegment _buildSegment(
@@ -579,7 +625,12 @@ class StructuralAudioPlanner {
     final StructuralSourceRef? nestedRef =
         StructuralSourceRef.tryParse(clip.source);
     final StructuralAudioPlan? nestedPlan =
-        nestedRef == null ? null : _build(nestedRef);
+        nestedRef == null
+            ? null
+            : _build(
+                nestedRef,
+                context: const StructuralAudioSourceContext(),
+              );
 
     final int incomingFrames = _crossfadeFrames(
       clip.block.innerSource,
