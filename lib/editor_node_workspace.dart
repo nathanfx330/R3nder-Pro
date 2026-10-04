@@ -3247,10 +3247,18 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         ],
       )));
       if (split) {
-        f.add(_hint(
-          'A legacy SPLIT seed is still authored on this STRUCT placement. '
-          'It can define the initial state before the first LAYOUT cue; a '
-          'frame-zero LAYOUT cue overrides it outright.',
+        f.add(_fToggle(
+          node,
+          'Legacy two-window seed',
+          'split',
+          'SPLIT',
+          'Compatibility state only: this can define the layout before the '
+              'first authored LAYOUT cue. A frame-zero cue overrides it.',
+          onTap: () {
+            node.set('split', '');
+            node.set('maxSplit', '');
+            _notifyChanged();
+          },
         ));
       }
     } else {
