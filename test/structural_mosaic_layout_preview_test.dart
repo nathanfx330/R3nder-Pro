@@ -91,16 +91,19 @@ class _ColorDecoder implements MediaDecoder {
 }
 
 
-class _OneFrameThenPendingBackend implements MediaDecoderBackend {
+class _ControlledPendingBackend implements MediaDecoderBackend {
+  bool releaseFrame1 = false;
+
   @override
   MediaDecoder open(String resolvedPath) =>
-      _OneFrameThenPendingDecoder(resolvedPath);
+      _ControlledPendingDecoder(this, resolvedPath);
 }
 
-class _OneFrameThenPendingDecoder implements NonBlockingMediaDecoder {
+class _ControlledPendingDecoder implements NonBlockingMediaDecoder {
+  final _ControlledPendingBackend owner;
   final String resolvedPath;
 
-  _OneFrameThenPendingDecoder(this.resolvedPath);
+  _ControlledPendingDecoder(this.owner, this.resolvedPath);
 
   @override
   void request(int requestedSourceFrame, int width, int height) {}
@@ -111,7 +114,9 @@ class _OneFrameThenPendingDecoder implements NonBlockingMediaDecoder {
     int width,
     int height,
   ) {
-    if (requestedSourceFrame != 0) return null;
+    if (requestedSourceFrame == 1 && !owner.releaseFrame1) {
+      return null;
+    }
     final Uint8List rgba = Uint8List(width * height * 4);
     final List<int> color = resolvedPath.contains('right')
         ? const <int>[0, 0, 255, 255]
@@ -338,8 +343,8 @@ void main() {
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_layoutSource).single;
-    final _OneFrameThenPendingBackend backend =
-        _OneFrameThenPendingBackend();
+    final _ControlledPendingBackend backend =
+        _ControlledPendingBackend();
 
     await tester.pumpWidget(
       _preview(
@@ -385,6 +390,24 @@ void main() {
       reason:
           'pending decode must hold resident pixels instead of flashing black',
     );
+
+    // Let the pending frame resolve so the normal post-frame polling loop can
+    // quiesce before widget-test teardown.
+    backend.releaseFrame1 = true;
+    for (int attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      });
+      painter = _layoutPainter(tester);
+      if (painter.visuals.values.every(
+        (StructuralWindowActorVisual visual) => visual.sourceImage != null,
+      )) {
+        break;
+      }
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('opening layout geometry advances while decoder stays pending',
