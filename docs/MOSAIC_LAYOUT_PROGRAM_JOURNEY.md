@@ -549,10 +549,13 @@ pixels
 ```
 
 Readiness and pending decode may affect which pixels are resident. They may not
-change the semantic layout frame. The current live implementation bounds
-resident hold to two source frames and evicts hidden actor images that are
-neither visible nor being warmed. Lookahead may keep a hidden actor requested,
-but an ancient pre-exit image is still not paintable when that pane returns.
+change the semantic layout frame. Moving playback bounds resident hold to two
+source frames and evicts hidden actor images that are neither visible nor being
+warmed. Parked/scrub Preview may hold an older resident image while the exact
+seek target decodes, but only when the actor stayed included across that entire
+authored frame interval. A direct scrub that skips over a hidden interval
+therefore cannot resurrect the pre-exit image even if no intermediate hidden
+widget frame was built.
 
 BAKE is different: it is exact and blocking, so it renders the requested frame's
 pixels rather than using resident hold.
@@ -911,15 +914,19 @@ lookahead normally refreshed a returning pane, but if playback jumped into the
 warm window or decode stayed pending under load, a pane hidden hundreds of
 frames earlier could return showing its pre-exit image.
 
-Fix: resident hold is now bounded to recent live frames. A hidden actor that is
-neither visible nor requested is evicted, and a recalled pane may not paint a
-resident image more than two source frames behind the authored source frame.
-If current decode is still pending after a long absence, the client is empty
-until current or near-current pixels become resident.
+Fix: moving resident hold is bounded to recent live frames. A hidden actor that
+is neither visible nor requested is evicted, and a recalled pane may not paint
+a resident image more than two source frames behind the authored source frame.
+Parked/scrub Preview keeps the previous image across an asynchronous exact-frame
+decode only inside the same continuous authored visibility run. A direct scrub
+across a hidden interval rejects the old image even if the widget never rendered
+an intermediate hidden frame.
 
-The regression deliberately hides a pane, jumps into its lookahead window with
-the recall decode held pending, then returns the pane and proves the old
-pre-exit image is not supplied to the actor painter.
+The regressions cover both paths: one hides a pane, jumps into its lookahead
+window with recall decode held pending, then proves the old pre-exit image is
+not supplied; another scrubs directly from a visible frame to a later visible
+frame across the hidden interval and requires the cached pre-hide image to be
+rejected at rebuild time.
 
 None of these failures required changing authored project time.
 
@@ -1014,9 +1021,11 @@ Live pixels may lag authored time. The timeline and layout evaluator do not.
 
 ### Preview and BAKE should share meaning, not necessarily delivery policy
 
-Preview may briefly hold recent resident pixels. A long-hidden recalled pane
-waits for current/near-current pixels rather than reusing ancient content.
-BAKE renders exact pixels. Both consume the same `MosaicLayoutFrame`.
+Preview may briefly hold recent resident pixels during playback. Parked scrubs
+may hold an older image while exact decode lands only within one continuous
+visibility run. A long-hidden recalled pane waits for current/near-current
+pixels rather than reusing ancient content. BAKE renders exact pixels. Both
+consume the same `MosaicLayoutFrame`.
 
 ### A UI control is part of the architecture
 
