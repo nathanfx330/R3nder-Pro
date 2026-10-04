@@ -19,6 +19,7 @@ import 'media_layer.dart';
 import 'mosaic_layout_cue.dart';
 import 'mosaic_layout_program.dart';
 import 'mosaic_split_geometry.dart';
+import 'structural_chrome.dart';
 import 'structural_sequence.dart';
 import 'structural_mosaic_layout_preview.dart';
 import 'mosaic_surface_model.dart';
@@ -1116,6 +1117,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
       endOffset: 0,
       sourceDurationFrames: duration,
       durationFrames: duration,
+      overlayMode: StructuralOverlayMode.none,
     );
 
     return ColoredBox(
