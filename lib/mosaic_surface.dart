@@ -692,6 +692,255 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     }
   }
 
+  Future<void> _configureOverview(
+    MosaicSurfaceDocument document,
+    MosaicSequence mosaic,
+    int frame, {
+    bool initial = false,
+  }) async {
+    if (mosaic.panes.length < 3) return;
+
+    MosaicLayoutState? existingState;
+    if (initial) {
+      final MosaicLayoutState current = _effectiveInitialLayoutState(document);
+      if (current.kind == MosaicLayoutStateKind.overview) {
+        existingState = current;
+      }
+    } else {
+      for (final MosaicLayoutCue cue in document.layoutCues) {
+        if (cue.frame == frame &&
+            cue.state.kind == MosaicLayoutStateKind.overview) {
+          existingState = cue.state;
+          break;
+        }
+      }
+    }
+
+    String mainPane = existingState?.overviewMain ?? mosaic.panes[0].id;
+    String other1 = existingState?.overviewOthers[0] ?? mosaic.panes[1].id;
+    String other2 = existingState?.overviewOthers[1] ?? mosaic.panes[2].id;
+    String other3 = existingState != null &&
+            existingState.overviewOthers.length == 3
+        ? existingState.overviewOthers[2]
+        : mosaic.panes.length >= 4
+            ? mosaic.panes[3].id
+            : mosaic.panes[2].id;
+    bool useThird = existingState?.overviewOthers.length == 3;
+    MosaicSplitClientAspect aspect =
+        existingState?.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
+
+    final MosaicLayoutState? state = await showDialog<MosaicLayoutState>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            BuildContext context,
+            StateSetter setDialogState,
+          ) {
+            final List<String> selected = <String>[
+              mainPane,
+              other1,
+              other2,
+              if (useThird) other3,
+            ];
+            final bool unique =
+                selected.toSet().length == selected.length;
+            final bool canUseThird = mosaic.panes.length >= 4;
+            return AlertDialog(
+              backgroundColor: R3Theme.panel,
+              title: Text('Overview', style: widget.theme.value),
+              content: SizedBox(
+                width: sc(440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      initial
+                          ? 'Choose the focal window and thumbnail shelf this '
+                              'MOSAIC comes in on.'
+                          : 'Set the focal window and thumbnail shelf at '
+                              'F$frame.',
+                      style: widget.theme.fine,
+                    ),
+                    SizedBox(height: sc(12)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-overview-main',
+                      ),
+                      initialValue: mainPane,
+                      decoration: const InputDecoration(labelText: 'Main'),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => mainPane = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-overview-other-1',
+                      ),
+                      initialValue: other1,
+                      decoration: const InputDecoration(
+                        labelText: 'Thumbnail 1',
+                      ),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => other1 = value);
+                      },
+                    ),
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-overview-other-2',
+                      ),
+                      initialValue: other2,
+                      decoration: const InputDecoration(
+                        labelText: 'Thumbnail 2',
+                      ),
+                      items: <DropdownMenuItem<String>>[
+                        for (final MosaicPane pane in mosaic.panes)
+                          DropdownMenuItem<String>(
+                            value: pane.id,
+                            child: Text(pane.id),
+                          ),
+                      ],
+                      onChanged: (String? value) {
+                        if (value == null) return;
+                        setDialogState(() => other2 = value);
+                      },
+                    ),
+                    if (canUseThird) ...<Widget>[
+                      SizedBox(height: sc(4)),
+                      SwitchListTile(
+                        key: const ValueKey<String>(
+                          'mosaic-layout-overview-third',
+                        ),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(
+                          'Third thumbnail',
+                          style: widget.theme.fine,
+                        ),
+                        subtitle: Text(
+                          'Use MAIN plus three ordered shelf thumbnails.',
+                          style: widget.theme.micro,
+                        ),
+                        value: useThird,
+                        onChanged: (bool value) {
+                          setDialogState(() => useThird = value);
+                        },
+                      ),
+                      if (useThird)
+                        DropdownButtonFormField<String>(
+                          key: const ValueKey<String>(
+                            'mosaic-layout-overview-other-3',
+                          ),
+                          initialValue: other3,
+                          decoration: const InputDecoration(
+                            labelText: 'Thumbnail 3',
+                          ),
+                          items: <DropdownMenuItem<String>>[
+                            for (final MosaicPane pane in mosaic.panes)
+                              DropdownMenuItem<String>(
+                                value: pane.id,
+                                child: Text(pane.id),
+                              ),
+                          ],
+                          onChanged: (String? value) {
+                            if (value == null) return;
+                            setDialogState(() => other3 = value);
+                          },
+                        ),
+                    ],
+                    SizedBox(height: sc(10)),
+                    DropdownButtonFormField<MosaicSplitClientAspect>(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-overview-aspect',
+                      ),
+                      initialValue: aspect,
+                      decoration: const InputDecoration(
+                        labelText: 'Client aspect',
+                      ),
+                      items: <DropdownMenuItem<MosaicSplitClientAspect>>[
+                        for (final MosaicSplitClientAspect value
+                            in MosaicSplitClientAspect.values)
+                          DropdownMenuItem<MosaicSplitClientAspect>(
+                            value: value,
+                            child: Text(_layoutAspectLabel(value)),
+                          ),
+                      ],
+                      onChanged: (MosaicSplitClientAspect? value) {
+                        if (value == null) return;
+                        setDialogState(() => aspect = value);
+                      },
+                    ),
+                    if (!unique)
+                      Padding(
+                        padding: EdgeInsets.only(top: sc(6)),
+                        child: Text(
+                          'MAIN and thumbnail panes must all be different.',
+                          style: widget.theme.micro.copyWith(
+                            color: R3Theme.danger,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('CANCEL'),
+                ),
+                TextButton(
+                  key: const ValueKey<String>(
+                    'mosaic-layout-overview-apply',
+                  ),
+                  onPressed: !unique
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(
+                            MosaicLayoutState.overview(
+                              mainPane: mainPane,
+                              others: <String>[
+                                other1,
+                                other2,
+                                if (useThird) other3,
+                              ],
+                              aspect: aspect,
+                            ),
+                          ),
+                  child: const Text('SET OVERVIEW'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || state == null) return;
+    if (initial) {
+      _setInitialLayout(state);
+    } else {
+      _setLayoutCueAtPlayhead(state, frame);
+    }
+  }
+
   String _layoutAspectLabel(MosaicSplitClientAspect aspect) {
     return switch (aspect) {
       MosaicSplitClientAspect.aspect16x9 => '16:9',
@@ -863,6 +1112,10 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 _configureTwoUp(document, mosaic, 0, initial: true);
                 return;
               }
+              if (value == 'overview') {
+                _configureOverview(document, mosaic, 0, initial: true);
+                return;
+              }
               if (value.startsWith('one:')) {
                 _setInitialLayout(MosaicLayoutState.one(value.substring(4)));
                 return;
@@ -880,6 +1133,11 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 const PopupMenuItem<String>(
                   value: 'twoup',
                   child: Text('TWO UP…'),
+                ),
+              if (mosaic.panes.length >= 3)
+                const PopupMenuItem<String>(
+                  value: 'overview',
+                  child: Text('OVERVIEW…'),
                 ),
               for (final MosaicPane pane in mosaic.panes)
                 PopupMenuItem<String>(
@@ -989,6 +1247,18 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                     label: 'TWO UP',
                     keyName: 'mosaic-layout-add-twoup-chip',
                     enabled: !widget.isPlaying && mosaic.panes.length >= 2,
+                  ),
+                ),
+                SizedBox(width: sc(6)),
+                InkWell(
+                  key: const ValueKey<String>('mosaic-layout-add-overview'),
+                  onTap: widget.isPlaying || mosaic.panes.length < 3
+                      ? null
+                      : () => _configureOverview(document, mosaic, frame),
+                  child: _layoutActionChip(
+                    label: 'OVERVIEW',
+                    keyName: 'mosaic-layout-add-overview-chip',
+                    enabled: !widget.isPlaying && mosaic.panes.length >= 3,
                   ),
                 ),
                 SizedBox(width: sc(6)),

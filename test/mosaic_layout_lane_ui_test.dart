@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:r3nder/edit_video_preview.dart';
 import 'package:r3nder/media_layer.dart';
+import 'package:r3nder/mosaic_split_geometry.dart';
 import 'package:r3nder/mosaic_surface.dart';
 import 'package:r3nder/structural_mosaic_layout_preview.dart';
 import 'package:r3nder/ui_theme.dart';
@@ -32,6 +33,16 @@ const String _source = '''[EDIT:source]
 [/PANE]
 [/MOSAIC]
 ''';
+
+final String _source4 = _source.replaceFirst(
+  '[/MOSAIC]\n',
+  '''[PANE:pane4]
+[CLIP:p4:EDIT.source:0:0:300:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''',
+);
 
 class _Backend implements MediaDecoderBackend {
   @override
@@ -164,6 +175,7 @@ void main() {
     );
     expect(_key('mosaic-layout-add-composite'), findsOneWidget);
     expect(_key('mosaic-layout-add-twoup'), findsOneWidget);
+    expect(_key('mosaic-layout-add-overview'), findsOneWidget);
     expect(_key('mosaic-layout-add-one'), findsOneWidget);
     expect(_key('mosaic-layout-add-full'), findsOneWidget);
   });
@@ -342,6 +354,160 @@ void main() {
       contains(
         '[LAYOUT:40:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
       ),
+    );
+  });
+
+  testWidgets('OVERVIEW authors MAIN +2 and cue-local aspect',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+
+    await tester.tap(_key('mosaic-layout-add-overview'));
+    await tester.pumpAndSettle();
+    expect(find.text('Overview'), findsOneWidget);
+
+    await tester.tap(_key('mosaic-layout-overview-main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane2').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-other-1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane1').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-aspect'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('4:3').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains(
+        '[LAYOUT:40:OVERVIEW:MAIN=pane2:'
+        'OTHERS=pane1,pane3:ASPECT=4X3]',
+      ),
+    );
+    expect(_key('mosaic-layout-cue:40'), findsOneWidget);
+  });
+
+  testWidgets('OVERVIEW +3 authors ordered third thumbnail on four-pane MOSAIC',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host =
+        await _mount(tester, source: _source4);
+
+    await tester.tap(_key('mosaic-layout-add-overview'));
+    await tester.pumpAndSettle();
+    await tester.tap(_key('mosaic-layout-overview-third'));
+    await tester.pump();
+    expect(_key('mosaic-layout-overview-other-3'), findsOneWidget);
+
+    await tester.tap(_key('mosaic-layout-overview-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains(
+        '[LAYOUT:40:OVERVIEW:MAIN=pane1:'
+        'OTHERS=pane2,pane3,pane4]',
+      ),
+    );
+  });
+
+  testWidgets('OVERVIEW rejects duplicate MAIN/thumbnail selection in dialog',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+
+    await tester.tap(_key('mosaic-layout-add-overview'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-other-1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane1').last);
+    await tester.pumpAndSettle();
+
+    final TextButton apply = tester.widget<TextButton>(
+      _key('mosaic-layout-overview-apply'),
+    );
+    expect(apply.onPressed, isNull);
+    expect(
+      find.text('MAIN and thumbnail panes must all be different.'),
+      findsOneWidget,
+    );
+    expect(host.currentState!.changes, isEmpty);
+  });
+
+  testWidgets('COME IN ON OVERVIEW authors LAYOUT_START through same dialog',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+
+    await tester.tap(_key('mosaic-layout-come-in-on'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OVERVIEW…').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains(
+        '[LAYOUT_START:OVERVIEW:MAIN=pane1:OTHERS=pane2,pane3]',
+      ),
+    );
+    expect(host.currentState!.source, isNot(contains('[LAYOUT:0:')));
+  });
+
+  testWidgets('existing OVERVIEW at playhead reopens prefilled and updates',
+      (WidgetTester tester) async {
+    final String source = _source.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n'
+          '[LAYOUT:40:OVERVIEW:MAIN=pane2:OTHERS=pane1,pane3:ASPECT=4X3]\n',
+    );
+    final GlobalKey<_HarnessState> host =
+        await _mount(tester, source: source);
+
+    await tester.tap(_key('mosaic-layout-add-overview'));
+    await tester.pumpAndSettle();
+
+    final DropdownButtonFormField<String> main =
+        tester.widget<DropdownButtonFormField<String>>(
+      _key('mosaic-layout-overview-main'),
+    );
+    expect(main.initialValue, 'pane2');
+
+    final DropdownButtonFormField<MosaicSplitClientAspect> aspect =
+        tester.widget<DropdownButtonFormField<MosaicSplitClientAspect>>(
+      _key('mosaic-layout-overview-aspect'),
+    );
+    expect(aspect.initialValue, MosaicSplitClientAspect.aspect4x3);
+
+    await tester.tap(_key('mosaic-layout-overview-main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane1').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-other-1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('pane2').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(_key('mosaic-layout-overview-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains(
+        '[LAYOUT:40:OVERVIEW:MAIN=pane1:'
+        'OTHERS=pane2,pane3:ASPECT=4X3]',
+      ),
+    );
+    expect(
+      RegExp(r'\[LAYOUT:40:').allMatches(host.currentState!.source),
+      hasLength(1),
     );
   });
 
