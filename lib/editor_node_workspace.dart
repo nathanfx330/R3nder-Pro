@@ -3125,6 +3125,26 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
     return f;
   }
 
+  int _mosaicLayoutCueCountForSource(String source) {
+    final String value = source.trim();
+    if (!value.startsWith('MOSAIC.')) return 0;
+    final String id = value.substring('MOSAIC.'.length).trim();
+    if (id.isEmpty) return 0;
+
+    for (final ScriptNode candidate in _nodes) {
+      if (!candidate.isStructural ||
+          candidate.type != 'MOSAIC' ||
+          candidate.param('id').trim() != id) {
+        continue;
+      }
+      return RegExp(
+        r'^[ \t]*\[LAYOUT:',
+        multiLine: true,
+      ).allMatches(candidate.toMarkup()).length;
+    }
+    return 0;
+  }
+
   /// First-class controls for one `[STRUCT:...]` placement.
   ///
   /// EDIT and MOSAIC definitions are authored in their own structural panels.
@@ -3141,6 +3161,9 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
         node.param('maxSplit').trim().toUpperCase() == 'MAX';
     final bool showPaneNames =
         node.param('showPaneNames').trim().toUpperCase() == 'PANENAMES';
+    final bool mosaicSource = current.startsWith('MOSAIC.');
+    final int layoutCueCount = _mosaicLayoutCueCountForSource(current);
+    final bool hasLayoutProgram = layoutCueCount > 0;
 
     final List<String> sources = _nodes
         .where((n) =>
@@ -3193,8 +3216,12 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       'Full screen',
       'mode',
       'FULL',
-      'Fill the program frame directly instead of presenting this source '
-          'inside a desktop window.',
+      hasLayoutProgram
+          ? 'Set the placement-level COMPOSITE presentation to full frame. '
+              'ONE, FULL, TWO UP, MAX, aspect, and pane assignment are owned '
+              'by the MOSAIC LAYOUT program.'
+          : 'Fill the program frame directly instead of presenting this source '
+              'inside a desktop window.',
       onTap: () {
         node.set('mode', fullscreen ? '' : 'FULL');
         if (!fullscreen) {
@@ -3205,49 +3232,87 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       },
     ));
 
-    f.add(_fToggle(
-      node,
-      'Two windows',
-      'split',
-      'SPLIT',
-      'Present an eligible two-pane MOSAIC as two equal desktop windows. '
-          'Unsupported sources stay authored but fall back to the ordinary '
-          'windowed presentation.',
-      onTap: () {
-        node.set('split', split ? '' : 'SPLIT');
-        if (!split) {
-          node.set('mode', '');
-        } else {
-          node.set('maxSplit', '');
-        }
-        _notifyChanged();
-      },
-    ));
+    if (hasLayoutProgram) {
+      f.add(_wrap(Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          R3MicroLabel('Layout program', theme: widget.theme, accent: true),
+          SizedBox(height: sc(5)),
+          Text(
+            '$layoutCueCount authored '
+            '${layoutCueCount == 1 ? 'cue' : 'cues'} · MOSAIC timeline owns '
+            'window count, pane assignment, MAX, and aspect',
+            style: widget.theme.micro,
+          ),
+        ],
+      )));
+      if (split) {
+        f.add(_hint(
+          'A legacy SPLIT seed is still authored on this STRUCT placement. '
+          'It can define the initial state before the first LAYOUT cue; a '
+          'frame-zero LAYOUT cue overrides it outright.',
+        ));
+      }
+    } else {
+      f.add(_fToggle(
+        node,
+        'Two windows',
+        'split',
+        'SPLIT',
+        'Legacy static presentation for a cue-less eligible two-pane MOSAIC. '
+            'Once the MOSAIC has LAYOUT cues, window count belongs to those '
+            'cues instead.',
+        onTap: () {
+          node.set('split', split ? '' : 'SPLIT');
+          if (!split) {
+            node.set('mode', '');
+          } else {
+            node.set('maxSplit', '');
+          }
+          _notifyChanged();
+        },
+      ));
 
-    if (split) {
+      if (split) {
+        f.add(_fToggle(
+          node,
+          'Maximize split',
+          'maxSplit',
+          'MAX',
+          'Use the full program width: each window takes one horizontal half '
+              'with no outside margin or center gap. Client aspect still owns '
+              'the window height, so video does not become unnecessarily tall.',
+        ));
+        f.add(_fEnum(
+          node,
+          'Client aspect',
+          'aspect',
+          const <String>['16X9', '4X3', '9X16'],
+          '16X9',
+        ));
+        f.add(_hint(
+          maximizeSplit
+              ? 'MAXIMIZE SPLIT fixes each client to half the program width. '
+                  'This aspect determines its height; portrait is capped by '
+                  'available program height.'
+              : 'One aspect applies to both windows. 16X9 is the implicit '
+                  'default.',
+        ));
+      }
+    }
+
+    if (mosaicSource && (split || hasLayoutProgram)) {
       f.add(_fToggle(
         node,
-        'Maximize split',
-        'maxSplit',
-        'MAX',
-        'Use the full program width: each window takes one horizontal half '
-            'with no outside margin or center gap. Client aspect still owns '
-            'the window height, so video does not become unnecessarily tall.',
-      ));
-      f.add(_fEnum(
-        node,
-        'Client aspect',
-        'aspect',
-        const <String>['16X9', '4X3', '9X16'],
-        '16X9',
-      ));
-      f.add(_fToggle(
-        node,
-        'Show pane names',
+        hasLayoutProgram ? 'Show window names' : 'Show pane names',
         'showPaneNames',
         'PANENAMES',
-        'Append a stable name to each split-window title. Off keeps both '
-            'windows on the existing STRUCT placement title.',
+        hasLayoutProgram
+            ? 'Append NAME 1 / NAME 2 to the two active pane-window slots '
+                'whenever the LAYOUT program is TWO UP. Cues may put different '
+                'pane ids into those slots without changing the placement names.'
+            : 'Append a stable name to each split-window title. Off keeps both '
+                'windows on the existing STRUCT placement title.',
       ));
       if (showPaneNames) {
         f.add(_fText(
@@ -3263,19 +3328,15 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
           hintText: 'PANE 2',
         ));
         f.add(_hint(
-          'Blank names fall back to PANE 1 / PANE 2. Hiding pane names keeps '
-          'the saved values so they return when this option is enabled again.',
+          hasLayoutProgram
+              ? 'NAME 1 follows the left/A window slot and NAME 2 follows the '
+                  'right/B slot. A ONE or FULL layout uses the base window '
+                  'title without a slot suffix.'
+              : 'Blank names fall back to PANE 1 / PANE 2. Hiding pane names '
+                  'keeps the saved values so they return when this option is '
+                  'enabled again.',
         ));
       }
-      f.add(_hint(
-        maximizeSplit
-            ? 'MAXIMIZE SPLIT fixes each client to half the program width. '
-                'This aspect determines its height; portrait is capped by '
-                'available program height.'
-            : 'One aspect applies to both windows. 16X9 is the implicit '
-                'default. Pane-name suffixes are opt-in and never follow '
-                'timeline cuts inside a pane.',
-      ));
     }
 
     f.add(_fToggle(
@@ -3316,10 +3377,16 @@ class _EditorNodeWorkspaceState extends State<EditorNodeWorkspace> {
       ),
     ));
 
-    f.add(_hint('This changes only this STRUCT placement. The referenced '
-        'EDIT or MOSAIC definition stays unchanged and can be placed '
-        'windowed, full screen, or as an eligible two-window MOSAIC with '
-        'different chrome somewhere else.'));
+    f.add(_hint(
+      hasLayoutProgram
+          ? 'This STRUCT placement owns chrome, audio, its COMPOSITE placement '
+              'mode, and optional two-window slot names. The referenced MOSAIC '
+              'owns its changing window arrangement through LAYOUT cues.'
+          : 'This changes only this STRUCT placement. The referenced EDIT or '
+              'MOSAIC definition stays unchanged and can be placed windowed, '
+              'full screen, or as a legacy two-window MOSAIC with different '
+              'chrome somewhere else.',
+    ));
 
     return f;
   }
