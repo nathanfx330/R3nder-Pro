@@ -334,7 +334,7 @@ List<MosaicLayoutCue> parseMosaicLayoutCues({
   );
   final List<MosaicLayoutCue> out = <MosaicLayoutCue>[];
   final RegExp canonicalLine = RegExp(
-    r'^(?<indent>[ \t]*)\[LAYOUT:(?<body>[^\]\r\n]+)\][ \t]*(?<eol>\r?\n|$),
+    r'^(?<indent>[ \t]*)\[LAYOUT:(?<body>[^\]\r\n]+)\][ \t]*(?<eol>\r?\n|$)$',
   );
 
   int cursor = 0;
