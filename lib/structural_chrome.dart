@@ -106,10 +106,10 @@ class StructuralChromeSpec {
   /// determines height after each client takes half of the program width.
   final MosaicSplitClientAspect splitAspect;
 
-  /// Opt-in per-window title suffixes for effective two-window SPLIT.
+  /// Opt-in title suffixes for the two pane-window presentation slots.
   ///
-  /// NAME1/NAME2 stay authored even while this switch is off, and all three
-  /// values stay dormant when SPLIT is not effective.
+  /// Legacy SPLIT and frame-dependent MOSAIC LAYOUT TWO UP share these names.
+  /// NAME1/NAME2 stay authored even while this switch is off.
   final bool showPaneNames;
   final String pane1Name;
   final String pane2Name;
