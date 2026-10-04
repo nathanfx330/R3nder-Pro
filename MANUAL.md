@@ -483,10 +483,13 @@ Important timing rules:
 * A LAYOUT cue does **not** lengthen the MOSAIC.
 * Hidden panes continue on the same MOSAIC source clock. Hiding a pane does not
   pause its content; it mutes that pane's contribution to the MOSAIC mix.
-* Audio follows the authored target layout at the cue boundary, not the visual
-  transition duration: COMPOSITE mixes all panes, TWOUP mixes A/B, and ONE/FULL
-  mix only the selected pane. A TWOUP → ONE cue therefore mutes the dismissed
-  pane starting on the exact cue frame while its window may still be retreating.
+* Stable layout states define the intended pane mix: COMPOSITE includes all
+  panes, TWOUP includes A/B, and ONE/FULL include only the selected pane.
+* Audio transitions are derived from the same resolved actor program as picture.
+  For an animated layout change, pane gain follows the actor opacity segment, so
+  a TWOUP → ONE dismissal fades while that window retreats instead of cutting at
+  the cue frame. DUR=0/1 has no visual segment, so audio uses a short 5 ms
+  post-boundary declick ramp rather than a raw sample discontinuity.
 * **LAYOUT_START** establishes the canonical opening layout and has no DUR
   because it is not a transition. The outer STRUCT entry owns the opening
   motion.
