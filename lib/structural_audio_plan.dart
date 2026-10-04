@@ -476,13 +476,16 @@ class StructuralAudioPlanner {
         paneId: <StructuralAudioFrameSpan>[],
     };
 
-    MosaicLayoutState state = (start?.state ??
-            cues
-                .where((MosaicLayoutCue cue) => cue.frame == 0)
-                .map((MosaicLayoutCue cue) => cue.state)
-                .firstOrNull ??
-            const MosaicLayoutState.composite())
-        .resolveBareTwoUp(paneIds);
+    MosaicLayoutState? legacyFrameZero;
+    for (final MosaicLayoutCue cue in cues) {
+      if (cue.frame == 0) {
+        legacyFrameZero = cue.state;
+        break;
+      }
+    }
+    MosaicLayoutState state =
+        (start?.state ?? legacyFrameZero ?? const MosaicLayoutState.composite())
+            .resolveBareTwoUp(paneIds);
 
     int spanStart = 0;
     for (final MosaicLayoutCue cue in cues) {
