@@ -1,10 +1,12 @@
 # MOSAIC Layout Program Journey
 
-Status: merged to `main` through PR #30 at
-`6b16ec29bcfe95e3e4fb25d15818b2bf74c8c144`.
-The final focused gate before merge passed 50 tests. `flutter analyze` remained
-at the repository's existing 77-issue baseline. The feature was also exercised
-manually in live Preview and final BAKE before merge.
+Status: the initial MOSAIC Layout Program merged to `main` through PR #30 at
+`6b16ec29bcfe95e3e4fb25d15818b2bf74c8c144`. Post-merge GUI testing then
+exposed resident-pixel and exit-paintability defects; those stabilization fixes
+landed directly on `main`. The final focused gate after the TWO UP → ONE
+paintability fix passed 51 tests, and the corrected retreat/minimize behavior
+was confirmed again in the live GUI. Before the post-merge stabilization, the
+repository analyzer remained at its existing 77-issue baseline.
 
 This document records the path from R3nder Pro's first static MOSAIC two-window
 STRUCT presentation to a reusable, frame-dependent MOSAIC layout program whose
@@ -553,9 +555,12 @@ change the semantic layout frame. Preview holds the last good actor image for
 as long as that actor remains continuously paintable, because a decoder may
 legitimately lag several frames under load and black is not an acceptable
 fallback. Hidden actors that are neither visible nor being warmed are evicted.
-The resolved program also records inclusion changes, so a direct scrub or
-playback jump that skips over a hidden interval cannot resurrect a pre-exit
-image even if no intermediate hidden widget frame was built.
+The resolved program also records paintability changes, including real
+settlement into absence. A direct scrub or playback jump that skips over a
+hidden interval therefore cannot resurrect a pre-exit image even if no
+intermediate hidden widget frame was built. Conversely, an actor that is still
+visually exiting remains paintable and keeps its last good image until that exit
+actually settles.
 
 BAKE is different: it is exact and blocking, so it renders the requested frame's
 pixels rather than using resident hold.
@@ -965,8 +970,10 @@ The layout-program contract is primarily exercised by:
 - `test/editor_structural_split_node_test.dart`
 - `test/structural_window_actor_painter_test.dart`
 
-The final focused regression gate after the FULL/TWO UP z correction passed 50
-tests before merge.
+The focused regression gate after the FULL/TWO UP z correction passed 50 tests
+before PR #30 merged. Post-merge residency stabilization added stale-recall,
+parked-scrub, multi-frame playback-lag, and TWO UP → ONE exit-motion coverage.
+After the final paintability correction, the focused gate passed 51 tests.
 
 The important proof shape is wider than one evaluator test:
 
@@ -1057,8 +1064,12 @@ presentation depth needed one additional semantic rule.
 
 ### Real GUI abuse remains valuable after green tests
 
-The MOSAIC-viewer gap, BAKE gap, stale node model, and z-order issue were all
+The MOSAIC-viewer gap, BAKE gap, stale node model, z-order issue, stale recalled
+pane, playback black-frame regression, and TWO UP → ONE retreat flash were all
 found by exercising the feature as an editor rather than only as a library.
+Several of those failures appeared while focused tests were green; each one
+therefore became a new ownership-boundary regression rather than only another
+assertion inside an already-green lower-level test.
 
 ---
 
@@ -1075,7 +1086,9 @@ The merged milestone leaves R3nder with:
 - persistent pane actor identity;
 - hidden-pane source-clock continuity;
 - shared Preview/BAKE layout evaluation;
-- bounded recent-frame hold for nonblocking live decode without stale hidden-pane recall;
+- resident-pixel hold bounded by continuous actor paintability rather than frame age;
+- stale hidden-pane recall rejection across real absent intervals;
+- resident pixels preserved through visible exit/minimize segments until settlement;
 - exact actor rendering for BAKE;
 - layout-aware MOSAIC editor viewer;
 - layout-aware TEXT/STRUCT Preview;
@@ -1084,8 +1097,10 @@ The merged milestone leaves R3nder with:
 - FULL-morph front-layer depth;
 - legacy cue-less SPLIT compatibility.
 
-The feature was merged only after manual Preview and BAKE acceptance in addition
-to the focused automated gates.
+The initial feature merged after manual Preview and BAKE acceptance in addition
+to the focused automated gates. Post-merge GUI testing then found the residency
+edge cases recorded above. Those fixes were accepted only after the live player
+was exercised again and the focused suite reached 51 passing tests.
 
 The most important final rule remains the one the implementation was built
 around:
