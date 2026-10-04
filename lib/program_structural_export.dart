@@ -30,12 +30,15 @@ import 'edit_model.dart';
 import 'maximize_shell_state.dart';
 import 'media_layer.dart';
 import 'mosaic_split_geometry.dart';
+import 'structural_mosaic_layout.dart';
+import 'mosaic_layout_program.dart';
 import 'scene_engine.dart';
 import 'scene_painter.dart';
 import 'structural_chrome.dart';
 import 'structural_sequence.dart';
 import 'structural_split_window_painter.dart';
 import 'structural_shell_geometry.dart';
+import 'structural_window_actor_painter.dart';
 import 'structural_source_export.dart';
 import 'structural_window_painter.dart';
 import 'ui_theme.dart';
@@ -126,6 +129,10 @@ class ProgramStructuralFrameRenderer {
   final DossierOverlayImageCache _dossierImages;
   final Map<String, StructuralSourceFrameRenderer> _sourceRenderers =
       <String, StructuralSourceFrameRenderer>{};
+  final Map<String, MosaicLayoutProgram?> _layoutPrograms =
+      <String, MosaicLayoutProgram?>{};
+  final Map<String, MosaicResolvedLayoutProgram> _resolvedLayoutPrograms =
+      <String, MosaicResolvedLayoutProgram>{};
 
   String? _cachedSource;
   int? _cachedSourceFrame;
@@ -243,6 +250,66 @@ class ProgramStructuralFrameRenderer {
 
   int _dossierPageCount(request) =>
       structuralDossierCenterPageCount(request, resolveSource);
+
+  MosaicLayoutProgram? _layoutProgramFor(
+    StructuralSequencePlacement placement,
+  ) {
+    final String source = placement.sourceRef.canonicalSource;
+    if (_layoutPrograms.containsKey(source)) return _layoutPrograms[source];
+
+    final StructuralSourceRef? root = _rootFor(placement);
+    if (root == null || root.kind != StructuralSourceKind.mosaic) {
+      _layoutPrograms[source] = null;
+      return null;
+    }
+
+    final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
+      source: rawDocument,
+      mosaic: _editModel.mosaic(root.id),
+    );
+    final MosaicLayoutProgram? result = program.cues.isEmpty ? null : program;
+    _layoutPrograms[source] = result;
+    return result;
+  }
+
+  MosaicResolvedLayoutProgram _resolvedLayoutFor({
+    required StructuralSequencePlacement placement,
+    required MosaicLayoutProgram program,
+    required double chromeScale,
+  }) {
+    final MosaicLayoutEvaluationContext context =
+        structuralMosaicLayoutContext(
+      programRect: Rect.fromLTWH(
+        0,
+        0,
+        width.toDouble(),
+        height.toDouble(),
+      ),
+      placement: placement,
+      program: program,
+      chromeScale: chromeScale,
+    );
+    final String key =
+        '${placement.sourceRef.canonicalSource}|${context.toJson()}';
+    return _resolvedLayoutPrograms.putIfAbsent(
+      key,
+      () => program.resolve(context),
+    );
+  }
+
+  Size _layoutActorDecodeSize(
+    MosaicLayoutActorFrame actor,
+    double chromeScale,
+  ) {
+    final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+    final Rect anchor = segment?.anchorRect ?? actor.rect;
+    final double targetChrome = segment?.targetChrome ?? actor.chrome;
+    final double barHeight = 38.0 * chromeScale * targetChrome;
+    return Size(
+      math.max(1.0, anchor.width.roundToDouble()),
+      math.max(1.0, (anchor.height - barHeight).roundToDouble()),
+    );
+  }
 
   StructuralDossierOverlayPlacement? _dossierAtSourceFrame(
     StructuralSequencePlacement placement,
@@ -1019,6 +1086,8 @@ class ProgramStructuralFrameRenderer {
       renderer.dispose();
     }
     _sourceRenderers.clear();
+    _layoutPrograms.clear();
+    _resolvedLayoutPrograms.clear();
   }
 }
 
