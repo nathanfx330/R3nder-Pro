@@ -69,7 +69,6 @@ class _StructuralMosaicLayoutPreviewState
     extends State<StructuralMosaicLayoutPreview> {
   static const int _movingDecodePixelBudget = 480 * 270;
   static const int _lookAheadFrames = 24;
-  static const int _residentHoldMaxLagFrames = 2;
 
   MediaLayer? _layer;
   EditVideoCompositor? _compositor;
@@ -196,29 +195,21 @@ class _StructuralMosaicLayoutPreviewState
     if (image == null || residentFrame == null) return null;
     if (residentFrame == widget.sourceFrame) return image;
 
-    // Parked/scrub Preview keeps the actor's current-run resident image until
-    // the exact requested frame finishes decoding. A direct scrub may skip all
-    // intermediate widget ticks, so also ask the immutable layout program
-    // whether this actor ever left and re-entered between the resident frame
-    // and the requested frame.
-    if (!widget.moving) {
-      final MosaicResolvedLayoutProgram? resolved = _resolved;
-      if (resolved == null ||
-          !resolved.actorStayedIncludedAcross(
-            actorId,
-            frameA: residentFrame,
-            frameB: widget.sourceFrame,
-          )) {
-        return null;
-      }
-      return image;
+    // Resident hold is tied to one continuous authored visibility run, not to
+    // a frame-age budget. A decoder may legitimately lag several frames under
+    // load; painting black during that lag is worse than holding the last good
+    // picture. Hidden/recalled actors remain safe because the resolved layout
+    // records every inclusion change, including intervals skipped by a direct
+    // scrub or playback jump.
+    final MosaicResolvedLayoutProgram? resolved = _resolved;
+    if (resolved == null ||
+        !resolved.actorStayedIncludedAcross(
+          actorId,
+          frameA: residentFrame,
+          frameB: widget.sourceFrame,
+        )) {
+      return null;
     }
-
-    // Moving playback is stricter: hold only a very recent frame so a far seek
-    // or decode stall cannot leave visibly stale content under advancing layout
-    // geometry.
-    final int lag = widget.sourceFrame - residentFrame;
-    if (lag < 0 || lag > _residentHoldMaxLagFrames) return null;
     return image;
   }
 
