@@ -43,6 +43,8 @@ const String _legacySplitSource = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall:SPLIT:OVERLAY=NONE]
 ''';
 
+String _resolveTestSource(String value) => value;
+
 class _ColorBackend implements MediaDecoderBackend {
   final Map<String, List<int>> requestedFrames = <String, List<int>>{};
 
@@ -196,7 +198,7 @@ Widget _preview({
         theme: R3Theme.of(Colors.green),
         wallpaper: null,
         backend: backend,
-        resolveSource: (String value) => value,
+        resolveSource: _resolveTestSource,
       ),
     ),
   );
