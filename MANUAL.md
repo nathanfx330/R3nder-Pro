@@ -489,8 +489,9 @@ Important timing rules:
   The GUI shows that cue normally instead of hiding it. Choosing **COME IN ON**
   migrates that old F0 cue into LAYOUT_START and removes it from the cue lane.
 * An older cue-less `[STRUCT:MOSAIC.name:SPLIT...]` placement can act as a
-  legacy initial two-window seed before the first LAYOUT cue. A frame-zero
-  LAYOUT cue overrides that seed outright.
+  legacy initial two-window seed. LAYOUT_START overrides that seed outright;
+  when no LAYOUT_START exists, a legacy frame-zero LAYOUT cue still overrides
+  it.
 * If both legacy SPLIT metadata and LAYOUT cues are authored, node mode labels
   the SPLIT state as a **LEGACY TWO-WINDOW SEED** rather than pretending it
   describes the whole placement.
