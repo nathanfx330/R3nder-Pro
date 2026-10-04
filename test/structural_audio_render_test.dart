@@ -310,16 +310,16 @@ void main() {
     expect(decoder.calls, <String>['/workspace/video/left.mp4']);
   });
 
-  test('MOSAIC TWOUP to ONE mutes pane2 on the exact cue frame', () async {
+  test('MOSAIC TWOUP to ONE follows the visual exit gain segment', () async {
     const String script = '''[EDIT:left]
 [TRACK:V1]
-[CLIP:l:video/left.mp4:0:0:4:1]
+[CLIP:l:video/left.mp4:0:0:20:1]
 [/CLIP]
 [/TRACK]
 [/EDIT]
 [EDIT:right]
 [TRACK:V1]
-[CLIP:r:video/right.mp4:0:0:4:1]
+[CLIP:r:video/right.mp4:0:0:20:1]
 [/CLIP]
 [/TRACK]
 [/EDIT]
@@ -327,11 +327,11 @@ void main() {
 [LAYOUT_START:TWOUP:A=p1:B=p2]
 [LAYOUT:2:ONE:PANE=p1:DUR=12]
 [PANE:p1]
-[CLIP:leftCut:EDIT.left:0:0:4:1]
+[CLIP:leftCut:EDIT.left:0:0:20:1]
 [/CLIP]
 [/PANE]
 [PANE:p2]
-[CLIP:rightCut:EDIT.right:0:0:4:1]
+[CLIP:rightCut:EDIT.right:0:0:20:1]
 [/CLIP]
 [/PANE]
 [/MOSAIC]
@@ -341,17 +341,96 @@ void main() {
           path.endsWith('left.mp4') ? 0.25 : 0.5,
     );
 
-    final StructuralAudioSourceRender render =
-        await _renderer(script, decoder).render('MOSAIC.wall');
+    final StructuralAudioPlanner planner = StructuralAudioPlanner.parse(script);
+    final StructuralAudioLayoutGainEnvelope pane2 = planner
+        .plan('MOSAIC.wall')
+        .lane('p2')
+        .layoutGainEnvelope!;
+    final StructuralAudioSourceRender render = await StructuralAudioSourceRenderer(
+      planner: planner,
+      leafDecoder: decoder,
+      resolveSource: (String source) => '/workspace/$source',
+    ).render('MOSAIC.wall');
 
-    expect(_leftAt(render, 0), closeTo(0.75, 1e-7));
-    expect(_leftAt(render, 2 * 1600 - 1), closeTo(0.75, 1e-7));
-    expect(_leftAt(render, 2 * 1600), closeTo(0.25, 1e-7));
-    expect(_leftAt(render, 4 * 1600 - 1), closeTo(0.25, 1e-7));
-    expect(decoder.calls, containsAll(<String>[
-      '/workspace/video/left.mp4',
-      '/workspace/video/right.mp4',
-    ]));
+    final int cueSample = 2 * 1600;
+    expect(_leftAt(render, cueSample), closeTo(0.75, 1e-7));
+
+    final int midSample = 7 * 1600 + 800;
+    final double midGain = pane2.gainAtProjectSample(midSample);
+    expect(midGain, inExclusiveRange(0.0, 1.0));
+    expect(
+      _leftAt(render, midSample),
+      closeTo(0.25 + 0.5 * midGain, 1e-6),
+    );
+
+    final int settledSample = 13 * 1600;
+    expect(pane2.gainAtProjectSample(settledSample), 0.0);
+    expect(_leftAt(render, settledSample), closeTo(0.25, 1e-7));
+  });
+
+  test('MOSAIC immediate layout change gets a five millisecond declick ramp',
+      () async {
+    const String script = '''[EDIT:left]
+[TRACK:V1]
+[CLIP:l:video/left.mp4:0:0:6:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[EDIT:right]
+[TRACK:V1]
+[CLIP:r:video/right.mp4:0:0:6:1]
+[/CLIP]
+[/TRACK]
+[/EDIT]
+[MOSAIC:wall]
+[LAYOUT_START:TWOUP:A=p1:B=p2]
+[LAYOUT:2:ONE:PANE=p1:DUR=1]
+[PANE:p1]
+[CLIP:leftCut:EDIT.left:0:0:6:1]
+[/CLIP]
+[/PANE]
+[PANE:p2]
+[CLIP:rightCut:EDIT.right:0:0:6:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+    final _FakeLeafDecoder decoder = _FakeLeafDecoder(
+      sampleValue: (String path, int sample, int channel) =>
+          path.endsWith('left.mp4') ? 0.25 : 0.5,
+    );
+    final StructuralAudioPlanner planner = StructuralAudioPlanner.parse(script);
+    final StructuralAudioLayoutGainEnvelope pane2 = planner
+        .plan('MOSAIC.wall')
+        .lane('p2')
+        .layoutGainEnvelope!;
+    final StructuralAudioSourceRender render = await StructuralAudioSourceRenderer(
+      planner: planner,
+      leafDecoder: decoder,
+      resolveSource: (String source) => '/workspace/$source',
+    ).render('MOSAIC.wall');
+
+    final int cueSample = 2 * 1600;
+    final double firstGain = pane2.gainAtProjectSample(cueSample);
+    expect(firstGain, inExclusiveRange(0.99, 1.0));
+    expect(
+      _leftAt(render, cueSample),
+      closeTo(0.25 + 0.5 * firstGain, 1e-6),
+    );
+
+    final int lastRampSample = cueSample + kStructuralAudioDeclickSamples - 1;
+    final double lastRampGain =
+        pane2.gainAtProjectSample(lastRampSample);
+    expect(lastRampGain, inExclusiveRange(0.0, 0.01));
+    expect(
+      _leftAt(render, lastRampSample),
+      closeTo(0.25 + 0.5 * lastRampGain, 1e-6),
+    );
+
+    expect(
+      _leftAt(render, cueSample + kStructuralAudioDeclickSamples),
+      closeTo(0.25, 1e-7),
+    );
   });
 
   test('nested structural IN and placement preserve source-relative timing', () async {
