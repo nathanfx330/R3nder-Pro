@@ -196,10 +196,14 @@ class _StructuralMosaicLayoutPreviewState
     if (image == null || residentFrame == null) return null;
     if (residentFrame == widget.sourceFrame) return image;
 
-    // Resident hold is a short live-playback bridge, not long-term pane memory.
-    // A pane recalled after a long hidden interval must not flash its old
-    // pre-exit picture while the current decode is still pending.
-    if (!widget.moving) return null;
+    // Parked/scrub Preview keeps the actor's current-run resident image until
+    // the exact requested frame finishes decoding. Hidden actors are evicted
+    // separately, so this cannot resurrect a pre-exit image on recall.
+    if (!widget.moving) return image;
+
+    // Moving playback is stricter: hold only a very recent frame so a far seek
+    // or decode stall cannot leave visibly stale content under advancing layout
+    // geometry.
     final int lag = widget.sourceFrame - residentFrame;
     if (lag < 0 || lag > _residentHoldMaxLagFrames) return null;
     return image;
