@@ -2,9 +2,10 @@
 //
 // M21 Stage 1A: pure structural-audio geometry.
 //
-// This file deliberately knows nothing about ffmpeg, MLT, files, Flutter,
+// This file deliberately knows nothing about ffmpeg, MLT, files, realtime
 // playback, or export. It converts canonical EDIT/MOSAIC authored state into
-// exact project/sample geometry that later stages may render.
+// exact project/sample geometry and consumes the pure MOSAIC layout resolver
+// for pane-audio presentation gain.
 //
 // The contract is intentionally narrow:
 //
