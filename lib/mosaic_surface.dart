@@ -65,6 +65,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
   String? _selectedClipId;
   String? _error;
   double _pixelsPerFrame = 2.0;
+  final ScrollController _layoutHorizontal = ScrollController();
   final EditSourceHistory _history = EditSourceHistory();
   bool _trimDialogOpen = false;
 
@@ -72,6 +73,12 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
   void initState() {
     super.initState();
     _workingSource = widget.source;
+  }
+
+  @override
+  void dispose() {
+    _layoutHorizontal.dispose();
+    super.dispose();
   }
 
   @override
@@ -1064,63 +1071,74 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                   timelineFrames * _pixelsPerFrame + sc(36),
                 );
                 return ClipRect(
-                  child: SingleChildScrollView(
+                  child: Scrollbar(
                     key: const ValueKey<String>(
-                      'mosaic-layout-lane-scroll',
+                      'mosaic-layout-lane-scrollbar',
                     ),
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: timelineWidth,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: GestureDetector(
-                              key: const ValueKey<String>(
-                                'mosaic-layout-ruler',
-                              ),
-                              behavior: HitTestBehavior.opaque,
-                              onTapDown: widget.isPlaying
-                                  ? null
-                                  : (TapDownDetails details) {
-                                      final int seek =
-                                          (details.localPosition.dx /
-                                                  _pixelsPerFrame)
-                                              .floor()
-                                              .clamp(
-                                                0,
-                                                math.max(
+                    controller: _layoutHorizontal,
+                    thumbVisibility: true,
+                    interactive: true,
+                    scrollbarOrientation: ScrollbarOrientation.bottom,
+                    child: SingleChildScrollView(
+                      key: const ValueKey<String>(
+                        'mosaic-layout-lane-scroll',
+                      ),
+                      controller: _layoutHorizontal,
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: timelineWidth,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: GestureDetector(
+                                key: const ValueKey<String>(
+                                  'mosaic-layout-ruler',
+                                ),
+                                behavior: HitTestBehavior.opaque,
+                                onTapDown: widget.isPlaying
+                                    ? null
+                                    : (TapDownDetails details) {
+                                        final int seek =
+                                            (details.localPosition.dx /
+                                                    _pixelsPerFrame)
+                                                .floor()
+                                                .clamp(
                                                   0,
-                                                  timelineFrames - 1,
-                                                ),
-                                              );
-                                      widget.onSeek(seek);
-                                    },
-                              child: CustomPaint(
-                                painter: _MosaicRulerPainter(
-                                  pixelsPerFrame: _pixelsPerFrame,
-                                  frames: timelineFrames,
-                                  theme: widget.theme,
+                                                  math.max(
+                                                    0,
+                                                    timelineFrames - 1,
+                                                  ),
+                                                );
+                                        widget.onSeek(seek);
+                                      },
+                                child: CustomPaint(
+                                  painter: _MosaicRulerPainter(
+                                    pixelsPerFrame: _pixelsPerFrame,
+                                    frames: timelineFrames,
+                                    theme: widget.theme,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          for (final MosaicLayoutCue cue in cues)
-                            _buildLayoutCueMarker(
-                              cue: cue,
-                              markerIndex: cueIndex++,
-                              duplicateFrame:
-                                  (cueFrameCounts[cue.frame] ?? 0) > 1,
+                            for (final MosaicLayoutCue cue in cues)
+                              _buildLayoutCueMarker(
+                                cue: cue,
+                                markerIndex: cueIndex++,
+                                duplicateFrame:
+                                    (cueFrameCounts[cue.frame] ?? 0) > 1,
+                                maxFrame: timelineFrames - 1,
+                              ),
+                            Positioned(
+                              left: frame * _pixelsPerFrame,
+                              top: 0,
+                              bottom: 0,
+                              width: 1,
+                              child: IgnorePointer(
+                                child: Container(color: widget.theme.accent),
+                              ),
                             ),
-                          Positioned(
-                            left: frame * _pixelsPerFrame,
-                            top: 0,
-                            bottom: 0,
-                            width: 1,
-                            child: IgnorePointer(
-                              child: Container(color: widget.theme.accent),
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1137,6 +1155,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     required MosaicLayoutCue cue,
     required int markerIndex,
     required bool duplicateFrame,
+    required int maxFrame,
   }) {
     final String keyName = duplicateFrame
         ? 'mosaic-layout-cue:${cue.frame}:$markerIndex'
@@ -1147,36 +1166,26 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
         cue.frame * _pixelsPerFrame - sc(7),
       ),
       top: sc(23),
-      child: Tooltip(
-        message:
-            '${cue.state.formatTokens()} · F${cue.frame} · ${cue.durationFrames}F',
-        child: InkWell(
-          key: ValueKey<String>(keyName),
-          onTap: widget.isPlaying ? null : () => _editLayoutCue(cue),
-          child: Container(
-            width: sc(15),
-            height: sc(28),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: duplicateFrame
-                  ? R3Theme.danger.withValues(alpha: 0.16)
-                  : widget.theme.accentFaint,
-              border: Border.all(
-                color: duplicateFrame ? R3Theme.danger : widget.theme.accent,
-              ),
-              borderRadius: BorderRadius.circular(2),
+      child: _MosaicLayoutCueMarker(
+        keyName: keyName,
+        cue: cue,
+        pixelsPerFrame: _pixelsPerFrame,
+        maxFrame: maxFrame,
+        duplicateFrame: duplicateFrame,
+        editable: !widget.isPlaying,
+        draggable: !widget.isPlaying && !duplicateFrame,
+        theme: widget.theme,
+        glyph: _layoutCueGlyph(cue.state),
+        onEdit: () => _editLayoutCue(cue),
+        onMove: (int nextFrame) {
+          if (nextFrame == cue.frame) return;
+          _commit(
+            (MosaicSurfaceDocument current) => current.updateLayoutCue(
+              cue.frame,
+              frame: nextFrame,
             ),
-            child: Text(
-              _layoutCueGlyph(cue.state),
-              style: widget.theme.microAccent.copyWith(
-                color: duplicateFrame
-                    ? R3Theme.danger
-                    : widget.theme.accent,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -1899,6 +1908,165 @@ class _LayoutCueEditAction {
     required this.frame,
     required this.durationFrames,
   }) : delete = false;
+}
+
+class _MosaicLayoutCueMarker extends StatefulWidget {
+  final String keyName;
+  final MosaicLayoutCue cue;
+  final double pixelsPerFrame;
+  final int maxFrame;
+  final bool duplicateFrame;
+  final bool editable;
+  final bool draggable;
+  final R3Theme theme;
+  final String glyph;
+  final VoidCallback onEdit;
+  final ValueChanged<int> onMove;
+
+  const _MosaicLayoutCueMarker({
+    required this.keyName,
+    required this.cue,
+    required this.pixelsPerFrame,
+    required this.maxFrame,
+    required this.duplicateFrame,
+    required this.editable,
+    required this.draggable,
+    required this.theme,
+    required this.glyph,
+    required this.onEdit,
+    required this.onMove,
+  });
+
+  @override
+  State<_MosaicLayoutCueMarker> createState() =>
+      _MosaicLayoutCueMarkerState();
+}
+
+class _MosaicLayoutCueMarkerState extends State<_MosaicLayoutCueMarker> {
+  bool _dragging = false;
+  double _dragPixels = 0.0;
+
+  int get _previewFrame {
+    final int delta = (_dragPixels / widget.pixelsPerFrame).round();
+    return math.max(
+      0,
+      math.min(widget.maxFrame, widget.cue.frame + delta),
+    );
+  }
+
+  double get _previewOffset =>
+      (_previewFrame - widget.cue.frame) * widget.pixelsPerFrame;
+
+  void _finishDrag({required bool commit}) {
+    final int frame = _previewFrame;
+    setState(() {
+      _dragging = false;
+      _dragPixels = 0.0;
+    });
+    if (commit && frame != widget.cue.frame) {
+      widget.onMove(frame);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final int frame = _previewFrame;
+    final Color markerColor =
+        widget.duplicateFrame ? R3Theme.danger : widget.theme.accent;
+
+    return Transform.translate(
+      offset: Offset(_previewOffset, 0),
+      child: Tooltip(
+        message:
+            '${widget.cue.state.formatTokens()} · F$frame · ${widget.cue.durationFrames}F'
+            '${widget.draggable ? ' · drag to retime' : ''}',
+        child: MouseRegion(
+          cursor: widget.draggable
+              ? SystemMouseCursors.resizeLeftRight
+              : widget.editable
+                  ? SystemMouseCursors.click
+                  : MouseCursor.defer,
+          child: GestureDetector(
+            key: ValueKey<String>(widget.keyName),
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.editable ? widget.onEdit : null,
+            onHorizontalDragStart: widget.draggable
+                ? (_) {
+                    setState(() {
+                      _dragging = true;
+                      _dragPixels = 0.0;
+                    });
+                  }
+                : null,
+            onHorizontalDragUpdate: widget.draggable
+                ? (DragUpdateDetails details) {
+                    setState(() => _dragPixels += details.delta.dx);
+                  }
+                : null,
+            onHorizontalDragEnd:
+                widget.draggable ? (_) => _finishDrag(commit: true) : null,
+            onHorizontalDragCancel:
+                widget.draggable ? () => _finishDrag(commit: false) : null,
+            child: SizedBox(
+              width: sc(15),
+              height: sc(28),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(
+                    child: Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: widget.duplicateFrame
+                            ? R3Theme.danger.withValues(alpha: 0.16)
+                            : widget.theme.accentFaint,
+                        border: Border.all(color: markerColor),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      child: Text(
+                        widget.glyph,
+                        style: widget.theme.microAccent.copyWith(
+                          color: markerColor,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_dragging)
+                    Positioned(
+                      left: -sc(18),
+                      top: -sc(19),
+                      width: sc(52),
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: sc(4),
+                            vertical: sc(2),
+                          ),
+                          decoration: BoxDecoration(
+                            color: R3Theme.panelHi,
+                            border: Border.all(color: markerColor),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                          child: Text(
+                            'F$frame',
+                            textAlign: TextAlign.center,
+                            style: widget.theme.microAccent.copyWith(
+                              color: markerColor,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _MosaicTimelineClip extends StatefulWidget {
