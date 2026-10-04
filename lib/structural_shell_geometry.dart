@@ -9,6 +9,7 @@
 // stage geometry, opacity curves, and visibility ramp from drifting between the
 // two render paths.
 
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/animation.dart';
