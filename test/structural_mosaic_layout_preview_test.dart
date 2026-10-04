@@ -465,6 +465,67 @@ void main() {
   });
 
 
+  testWidgets('parked scrub holds current-run resident pixels during decode',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_longRecallSource).single;
+    final _ColorBackend backend = _ColorBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: false,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final StructuralWindowActorVisual initialLeft = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'left',
+        )
+        .value;
+    expect(initialLeft.sourceImage, isNotNull);
+
+    // Jump far ahead while parked. The rebuild happens before the asynchronous
+    // ui.Image conversion for the exact requested frame can repaint. The
+    // currently visible actor must keep its current-run resident image through
+    // that gap instead of flashing an empty client.
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 200,
+        backend: backend,
+        playing: false,
+      ),
+    );
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 200);
+    expect(painter.layoutFrame.pane('left').presence,
+        MosaicLayoutPresence.present);
+    final StructuralWindowActorVisual scrubLeft = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'left',
+        )
+        .value;
+    expect(
+      scrubLeft.sourceImage,
+      isNotNull,
+      reason:
+          'parked scrub must hold the visible actor image until exact decode lands',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('pending next frame keeps last resident actor pixels',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
