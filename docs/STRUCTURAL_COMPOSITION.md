@@ -793,8 +793,9 @@ the pane-audio gating gap in ONE. That hard-gate version passed a **74-test
 focused gate** and was accepted in live Rocky playback. A subsequent review
 found that exact-sample gating could click and that audio had become a second
 layout interpreter. The newer resolver-driven gain-envelope / placement-context
-correction is pending a fresh gate and live listen before acceptance. The
-underlying structural contracts remain the compatibility target.
+correction passed a **110-test focused Rocky gate**. Live listening remains the
+final acceptance check. The underlying structural contracts remain the
+compatibility target.
 
 ---
 
