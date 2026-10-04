@@ -85,7 +85,7 @@ void main() {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(source).single;
     final MosaicSplitWindowGeometry geometry = mosaicSplitWindowGeometry(
-      frame: const Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      frame: Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
       aspect: placement.splitClientAspect,
       titleHeight: 38.0 * chromeScale,
     );
@@ -112,7 +112,7 @@ void main() {
       width: width,
       height: height,
       paint: (Canvas canvas) {
-        legacy.paint(canvas, const Size(width.toDouble(), height.toDouble()));
+        legacy.paint(canvas, Size(width.toDouble(), height.toDouble()));
       },
     );
 
@@ -232,7 +232,7 @@ void main() {
       width: width,
       height: height,
       paint: (Canvas canvas) {
-        painter.paint(canvas, const Size(width.toDouble(), height.toDouble()));
+        painter.paint(canvas, Size(width.toDouble(), height.toDouble()));
       },
     );
 
@@ -320,7 +320,7 @@ void main() {
       width: width,
       height: height,
       paint: (Canvas canvas) {
-        painter.paint(canvas, const Size(width.toDouble(), height.toDouble()));
+        painter.paint(canvas, Size(width.toDouble(), height.toDouble()));
       },
     );
 
