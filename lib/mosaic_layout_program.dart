@@ -269,7 +269,7 @@ class MosaicLayoutActiveSegment {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
         startFrame,
         durationFrames,
         startRect,
@@ -292,7 +292,7 @@ class MosaicLayoutActiveSegment {
         startDominant,
         targetDominant,
         opacityCurve,
-      );
+      ]);
 
   Map<String, Object?> toJson() => <String, Object?>{
         'startFrame': startFrame,

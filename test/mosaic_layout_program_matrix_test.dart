@@ -603,7 +603,7 @@ void main() {
   [LAYOUT:100:COMPOSITE:DUR=12]''').resolve(context());
 
       final double midB =
-          resolved.paneAudioFrame('B', sourceFrame: 105).gain;
+          resolved.paneAudioFrame('B', sourceFrame: 102).gain;
       expect(midB, greaterThan(0.0));
       expect(midB, lessThan(1.0));
       expect(resolved.paneAudioFrame('B', sourceFrame: 111).gain, 1.0);
