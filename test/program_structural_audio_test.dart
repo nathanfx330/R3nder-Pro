@@ -66,6 +66,20 @@ const String _runtimeSource = '''[SPEED:MAX]
 [STRUCT:EDIT.main:AUDIO]
 ''';
 
+const String _splitAudioSource = '''[SPEED:MAX]
+[MOSAIC:wall]
+[PANE:left]
+[CLIP:l:video/left.mp4:0:0:3:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:r:video/right.mp4:0:0:3:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:SPLIT:MAX:ASPECT=4X3:AUDIO]
+''';
+
 const String _slideAudioSource = '''[SPEED:MAX]
 [CONFIG:APPSWITCH:SLIDE]
 [EDIT:a]
@@ -209,6 +223,92 @@ void main() {
       wav.length,
       44 + rendered.interleavedStereo.length * 4,
     );
+  });
+
+  test('program renderer memoizes by source plus layout context',
+      () async {
+    final StructuralSourceRef ref =
+        StructuralSourceRef.tryParse('MOSAIC.wall')!;
+    const StructuralAudioSourceContext splitContext =
+        StructuralAudioSourceContext(legacySplitWindow: true);
+    final ProgramStructuralAudioTimeline timeline =
+        ProgramStructuralAudioTimeline(
+      durationFrames: 4,
+      occurrences: <ProgramStructuralAudioOccurrence>[
+        ProgramStructuralAudioOccurrence(
+          placementIndex: 0,
+          sourceRef: ref,
+          programStartFrame: 0,
+          sourceDurationFrames: 2,
+        ),
+        ProgramStructuralAudioOccurrence(
+          placementIndex: 1,
+          sourceRef: ref,
+          programStartFrame: 2,
+          sourceDurationFrames: 2,
+          sourceContext: splitContext,
+        ),
+      ],
+    );
+
+    int renderCalls = 0;
+    final ProgramStructuralAudioRender rendered =
+        await ProgramStructuralAudioRenderer(
+      timeline: timeline,
+      renderSource: (
+        String source,
+        StructuralAudioSourceContext context,
+      ) async {
+        renderCalls++;
+        return _constantSourceRender(
+          source,
+          frames: 2,
+          left: context.legacySplitWindow ? 0.5 : 0.25,
+          right: 0.0,
+        );
+      },
+    ).render();
+
+    expect(renderCalls, 2);
+    expect(_sampleAt(rendered, 0, 0), 0.25);
+    expect(_sampleAt(rendered, 2, 0), 0.5);
+  });
+
+  testWidgets('runtime trace carries MOSAIC legacy SPLIT context into audio',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_program_struct_split_audio_');
+    final Directory images = Directory('${root.path}/images')
+      ..createSync(recursive: true);
+    final Directory sprites = Directory('${root.path}/sprites')
+      ..createSync(recursive: true);
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      images,
+      sprites,
+      source: _splitAudioSource,
+    );
+    final int totalFrames = _programDuration(scene);
+    final ProgramStructuralAudioTimeline timeline =
+        traceProgramStructuralAudioTimeline(
+      scene: scene,
+      rawDocument: _splitAudioSource,
+      totalFrames: totalFrames,
+    );
+
+    expect(timeline.occurrences, hasLength(1));
+    final StructuralAudioSourceContext context =
+        timeline.occurrences.single.sourceContext;
+    expect(context.legacySplitWindow, isTrue);
+    expect(context.legacySplitAspect.name, 'aspect4x3');
+    expect(context.legacyMaximizeSplit, isTrue);
   });
 
   testWidgets(
