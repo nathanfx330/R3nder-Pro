@@ -259,7 +259,7 @@ void main() {
       for (final MapEntry<String, MosaicLayoutState> from in states.entries) {
         for (final MapEntry<String, MosaicLayoutState> to in states.entries) {
           if (from.key == to.key) continue;
-          final String key = from.key + '>' + to.key;
+          final String key = '${from.key}>${to.key}';
           final String first = MosaicLayoutCue(
             frame: 100,
             state: from.value,
@@ -271,7 +271,7 @@ void main() {
             durationFrames: 12,
           ).formatTag();
           final MosaicLayoutFrame frame =
-              programFor('  ' + first + '\n  ' + second)
+              programFor('  $first\n  $second')
                   .resolve(context())
                   .evaluate(200);
 
@@ -291,12 +291,12 @@ void main() {
           expect(
             creates,
             expectedCreates[key],
-            reason: key + ' changed CREATE classification',
+            reason: '$key changed CREATE classification',
           );
           expect(
             redirects,
             expectedRedirects[key],
-            reason: key + ' changed REDIRECT classification',
+            reason: '$key changed REDIRECT classification',
           );
         }
       }

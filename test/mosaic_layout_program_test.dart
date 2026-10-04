@@ -96,8 +96,7 @@ $layoutLines
       targetDominantCount,
       lessThanOrEqualTo(1),
       reason: reason ??
-          'multiple target-dominant actors at F' +
-              frame.sourceFrame.toString(),
+          'multiple target-dominant actors at F${frame.sourceFrame}',
     );
 
     final int eligibleStartDominantCount =
@@ -109,8 +108,8 @@ $layoutLines
       eligibleStartDominantCount,
       lessThanOrEqualTo(1),
       reason: reason ??
-          'multiple target-present start-dominant actors at F' +
-              frame.sourceFrame.toString(),
+          'multiple target-present start-dominant actors at '
+              'F${frame.sourceFrame}',
     );
 
     for (final MosaicLayoutActiveSegment segment in segments) {
@@ -119,8 +118,8 @@ $layoutLines
           segment.targetPresence,
           isNot(MosaicLayoutPresence.absent),
           reason: reason ??
-              'target dominance without target presence at F' +
-                  frame.sourceFrame.toString(),
+              'target dominance without target presence at '
+                  'F${frame.sourceFrame}',
         );
       }
     }
@@ -140,8 +139,7 @@ $layoutLines
         winnerCount,
         1,
         reason: reason ??
-            'dominant morph ownership tied at F' +
-                frame.sourceFrame.toString(),
+            'dominant morph ownership tied at F${frame.sourceFrame}',
       );
     }
   }

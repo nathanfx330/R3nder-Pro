@@ -306,10 +306,8 @@ void main() {
           overlapArea,
           lessThanOrEqualTo(overlapAreaTolerance),
           reason:
-              'resting peers left and right overlap in ' +
-                  family +
-                  ' at ASPECT=' +
-                  aspect.name,
+              'resting peers left and right overlap in $family '
+              'at ASPECT=${aspect.name}',
         );
       }
     }
