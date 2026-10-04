@@ -34,7 +34,10 @@ import 'structural_sequence.dart';
 const int kProgramStructuralAudioSchemaVersion = 1;
 
 typedef StructuralAudioSourceRenderCallback =
-    Future<StructuralAudioSourceRender> Function(String structuralSource);
+    Future<StructuralAudioSourceRender> Function(
+      String structuralSource,
+      StructuralAudioSourceContext context,
+    );
 
 class ProgramStructuralAudioException implements Exception {
   final String message;
@@ -55,12 +58,14 @@ class ProgramStructuralAudioOccurrence {
   final StructuralSourceRef sourceRef;
   final int programStartFrame;
   final int sourceDurationFrames;
+  final StructuralAudioSourceContext sourceContext;
 
   const ProgramStructuralAudioOccurrence({
     required this.placementIndex,
     required this.sourceRef,
     required this.programStartFrame,
     required this.sourceDurationFrames,
+    this.sourceContext = const StructuralAudioSourceContext(),
   });
 
   int get programStartSample =>
@@ -393,6 +398,13 @@ ProgramStructuralAudioTimeline traceProgramStructuralAudioTimeline({
         sourceRef: placement.sourceRef,
         programStartFrame: trace.programStartFrame,
         sourceDurationFrames: placement.sourceDurationFrames,
+        sourceContext: placement.sourceRef.kind == StructuralSourceKind.mosaic
+            ? StructuralAudioSourceContext(
+                legacySplitWindow: placement.splitWindow,
+                legacySplitAspect: placement.splitClientAspect,
+                legacyMaximizeSplit: placement.maximizeSplit,
+              )
+            : const StructuralAudioSourceContext(),
       ),
     );
   }
@@ -447,15 +459,19 @@ class ProgramStructuralAudioRenderer {
     final Float32List output = Float32List(
       timeline.durationSamples * kStructuralAudioChannels,
     );
-    final Map<String, Future<StructuralAudioSourceRender>> memo =
-        <String, Future<StructuralAudioSourceRender>>{};
+    final Map<(String, StructuralAudioSourceContext),
+            Future<StructuralAudioSourceRender>> memo =
+        <(String, StructuralAudioSourceContext),
+            Future<StructuralAudioSourceRender>>{};
 
     for (final ProgramStructuralAudioOccurrence occurrence
         in timeline.occurrences) {
       final String source = occurrence.sourceRef.canonicalSource;
+      final (String, StructuralAudioSourceContext) key =
+          (source, occurrence.sourceContext);
       final Future<StructuralAudioSourceRender> pending = memo.putIfAbsent(
-        source,
-        () => renderSource(source),
+        key,
+        () => renderSource(source, occurrence.sourceContext),
       );
       final StructuralAudioSourceRender rendered = await pending;
 
