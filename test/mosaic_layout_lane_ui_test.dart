@@ -4,8 +4,10 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:r3nder/edit_video_preview.dart';
 import 'package:r3nder/media_layer.dart';
 import 'package:r3nder/mosaic_surface.dart';
+import 'package:r3nder/structural_mosaic_layout_preview.dart';
 import 'package:r3nder/ui_theme.dart';
 
 const String _source = '''[EDIT:source]
@@ -158,6 +160,23 @@ void main() {
     expect(_key('mosaic-layout-add-full'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('mosaic-layout-cue:40')),
         findsNothing);
+  });
+
+
+  testWidgets('MOSAIC viewer switches to layout-aware actor Preview after cue',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+
+    expect(find.byType(EditVideoPreview), findsWidgets);
+    expect(find.byType(StructuralMosaicLayoutPreview), findsNothing);
+
+    await _chooseOne(tester, 'pane1');
+
+    expect(
+      host.currentState!.source,
+      contains('[LAYOUT:40:ONE:PANE=pane1]'),
+    );
+    expect(find.byType(StructuralMosaicLayoutPreview), findsOneWidget);
   });
 
   testWidgets('COMPOSITE authors an absolute cue at the playhead',
