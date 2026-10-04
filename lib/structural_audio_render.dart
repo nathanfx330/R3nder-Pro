@@ -267,6 +267,7 @@ class StructuralAudioSourceRenderer {
       final double layoutGain =
           lane.layoutGainEnvelope?.gainAtProjectSample(
                 absoluteProjectSample,
+                contributorStartFrame: segment.projectStartFrame,
               ) ??
               1.0;
       if (layoutGain == 0.0) continue;
