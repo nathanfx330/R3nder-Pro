@@ -526,6 +526,70 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+      'parked direct recall rejects image from an earlier visibility run',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_longRecallSource).single;
+    final _ColorBackend backend = _ColorBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: false,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final StructuralWindowActorVisual initialRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(initialRight.sourceImage, isNotNull);
+
+    // Scrub directly across the authored hidden interval without ever building
+    // an intermediate hidden frame. The old image still exists in the cache at
+    // rebuild time, so the visibility-run guard—not tick-time eviction—must
+    // reject it until the exact F400 image lands.
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 400,
+        backend: backend,
+        playing: false,
+      ),
+    );
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 400);
+    expect(
+      painter.layoutFrame.pane('right').presence,
+      MosaicLayoutPresence.present,
+    );
+    final StructuralWindowActorVisual recalledRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(
+      recalledRight.sourceImage,
+      isNull,
+      reason:
+          'parked scrub must not bridge across an authored hidden interval',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('pending next frame keeps last resident actor pixels',
       (WidgetTester tester) async {
     final StructuralSequencePlacement placement =
