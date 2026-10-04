@@ -129,11 +129,14 @@ explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. Persistent pane actor
 identity survives layout changes and cuts inside a pane. A hidden pane remains
 on the shared MOSAIC source clock; hiding it is not pausing it.
 
-Preview and BAKE share layout evaluation and the actor-window painter. Live
+Preview and BAKE share layout evaluation and the actor-window painter. Moving
 Preview may hold only a recent resident actor image while a nonblocking decoder
 catches up; the current implementation allows at most two source frames of lag.
-A pane recalled after a long hidden interval paints empty until current or
-near-current pixels are resident. Geometry/time still follow the exact current
+Parked/scrub Preview may keep an older resident image while the exact seek frame
+decodes, but only if the actor stayed included across the entire authored frame
+interval. A pane recalled after any hidden interval paints empty until current
+or near-current pixels are resident, including a direct scrub that skipped all
+intermediate hidden widget frames. Geometry/time still follow the exact current
 source frame. BAKE blocks for exact actor pixels at that same frame.
 
 The complete development path, including interruption semantics, residency
