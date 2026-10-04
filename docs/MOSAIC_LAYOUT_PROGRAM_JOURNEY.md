@@ -1058,7 +1058,12 @@ The layout-program contract is primarily exercised by:
 The focused regression gate after the FULL/TWO UP z correction passed 50 tests
 before PR #30 merged. Post-merge residency stabilization added stale-recall,
 parked-scrub, multi-frame playback-lag, and TWO UP → ONE exit-motion coverage.
-After the final paintability correction, the focused gate passed 51 tests. After adding the warm-recall bridge regression, the focused gate passed 52 tests.
+After the final paintability correction, the focused gate passed 51 tests. After
+adding the warm-recall bridge regression, the focused gate passed 52 tests.
+The later COME IN ON / LAYOUT_START and layout-driven pane-audio follow-up
+expanded the focused gate to **74 passing tests**. Rocky live acceptance then
+confirmed that TWO UP → ONE mutes the dismissed pane at the intended cue
+boundary while the surviving pane continues cleanly.
 
 The important proof shape is wider than one evaluator test:
 
@@ -1165,9 +1170,8 @@ assertion inside an already-green lower-level test.
 **Milestone reached and closed.** The accepted implementation is on `main`,
 the residency-focused regression gate passed 52 tests, and the live GUI pass
 was accepted after exercising continuous playback, TWO UP → ONE retreat, pane
-recall, lookahead warming, and scrub crossings. The later COME IN ON /
-LAYOUT_START workflow correction is a post-milestone authoring fix and requires
-a fresh gate before its head is marked accepted.
+recall, lookahead warming, and scrub crossings. The later COME IN ON / LAYOUT_START workflow and layout-driven pane-audio
+follow-up subsequently passed a 74-test focused gate and Rocky live acceptance.
 
 The completed milestone leaves R3nder with:
 
