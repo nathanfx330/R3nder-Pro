@@ -480,6 +480,12 @@ class ProgramStructuralFrameRenderer {
     final _StructuralBakeHandoff? handoff =
         _handoffFor(marker, placement, visual.sourceFrame);
     final int displaySourceFrame = visual.sourceFrame;
+    final double structuralEngineWidth =
+        scene.width > 0.0 ? scene.width : width.toDouble();
+    final double structuralChromeScale =
+        scene.terminal.scale * width.toDouble() / structuralEngineWidth;
+    final MosaicLayoutProgram? layoutProgram =
+        _layoutProgramFor(displayPlacement);
 
     final StructuralDossierOverlayPlacement? dossier = _dossierFor(
       placement,
@@ -506,15 +512,71 @@ class ProgramStructuralFrameRenderer {
     ui.Image? outgoingSourceImage;
     MosaicSplitWindowGeometry? splitGeometry;
     List<_RenderedStructuralSourceImage>? splitPaneImages;
+    MosaicLayoutFrame? displayLayoutFrame;
+    Map<MosaicLayoutActorId, StructuralWindowActorVisual>? layoutVisuals;
     String defaultBottomOverlay = '';
     String outgoingDefaultBottomOverlay = '';
     if (visual.structuralWindowPresent && visual.structuralOpacity > 0.001) {
-      if (displayPlacement.splitWindow) {
-        final double engineWidth =
-            scene.width > 0.0 ? scene.width : width.toDouble();
-        final double chromeScale =
-            scene.terminal.scale * width.toDouble() / engineWidth;
-        final double titleHeight = 38.0 * chromeScale;
+      if (layoutProgram != null) {
+        final MosaicResolvedLayoutProgram resolved = _resolvedLayoutFor(
+          placement: displayPlacement,
+          program: layoutProgram,
+          chromeScale: structuralChromeScale,
+        );
+        final MosaicLayoutFrame layoutFrame =
+            resolved.evaluate(displaySourceFrame);
+        displayLayoutFrame = structuralMosaicLayoutOuterFrame(
+          frame: layoutFrame,
+          stage: stage,
+          stageProgress: placement.stageProgressAt(localFrame),
+          shellOpacity: visual.structuralOpacity,
+        );
+
+        final Map<MosaicLayoutActorId, StructuralWindowActorVisual> visuals =
+            <MosaicLayoutActorId, StructuralWindowActorVisual>{};
+        for (final MosaicLayoutActorFrame actor in layoutFrame.paintActors) {
+          final Size decodeSize =
+              _layoutActorDecodeSize(actor, structuralChromeScale);
+          final int imageWidth = math.max(1, decodeSize.width.round());
+          final int imageHeight = math.max(1, decodeSize.height.round());
+
+          final _RenderedStructuralSourceImage rendered;
+          if (actor.actorId.kind == MosaicLayoutActorKind.composite) {
+            rendered = await _renderSourceFrameImageAtSize(
+              displayPlacement.sourceRef.canonicalSource,
+              displaySourceFrame,
+              imageWidth,
+              imageHeight,
+              fontFamily,
+            );
+          } else {
+            final int paneIndex =
+                layoutProgram.paneIds.indexOf(actor.actorId.paneId!);
+            if (paneIndex < 0) continue;
+            rendered = await _renderSplitPaneFrameImage(
+              displayPlacement.sourceRef.canonicalSource,
+              paneIndex,
+              displaySourceFrame,
+              imageWidth,
+              imageHeight,
+              fontFamily,
+            );
+          }
+
+          visuals[actor.actorId] = StructuralWindowActorVisual(
+            sourceImage: rendered.image,
+            sourceFrame: displaySourceFrame,
+            sourceDurationFrames: displayPlacement.sourceDurationFrames,
+            windowTitle: displayPlacement.effectiveWindowTitle,
+            overlayMode: displayPlacement.overlayMode,
+            topOverlay: displayPlacement.topOverlay,
+            bottomOverlay: displayPlacement.bottomOverlay,
+            defaultBottomOverlay: rendered.diagnosticLabel,
+          );
+        }
+        layoutVisuals = visuals;
+      } else if (displayPlacement.splitWindow) {
+        final double titleHeight = 38.0 * structuralChromeScale;
         splitGeometry = mosaicSplitWindowGeometry(
           frame: Rect.fromLTWH(
             0,
@@ -662,10 +724,6 @@ class ProgramStructuralFrameRenderer {
       structuralChrome = maximizeGeometry.windowChrome;
     }
 
-    final double structuralEngineWidth =
-        scene.width > 0.0 ? scene.width : width.toDouble();
-    final double structuralChromeScale =
-        scene.terminal.scale * width.toDouble() / structuralEngineWidth;
     final R3Theme structuralTheme = R3Theme.of(scene.terminal.fontColor);
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
