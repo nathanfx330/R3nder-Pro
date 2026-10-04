@@ -125,12 +125,13 @@ any legacy SPLIT seed. At source frame F that context plus the authored cues
 deterministically produces one `MosaicLayoutFrame`.
 
 The layout states are COMPOSITE, TWO UP, ONE, and FULL. TWO UP may carry an
-explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. The editor exposes
-the frame-zero canonical state separately as **START AS**; later **LAYOUT CUES**
-remain playhead-relative transitions. Both write the same LAYOUT grammar.
-Persistent pane actor identity survives layout changes and cuts inside a pane. A
-hidden pane remains on the shared MOSAIC source clock; hiding it is not pausing
-it.
+explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. The source may own
+one `LAYOUT_START` initial state, authored in the editor through **COME IN ON**.
+That opening state is not a timeline cue. Later **LAYOUT CUES** remain
+playhead-relative transitions. A legacy frame-zero LAYOUT cue is still accepted
+when no LAYOUT_START exists. Persistent pane actor identity survives layout
+changes and cuts inside a pane. A hidden pane remains on the shared MOSAIC
+source clock; hiding it is not pausing it.
 
 Preview and BAKE share layout evaluation and the actor-window painter. Live
 Preview may hold the last good resident actor image for as long as that actor
@@ -792,7 +793,8 @@ new milestone deliberately supersedes them.
 
 - [ ] EDIT is reusable frame-producing content;
 - [ ] MOSAIC composes structural sources into deterministic pane geometry;
-- [ ] source-relative LAYOUT cues change arrangement without changing content duration or audio;
+- [ ] LAYOUT_START owns the initial MOSAIC presentation without becoming a timeline cue;
+- [ ] source-relative LAYOUT cues change later arrangement without changing content duration or audio;
 - [ ] persistent pane actors survive layout changes without restarting source time;
 - [ ] hidden panes remain on the shared MOSAIC source clock;
 - [ ] Preview and BAKE derive the same `MosaicLayoutFrame` from source frame plus placement context;
