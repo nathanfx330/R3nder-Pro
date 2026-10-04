@@ -30,6 +30,20 @@ const String _layoutSource = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall:OVERLAY=NONE]
 ''';
 
+const String _namedLayoutSource = '''[MOSAIC:wall]
+[LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
+[PANE:left]
+[CLIP:left_clip:left.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_clip:right.mp4:0:0:12:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:PANENAMES:NAME1="Camera A":NAME2="Witness":OVERLAY=NONE]
+''';
+
 const String _legacySplitSource = '''[MOSAIC:wall]
 [PANE:left]
 [CLIP:left_clip:left.mp4:0:0:12:1]
@@ -268,6 +282,42 @@ void main() {
               visual.sourceImage != null),
       hasLength(2),
     );
+  });
+
+
+  testWidgets('dynamic TWO UP uses placement window-slot names',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_namedLayoutSource).single;
+    final _ColorBackend backend = _ColorBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _namedLayoutSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: false,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    final MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final StructuralWindowActorVisual left = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'left',
+        )
+        .value;
+    final StructuralWindowActorVisual right = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+
+    expect(left.windowTitle, 'MOSAIC.wall · Camera A');
+    expect(right.windowTitle, 'MOSAIC.wall · Witness');
   });
 
   testWidgets('source-frame cue changes live actor set without recreating source',
