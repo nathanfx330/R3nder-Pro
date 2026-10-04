@@ -82,3 +82,51 @@ MosaicLayoutFrame structuralMosaicLayoutOuterFrame({
     ],
   );
 }
+
+Map<MosaicLayoutActorId, String> structuralMosaicLayoutWindowTitles({
+  required MosaicLayoutFrame frame,
+  required StructuralSequencePlacement placement,
+}) {
+  final Map<MosaicLayoutActorId, String> titles =
+      <MosaicLayoutActorId, String>{
+    for (final MosaicLayoutActorFrame actor in frame.paintActors)
+      actor.actorId: placement.effectiveWindowTitle,
+  };
+
+  if (!placement.showPaneNames) return titles;
+
+  final List<MosaicLayoutActorFrame> paneActors = frame.paintActors
+      .where(
+        (MosaicLayoutActorFrame actor) =>
+            actor.actorId.kind == MosaicLayoutActorKind.pane,
+      )
+      .toList(growable: false);
+  if (paneActors.length < 2) return titles;
+
+  Rect slotRect(MosaicLayoutActorFrame actor) {
+    final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+    if (segment == null) return actor.rect;
+    if (actor.presence == MosaicLayoutPresence.exiting) {
+      return segment.anchorRect;
+    }
+    return segment.targetRect;
+  }
+
+  final List<MosaicLayoutActorFrame> ordered =
+      List<MosaicLayoutActorFrame>.from(paneActors)
+        ..sort((MosaicLayoutActorFrame a, MosaicLayoutActorFrame b) {
+          final Rect ar = slotRect(a);
+          final Rect br = slotRect(b);
+          final int byX = ar.center.dx.compareTo(br.center.dx);
+          if (byX != 0) return byX;
+          final int byY = ar.center.dy.compareTo(br.center.dy);
+          if (byY != 0) return byY;
+          return a.actorId.ordinal.compareTo(b.actorId.ordinal);
+        });
+
+  for (int slot = 0; slot < ordered.length && slot < 2; slot++) {
+    titles[ordered[slot].actorId] = placement.windowTitleForSlot(slot);
+  }
+  return titles;
+}
+
