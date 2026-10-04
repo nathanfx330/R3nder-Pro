@@ -90,6 +90,58 @@ class _ColorDecoder implements MediaDecoder {
   void dispose() {}
 }
 
+
+class _OneFrameThenPendingBackend implements MediaDecoderBackend {
+  @override
+  MediaDecoder open(String resolvedPath) =>
+      _OneFrameThenPendingDecoder(resolvedPath);
+}
+
+class _OneFrameThenPendingDecoder implements NonBlockingMediaDecoder {
+  final String resolvedPath;
+
+  _OneFrameThenPendingDecoder(this.resolvedPath);
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {}
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    if (requestedSourceFrame != 0) return null;
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final List<int> color = resolvedPath.contains('right')
+        ? const <int>[0, 0, 255, 255]
+        : const <int>[255, 0, 0, 255];
+    for (int at = 0; at < rgba.length; at += 4) {
+      rgba.setRange(at, at + 4, color);
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    throw StateError('Residency test must remain on nonblocking decode.');
+  }
+
+  @override
+  void dispose() {}
+}
+
 class _PendingBackend implements MediaDecoderBackend {
   @override
   MediaDecoder open(String resolvedPath) => _PendingDecoder();
@@ -278,6 +330,60 @@ void main() {
       contains(4),
       reason:
           'right pane returns at F6 and must be warmed at the current F4 clock',
+    );
+  });
+
+
+  testWidgets('pending next frame keeps last resident actor pixels',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_layoutSource).single;
+    final _OneFrameThenPendingBackend backend =
+        _OneFrameThenPendingBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _layoutSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    expect(
+      painter.visuals.values.every(
+        (StructuralWindowActorVisual visual) => visual.sourceImage != null,
+      ),
+      isTrue,
+    );
+
+    await tester.pumpWidget(
+      _preview(
+        source: _layoutSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 1,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 1);
+    expect(
+      painter.visuals.values.every(
+        (StructuralWindowActorVisual visual) => visual.sourceImage != null,
+      ),
+      isTrue,
+      reason:
+          'pending decode must hold resident pixels instead of flashing black',
     );
   });
 
