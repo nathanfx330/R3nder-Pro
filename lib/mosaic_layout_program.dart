@@ -445,6 +445,7 @@ class MosaicLayoutProgram {
   final String mosaicId;
   final List<String> paneIds;
   final int projectFrameCount;
+  final MosaicLayoutState? initialState;
   final List<MosaicLayoutCue> cues;
   final List<MosaicLayoutIssue> sourceIssues;
 
@@ -452,6 +453,7 @@ class MosaicLayoutProgram {
     required this.mosaicId,
     required this.paneIds,
     required this.projectFrameCount,
+    required this.initialState,
     required this.cues,
     required this.sourceIssues,
   });
@@ -460,6 +462,10 @@ class MosaicLayoutProgram {
     required String source,
     required MosaicSequence mosaic,
   }) {
+    final MosaicLayoutStart? parsedStart = parseMosaicLayoutStart(
+      source: source,
+      mosaic: mosaic,
+    );
     final List<MosaicLayoutCue> parsed = parseMosaicLayoutCues(
       source: source,
       mosaic: mosaic,
@@ -468,14 +474,28 @@ class MosaicLayoutProgram {
       mosaic: mosaic,
       cues: parsed,
     );
-    final List<MosaicLayoutIssue> errors =
-        validation.errors.toList(growable: false);
+    final MosaicLayoutValidationResult? startValidation =
+        parsedStart == null
+            ? null
+            : validateMosaicLayoutCues(
+                mosaic: mosaic,
+                cues: <MosaicLayoutCue>[
+                  MosaicLayoutCue(frame: 0, state: parsedStart.state),
+                ],
+              );
+    final List<MosaicLayoutIssue> errors = <MosaicLayoutIssue>[
+      ...validation.errors,
+      if (startValidation != null) ...startValidation.errors,
+    ];
     if (errors.isNotEmpty) {
       throw StateError(errors.first.message);
     }
 
     final List<String> paneIds =
         mosaic.panes.map((MosaicPane pane) => pane.id).toList(growable: false);
+    final MosaicLayoutState? resolvedStart = parsedStart?.state.resolveBareTwoUp(
+      paneIds,
+    );
     final List<MosaicLayoutCue> resolved = <MosaicLayoutCue>[
       for (final MosaicLayoutCue cue in parsed)
         cue.copyWith(
@@ -490,8 +510,12 @@ class MosaicLayoutProgram {
       mosaicId: mosaic.id,
       paneIds: List<String>.unmodifiable(paneIds),
       projectFrameCount: mosaic.projectFrameCount,
+      initialState: resolvedStart,
       cues: List<MosaicLayoutCue>.unmodifiable(resolved),
-      sourceIssues: List<MosaicLayoutIssue>.unmodifiable(validation.issues),
+      sourceIssues: List<MosaicLayoutIssue>.unmodifiable(<MosaicLayoutIssue>[
+        ...validation.issues,
+        if (startValidation != null) ...startValidation.issues,
+      ]),
     );
   }
 
@@ -503,10 +527,11 @@ class MosaicLayoutProgram {
     ];
 
     final bool cueAtZero = cues.isNotEmpty && cues.first.frame == 0;
-    final MosaicLayoutState seedState = cueAtZero
-        ? const MosaicLayoutState.composite()
-        : (context.legacySeed ?? const MosaicLayoutState.composite())
-            .resolveBareTwoUp(paneIds);
+    final MosaicLayoutState seedState = initialState ??
+        (cueAtZero
+            ? const MosaicLayoutState.composite()
+            : (context.legacySeed ?? const MosaicLayoutState.composite())
+                .resolveBareTwoUp(paneIds));
 
     Map<MosaicLayoutActorId, _ResolvedActorState> states =
         _canonicalStatesForTarget(
@@ -527,7 +552,19 @@ class MosaicLayoutProgram {
       ...sourceIssues,
     ];
 
-    if (context.legacySeed != null && cues.isNotEmpty) {
+    if (initialState != null && cueAtZero) {
+      issues.add(
+        const MosaicLayoutIssue(
+          severity: MosaicLayoutIssueSeverity.warning,
+          code: MosaicLayoutIssueCode.initialWithFrameZeroCue,
+          message:
+              'LAYOUT_START owns the initial MOSAIC state; legacy LAYOUT at frame 0 is ignored until removed or migrated.',
+          frame: 0,
+        ),
+      );
+    }
+
+    if (context.legacySeed != null && (initialState != null || cues.isNotEmpty)) {
       issues.add(
         const MosaicLayoutIssue(
           severity: MosaicLayoutIssueSeverity.warning,
@@ -539,6 +576,9 @@ class MosaicLayoutProgram {
     }
 
     for (final MosaicLayoutCue cue in cues) {
+      if (cue.frame == 0 && initialState != null) {
+        continue;
+      }
       if (cue.frame == 0) {
         // A frame-zero cue is the authored initial layout, not an internal
         // transition out of the placement seed. STRUCT entry owns the visible
