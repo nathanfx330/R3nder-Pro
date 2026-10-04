@@ -16,7 +16,7 @@ import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 
-const int kStructuralSourceAudioCacheSchemaVersion = 2;
+const int kStructuralSourceAudioCacheSchemaVersion = 3;
 const int _kFloatWavHeaderBytes = 44;
 const int _kUint32Mask = 0xffffffff;
 
@@ -268,6 +268,18 @@ void _writePlanManifest(
       ..writeln('lane_kind=${lane.kind.name}')
       ..writeln('lane_authored_index=${lane.authoredIndex}')
       ..writeln('lane_segment_count=${lane.segments.length}');
+
+    final List<StructuralAudioFrameSpan>? audible = lane.audibleFrameSpans;
+    if (audible == null) {
+      out.writeln('lane_audibility=unrestricted');
+    } else {
+      out.writeln('lane_audibility_count=${audible.length}');
+      for (final StructuralAudioFrameSpan span in audible) {
+        out.writeln(
+          'lane_audible_span=${span.startFrame}..${span.endFrameExclusive}',
+        );
+      }
+    }
 
     for (final StructuralAudioSegment segment in lane.segments) {
       out
