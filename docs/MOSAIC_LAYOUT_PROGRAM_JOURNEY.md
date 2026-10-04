@@ -869,7 +869,7 @@ There is no second layout database in the widgets.
 
 ## 21. The bugs that mattered most
 
-The feature's useful debugging history can be summarized as eight failures.
+The feature's useful debugging history can be summarized as nine failures.
 
 ### Failure 1: black/flickering windows during live playback
 
@@ -951,6 +951,33 @@ absent frame is invented.
 The regression drives TWO UP → ONE with decode deliberately pending at the
 middle of the exit and requires the retiring pane to retain its last good image
 until the exact settlement frame removes it from paint.
+
+### Failure 9: lookahead warmed the decoder but could not bridge recall
+
+Cause: hidden-pane lookahead rendered on the current shared source frame, but
+the warmed image had no provenance saying which future appearance it was
+preparing for. At the appearance boundary itself, paintability correctly
+changes from absent to present, so ordinary paintability continuity rejected
+the warm image. If the exact recall-frame decode was still pending, the new
+window could therefore open on an empty client even though a one-frame-old warm
+image was already resident.
+
+A second implementation detail made lookahead weaker than intended:
+`layoutFrame.actors` includes absent actors, so the hidden actor was found as a
+"current actor" and its absent geometry could win over the upcoming appearance
+geometry used for decode sizing.
+
+Fix: Preview now stores explicit warm provenance
+`actor -> appearanceFrame` alongside the resident image. A warm image may cross
+that one intentional appearance boundary, after which ordinary paintability
+continuity applies from the appearance frame forward. Normal pre-hide resident
+images have no warm provenance and remain rejected. Hidden warm renders also use
+the actor evaluated at the upcoming appearance frame for decode sizing.
+
+The regression warms a hidden pane at F399 for an F400 appearance, holds the
+F400 exact decode pending, proves the warm request used nontrivial appearance
+geometry, and requires the recalled pane to paint a different non-null image
+than its old pre-hide F0 resident image.
 
 None of these failures required changing authored project time.
 
@@ -1048,9 +1075,11 @@ Live pixels may lag authored time. The timeline and layout evaluator do not.
 ### Preview and BAKE should share meaning, not necessarily delivery policy
 
 Preview may hold the last good resident pixels through decoder lag while the
-actor remains in one continuous paintability run. A recalled pane waits for
-current pixels rather than reusing pre-hide content. BAKE renders exact pixels.
-Both consume the same `MosaicLayoutFrame`.
+actor remains in one continuous paintability run. A hidden pane intentionally
+warmed for its next appearance may also bridge that one appearance boundary,
+then continues under the same paintability rule. An unwarmed recalled pane
+waits for current pixels rather than reusing pre-hide content. BAKE renders
+exact pixels. Both consume the same `MosaicLayoutFrame`.
 
 ### A UI control is part of the architecture
 
@@ -1089,6 +1118,8 @@ The merged milestone leaves R3nder with:
 - resident-pixel hold bounded by continuous actor paintability rather than frame age;
 - stale hidden-pane recall rejection across real absent intervals;
 - resident pixels preserved through visible exit/minimize segments until settlement;
+- explicit lookahead warm provenance that can bridge its intended appearance boundary;
+- appearance-frame geometry used for hidden-pane warm decode sizing;
 - exact actor rendering for BAKE;
 - layout-aware MOSAIC editor viewer;
 - layout-aware TEXT/STRUCT Preview;
