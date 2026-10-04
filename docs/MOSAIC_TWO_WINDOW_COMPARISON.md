@@ -7,6 +7,13 @@ horizontal-only MAX refinement; the final geometry/render subset then passed
 13 tests. The documentation checker reported 16 contracts / 90 proof files,
 and the final GUI behavior was confirmed before merge.
 
+Historical scope note: this document describes the original static placement-owned
+SPLIT/SPLIT:MAX milestone. That behavior remains supported for cue-less projects,
+but dynamic window arrangement later moved into reusable source-relative MOSAIC
+LAYOUT cues. See
+[`MOSAIC_LAYOUT_PROGRAM_JOURNEY.md`](MOSAIC_LAYOUT_PROGRAM_JOURNEY.md) for the
+successor architecture and the debugging path that produced it.
+
 This document records the next MOSAIC presentation milestone after Trim to
 shortest T0-T4. It is deliberately a STRUCT placement feature. The reusable
 MOSAIC definition remains content-only.
