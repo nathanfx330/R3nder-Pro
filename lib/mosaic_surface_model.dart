@@ -219,6 +219,14 @@ class MosaicSurfaceDocument {
       ..sort((MosaicLayoutCue a, MosaicLayoutCue b) => a.frame.compareTo(b.frame));
     if (after.isNotEmpty) {
       insertionOffset = after.first.sourceSpan!.startOffset;
+    } else if (existing.isNotEmpty) {
+      final List<MosaicLayoutCue> ordered =
+          List<MosaicLayoutCue>.from(existing)
+            ..sort(
+              (MosaicLayoutCue a, MosaicLayoutCue b) =>
+                  a.frame.compareTo(b.frame),
+            );
+      insertionOffset = ordered.last.sourceSpan!.endOffset;
     } else if (mosaic.panes.isNotEmpty) {
       insertionOffset = _lineStartAt(source, mosaic.panes.first.block.startOffset);
     } else {
