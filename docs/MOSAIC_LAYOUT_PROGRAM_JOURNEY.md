@@ -4,7 +4,7 @@ Status: the initial MOSAIC Layout Program merged to `main` through PR #30 at
 `6b16ec29bcfe95e3e4fb25d15818b2bf74c8c144`. Post-merge GUI testing then
 exposed resident-pixel and exit-paintability defects; those stabilization fixes
 landed directly on `main`. The final focused gate after the TWO UP → ONE
-paintability fix passed 51 tests, and the corrected retreat/minimize behavior
+paintability fix passed 51 tests; after the warm-recall bridge regression was added, the focused gate passed 52 tests, and the corrected retreat/minimize behavior
 was confirmed again in the live GUI. Before the post-merge stabilization, the
 repository analyzer remained at its existing 77-issue baseline.
 
@@ -1000,7 +1000,7 @@ The layout-program contract is primarily exercised by:
 The focused regression gate after the FULL/TWO UP z correction passed 50 tests
 before PR #30 merged. Post-merge residency stabilization added stale-recall,
 parked-scrub, multi-frame playback-lag, and TWO UP → ONE exit-motion coverage.
-After the final paintability correction, the focused gate passed 51 tests.
+After the final paintability correction, the focused gate passed 51 tests. After adding the warm-recall bridge regression, the focused gate passed 52 tests.
 
 The important proof shape is wider than one evaluator test:
 
@@ -1131,7 +1131,7 @@ The merged milestone leaves R3nder with:
 The initial feature merged after manual Preview and BAKE acceptance in addition
 to the focused automated gates. Post-merge GUI testing then found the residency
 edge cases recorded above. Those fixes were accepted only after the live player
-was exercised again and the focused suite reached 51 passing tests.
+was exercised again. The focused suite reached 51 passing tests after the paintability correction and 52 after the warm-recall bridge regression.
 
 The most important final rule remains the one the implementation was built
 around:
