@@ -478,8 +478,7 @@ class MosaicLayoutProgram {
         MosaicLayoutActorId.pane(paneIds[i], i + 1),
     ];
 
-    final bool cueAtZero =
-        cues.isNotEmpty && cues.first.frame == 0;
+    final bool cueAtZero = cues.isNotEmpty && cues.first.frame == 0;
     final MosaicLayoutState seedState = cueAtZero
         ? const MosaicLayoutState.composite()
         : (context.legacySeed ?? const MosaicLayoutState.composite())
@@ -516,6 +515,27 @@ class MosaicLayoutProgram {
     }
 
     for (final MosaicLayoutCue cue in cues) {
+      if (cue.frame == 0) {
+        // A frame-zero cue is the authored initial layout, not an internal
+        // transition out of the placement seed. STRUCT entry owns the visible
+        // application-opening motion. This also makes a frame-zero cue win
+        // outright over dormant legacy SPLIT intent.
+        states = _canonicalStatesForTarget(
+          state: cue.state,
+          context: context,
+          actorIds: actors,
+        );
+        boundaries.add(
+          _ResolvedBoundary(
+            frame: 0,
+            states: Map<MosaicLayoutActorId, _ResolvedActorState>.unmodifiable(
+              states,
+            ),
+          ),
+        );
+        continue;
+      }
+
       states = <MosaicLayoutActorId, _ResolvedActorState>{
         for (final MapEntry<MosaicLayoutActorId, _ResolvedActorState> entry
             in states.entries)
