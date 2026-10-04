@@ -426,8 +426,9 @@ The MOSAIC's total frame count comes from the authored structural sources and th
 ## Change the desktop layout over MOSAIC time
 
 A MOSAIC can also author **LAYOUT cues**. These change how the persistent pane
-windows are presented at a MOSAIC source frame without changing clip timing,
-MOSAIC duration, or audio.
+windows are presented at a MOSAIC source frame without changing clip timing or
+MOSAIC duration. Layout state also gates pane audio contribution: hidden panes
+keep advancing on the shared source clock but do not contribute to the mix.
 
 The GUI separates the opening condition from later transitions:
 
@@ -481,7 +482,11 @@ Important timing rules:
 
 * A LAYOUT cue does **not** lengthen the MOSAIC.
 * Hidden panes continue on the same MOSAIC source clock. Hiding a pane does not
-  pause its content.
+  pause its content; it mutes that pane's contribution to the MOSAIC mix.
+* Audio follows the authored target layout at the cue boundary, not the visual
+  transition duration: COMPOSITE mixes all panes, TWOUP mixes A/B, and ONE/FULL
+  mix only the selected pane. A TWOUP → ONE cue therefore mutes the dismissed
+  pane starting on the exact cue frame while its window may still be retreating.
 * **LAYOUT_START** establishes the canonical opening layout and has no DUR
   because it is not a transition. The outer STRUCT entry owns the opening
   motion.
