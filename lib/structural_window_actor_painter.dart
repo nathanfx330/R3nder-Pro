@@ -13,7 +13,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'mosaic_layout_program.dart';
-import 'structural_sequence.dart';
+import 'structural_chrome.dart';
 import 'structural_window_painter.dart';
 import 'ui_theme.dart';
 
