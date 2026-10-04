@@ -30,6 +30,22 @@ const String _layoutSource = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall:OVERLAY=NONE]
 ''';
 
+const String _longRecallSource = '''[MOSAIC:wall]
+[LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
+[LAYOUT:10:ONE:PANE=left:DUR=1]
+[LAYOUT:400:TWOUP:A=left:B=right:DUR=1]
+[PANE:left]
+[CLIP:left_clip:left.mp4:0:0:500:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_clip:right.mp4:0:0:500:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:OVERLAY=NONE]
+''';
+
 const String _namedLayoutSource = '''[MOSAIC:wall]
 [LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
 [PANE:left]
@@ -157,6 +173,64 @@ class _ControlledPendingDecoder implements NonBlockingMediaDecoder {
     int height,
   ) {
     throw StateError('Residency test must remain on nonblocking decode.');
+  }
+
+  @override
+  void dispose() {}
+}
+
+class _LongRecallPendingBackend implements MediaDecoderBackend {
+  bool releaseRecall = false;
+
+  @override
+  MediaDecoder open(String resolvedPath) =>
+      _LongRecallPendingDecoder(this, resolvedPath);
+}
+
+class _LongRecallPendingDecoder implements NonBlockingMediaDecoder {
+  final _LongRecallPendingBackend owner;
+  final String resolvedPath;
+
+  _LongRecallPendingDecoder(this.owner, this.resolvedPath);
+
+  @override
+  void request(int requestedSourceFrame, int width, int height) {}
+
+  @override
+  DecodedMediaFrame? poll(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    if (resolvedPath.contains('right') &&
+        requestedSourceFrame >= 395 &&
+        !owner.releaseRecall) {
+      return null;
+    }
+    final Uint8List rgba = Uint8List(width * height * 4);
+    final List<int> color = resolvedPath.contains('right')
+        ? const <int>[0, 0, 255, 255]
+        : const <int>[255, 0, 0, 255];
+    for (int at = 0; at < rgba.length; at += 4) {
+      rgba.setRange(at, at + 4, color);
+    }
+    return DecodedMediaFrame(
+      requestedSourceFrame: requestedSourceFrame,
+      actualSourceFrame: requestedSourceFrame,
+      width: width,
+      height: height,
+      stride: width * 4,
+      rgba: rgba,
+    );
+  }
+
+  @override
+  DecodedMediaFrame render(
+    int requestedSourceFrame,
+    int width,
+    int height,
+  ) {
+    throw StateError('Long-recall test must remain on nonblocking decode.');
   }
 
   @override
@@ -458,6 +532,124 @@ void main() {
         break;
       }
     }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+      'recalled pane does not reuse ancient pre-exit resident pixels',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_longRecallSource).single;
+    final _LongRecallPendingBackend backend = _LongRecallPendingBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    final StructuralWindowActorVisual initialRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(initialRight.sourceImage, isNotNull);
+
+    // Jump into the 24-frame warm window while the returning pane's decoder is
+    // deliberately pending. This specifically proves lookahead cannot preserve
+    // the old F0 image merely because the hidden pane is "requested".
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 395,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 395);
+    expect(painter.layoutFrame.pane('right').presence,
+        MosaicLayoutPresence.absent);
+
+    await tester.pumpWidget(
+      _preview(
+        source: _longRecallSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 400,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 400);
+    expect(
+      painter.layoutFrame.pane('right').presence,
+      MosaicLayoutPresence.present,
+    );
+    final StructuralWindowActorVisual recalledRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(
+      recalledRight.sourceImage,
+      isNull,
+      reason:
+          'a recalled pane with pending decode must not flash its pre-exit image',
+    );
+
+    // Release the pending recall so the Preview retry loop can quiesce before
+    // widget-test teardown.
+    backend.releaseRecall = true;
+    for (int attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      });
+      painter = _layoutPainter(tester);
+      final StructuralWindowActorVisual right = painter.visuals.entries
+          .singleWhere(
+            (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+                entry.key.paneId == 'right',
+          )
+          .value;
+      if (right.sourceImage != null) break;
+    }
+
+    expect(
+      _layoutPainter(tester)
+          .visuals
+          .entries
+          .singleWhere(
+            (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+                entry.key.paneId == 'right',
+          )
+          .value
+          .sourceImage,
+      isNotNull,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
