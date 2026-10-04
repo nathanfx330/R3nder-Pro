@@ -387,6 +387,25 @@ class MosaicLayoutFrame {
       };
 }
 
+class MosaicPaneAudioFrame {
+  final double gain;
+  final bool interpolateToNextFrame;
+
+  const MosaicPaneAudioFrame({
+    required this.gain,
+    required this.interpolateToNextFrame,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is MosaicPaneAudioFrame &&
+      other.gain == gain &&
+      other.interpolateToNextFrame == interpolateToNextFrame;
+
+  @override
+  int get hashCode => Object.hash(gain, interpolateToNextFrame);
+}
+
 class MosaicLayoutEvaluationContext {
   final Rect programRect;
   final Rect ordinaryWindowRect;
@@ -516,6 +535,25 @@ class MosaicLayoutProgram {
         ...validation.issues,
         if (startValidation != null) ...startValidation.issues,
       ]),
+    );
+  }
+
+  MosaicResolvedLayoutProgram resolveForStructuralAudio({
+    MosaicLayoutState? legacySeed,
+  }) {
+    // Audio needs the exact actor inclusion/segment semantics, not output
+    // geometry. Use one stable non-degenerate geometry context so the same
+    // resolver owns CREATE / CONTINUE / REDIRECT / interruption timing while
+    // placement-specific legacy SPLIT still enters through [legacySeed].
+    return resolve(
+      MosaicLayoutEvaluationContext(
+        programRect: const Rect.fromLTWH(0, 0, 1920, 1080),
+        ordinaryWindowRect: const Rect.fromLTWH(160, 90, 1600, 900),
+        compositeRect: const Rect.fromLTWH(160, 90, 1600, 900),
+        compositeChrome: 1.0,
+        titleHeight: 38.0,
+        legacySeed: legacySeed,
+      ),
     );
   }
 
@@ -730,6 +768,34 @@ class MosaicResolvedLayoutProgram {
     return MosaicLayoutFrame(
       sourceFrame: sourceFrame,
       actors: List<MosaicLayoutActorFrame>.unmodifiable(frames),
+    );
+  }
+
+  MosaicPaneAudioFrame paneAudioFrame(
+    String paneId, {
+    required int sourceFrame,
+  }) {
+    final MosaicLayoutFrame frame = evaluate(sourceFrame);
+    final MosaicLayoutActorFrame composite = frame.composite;
+    final MosaicLayoutActorFrame pane = frame.pane(paneId);
+
+    // COMPOSITE represents the whole MOSAIC, including every pane. Direct pane
+    // actors represent that pane when the desktop is decomposed. During
+    // COMPOSITE <-> pane transitions both representations overlap; summing and
+    // clamping preserves unity for a pane that remains represented while still
+    // allowing panes that enter/exit to follow the exact visual opacity segment.
+    final double gain =
+        (composite.opacity + pane.opacity).clamp(0.0, 1.0).toDouble();
+
+    bool transitioning(MosaicLayoutActorFrame actor) {
+      final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+      return segment != null && segment.endFrame > sourceFrame;
+    }
+
+    return MosaicPaneAudioFrame(
+      gain: gain,
+      interpolateToNextFrame:
+          transitioning(composite) || transitioning(pane),
     );
   }
 
