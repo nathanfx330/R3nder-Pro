@@ -148,6 +148,7 @@ class StructuralAudioSourceRenderer {
       for (final StructuralAudioSegment segment in lane.segments) {
         await _mixSegment(
           output,
+          lane,
           segment,
           memo,
         );
@@ -162,10 +163,12 @@ class StructuralAudioSourceRenderer {
 
   Future<void> _mixSegment(
     Float32List destination,
+    StructuralAudioLanePlan lane,
     StructuralAudioSegment segment,
     Map<String, Future<StructuralAudioSourceRender>> memo,
   ) async {
-    if (segment.sampleCount <= 0) {
+    if (segment.sampleCount <= 0 ||
+        !_laneHasAudibleOverlap(lane, segment)) {
       return;
     }
 
@@ -173,7 +176,7 @@ class StructuralAudioSourceRenderer {
       final StructuralAudioPlan nestedPlan = segment.nestedPlan!;
       final StructuralAudioSourceRender nested =
           await _renderPlan(nestedPlan, memo);
-      _mixNestedSegment(destination, segment, nested);
+      _mixNestedSegment(destination, lane, segment, nested);
       return;
     }
 
@@ -207,11 +210,12 @@ class StructuralAudioSourceRenderer {
       );
     }
 
-    _mixLeafSegment(destination, segment, decoded, window);
+    _mixLeafSegment(destination, lane, segment, decoded, window);
   }
 
   void _mixLeafSegment(
     Float32List destination,
+    StructuralAudioLanePlan lane,
     StructuralAudioSegment segment,
     StructuralAudioLeafDecode decoded,
     StructuralAudioDecodeWindow window,
@@ -242,9 +246,21 @@ class StructuralAudioSourceRenderer {
         speedDenominator *
         source.sourceFpsNumerator;
 
+    final _StructuralAudioLaneAudibilityCursor audibility =
+        _StructuralAudioLaneAudibilityCursor(
+      lane.audibleFrameSpans,
+      startSample: segment.projectStartSample,
+    );
+
     for (int localSample = 0;
         localSample < segment.sampleCount;
         localSample++) {
+      final int absoluteProjectSample =
+          segment.projectStartSample + localSample;
+      if (!audibility.isAudible(absoluteProjectSample)) {
+        continue;
+      }
+
       final int sourceNumerator =
           baseNumerator + localSample * stepNumerator;
       final double gain = _segmentGain(segment, localSample);
@@ -277,6 +293,7 @@ class StructuralAudioSourceRenderer {
 
   void _mixNestedSegment(
     Float32List destination,
+    StructuralAudioLanePlan lane,
     StructuralAudioSegment segment,
     StructuralAudioSourceRender nested,
   ) {
@@ -292,9 +309,21 @@ class StructuralAudioSourceRenderer {
         kStructuralAudioSamplesPerProjectFrame *
         speedDenominator;
 
+    final _StructuralAudioLaneAudibilityCursor audibility =
+        _StructuralAudioLaneAudibilityCursor(
+      lane.audibleFrameSpans,
+      startSample: segment.projectStartSample,
+    );
+
     for (int localSample = 0;
         localSample < segment.sampleCount;
         localSample++) {
+      final int absoluteProjectSample =
+          segment.projectStartSample + localSample;
+      if (!audibility.isAudible(absoluteProjectSample)) {
+        continue;
+      }
+
       final int sourceNumerator =
           baseNumerator + localSample * speedNumerator;
       final double gain = _segmentGain(segment, localSample);
@@ -323,6 +352,53 @@ class StructuralAudioSourceRenderer {
         right * gain,
       );
     }
+  }
+}
+
+bool _laneHasAudibleOverlap(
+  StructuralAudioLanePlan lane,
+  StructuralAudioSegment segment,
+) {
+  final List<StructuralAudioFrameSpan>? spans = lane.audibleFrameSpans;
+  if (spans == null) return true;
+  if (spans.isEmpty) return false;
+
+  final int segmentStart = segment.projectStartSample;
+  final int segmentEnd = segment.projectEndSampleExclusive;
+  for (final StructuralAudioFrameSpan span in spans) {
+    if (span.endSampleExclusive <= segmentStart) continue;
+    if (span.startSample >= segmentEnd) return false;
+    return true;
+  }
+  return false;
+}
+
+class _StructuralAudioLaneAudibilityCursor {
+  final List<StructuralAudioFrameSpan>? spans;
+  int _index = 0;
+
+  _StructuralAudioLaneAudibilityCursor(
+    this.spans, {
+    required int startSample,
+  }) {
+    final List<StructuralAudioFrameSpan>? current = spans;
+    if (current == null) return;
+    while (_index < current.length &&
+        current[_index].endSampleExclusive <= startSample) {
+      _index++;
+    }
+  }
+
+  bool isAudible(int projectSample) {
+    final List<StructuralAudioFrameSpan>? current = spans;
+    if (current == null) return true;
+
+    while (_index < current.length &&
+        projectSample >= current[_index].endSampleExclusive) {
+      _index++;
+    }
+    if (_index >= current.length) return false;
+    return projectSample >= current[_index].startSample;
   }
 }
 
