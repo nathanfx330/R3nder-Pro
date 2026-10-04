@@ -574,6 +574,11 @@ class _StructuralMosaicLayoutPreviewState
   ) {
     final Map<MosaicLayoutActorId, StructuralWindowActorVisual> out =
         <MosaicLayoutActorId, StructuralWindowActorVisual>{};
+    final Map<MosaicLayoutActorId, String> titles =
+        structuralMosaicLayoutWindowTitles(
+      frame: frame,
+      placement: widget.placement,
+    );
     for (final MosaicLayoutActorFrame actor in frame.paintActors) {
       final MosaicLayoutActorId actorId = actor.actorId;
       // Residency is deliberately independent from authored time. While a
@@ -585,7 +590,7 @@ class _StructuralMosaicLayoutPreviewState
         sourceImage: image,
         sourceFrame: widget.sourceFrame,
         sourceDurationFrames: widget.placement.sourceDurationFrames,
-        windowTitle: widget.placement.effectiveWindowTitle,
+        windowTitle: titles[actorId] ?? widget.placement.effectiveWindowTitle,
         overlayMode: widget.placement.overlayMode,
         topOverlay: widget.placement.topOverlay,
         bottomOverlay: widget.placement.bottomOverlay,
