@@ -773,7 +773,7 @@ class _StructuralSequencePreviewState extends State<StructuralSequencePreview> {
                     ),
                     rawDocument: widget.rawDocument,
                     placement: placement,
-                    program: mosaicLayoutProgram!,
+                    program: mosaicLayoutProgram,
                     sourceFrame: sourceFrame,
                     stage: stage,
                     stageProgress: linear,
