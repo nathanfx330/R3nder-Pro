@@ -1,6 +1,7 @@
 // ./test/mosaic_layout_lane_ui_test.dart
 
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -342,6 +343,60 @@ void main() {
         '[LAYOUT:40:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
       ),
     );
+  });
+
+  testWidgets('long layout lane exposes horizontal scrolling',
+      (WidgetTester tester) async {
+    final String longSource = _source
+        .replaceAll(':300:1]', ':1000:1]')
+        .replaceFirst(
+          '[MOSAIC:wall]\n',
+          '[MOSAIC:wall]\n[LAYOUT:900:FULL:PANE=pane1]\n',
+        );
+
+    await _mount(tester, source: longSource);
+
+    final Scrollbar scrollbar = tester.widget<Scrollbar>(
+      _key('mosaic-layout-lane-scrollbar'),
+    );
+    expect(scrollbar.thumbVisibility, isTrue);
+    expect(scrollbar.controller, isNotNull);
+    expect(_key('mosaic-layout-cue:900'), findsOneWidget);
+  });
+
+  testWidgets('drag retimes cue only once on pointer up',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host = await _mount(tester);
+    await _chooseOne(tester, 'pane1');
+
+    final int changesBeforeDrag = host.currentState!.changes.length;
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(_key('mosaic-layout-cue:40')),
+      kind: PointerDeviceKind.mouse,
+    );
+
+    await gesture.moveBy(const Offset(60, 0));
+    await tester.pump();
+
+    expect(host.currentState!.changes, hasLength(changesBeforeDrag));
+    expect(host.currentState!.source, contains('[LAYOUT:40:ONE:PANE=pane1]'));
+
+    final Text frameBadge = tester.widget<Text>(
+      _key('mosaic-layout-cue-drag-frame:40'),
+    );
+    final int previewFrame = int.parse(frameBadge.data!.substring(1));
+    expect(previewFrame, greaterThan(40));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(host.currentState!.changes, hasLength(changesBeforeDrag + 1));
+    expect(
+      host.currentState!.source,
+      contains('[LAYOUT:$previewFrame:ONE:PANE=pane1]'),
+    );
+    expect(host.currentState!.source, isNot(contains('[LAYOUT:40:')));
+    expect(_key('mosaic-layout-cue:$previewFrame'), findsOneWidget);
   });
 
   testWidgets('marker edits frame and DUR through source-backed API',
