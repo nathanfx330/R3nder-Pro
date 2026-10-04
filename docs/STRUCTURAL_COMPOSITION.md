@@ -135,9 +135,12 @@ remains continuously paintable while a nonblocking decoder catches up. Resident
 hold is therefore bounded by authored paintability continuity, not by a fixed
 frame-age budget. An actor stays paintable through an authored exit segment, so
 a minimizing/retreating pane keeps its last good picture until that exit
-actually settles. A pane recalled after a real absent interval paints empty
-until current pixels are resident, including a direct scrub or playback jump
-that skipped all intermediate hidden widget frames. Geometry/time still follow the
+actually settles. A pane recalled after a real absent interval paints empty until current pixels
+are resident unless Preview explicitly warmed a newer shared-clock image for
+that exact upcoming appearance. Warm provenance may bridge only that intended
+appearance boundary; ordinary pre-hide residency remains invalid. This also
+covers direct scrubs or playback jumps that skipped all intermediate hidden
+widget frames. Geometry/time still follow the
 exact current source frame. BAKE blocks for exact actor pixels at that same
 frame.
 
@@ -781,7 +784,9 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 - [ ] Preview and BAKE derive the same `MosaicLayoutFrame` from source frame plus placement context;
 - [ ] live resident pixels may lag authored time only within one continuous actor paintability run;
 - [ ] an exiting actor keeps resident pixels until its visual exit settles;
-- [ ] a real absent interval breaks residency so recalled panes cannot reuse pre-hide pixels;
+- [ ] a real absent interval breaks ordinary residency so recalled panes cannot reuse pre-hide pixels;
+- [ ] a hidden-pane lookahead image is tagged for its intended appearance and may bridge that appearance boundary;
+- [ ] hidden-pane warming uses upcoming appearance geometry rather than absent-client geometry;
 - [ ] source duration is authored in source definitions;
 - [ ] STRUCT places a source into the main program without a duplicate duration field;
 - [ ] presentation mode and chrome belong to STRUCT;
