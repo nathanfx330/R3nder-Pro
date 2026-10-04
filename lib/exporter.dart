@@ -408,7 +408,11 @@ class SceneExporter {
           final ProgramStructuralAudioRender programAudio =
               await ProgramStructuralAudioRenderer(
             timeline: timeline,
-            renderSource: sourceRenderer.render,
+            renderSource: (
+              String source,
+              StructuralAudioSourceContext context,
+            ) =>
+                sourceRenderer.render(source, context: context),
           ).render();
 
           final String tempPath = '$exportDir/.r3nder_struct_audio_$pid.wav';
