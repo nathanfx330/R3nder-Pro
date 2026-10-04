@@ -30,6 +30,21 @@ const String _layoutSource = '''[MOSAIC:wall]
 [STRUCT:MOSAIC.wall:OVERLAY=NONE]
 ''';
 
+const String _oneExitSource = '''[MOSAIC:wall]
+[LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
+[LAYOUT:20:ONE:PANE=left:DUR=12]
+[PANE:left]
+[CLIP:left_clip:left.mp4:0:0:80:1]
+[/CLIP]
+[/PANE]
+[PANE:right]
+[CLIP:right_clip:right.mp4:0:0:80:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:OVERLAY=NONE]
+''';
+
 const String _longRecallSource = '''[MOSAIC:wall]
 [LAYOUT:0:TWOUP:A=left:B=right:DUR=1]
 [LAYOUT:10:ONE:PANE=left:DUR=1]
@@ -640,6 +655,94 @@ void main() {
           'parked scrub must not bridge across an authored hidden interval',
     );
 
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+      'retiring TWOUP pane keeps resident pixels through ONE exit motion',
+      (WidgetTester tester) async {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_oneExitSource).single;
+    final _PlaybackLagBackend backend = _PlaybackLagBackend();
+
+    await tester.pumpWidget(
+      _preview(
+        source: _oneExitSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await _pumpUntilLayoutReady(tester);
+
+    await tester.pumpWidget(
+      _preview(
+        source: _oneExitSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 25,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    MosaicLayoutWindowPainter painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 25);
+    expect(
+      painter.layoutFrame.pane('right').presence,
+      MosaicLayoutPresence.exiting,
+    );
+    final StructuralWindowActorVisual exitingRight = painter.visuals.entries
+        .singleWhere(
+          (MapEntry<MosaicLayoutActorId, StructuralWindowActorVisual> entry) =>
+              entry.key.paneId == 'right',
+        )
+        .value;
+    expect(
+      exitingRight.sourceImage,
+      isNotNull,
+      reason:
+          'an exiting pane must keep its resident pixels until its exit settles',
+    );
+
+    await tester.pumpWidget(
+      _preview(
+        source: _oneExitSource,
+        placement: placement,
+        localFrame: placement.contentStartFrame + 31,
+        backend: backend,
+        playing: true,
+      ),
+    );
+    await tester.pump();
+
+    painter = _layoutPainter(tester);
+    expect(painter.layoutFrame.sourceFrame, 31);
+    expect(
+      painter.layoutFrame.pane('right').presence,
+      MosaicLayoutPresence.absent,
+    );
+    expect(
+      painter.visuals.keys.any(
+        (MosaicLayoutActorId id) => id.paneId == 'right',
+      ),
+      isFalse,
+      reason: 'the retiring pane leaves paint only when the exit settles',
+    );
+
+    backend.releaseLag = true;
+    for (int attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      });
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
