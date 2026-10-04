@@ -279,7 +279,10 @@ class StructuralAudioLayoutGainEnvelope {
 
   int get durationFrames => frameGains.length;
 
-  double gainAtProjectSample(int projectSample) {
+  double gainAtProjectSample(
+    int projectSample, {
+    int contributorStartFrame = 0,
+  }) {
     if (projectSample < 0 ||
         projectSample >=
             structuralAudioSamplesForProjectFrames(durationFrames)) {
@@ -308,7 +311,7 @@ class StructuralAudioLayoutGainEnvelope {
       return current + (next - current) * t;
     }
 
-    if (frame > 0 &&
+    if (frame > contributorStartFrame &&
         !interpolateToNextFrame[frame - 1] &&
         frameGains[frame - 1] != current &&
         inFrame < kStructuralAudioDeclickSamples) {
@@ -332,7 +335,7 @@ class StructuralAudioLayoutGainEnvelope {
 
     for (int frame = first; frame < last; frame++) {
       if (frameGains[frame] > 0.0) return true;
-      if (frame > 0 &&
+      if (frame > startFrame &&
           !interpolateToNextFrame[frame - 1] &&
           frameGains[frame - 1] > 0.0 &&
           frameGains[frame - 1] != frameGains[frame]) {
