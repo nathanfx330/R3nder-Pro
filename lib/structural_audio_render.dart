@@ -34,7 +34,7 @@ import 'dart:typed_data';
 import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 
-const int kStructuralAudioSourceRendererSchemaVersion = 2;
+const int kStructuralAudioSourceRendererSchemaVersion = 3;
 const int _kFloatWavFormatCode = 3;
 const int _kFloatWavBitsPerSample = 32;
 const int _kFloatWavHeaderBytes = 44;
