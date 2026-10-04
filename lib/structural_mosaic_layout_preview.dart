@@ -649,7 +649,9 @@ class _StructuralMosaicLayoutPreviewState
         overlayMode: widget.placement.overlayMode,
         topOverlay: widget.placement.topOverlay,
         bottomOverlay: widget.placement.bottomOverlay,
-        defaultBottomOverlay: _diagnosticLabels[actorId] ?? '',
+        defaultBottomOverlay: _imageFrames[actorId] == widget.sourceFrame
+            ? (_diagnosticLabels[actorId] ?? '')
+            : '',
       );
     }
     return out;
