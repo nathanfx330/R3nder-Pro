@@ -515,9 +515,9 @@ class EditTrack {
 /// One frame-producing Metro composition.
 ///
 /// Pane order owns layout. One pane fills the frame, two split 56/44, and
-/// three use the same hero-plus-stack geometry as APP:MOSAIC. A MOSAIC is one
-/// composition, not a paged presentation, so more than three panes are
-/// rejected rather than silently moved to another page.
+/// three or four use one hero pane plus a vertical stack. A MOSAIC is one
+/// composition, not a paged presentation, so more than four panes are rejected
+/// rather than silently moved to another page.
 class MosaicSequence {
   final String id;
   final ScriptCstBlock block;
@@ -696,9 +696,9 @@ MosaicSequence _parseMosaicSequence(ScriptCstBlock mosaicBlock) {
     );
   }
 
-  if (panes.length > 3) {
+  if (panes.length > 4) {
     throw EditLanguageFormatException(
-      'MOSAIC "$mosaicId" has ${panes.length} panes; one MOSAIC supports at most 3.',
+      'MOSAIC "$mosaicId" has ${panes.length} panes; one MOSAIC supports at most 4.',
       mosaicBlock.startOffset,
     );
   }

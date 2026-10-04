@@ -505,11 +505,11 @@ class MosaicSurfaceDocument {
   }
 
   String setPaneCount(int count) {
-    if (count < 1 || count > 3) {
+    if (count < 1 || count > 4) {
       throw ArgumentError.value(
         count,
         'count',
-        'MOSAIC pane count must be 1, 2, or 3.',
+        'MOSAIC pane count must be 1, 2, 3, or 4.',
       );
     }
     if (count == mosaic.panes.length) return source;
@@ -861,8 +861,8 @@ class MosaicSurfaceDocument {
     required int atFrame,
     required int durationFrames,
   }) {
-    if (mosaic.panes.length >= 3) {
-      throw StateError('MOSAIC "$mosaicId" already has its maximum 3 panes.');
+    if (mosaic.panes.length >= 4) {
+      throw StateError('MOSAIC "$mosaicId" already has its maximum 4 panes.');
     }
     _validateId('PANE', paneId);
     _validateId('CLIP', clipId);

@@ -1351,7 +1351,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
           ),
           SizedBox(width: sc(4)),
           Text('LAYOUT', style: widget.theme.micro),
-          for (final int count in const <int>[1, 2, 3])
+          for (final int count in const <int>[1, 2, 3, 4])
             R3Button(
               count == 1 ? '1 PANE' : '$count PANES',
               theme: widget.theme,

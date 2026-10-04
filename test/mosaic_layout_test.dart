@@ -16,6 +16,7 @@ const ui.Size _outputSize = ui.Size(101, 57);
 const List<int> _red = <int>[255, 0, 0, 255];
 const List<int> _green = <int>[0, 255, 0, 255];
 const List<int> _blue = <int>[0, 0, 255, 255];
+const List<int> _yellow = <int>[255, 255, 0, 255];
 
 class _FixtureBackend implements MediaDecoderBackend {
   @override
@@ -27,6 +28,8 @@ class _FixtureBackend implements MediaDecoderBackend {
         return _FixtureDecoder(_green);
       case 'blue.mp4':
         return _FixtureDecoder(_blue);
+      case 'yellow.mp4':
+        return _FixtureDecoder(_yellow);
       default:
         throw StateError('Unexpected fixture source "$resolvedPath".');
     }
@@ -59,7 +62,8 @@ class _FixtureDecoder implements MediaDecoder {
 }
 
 String _sourceFor(int count, {int? dossierPane}) {
-  final List<String> media = <String>['red.mp4', 'green.mp4', 'blue.mp4'];
+  final List<String> media =
+      <String>['red.mp4', 'green.mp4', 'blue.mp4', 'yellow.mp4'];
   final StringBuffer out = StringBuffer('[MOSAIC:wall]\n');
   for (int i = 0; i < count; i++) {
     out
@@ -97,10 +101,16 @@ Uint8List _expectedPixels(int count) {
       final List<int> color;
       if (count == 1 || x < 57) {
         color = _red;
-      } else if (count == 2 || y < 29) {
+      } else if (count == 2) {
         color = _green;
-      } else {
+      } else if (count == 3) {
+        color = y < 29 ? _green : _blue;
+      } else if (y < 19) {
+        color = _green;
+      } else if (y < 38) {
         color = _blue;
+      } else {
+        color = _yellow;
       }
       final int offset = (y * width + x) * 4;
       rgba.setRange(offset, offset + 4, color);
@@ -129,6 +139,12 @@ void _expectRenderedPixels(EditVideoCompositeResult result, int count) {
   if (count == 3) {
     expect(_pixel(rgba, 57, 28), _green);
     expect(_pixel(rgba, 57, 29), _blue);
+  }
+  if (count == 4) {
+    expect(_pixel(rgba, 57, 18), _green);
+    expect(_pixel(rgba, 57, 19), _blue);
+    expect(_pixel(rgba, 57, 37), _blue);
+    expect(_pixel(rgba, 57, 38), _yellow);
   }
 }
 
@@ -194,17 +210,10 @@ void _verifyLayout(int count, List<ui.Rect> expected) {
 }
 
 void main() {
-  test('legacy empty and unsupported count behavior is preserved', () {
+  test('empty counts stay empty and counts above four are rejected', () {
     expect(mosaicPaneLayout(0), isEmpty);
     expect(mosaicPaneLayout(-1), isEmpty);
-    expect(
-      mosaicPaneLayout(4),
-      const <ui.Rect>[
-        ui.Rect.fromLTRB(0, 0, 0.56, 1),
-        ui.Rect.fromLTRB(0.56, 0, 1, 0.5),
-        ui.Rect.fromLTRB(0.56, 0.5, 1, 1),
-      ],
-    );
+    expect(() => mosaicPaneLayout(5), throwsArgumentError);
   });
 
   test('one pane shares exact legacy geometry across pixels and cues', () {
@@ -231,6 +240,19 @@ void main() {
         ui.Rect.fromLTRB(0, 0, 0.56, 1),
         ui.Rect.fromLTRB(0.56, 0, 1, 0.5),
         ui.Rect.fromLTRB(0.56, 0.5, 1, 1),
+      ],
+    );
+  });
+
+  test('four panes share hero-plus-three-stack geometry across pixels and cues',
+      () {
+    _verifyLayout(
+      4,
+      const <ui.Rect>[
+        ui.Rect.fromLTRB(0, 0, 0.56, 1),
+        ui.Rect.fromLTRB(0.56, 0, 1, 1 / 3),
+        ui.Rect.fromLTRB(0.56, 1 / 3, 1, 2 / 3),
+        ui.Rect.fromLTRB(0.56, 2 / 3, 1, 1),
       ],
     );
   });

@@ -265,7 +265,7 @@ opaque body stays exact
     );
   });
 
-  test('more than three panes is rejected by authoring model', () {
+  test('four panes are valid and a fifth is rejected by authoring model', () {
     const String source = '''[EDIT:a]
 [TRACK:V1]
 [CLIP:x:video/a.mp4:0:0:20:1]
@@ -281,10 +281,21 @@ opaque body stays exact
 
     final MosaicSurfaceDocument document =
         MosaicSurfaceDocument.parse(source, 'wall');
+    final String fourPaneSource = document.addPane(
+      paneId: 'p4',
+      clipId: 'c4',
+      structuralSource: 'EDIT.a',
+      atFrame: 0,
+      durationFrames: 20,
+    );
+    final MosaicSurfaceDocument fourPane =
+        MosaicSurfaceDocument.parse(fourPaneSource, 'wall');
+    expect(fourPane.mosaic.panes, hasLength(4));
+
     expect(
-      () => document.addPane(
-        paneId: 'p4',
-        clipId: 'c4',
+      () => fourPane.addPane(
+        paneId: 'p5',
+        clipId: 'c5',
         structuralSource: 'EDIT.a',
         atFrame: 0,
         durationFrames: 20,

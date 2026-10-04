@@ -21,9 +21,24 @@ List<ui.Rect> mosaicPaneLayout(int count) {
       ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 1),
     ];
   }
-  return const <ui.Rect>[
-    ui.Rect.fromLTRB(0, 0, _mosaicHeroFraction, 1),
-    ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 0.5),
-    ui.Rect.fromLTRB(_mosaicHeroFraction, 0.5, 1, 1),
-  ];
+  if (count == 3) {
+    return const <ui.Rect>[
+      ui.Rect.fromLTRB(0, 0, _mosaicHeroFraction, 1),
+      ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 0.5),
+      ui.Rect.fromLTRB(_mosaicHeroFraction, 0.5, 1, 1),
+    ];
+  }
+  if (count == 4) {
+    return const <ui.Rect>[
+      ui.Rect.fromLTRB(0, 0, _mosaicHeroFraction, 1),
+      ui.Rect.fromLTRB(_mosaicHeroFraction, 0, 1, 1 / 3),
+      ui.Rect.fromLTRB(_mosaicHeroFraction, 1 / 3, 1, 2 / 3),
+      ui.Rect.fromLTRB(_mosaicHeroFraction, 2 / 3, 1, 1),
+    ];
+  }
+  throw ArgumentError.value(
+    count,
+    'count',
+    'MOSAIC pane layout supports at most four panes.',
+  );
 }
