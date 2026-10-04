@@ -90,7 +90,7 @@ void main() {
   void expectCanonical(
     MosaicLayoutFrame frame,
     MosaicLayoutState state, {
-    Rect compositeRect = windowRect,
+    Rect? compositeRect,
     double compositeChrome = 1.0,
   }) {
     final MosaicLayoutActorFrame composite = frame.composite;
@@ -102,7 +102,7 @@ void main() {
       case MosaicLayoutStateKind.composite:
         expect(composite.presence, MosaicLayoutPresence.present);
         expect(composite.activeSegment, isNull);
-        expect(composite.rect, compositeRect);
+        expect(composite.rect, compositeRect ?? windowRect);
         expect(composite.opacity, 1.0);
         expect(composite.chrome, compositeChrome);
         expect(composite.z.band, MosaicLayoutZBand.stable);
@@ -371,6 +371,24 @@ void main() {
   });
 
   group('Family 7 - validation and lookup', () {
+
+    test('frame-zero cue is canonical immediately and overrides legacy seed', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT:0:FULL:PANE=A:DUR=12]''').resolve(
+        context(
+          legacySeed: const MosaicLayoutState.twoUp(
+            paneA: 'A',
+            paneB: 'B',
+          ),
+        ),
+      );
+
+      final MosaicLayoutFrame frame = resolved.evaluate(0);
+      expectCanonical(frame, const MosaicLayoutState.full('A'));
+      expect(frame.pane('A').activeSegment, isNull);
+      expect(frame.pane('B').presence, MosaicLayoutPresence.absent);
+    });
+
     test('duplicate cue frame is an evaluator error', () {
       final String source = sourceFor('''
   [LAYOUT:10:ONE:PANE=A]
