@@ -147,57 +147,58 @@ Future<void> _chooseFull(
 }
 
 void main() {
-  testWidgets('shared LAYOUT lane starts as implicit COMPOSITE',
+  testWidgets('COME IN ON defaults to implicit COMPOSITE',
       (WidgetTester tester) async {
     await _mount(tester);
 
     expect(_key('mosaic-layout-lane'), findsOneWidget);
-    expect(find.text('START AS'), findsOneWidget);
+    expect(find.text('COME IN ON'), findsOneWidget);
+    expect(_key('mosaic-layout-come-in-on'), findsOneWidget);
     expect(_key('mosaic-layout-start-bar'), findsOneWidget);
-    expect(find.text('COMPOSITE (IMPLICIT)'), findsOneWidget);
     expect(find.text('LAYOUT CUES'), findsOneWidget);
     expect(find.text('NO TRANSITIONS'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('mosaic-layout-start-status')).data,
+      'DEFAULT',
+    );
     expect(_key('mosaic-layout-add-composite'), findsOneWidget);
     expect(_key('mosaic-layout-add-twoup'), findsOneWidget);
     expect(_key('mosaic-layout-add-one'), findsOneWidget);
     expect(_key('mosaic-layout-add-full'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('mosaic-layout-cue:40')),
-        findsNothing);
   });
 
-
-  testWidgets('START AS authors frame zero independently of playhead',
+  testWidgets('COME IN ON authors initial state outside cue timeline',
       (WidgetTester tester) async {
     final GlobalKey<_HarnessState> host = await _mount(tester);
     expect(host.currentState!.frame, 40);
 
-    await tester.tap(_key('mosaic-layout-start-one'));
+    await tester.tap(_key('mosaic-layout-come-in-on'));
     await tester.pumpAndSettle();
-    await tester.tap(_key('mosaic-layout-start-one:pane2'));
+    await tester.tap(find.text('ONE · pane2').last);
     await tester.pumpAndSettle();
 
     expect(
       host.currentState!.source,
-      contains('[LAYOUT:0:ONE:PANE=pane2]'),
+      contains('[LAYOUT_START:ONE:PANE=pane2]'),
     );
-    expect(
-      host.currentState!.source,
-      isNot(contains('[LAYOUT:40:ONE:PANE=pane2]')),
-    );
+    expect(host.currentState!.source, isNot(contains('[LAYOUT:0:')));
     expect(_key('mosaic-layout-cue:0'), findsNothing);
     expect(find.text('NO TRANSITIONS'), findsOneWidget);
     expect(
       tester.widget<Text>(_key('mosaic-layout-start-status')).data,
-      'ONE:PANE=pane2',
+      'INITIAL STATE',
     );
     expect(host.currentState!.frame, 40);
+    expect(find.byType(StructuralMosaicLayoutPreview), findsOneWidget);
   });
 
-  testWidgets('START AS TWO UP reuses normal pair/aspect/MAX authoring at F0',
+  testWidgets('COME IN ON TWO UP reuses pair aspect and MAX authoring',
       (WidgetTester tester) async {
     final GlobalKey<_HarnessState> host = await _mount(tester);
 
-    await tester.tap(_key('mosaic-layout-start-twoup'));
+    await tester.tap(_key('mosaic-layout-come-in-on'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TWO UP…').last);
     await tester.pumpAndSettle();
     expect(find.text('Two Up'), findsOneWidget);
 
@@ -219,10 +220,40 @@ void main() {
     expect(
       host.currentState!.source,
       contains(
-        '[LAYOUT:0:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
+        '[LAYOUT_START:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
       ),
     );
+    expect(host.currentState!.source, isNot(contains('[LAYOUT:0:')));
     expect(host.currentState!.frame, 40);
+  });
+
+  testWidgets('legacy F0 cue stays visible until COME IN ON migrates it',
+      (WidgetTester tester) async {
+    final String source = _source.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n[LAYOUT:0:ONE:PANE=pane1]\n',
+    );
+    final GlobalKey<_HarnessState> host =
+        await _mount(tester, source: source);
+
+    expect(_key('mosaic-layout-cue:0'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('mosaic-layout-start-status')).data,
+      'LEGACY F0 CUE',
+    );
+
+    await tester.tap(_key('mosaic-layout-come-in-on'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ONE · pane2').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains('[LAYOUT_START:ONE:PANE=pane2]'),
+    );
+    expect(host.currentState!.source, isNot(contains('[LAYOUT:0:')));
+    expect(_key('mosaic-layout-cue:0'), findsNothing);
+    expect(find.text('NO TRANSITIONS'), findsOneWidget);
   });
 
   testWidgets('MOSAIC viewer switches to layout-aware actor Preview after cue',
