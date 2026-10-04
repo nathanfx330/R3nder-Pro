@@ -125,9 +125,12 @@ any legacy SPLIT seed. At source frame F that context plus the authored cues
 deterministically produces one `MosaicLayoutFrame`.
 
 The layout states are COMPOSITE, TWO UP, ONE, and FULL. TWO UP may carry an
-explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. Persistent pane actor
-identity survives layout changes and cuts inside a pane. A hidden pane remains
-on the shared MOSAIC source clock; hiding it is not pausing it.
+explicit A/B pane pair, 16:9 / 4:3 / 9:16 aspect, and MAX. The editor exposes
+the frame-zero canonical state separately as **START AS**; later **LAYOUT CUES**
+remain playhead-relative transitions. Both write the same LAYOUT grammar.
+Persistent pane actor identity survives layout changes and cuts inside a pane. A
+hidden pane remains on the shared MOSAIC source clock; hiding it is not pausing
+it.
 
 Preview and BAKE share layout evaluation and the actor-window painter. Live
 Preview may hold the last good resident actor image for as long as that actor
