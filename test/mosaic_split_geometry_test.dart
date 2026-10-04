@@ -277,6 +277,44 @@ void main() {
     }
   });
 
+  test('resting TWOUP peers never claim the same positive painted area', () {
+    // The shared structural-window painter currently consumes these double
+    // rects directly; it does not pixel-snap them. Use a tiny area tolerance
+    // only to ignore floating-point slivers at mathematically shared edges.
+    // Do not loosen geometry to make this guard pass.
+    const double overlapAreaTolerance = 0.000001;
+
+    for (final bool maximized in <bool>[false, true]) {
+      for (final MosaicSplitClientAspect aspect
+          in MosaicSplitClientAspect.values) {
+        final MosaicSplitWindowGeometry geometry =
+            mosaicSplitWindowGeometry(
+          frame: hd,
+          aspect: aspect,
+          titleHeight: 38.0,
+          maximized: maximized,
+        );
+        final Rect overlap =
+            geometry.leftWindowRect.intersect(geometry.rightWindowRect);
+        final double overlapArea =
+            overlap.width > 0.0 && overlap.height > 0.0
+                ? overlap.width * overlap.height
+                : 0.0;
+        final String family = maximized ? 'TWOUP MAX' : 'TWOUP normal';
+
+        expect(
+          overlapArea,
+          lessThanOrEqualTo(overlapAreaTolerance),
+          reason:
+              'resting peers left and right overlap in ' +
+                  family +
+                  ' at ASPECT=' +
+                  aspect.name,
+        );
+      }
+    }
+  });
+
   test('frame origin and chrome scale preserve linear geometry scaling', () {
     final MosaicSplitWindowGeometry hdGeometry = mosaicSplitWindowGeometry(
       frame: hd,

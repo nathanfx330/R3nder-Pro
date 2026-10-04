@@ -217,6 +217,90 @@ void main() {
       expect(settled.pane('C').presence, MosaicLayoutPresence.present);
       expect(settled.pane('C').rect, splitGeometry().rightWindowRect);
     });
+
+    test('PR1 preserves settled transition CREATE/REDIRECT classification', () {
+      final Map<String, Set<String>> expectedCreates = <String, Set<String>>{
+        'COMPOSITE>TWOUP': <String>{'A', 'B'},
+        'COMPOSITE>ONE': <String>{'A'},
+        'COMPOSITE>FULL': <String>{'A'},
+        'TWOUP>COMPOSITE': <String>{'COMPOSITE'},
+        'TWOUP>ONE': <String>{},
+        'TWOUP>FULL': <String>{},
+        'ONE>COMPOSITE': <String>{'COMPOSITE'},
+        'ONE>TWOUP': <String>{'B'},
+        'ONE>FULL': <String>{},
+        'FULL>COMPOSITE': <String>{'COMPOSITE'},
+        'FULL>TWOUP': <String>{'B'},
+        'FULL>ONE': <String>{},
+      };
+      final Map<String, Set<String>> expectedRedirects =
+          <String, Set<String>>{
+        'COMPOSITE>TWOUP': <String>{'COMPOSITE'},
+        'COMPOSITE>ONE': <String>{'COMPOSITE'},
+        'COMPOSITE>FULL': <String>{'COMPOSITE'},
+        'TWOUP>COMPOSITE': <String>{'A', 'B'},
+        'TWOUP>ONE': <String>{'A', 'B'},
+        'TWOUP>FULL': <String>{'A', 'B'},
+        'ONE>COMPOSITE': <String>{'A'},
+        'ONE>TWOUP': <String>{'A'},
+        'ONE>FULL': <String>{'A'},
+        'FULL>COMPOSITE': <String>{'A'},
+        'FULL>TWOUP': <String>{'A'},
+        'FULL>ONE': <String>{'A'},
+      };
+
+      String actorKey(MosaicLayoutActorFrame actor) {
+        if (actor.actorId.kind == MosaicLayoutActorKind.composite) {
+          return 'COMPOSITE';
+        }
+        return actor.actorId.paneId!;
+      }
+
+      for (final MapEntry<String, MosaicLayoutState> from in states.entries) {
+        for (final MapEntry<String, MosaicLayoutState> to in states.entries) {
+          if (from.key == to.key) continue;
+          final String key = from.key + '>' + to.key;
+          final String first = MosaicLayoutCue(
+            frame: 100,
+            state: from.value,
+            durationFrames: 1,
+          ).formatTag();
+          final String second = MosaicLayoutCue(
+            frame: 200,
+            state: to.value,
+            durationFrames: 12,
+          ).formatTag();
+          final MosaicLayoutFrame frame =
+              programFor('  ' + first + '\n  ' + second)
+                  .resolve(context())
+                  .evaluate(200);
+
+          final Set<String> creates = <String>{};
+          final Set<String> redirects = <String>{};
+          for (final MosaicLayoutActorFrame actor in frame.actors) {
+            final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+            if (segment == null) continue;
+            if (segment.startPresence == MosaicLayoutPresence.absent &&
+                segment.targetPresence != MosaicLayoutPresence.absent) {
+              creates.add(actorKey(actor));
+            } else {
+              redirects.add(actorKey(actor));
+            }
+          }
+
+          expect(
+            creates,
+            expectedCreates[key],
+            reason: key + ' changed CREATE classification',
+          );
+          expect(
+            redirects,
+            expectedRedirects[key],
+            reason: key + ' changed REDIRECT classification',
+          );
+        }
+      }
+    });
   });
 
   group('Family 2 - geometry-only survivors', () {
@@ -321,7 +405,7 @@ void main() {
     }
 
     for (final int duration in <int>[11, 12]) {
-      test('D=$duration preserves midpoint metadata while FULL morph stays front',
+      test('D=$duration keeps band midpoint while FULL target owns front',
           () {
         final int switchFrame = 500 + duration ~/ 2;
         final int endFrame = 500 + duration - 1;
@@ -335,20 +419,26 @@ void main() {
         expect(start.activeSegment!.endFrame, endFrame);
         expect(start.activeSegment!.startZ.band, MosaicLayoutZBand.stable);
         expect(start.activeSegment!.targetZ.band, MosaicLayoutZBand.fullTarget);
+        expect(start.activeSegment!.startDominant, isTrue);
+        expect(start.activeSegment!.targetDominant, isTrue);
+        expect(start.dominantMorphPriority, 2);
 
-        // FULL is a presentation-depth exception: the survivor owns the front
-        // layer from the first morph frame, while the segment still records the
-        // ordinary frozen midpoint for deterministic interruption/history.
-        expect(start.z.band, MosaicLayoutZBand.fullTarget);
+        // Dominance owns focal front-layer semantics. Band keeps its ordinary
+        // midpoint transition and no longer carries the FULL-specific hold.
+        expect(start.z.band, MosaicLayoutZBand.stable);
         expect(
           resolved.evaluate(switchFrame - 1).pane('A').z.band,
-          MosaicLayoutZBand.fullTarget,
+          MosaicLayoutZBand.stable,
         );
         expect(
           resolved.evaluate(switchFrame).pane('A').z.band,
           MosaicLayoutZBand.fullTarget,
         );
         expect(resolved.evaluate(endFrame).pane('A').activeSegment, isNull);
+        expect(
+          resolved.evaluate(endFrame).pane('A').dominantMorphPriority,
+          0,
+        );
         expect(resolved.evaluate(endFrame).pane('A').z.band,
             MosaicLayoutZBand.fullTarget);
       });

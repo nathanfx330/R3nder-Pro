@@ -153,6 +153,9 @@ class MosaicLayoutActiveSegment {
   final MosaicLayoutPresence startPresence;
   final MosaicLayoutPresence targetPresence;
 
+  final bool startDominant;
+  final bool targetDominant;
+
   final MosaicLayoutOpacityCurve opacityCurve;
 
   const MosaicLayoutActiveSegment({
@@ -169,8 +172,15 @@ class MosaicLayoutActiveSegment {
     required this.targetZ,
     required this.startPresence,
     required this.targetPresence,
+    required this.startDominant,
+    required this.targetDominant,
     required this.opacityCurve,
-  }) : assert(durationFrames > 1);
+  }) : assert(durationFrames > 1),
+       assert(
+         !targetDominant ||
+             targetPresence != MosaicLayoutPresence.absent,
+         'targetDominant requires target presence',
+       );
 
   int get endFrame => startFrame + durationFrames - 1;
 
@@ -186,27 +196,28 @@ class MosaicLayoutActiveSegment {
     return MosaicLayoutPresence.present;
   }
 
-  /// A surviving pane morphing between FULL and an ordinary window owns the
-  /// front layer for the whole morph. Switching at the generic midpoint makes
-  /// the smaller TWO UP peer briefly paint over a window that is visibly
-  /// shrinking from, or expanding toward, full frame.
-  bool get holdsFullMorphFrontLayer {
-    return startPresence != MosaicLayoutPresence.absent &&
-        targetPresence != MosaicLayoutPresence.absent &&
-        (startZ.band == MosaicLayoutZBand.fullTarget ||
-            targetZ.band == MosaicLayoutZBand.fullTarget);
+  /// Active focal ownership is independent from ordinary z-band ordering.
+  ///
+  /// Target dominance wins a focal swap. Start dominance is eligible only
+  /// while the actor remains target-present; an exiting former owner therefore
+  /// falls back to ordinary band ordering immediately.
+  int get dominantMorphPriority {
+    if (targetPresence == MosaicLayoutPresence.absent) return 0;
+    if (targetDominant) return 2;
+    if (startDominant) return 1;
+    return 0;
   }
 
+  /// roleRank orders a settled peer arrangement. When a target-present actor
+  /// stays in the same band, keep its effective source rank for the active
+  /// morph and adopt the target rank only at settlement.
+  bool get defersSameBandRoleRank =>
+      startPresence != MosaicLayoutPresence.absent &&
+      targetPresence != MosaicLayoutPresence.absent &&
+      startZ.band == targetZ.band;
+
   MosaicLayoutZ zAt(int frame) {
-    if (holdsFullMorphFrontLayer) {
-      final MosaicLayoutZ full =
-          targetZ.band == MosaicLayoutZBand.fullTarget ? targetZ : startZ;
-      return MosaicLayoutZ(
-        band: MosaicLayoutZBand.fullTarget,
-        roleRank: full.roleRank,
-        actorOrdinal: full.actorOrdinal,
-      );
-    }
+    if (defersSameBandRoleRank) return startZ;
     return frame < zSwitchFrame ? startZ : targetZ;
   }
 
@@ -226,6 +237,8 @@ class MosaicLayoutActiveSegment {
         other.targetZ == targetZ &&
         other.startPresence == startPresence &&
         other.targetPresence == targetPresence &&
+        other.startDominant == startDominant &&
+        other.targetDominant == targetDominant &&
         other.opacityCurve == opacityCurve;
   }
 
@@ -244,6 +257,8 @@ class MosaicLayoutActiveSegment {
         targetZ,
         startPresence,
         targetPresence,
+        startDominant,
+        targetDominant,
         opacityCurve,
       );
 
@@ -261,6 +276,8 @@ class MosaicLayoutActiveSegment {
         'targetZ': targetZ.toJson(),
         'startPresence': startPresence.name,
         'targetPresence': targetPresence.name,
+        'startDominant': startDominant,
+        'targetDominant': targetDominant,
         'opacityCurve': opacityCurve.name,
       };
 }
@@ -286,6 +303,9 @@ class MosaicLayoutActorFrame {
 
   bool get visible =>
       presence != MosaicLayoutPresence.absent && opacity > 0.0;
+
+  int get dominantMorphPriority =>
+      activeSegment?.dominantMorphPriority ?? 0;
 
   @override
   bool operator ==(Object other) {
@@ -354,8 +374,12 @@ class MosaicLayoutFrame {
     final List<MosaicLayoutActorFrame> sorted =
         List<MosaicLayoutActorFrame>.from(visible)
           ..sort(
-            (MosaicLayoutActorFrame a, MosaicLayoutActorFrame b) =>
-                a.z.compareTo(b.z),
+            (MosaicLayoutActorFrame a, MosaicLayoutActorFrame b) {
+              final int dominantOrder = a.dominantMorphPriority
+                  .compareTo(b.dominantMorphPriority);
+              if (dominantOrder != 0) return dominantOrder;
+              return a.z.compareTo(b.z);
+            },
           );
     return List<MosaicLayoutActorFrame>.unmodifiable(sorted);
   }
@@ -650,6 +674,8 @@ class MosaicLayoutProgram {
         context: context,
         actorIds: actors,
       );
+      final Map<MosaicLayoutActorId, bool> snapshotDominance =
+          _snapshotDominanceForStates(states);
 
       bool changed = false;
       final Map<MosaicLayoutActorId, _ResolvedActorState> reconciled =
@@ -671,6 +697,7 @@ class MosaicLayoutProgram {
           reconciled[actorId] = _redirectActor(
             old: old,
             desired: target,
+            startDominant: snapshotDominance[actorId]!,
             frame: cue.frame,
             durationFrames: cue.durationFrames,
           );
@@ -989,13 +1016,15 @@ class _TerminalCondition {
   final Rect? anchorRect;
   final double restingChrome;
   final MosaicLayoutZ restingZ;
+  final bool dominant;
 
   const _TerminalCondition({
     required this.included,
     required this.anchorRect,
     required this.restingChrome,
     required this.restingZ,
-  });
+    required this.dominant,
+  }) : assert(!dominant || included, 'dominant requires inclusion');
 
   @override
   bool operator ==(Object other) {
@@ -1003,18 +1032,20 @@ class _TerminalCondition {
         other.included == included &&
         other.anchorRect == anchorRect &&
         other.restingChrome == restingChrome &&
-        other.restingZ == restingZ;
+        other.restingZ == restingZ &&
+        other.dominant == dominant;
   }
 
   @override
   int get hashCode =>
-      Object.hash(included, anchorRect, restingChrome, restingZ);
+      Object.hash(included, anchorRect, restingChrome, restingZ, dominant);
 
   Map<String, Object?> toJson() => <String, Object?>{
         'included': included,
         'anchorRect': anchorRect == null ? null : _rectJson(anchorRect!),
         'restingChrome': restingChrome,
         'restingZ': restingZ.toJson(),
+        'dominant': dominant,
       };
 }
 
@@ -1214,6 +1245,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           roleRank: 0,
           actorOrdinal: composite.actorOrdinal,
         ),
+        dominant: false,
       );
       break;
 
@@ -1237,6 +1269,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           roleRank: 0,
           actorOrdinal: actorA.actorOrdinal,
         ),
+        dominant: false,
       );
       out[actorB] = _TerminalCondition(
         included: true,
@@ -1247,6 +1280,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           roleRank: 1,
           actorOrdinal: actorB.actorOrdinal,
         ),
+        dominant: false,
       );
       break;
 
@@ -1261,6 +1295,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           roleRank: 0,
           actorOrdinal: actor.actorOrdinal,
         ),
+        dominant: true,
       );
       break;
 
@@ -1275,6 +1310,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           roleRank: 0,
           actorOrdinal: actor.actorOrdinal,
         ),
+        dominant: true,
       );
       break;
   }
@@ -1292,9 +1328,59 @@ _TerminalCondition _absentTerminal(MosaicLayoutActorId actorId) {
       roleRank: 0,
       actorOrdinal: actorId.actorOrdinal,
     ),
+    dominant: false,
   );
 }
 
+Map<MosaicLayoutActorId, bool> _snapshotDominanceForStates(
+  Map<MosaicLayoutActorId, _ResolvedActorState> states,
+) {
+  MosaicLayoutActorId? activeOwner;
+  int highestPriority = 0;
+
+  for (final MapEntry<MosaicLayoutActorId, _ResolvedActorState> entry
+      in states.entries) {
+    final MosaicLayoutActiveSegment? segment = entry.value.activeSegment;
+    if (segment == null) continue;
+    final int priority = segment.dominantMorphPriority;
+    if (priority == 0) continue;
+    if (priority > highestPriority) {
+      highestPriority = priority;
+      activeOwner = entry.key;
+      continue;
+    }
+    if (priority == highestPriority) {
+      throw StateError(
+        'Multiple MOSAIC actors resolve the same dominant morph priority '
+        '$priority at one cue boundary.',
+      );
+    }
+  }
+
+  final Map<MosaicLayoutActorId, bool> out =
+      <MosaicLayoutActorId, bool>{
+    for (final MapEntry<MosaicLayoutActorId, _ResolvedActorState> entry
+        in states.entries)
+      entry.key: entry.value.activeSegment == null
+          ? entry.value.terminal.dominant
+          : entry.key == activeOwner,
+  };
+
+  final int ownerCount = out.values.where((bool value) => value).length;
+  if (ownerCount > 1) {
+    throw StateError(
+      'MOSAIC snapshot dominance resolved more than one current owner.',
+    );
+  }
+
+  return Map<MosaicLayoutActorId, bool>.unmodifiable(out);
+}
+
+/// Raw startDominant endpoint facts can persist on a target-absent CONTINUE
+/// segment from an older cue. Those facts are intentionally inert because
+/// target-presence gating gives them priority zero. The globally resolved
+/// current owner above is therefore the authority used when a new redirect
+/// snapshots dominance.
 _ResolvedActorState _createActor({
   required MosaicLayoutActorId actorId,
   required _TerminalCondition desired,
@@ -1328,6 +1414,8 @@ _ResolvedActorState _createActor({
     targetZ: desired.restingZ,
     startPresence: MosaicLayoutPresence.absent,
     targetPresence: MosaicLayoutPresence.present,
+    startDominant: false,
+    targetDominant: desired.dominant,
     opacityCurve: MosaicLayoutOpacityCurve.shellEntry,
   );
 
@@ -1346,6 +1434,7 @@ _ResolvedActorState _createActor({
 _ResolvedActorState _redirectActor({
   required _ResolvedActorState old,
   required _TerminalCondition desired,
+  required bool startDominant,
   required int frame,
   required int durationFrames,
 }) {
@@ -1410,6 +1499,8 @@ _ResolvedActorState _redirectActor({
     targetZ: targetZ,
     startPresence: old.presence,
     targetPresence: targetPresence,
+    startDominant: startDominant,
+    targetDominant: desired.dominant,
     opacityCurve: MosaicLayoutOpacityCurve.easedLerp,
   );
 
