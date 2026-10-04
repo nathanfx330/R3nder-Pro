@@ -997,6 +997,67 @@ class ProgramStructuralFrameRenderer {
     );
   }
 
+  Future<_RenderedStructuralSourceImage> _renderSourceFrameImageAtSize(
+    String source,
+    int sourceFrame,
+    int imageWidth,
+    int imageHeight,
+    String fontFamily,
+  ) async {
+    final String rendererKey =
+        '$source|layout-composite|${imageWidth}x$imageHeight';
+    final StructuralSourceFrameRenderer renderer =
+        _sourceRenderers.putIfAbsent(
+      rendererKey,
+      () => StructuralSourceFrameRenderer.create(
+        source: rawDocument,
+        structuralSource: source,
+        width: imageWidth,
+        height: imageHeight,
+        backend: backend,
+        resolveSource: resolveSource,
+      ),
+    );
+
+    final StructuralSourceRenderedFrame rendered =
+        renderer.renderFrameDetailed(sourceFrame);
+    final ui.Image decoded = await _decodeRgba(
+      rendered.rgba,
+      imageWidth,
+      imageHeight,
+    );
+
+    ui.Image finalImage = decoded;
+    final StructuralSourceRef? root = StructuralSourceRef.tryParse(source);
+    if (root != null &&
+        root.id.isNotEmpty &&
+        _editModel.containsStructuralSource(root)) {
+      final List<StructuralCardOverlayPlacement> overlays =
+          structuralCardOverlayPlacements(_editModel, root, sourceFrame)
+              .where(
+                (StructuralCardOverlayPlacement placement) =>
+                    !placement.isSideCard,
+              )
+              .toList(growable: false);
+      final ui.Image? composited =
+          await compositeStructuralCardOverlaysToImage(
+        structuralImage: decoded,
+        placements: overlays,
+        images: _cardImages,
+        fontFamily: fontFamily,
+      );
+      if (composited != null) {
+        finalImage = composited;
+        decoded.dispose();
+      }
+    }
+
+    return _RenderedStructuralSourceImage(
+      image: finalImage,
+      diagnosticLabel: rendered.diagnosticLabel(source),
+    );
+  }
+
   Future<_RenderedStructuralSourceImage> _renderSourceFrameImage(
     String source,
     int sourceFrame,
