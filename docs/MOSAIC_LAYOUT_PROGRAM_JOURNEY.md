@@ -123,7 +123,8 @@ The chosen model was:
 
 > A MOSAIC layout cue changes the desired desktop arrangement of persistent pane
 > windows at a MOSAIC project frame. It does not create content, change project
-> duration, affect audio, or restart a surviving pane.
+> duration, pause hidden panes, or restart a surviving pane. It does gate which
+> pane audio contributes to the mix from that source frame forward.
 
 That moved dynamic arrangement into the MOSAIC source while leaving placement
 context on STRUCT.
@@ -138,6 +139,7 @@ MOSAIC LAYOUT program
     split aspect
     MAX
     transition duration
+    pane-audio audibility at layout boundaries
 
 STRUCT placement
     owns placement context
@@ -509,6 +511,14 @@ The first UI-only correction still encoded the start as a hidden frame-zero
 cue. Rocky testing showed that this was the wrong abstraction. LAYOUT_START is
 now a separate grammar element consumed by the same evaluator as the initial
 seed. Existing frame-zero LAYOUT cues remain a backward-compatible fallback.
+
+A later Rocky acceptance pass exposed a second source-level ownership gap:
+ONE visually dismissed a pane but structural audio still mixed every MOSAIC
+pane. The audio planner now derives pane-audibility spans from LAYOUT_START and
+LAYOUT cue boundaries. COMPOSITE admits all panes, TWOUP admits A/B, and
+ONE/FULL admit only the selected pane. This gating changes contribution to the
+mix only; hidden panes remain on the shared source clock. Audio switches on the
+cue frame rather than waiting for visual DUR to settle.
 
 This was the point where the data model became understandable as an editing
 feature rather than only an evaluator.
