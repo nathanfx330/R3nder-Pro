@@ -13,7 +13,7 @@ import 'package:flutter/material.dart';
 import 'mosaic_split_geometry.dart';
 import 'structural_sequence.dart';
 import 'structural_shell_geometry.dart';
-import 'structural_window_painter.dart';
+import 'structural_window_actor_painter.dart';
 import 'ui_theme.dart';
 
 class StructuralSplitWindowPainter extends CustomPainter {
@@ -71,27 +71,24 @@ class StructuralSplitWindowPainter extends CustomPainter {
                   linearProgress: progress,
                   contentReady: true,
                 ).rect;
-      paintStructuralWindow(
+      paintStructuralWindowActor(
         canvas: canvas,
         theme: theme,
         chromeScale: chromeScale,
         fontFamily: fontFamily,
-        sourceFrame: sourceFrame,
-        sourceDurationFrames: placement.sourceDurationFrames,
-        windowTitle: placement.splitWindowTitleForPane(paneIndex),
-        overlayMode: placement.overlayMode,
-        topOverlay: placement.topOverlay,
-        bottomOverlay: placement.bottomOverlay,
-        defaultBottomOverlay: diagnosticLabels[paneIndex],
         rect: rect,
-        sourceImage: images[paneIndex],
-        outgoingSourceImage: null,
-        outgoingPlacement: null,
-        outgoingSourceFrame: 0,
-        outgoingDefaultBottomOverlay: '',
-        handoffSlideT: 1.0,
         opacity: opacity,
         windowChrome: 1.0,
+        visual: StructuralWindowActorVisual(
+          sourceImage: images[paneIndex],
+          sourceFrame: sourceFrame,
+          sourceDurationFrames: placement.sourceDurationFrames,
+          windowTitle: placement.splitWindowTitleForPane(paneIndex),
+          overlayMode: placement.overlayMode,
+          topOverlay: placement.topOverlay,
+          bottomOverlay: placement.bottomOverlay,
+          defaultBottomOverlay: diagnosticLabels[paneIndex],
+        ),
       );
     }
   }
