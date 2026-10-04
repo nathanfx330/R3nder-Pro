@@ -643,6 +643,10 @@ class MosaicLayoutProgram {
         actorIds: actors,
         boundaries: frozenBoundaries,
       ),
+      inclusionChangeFramesByActor: _inclusionChangeFramesByActor(
+        actorIds: actors,
+        boundaries: frozenBoundaries,
+      ),
       issues: List<MosaicLayoutIssue>.unmodifiable(issues),
     );
   }
@@ -653,6 +657,7 @@ class MosaicResolvedLayoutProgram {
   final List<MosaicLayoutActorId> actorIds;
   final List<_ResolvedBoundary> _boundaries;
   final Map<String, List<int>> _appearanceFramesByPane;
+  final Map<MosaicLayoutActorId, List<int>> _inclusionChangeFramesByActor;
   final List<MosaicLayoutIssue> issues;
 
   const MosaicResolvedLayoutProgram._({
@@ -660,9 +665,11 @@ class MosaicResolvedLayoutProgram {
     required this.actorIds,
     required List<_ResolvedBoundary> boundaries,
     required Map<String, List<int>> appearanceFramesByPane,
+    required Map<MosaicLayoutActorId, List<int>> inclusionChangeFramesByActor,
     required this.issues,
   })  : _boundaries = boundaries,
-        _appearanceFramesByPane = appearanceFramesByPane;
+        _appearanceFramesByPane = appearanceFramesByPane,
+        _inclusionChangeFramesByActor = inclusionChangeFramesByActor;
 
   MosaicLayoutFrame evaluate(int sourceFrame) {
     if (sourceFrame < 0) {
@@ -702,6 +709,34 @@ class MosaicResolvedLayoutProgram {
       }
     }
     return low < appearances.length ? appearances[low] : null;
+  }
+
+  bool actorStayedIncludedAcross(
+    MosaicLayoutActorId actorId, {
+    required int frameA,
+    required int frameB,
+  }) {
+    final List<int>? changes = _inclusionChangeFramesByActor[actorId];
+    if (changes == null) {
+      throw StateError('Unknown MOSAIC actor "$actorId".');
+    }
+    if (frameA == frameB) return true;
+
+    final int lower = math.min(frameA, frameB);
+    final int upper = math.max(frameA, frameB);
+
+    int low = 0;
+    int high = changes.length;
+    while (low < high) {
+      final int mid = low + ((high - low) >> 1);
+      if (changes[mid] <= lower) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    return low >= changes.length || changes[low] > upper;
   }
 
   Set<String> paneIdsEnteringBetween({
@@ -777,6 +812,39 @@ Map<String, List<int>> _appearanceFramesByPane({
   return Map<String, List<int>>.unmodifiable(
     <String, List<int>>{
       for (final MapEntry<String, List<int>> entry in out.entries)
+        entry.key: List<int>.unmodifiable(entry.value),
+    },
+  );
+}
+
+Map<MosaicLayoutActorId, List<int>> _inclusionChangeFramesByActor({
+  required List<MosaicLayoutActorId> actorIds,
+  required List<_ResolvedBoundary> boundaries,
+}) {
+  final Map<MosaicLayoutActorId, List<int>> out =
+      <MosaicLayoutActorId, List<int>>{
+    for (final MosaicLayoutActorId actorId in actorIds) actorId: <int>[],
+  };
+  final Map<MosaicLayoutActorId, bool> included =
+      <MosaicLayoutActorId, bool>{
+    for (final MosaicLayoutActorId actorId in actorIds) actorId: false,
+  };
+
+  for (final _ResolvedBoundary boundary in boundaries) {
+    for (final MosaicLayoutActorId actorId in actorIds) {
+      final bool nextIncluded =
+          boundary.states[actorId]!.terminal.included;
+      if ((included[actorId] ?? false) != nextIncluded) {
+        out[actorId]!.add(boundary.frame);
+      }
+      included[actorId] = nextIncluded;
+    }
+  }
+
+  return Map<MosaicLayoutActorId, List<int>>.unmodifiable(
+    <MosaicLayoutActorId, List<int>>{
+      for (final MapEntry<MosaicLayoutActorId, List<int>> entry
+          in out.entries)
         entry.key: List<int>.unmodifiable(entry.value),
     },
   );
