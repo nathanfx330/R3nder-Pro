@@ -172,7 +172,10 @@ void main() {
     final ProgramStructuralAudioRender rendered =
         await ProgramStructuralAudioRenderer(
       timeline: timeline,
-      renderSource: (String source) async {
+      renderSource: (
+        String source,
+        StructuralAudioSourceContext context,
+      ) async {
         renderCalls++;
         return _constantSourceRender(
           source,
