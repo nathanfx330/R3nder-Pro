@@ -19,12 +19,10 @@ import 'edit_model.dart';
 import 'edit_video_compositor.dart';
 import 'edit_video_preview.dart';
 import 'media_layer.dart';
-import 'mosaic_layout_cue.dart';
 import 'mosaic_layout_program.dart';
 import 'project_clock.dart';
 import 'structural_mosaic_layout.dart';
 import 'structural_sequence.dart';
-import 'structural_shell_geometry.dart';
 import 'structural_window_actor_painter.dart';
 import 'ui_theme.dart';
 
