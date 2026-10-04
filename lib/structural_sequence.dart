@@ -263,8 +263,9 @@ class StructuralSequencePlacement {
   /// One shared authored client aspect for both split windows.
   final MosaicSplitClientAspect splitClientAspect;
 
-  /// Optional authored suffixes for effective two-window SPLIT titles.
-  /// Custom values remain placement metadata while hidden or unsupported.
+  /// Optional authored suffixes for the two pane-window presentation slots.
+  /// Legacy SPLIT and frame-dependent LAYOUT TWO UP share this placement
+  /// metadata; custom values remain authored while the switch is hidden/off.
   final bool showPaneNames;
   final String pane1Name;
   final String pane2Name;
