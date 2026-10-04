@@ -4,9 +4,10 @@
 //
 // StructuralAudioSourceRenderer deliberately owns composition only. This module
 // owns artifact reuse across PLAY presses and application runs. A cache key is
-// derived only from the selected structural source graph, resolved leaf file
-// identity, deterministic renderer policy, and ffmpeg toolchain identity.
-// Unrelated terminal text, STRUCT placement chrome, or titles therefore cannot
+// derived from the selected structural source graph, any placement context that
+// changes MOSAIC audio semantics, the resolver-derived gain envelope, resolved
+// leaf file identity, deterministic renderer policy, and ffmpeg toolchain
+// identity. Unrelated terminal text, chrome, or titles therefore cannot
 // invalidate a source-audio artifact.
 
 import 'dart:convert';
