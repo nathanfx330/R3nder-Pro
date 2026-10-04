@@ -570,7 +570,7 @@ class MosaicLayoutProgram {
           severity: MosaicLayoutIssueSeverity.warning,
           code: MosaicLayoutIssueCode.legacyWithCues,
           message:
-              'Legacy STRUCT SPLIT seed is mixed with MOSAIC LAYOUT cues.',
+              'Legacy STRUCT SPLIT seed is mixed with MOSAIC layout-program metadata.',
         ),
       );
     }
