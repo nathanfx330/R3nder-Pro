@@ -15,13 +15,13 @@ void main() {
 
   MosaicLayoutEvaluationContext context({
     MosaicLayoutState? legacySeed,
-    Rect compositeRect = windowRect,
+    Rect? compositeRect,
     double compositeChrome = 1.0,
   }) {
     return MosaicLayoutEvaluationContext(
       programRect: programRect,
       ordinaryWindowRect: windowRect,
-      compositeRect: compositeRect,
+      compositeRect: compositeRect ?? windowRect,
       compositeChrome: compositeChrome,
       titleHeight: 36,
       legacySeed: legacySeed,
@@ -128,14 +128,27 @@ $layoutLines
       expect(b507.presence, MosaicLayoutPresence.exiting);
       expect(b507.z.band, MosaicLayoutZBand.exiting);
 
+      final MosaicResolvedLayoutProgram withoutRecall = programFor('''
+  [LAYOUT:500:ONE:PANE=A:DUR=12]''').resolve(
+        context(
+          legacySeed: const MosaicLayoutState.twoUp(
+            paneA: 'A',
+            paneB: 'B',
+          ),
+        ),
+      );
+      final MosaicLayoutActorFrame oldAt508 =
+          withoutRecall.evaluate(508).pane('B');
+
       final MosaicLayoutActorFrame b508 = resolved.evaluate(508).pane('B');
       expect(b508.presence, MosaicLayoutPresence.present);
       expect(b508.activeSegment, isNotNull);
       expect(b508.activeSegment!.startFrame, 508);
-      expect(b508.activeSegment!.startZ, b507.z);
-      expect(b508.z, b507.z);
-      expect(b508.rect, b507.rect);
-      expect(b508.opacity, b507.opacity);
+      expect(b508.activeSegment!.startZ, oldAt508.z);
+      expect(b508.z, oldAt508.z);
+      expect(b508.rect, oldAt508.rect);
+      expect(b508.opacity, oldAt508.opacity);
+      expect(b508.chrome, oldAt508.chrome);
 
       expect(resolved.evaluate(513).pane('B').z.band, MosaicLayoutZBand.exiting);
       expect(resolved.evaluate(514).pane('B').z.band, MosaicLayoutZBand.stable);
