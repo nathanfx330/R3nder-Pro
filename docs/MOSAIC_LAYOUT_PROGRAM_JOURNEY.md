@@ -514,11 +514,10 @@ seed. Existing frame-zero LAYOUT cues remain a backward-compatible fallback.
 
 A later Rocky acceptance pass exposed a second source-level ownership gap:
 ONE visually dismissed a pane but structural audio still mixed every MOSAIC
-pane. The audio planner now derives pane-audibility spans from LAYOUT_START and
-LAYOUT cue boundaries. COMPOSITE admits all panes, TWOUP admits A/B, and
-ONE/FULL admit only the selected pane. This gating changes contribution to the
-mix only; hidden panes remain on the shared source clock. Audio switches on the
-cue frame rather than waiting for visual DUR to settle.
+pane. The first audio correction derived pane-audibility spans from LAYOUT_START and
+LAYOUT cue boundaries. COMPOSITE admitted all panes, TWOUP admitted A/B, and
+ONE/FULL admitted only the selected pane. Hidden panes remained on the shared
+source clock.
 
 This was the point where the data model became understandable as an editing
 feature rather than only an evaluator.
@@ -906,7 +905,7 @@ There is no second layout database in the widgets.
 
 ## 21. The bugs that mattered most
 
-The feature's useful debugging history can be summarized as ten failures.
+The feature's useful debugging history can be summarized as eleven failures.
 
 ### Failure 1: black/flickering windows during live playback
 
@@ -1040,6 +1039,47 @@ Legacy F0 cues remain readable and visible until COME IN ON migrates them to
 LAYOUT_START.
 
 That is the architectural success worth preserving.
+
+### Failure 11: audio became a second layout interpreter
+
+Review of the accepted hard-gate implementation found two coupled defects.
+
+First, the structural-audio mixer dropped a dismissed pane at the exact sample
+of the LAYOUT cue. That could create a waveform discontinuity and made sound
+finish before a DUR=12 window had visibly completed its exit.
+
+Second, the audio planner independently walked LAYOUT_START / LAYOUT cues
+instead of asking the MOSAIC resolver. That duplicated the semantics Preview
+and BAKE had deliberately centralized, and a source-only audio plan had no way
+to receive placement-owned legacy SPLIT seed context.
+
+The correction is architectural:
+
+```text
+STRUCT placement
+    → StructuralAudioSourceContext
+    → MosaicLayoutProgram.resolveForStructuralAudio(...)
+    → same CREATE / CONTINUE / REDIRECT / interruption semantics
+    → resolver-derived per-pane gain envelope
+    → source audio renderer / cache
+```
+
+The resolver exposes each pane's audio frame from the same actor opacity state
+used by picture. COMPOSITE contribution plus direct pane contribution is
+clamped to unity, which keeps a represented pane stable through
+COMPOSITE↔pane transitions while allowing entering/exiting panes to follow the
+visual segment. The audio renderer interpolates between resolver frame gains
+during active segments. True immediate DUR=0/1 changes receive only a 5 ms
+declick ramp after the boundary.
+
+Program audio memoization now keys source plus placement layout context, and
+runtime tracing carries legacy SPLIT / aspect / MAX into that context. The
+persistent source-audio cache hashes the resolver-derived gain envelope and its
+schemas were bumped again, so a semantically different layout mix cannot reuse
+a stale WAV.
+
+This review follow-up is newer than the recorded 74-test / Rocky acceptance and
+must pass a fresh gate and live listen before it inherits accepted status.
 
 ---
 
