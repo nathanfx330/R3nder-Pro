@@ -293,6 +293,7 @@ enum MosaicLayoutIssueCode {
   duplicateTwoUpPane,
   bareTwoUpNeedsTwoPanes,
   deadCue,
+  legacyWithCues,
   noEffect,
 }
 
