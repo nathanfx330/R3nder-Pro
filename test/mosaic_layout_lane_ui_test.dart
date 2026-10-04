@@ -156,7 +156,7 @@ void main() {
     expect(_key('mosaic-layout-start-bar'), findsOneWidget);
     expect(find.text('COMPOSITE (IMPLICIT)'), findsOneWidget);
     expect(find.text('LAYOUT CUES'), findsOneWidget);
-    expect(find.text('IMPLICIT COMPOSITE'), findsOneWidget);
+    expect(find.text('NO TRANSITIONS'), findsOneWidget);
     expect(_key('mosaic-layout-add-composite'), findsOneWidget);
     expect(_key('mosaic-layout-add-twoup'), findsOneWidget);
     expect(_key('mosaic-layout-add-one'), findsOneWidget);
@@ -184,7 +184,8 @@ void main() {
       host.currentState!.source,
       isNot(contains('[LAYOUT:40:ONE:PANE=pane2]')),
     );
-    expect(_key('mosaic-layout-cue:0'), findsOneWidget);
+    expect(_key('mosaic-layout-cue:0'), findsNothing);
+    expect(find.text('NO TRANSITIONS'), findsOneWidget);
     expect(
       tester.widget<Text>(_key('mosaic-layout-start-status')).data,
       'ONE:PANE=pane2',
