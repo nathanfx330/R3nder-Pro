@@ -156,8 +156,9 @@ FULL/TWO-UP z-order correction, is recorded in
 The earlier static two-window STRUCT milestone remains supported for cue-less
 projects and is documented in
 [`MOSAIC_TWO_WINDOW_COMPARISON.md`](MOSAIC_TWO_WINDOW_COMPARISON.md). Its
-SPLIT/SPLIT:MAX metadata may also act as a legacy initial seed until the first
-LAYOUT cue; a frame-zero LAYOUT cue wins immediately.
+SPLIT/SPLIT:MAX metadata may also act as a legacy initial seed. LAYOUT_START
+wins over that seed immediately; when no LAYOUT_START exists, a legacy
+frame-zero LAYOUT cue still wins.
 
 W1 of that earlier milestone added `lib/mosaic_split_geometry.dart` as a pure seated
 split-window geometry authority.
@@ -780,12 +781,13 @@ The M18 visual gate matters because a model can be correct while Flutter briefly
 
 ## MOSAIC Layout Program milestone status
 
-The source-relative MOSAIC Layout Program milestone is complete on `main`.
-Its final focused gate passes 52 tests, and live GUI acceptance covers
-continuous playback, TWO UP → ONE retreat, pane recall, lookahead warming, and
-scrubbing across hidden intervals. Treat this behavior as the current structural
-composition contract; future changes should preserve these guarantees unless a
-new milestone deliberately supersedes them.
+The source-relative MOSAIC Layout Program residency milestone reached a
+52-test focused gate and live GUI acceptance covering continuous playback,
+TWO UP → ONE retreat, pane recall, lookahead warming, and scrubbing across
+hidden intervals. A later Rocky workflow pass added COME IN ON / LAYOUT_START
+as a post-milestone authoring correction; that newer head must pass its fresh
+gate before it inherits the same acceptance status. The underlying structural
+contracts remain the compatibility target.
 
 ---
 
