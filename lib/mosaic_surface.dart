@@ -916,12 +916,13 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     MosaicSequence mosaic,
     int frame,
   ) {
-    final List<MosaicLayoutCue> cues =
-        List<MosaicLayoutCue>.from(document.layoutCues)
-          ..sort(
-            (MosaicLayoutCue a, MosaicLayoutCue b) =>
-                a.frame.compareTo(b.frame),
-          );
+    final List<MosaicLayoutCue> cues = document.layoutCues
+        .where((MosaicLayoutCue cue) => cue.frame > 0)
+        .toList(growable: false)
+      ..sort(
+        (MosaicLayoutCue a, MosaicLayoutCue b) =>
+            a.frame.compareTo(b.frame),
+      );
     final int lastCueFrame = cues.isEmpty ? -1 : cues.last.frame;
     final int timelineFrames = math.max(
       1,
@@ -1046,7 +1047,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 const Spacer(),
                 Text(
                   cues.isEmpty
-                      ? 'IMPLICIT COMPOSITE'
+                      ? 'NO TRANSITIONS'
                       : '${cues.length} CUE${cues.length == 1 ? '' : 'S'}',
                   style: widget.theme.micro,
                 ),
