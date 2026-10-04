@@ -12,8 +12,8 @@ authored meaning is shared by the MOSAIC editor viewer, TEXT/STRUCT Preview, and
 final BAKE.
 
 It is a development-history document. For the current ownership contract, read
-`STRUCTURAL_COMPOSITION.md`; for exact author-facing syntax, read
-`REFERENCE.md`.
+`STRUCTURAL_COMPOSITION.md`. The exact LAYOUT spelling introduced by this
+milestone is recorded here alongside the reasoning that produced it.
 
 The short version is:
 
