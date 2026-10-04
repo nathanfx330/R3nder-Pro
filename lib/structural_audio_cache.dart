@@ -16,7 +16,7 @@ import 'structural_audio_decode.dart';
 import 'structural_audio_plan.dart';
 import 'structural_audio_render.dart';
 
-const int kStructuralSourceAudioCacheSchemaVersion = 3;
+const int kStructuralSourceAudioCacheSchemaVersion = 4;
 const int _kFloatWavHeaderBytes = 44;
 const int _kUint32Mask = 0xffffffff;
 
@@ -102,10 +102,13 @@ class StructuralSourceAudioCache {
   Future<StructuralSourceAudioArtifact> prepare({
     required String rawDocument,
     required String structuralSource,
+    StructuralAudioSourceContext context =
+        const StructuralAudioSourceContext(),
   }) async {
     final StructuralAudioPlanner planner =
         StructuralAudioPlanner.parse(rawDocument);
-    final StructuralAudioPlan plan = planner.plan(structuralSource);
+    final StructuralAudioPlan plan =
+        planner.plan(structuralSource, context: context);
     final String ffmpegVersion = await _resolveFfmpegVersion();
     final StructuralSourceAudioKey key = StructuralSourceAudioKey.fromPlan(
       plan: plan,
@@ -141,6 +144,7 @@ class StructuralSourceAudioCache {
       key: key,
       outputPath: path,
       expectedBytes: expectedBytes,
+      context: context,
     );
     _inFlight[key.digest] = created;
     try {
@@ -171,6 +175,7 @@ class StructuralSourceAudioCache {
     required StructuralSourceAudioKey key,
     required String outputPath,
     required int expectedBytes,
+    required StructuralAudioSourceContext context,
   }) async {
     final Directory directory = cacheDirectory;
     directory.createSync(recursive: true);
@@ -185,8 +190,10 @@ class StructuralSourceAudioCache {
       leafDecoder: leafDecoder,
       resolveSource: resolveSource,
     );
-    final StructuralAudioSourceRender rendered =
-        await renderer.render(plan.sourceRef.canonicalSource);
+    final StructuralAudioSourceRender rendered = await renderer.render(
+      plan.sourceRef.canonicalSource,
+      context: context,
+    );
     if (rendered.sampleFrames != plan.durationSamples) {
       throw StructuralAudioRenderException(
         'Rendered source audio length ${rendered.sampleFrames} does not match '
@@ -269,16 +276,25 @@ void _writePlanManifest(
       ..writeln('lane_authored_index=${lane.authoredIndex}')
       ..writeln('lane_segment_count=${lane.segments.length}');
 
-    final List<StructuralAudioFrameSpan>? audible = lane.audibleFrameSpans;
-    if (audible == null) {
-      out.writeln('lane_audibility=unrestricted');
+    final StructuralAudioLayoutGainEnvelope? envelope =
+        lane.layoutGainEnvelope;
+    if (envelope == null) {
+      out.writeln('lane_layout_gain=unrestricted');
     } else {
-      out.writeln('lane_audibility_count=${audible.length}');
-      for (final StructuralAudioFrameSpan span in audible) {
-        out.writeln(
-          'lane_audible_span=${span.startFrame}..${span.endFrameExclusive}',
-        );
+      final StringBuffer gainIdentity = StringBuffer();
+      for (int frame = 0; frame < envelope.durationFrames; frame++) {
+        gainIdentity
+          ..write(envelope.frameGains[frame].toStringAsFixed(12))
+          ..write(':')
+          ..write(envelope.interpolateToNextFrame[frame] ? '1' : '0')
+          ..write(';');
       }
+      out
+        ..writeln('lane_layout_gain_frames=${envelope.durationFrames}')
+        ..writeln(
+          'lane_layout_gain_sha256='
+          '${structuralAudioSha256Hex(gainIdentity.toString())}',
+        );
     }
 
     for (final StructuralAudioSegment segment in lane.segments) {
