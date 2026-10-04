@@ -1,12 +1,14 @@
 # MOSAIC Layout Program Journey
 
-Status: the initial MOSAIC Layout Program merged to `main` through PR #30 at
-`6b16ec29bcfe95e3e4fb25d15818b2bf74c8c144`. Post-merge GUI testing then
-exposed resident-pixel and exit-paintability defects; those stabilization fixes
-landed directly on `main`. The final focused gate after the TWO UP → ONE
-paintability fix passed 51 tests; after the warm-recall bridge regression was added, the focused gate passed 52 tests, and the corrected retreat/minimize behavior
-was confirmed again in the live GUI. Before the post-merge stabilization, the
-repository analyzer remained at its existing 77-issue baseline.
+Status: **MILESTONE COMPLETE.** The initial MOSAIC Layout Program merged to
+`main` through PR #30 at
+`6b16ec29bcfe95e3e4fb25d15818b2bf74c8c144`. Post-merge GUI testing exposed
+resident-pixel, recall, and exit-paintability defects; those stabilization fixes
+landed directly on `main`. The focused gate reached 51 passing tests after the
+TWO UP → ONE paintability correction and 52 after the warm-recall bridge
+regression. Final live GUI acceptance confirmed continuous playback, retreat /
+minimize, recall, lookahead warming, and scrubbing without black flashes or
+stale pre-hide frames. The milestone is closed.
 
 This document records the path from R3nder Pro's first static MOSAIC two-window
 STRUCT presentation to a reusable, frame-dependent MOSAIC layout program whose
@@ -1104,7 +1106,12 @@ assertion inside an already-green lower-level test.
 
 ## 25. Completion state
 
-The merged milestone leaves R3nder with:
+**Milestone reached and closed.** The accepted implementation is on `main`,
+the focused regression gate passes 52 tests, and the final live GUI pass was
+accepted after exercising continuous playback, TWO UP → ONE retreat, pane
+recall, lookahead warming, and scrub crossings.
+
+The completed milestone leaves R3nder with:
 
 - reusable source-relative MOSAIC LAYOUT cues;
 - COMPOSITE, TWO UP, ONE, and FULL states;
@@ -1131,7 +1138,10 @@ The merged milestone leaves R3nder with:
 The initial feature merged after manual Preview and BAKE acceptance in addition
 to the focused automated gates. Post-merge GUI testing then found the residency
 edge cases recorded above. Those fixes were accepted only after the live player
-was exercised again. The focused suite reached 51 passing tests after the paintability correction and 52 after the warm-recall bridge regression.
+was exercised again. The focused suite reached 51 passing tests after the
+paintability correction and 52 after the warm-recall bridge regression. The
+final GUI pass was successful, so no follow-up work remains inside this
+milestone unless a new defect is discovered.
 
 The most important final rule remains the one the implementation was built
 around:
