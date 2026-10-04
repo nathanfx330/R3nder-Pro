@@ -820,7 +820,8 @@ The new program did not delete static SPLIT.
 Cue-less projects keep their old behavior.
 
 A legacy STRUCT SPLIT may seed initial layout until the first LAYOUT cue.
-A frame-zero LAYOUT cue wins immediately.
+A LAYOUT_START state wins immediately. When no LAYOUT_START exists, a legacy
+frame-zero LAYOUT cue still wins over the placement seed.
 
 The old static path also retains its established compatibility behavior,
 including its separately accepted close presentation where applicable. The new
@@ -1152,9 +1153,11 @@ assertion inside an already-green lower-level test.
 ## 25. Completion state
 
 **Milestone reached and closed.** The accepted implementation is on `main`,
-the focused regression gate passes 52 tests, and the final live GUI pass was
-accepted after exercising continuous playback, TWO UP → ONE retreat, pane
-recall, lookahead warming, and scrub crossings.
+the residency-focused regression gate passed 52 tests, and the live GUI pass
+was accepted after exercising continuous playback, TWO UP → ONE retreat, pane
+recall, lookahead warming, and scrub crossings. The later COME IN ON /
+LAYOUT_START workflow correction is a post-milestone authoring fix and requires
+a fresh gate before its head is marked accepted.
 
 The completed milestone leaves R3nder with:
 
