@@ -185,6 +185,30 @@ class MosaicLayoutActiveSegment {
     return MosaicLayoutPresence.present;
   }
 
+  /// A surviving pane morphing between FULL and an ordinary window owns the
+  /// front layer for the whole morph. Switching at the generic midpoint makes
+  /// the smaller TWO UP peer briefly paint over a window that is visibly
+  /// shrinking from, or expanding toward, full frame.
+  bool get holdsFullMorphFrontLayer {
+    return startPresence != MosaicLayoutPresence.absent &&
+        targetPresence != MosaicLayoutPresence.absent &&
+        (startZ.band == MosaicLayoutZBand.fullTarget ||
+            targetZ.band == MosaicLayoutZBand.fullTarget);
+  }
+
+  MosaicLayoutZ zAt(int frame) {
+    if (holdsFullMorphFrontLayer) {
+      final MosaicLayoutZ full =
+          targetZ.band == MosaicLayoutZBand.fullTarget ? targetZ : startZ;
+      return MosaicLayoutZ(
+        band: MosaicLayoutZBand.fullTarget,
+        roleRank: full.roleRank,
+        actorOrdinal: full.actorOrdinal,
+      );
+    }
+    return frame < zSwitchFrame ? startZ : targetZ;
+  }
+
   @override
   bool operator ==(Object other) {
     return other is MosaicLayoutActiveSegment &&
@@ -852,7 +876,7 @@ class _ResolvedActorState {
         segment.targetChrome,
         eased,
       ),
-      z: frame < segment.zSwitchFrame ? segment.startZ : segment.targetZ,
+      z: segment.zAt(frame),
       activeSegment: segment,
     );
   }
