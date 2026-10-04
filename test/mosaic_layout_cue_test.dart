@@ -62,6 +62,118 @@ void main() {
     expect(cues.single.sourceSpan, isNotNull);
   });
 
+  test('parses OVERVIEW MAIN, ordered OTHERS, and cue-local ASPECT', () {
+    const String source = '''[MOSAIC:wall]
+  [LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,third:ASPECT=4X3:DUR=18]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+  [PANE:right]
+    [CLIP:r:video/right.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+  [PANE:third]
+    [CLIP:t:video/third.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final MosaicSequence mosaic = model.mosaic('wall');
+    final MosaicLayoutCue cue =
+        parseMosaicLayoutCues(source: source, mosaic: mosaic).single;
+
+    expect(cue.state.kind, MosaicLayoutStateKind.overview);
+    expect(cue.state.overviewMain, 'left');
+    expect(cue.state.overviewOthers, <String>['right', 'third']);
+    expect(cue.state.splitAspect, MosaicSplitClientAspect.aspect4x3);
+    expect(cue.durationFrames, 18);
+    expect(
+      cue.formatTag(),
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,third:ASPECT=4X3:DUR=18]',
+    );
+  });
+
+  test('LAYOUT_START accepts OVERVIEW as a first-class stable state', () {
+    final String source = baseSource.replaceFirst(
+      '[MOSAIC:wall]\n',
+      '[MOSAIC:wall]\n'
+          '  [LAYOUT_START:OVERVIEW:MAIN=left:OTHERS=right,third]\n',
+    );
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final MosaicLayoutStart start = parseMosaicLayoutStart(
+      source: source,
+      mosaic: model.mosaic('wall'),
+    )!;
+
+    expect(start.state.kind, MosaicLayoutStateKind.overview);
+    expect(start.state.overviewMain, 'left');
+    expect(start.state.overviewOthers, <String>['right', 'third']);
+    expect(
+      start.formatTag(),
+      '[LAYOUT_START:OVERVIEW:MAIN=left:OTHERS=right,third]',
+    );
+  });
+
+  test('OVERVIEW parser rejects duplicate, repeated-main, and bad counts', () {
+    String sourceWith(String tag) => baseSource.replaceFirst(
+          '[MOSAIC:wall]\n',
+          '[MOSAIC:wall]\n  $tag\n',
+        );
+
+    for (final String tag in <String>[
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,right]',
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=left,third]',
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right]',
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,third,left,extra]',
+    ]) {
+      final String source = sourceWith(tag);
+      final EditDocumentModel model = EditDocumentModel.parse(source);
+      expect(
+        () => parseMosaicLayoutCues(
+          source: source,
+          mosaic: model.mosaic('wall'),
+        ),
+        throwsA(isA<MosaicLayoutFormatException>()),
+        reason: tag,
+      );
+    }
+  });
+
+  test('OVERVIEW semantic validation requires at least three MOSAIC panes', () {
+    const String source = '''[MOSAIC:wall]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+  [PANE:right]
+    [CLIP:r:video/right.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+    final MosaicSequence mosaic = EditDocumentModel.parse(source).mosaic('wall');
+    final MosaicLayoutValidationResult validation = validateMosaicLayoutCues(
+      mosaic: mosaic,
+      cues: <MosaicLayoutCue>[
+        MosaicLayoutCue(
+          frame: 30,
+          state: MosaicLayoutState.overview(
+            mainPane: 'left',
+            others: const <String>['right', 'third'],
+          ),
+        ),
+      ],
+    );
+
+    expect(
+      validation.errors.map((MosaicLayoutIssue issue) => issue.code),
+      contains(MosaicLayoutIssueCode.overviewNeedsThreePanes),
+    );
+  });
+
   test('parses LAYOUT_START separately from timeline cues', () {
     const String source = '''[MOSAIC:wall]
   [LAYOUT_START:TWOUP:A=left:B=third:MAX:ASPECT=4X3]
