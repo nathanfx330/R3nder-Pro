@@ -438,6 +438,47 @@ void main() {
   });
 
   group('OVERVIEW matrix', () {
+    test('two-pane OVERVIEW is MAIN plus one silent shelf thumbnail', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B]''',
+          paneCount: 2)
+          .resolve(context());
+
+      final MosaicLayoutFrame frame = resolved.evaluate(0);
+      final MosaicOverviewGeometry geometry = overviewGeometry(
+        thumbnailCount: 1,
+      );
+
+      expect(frame.pane('A').rect, geometry.mainWindowRect);
+      expect(frame.pane('A').chrome, 1.0);
+      expect(frame.pane('A').labelOpacity, 0.0);
+      expect(frame.pane('B').rect, geometry.thumbnailRects.single);
+      expect(frame.pane('B').chrome, 0.0);
+      expect(frame.pane('B').labelRect, geometry.labelRects.single);
+      expect(frame.pane('B').labelOpacity, 1.0);
+      expect(resolved.paneAudioFrame('A', sourceFrame: 0).gain, 1.0);
+      expect(resolved.paneAudioFrame('B', sourceFrame: 0).gain, 0.0);
+      expect(frame.paintActors.last.actorId.paneId, 'A');
+    });
+
+    test('two-pane OVERVIEW MAIN swap promotes the incoming focal pane', () {
+      final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B]
+  [LAYOUT:100:OVERVIEW:MAIN=B:OTHERS=A:DUR=12]''',
+          paneCount: 2)
+          .resolve(context());
+
+      final MosaicLayoutFrame start = resolved.evaluate(100);
+      expect(start.pane('A').activeSegment!.startDominant, isTrue);
+      expect(start.pane('A').activeSegment!.targetDominant, isFalse);
+      expect(start.pane('A').dominantMorphPriority, 1);
+      expect(start.pane('B').activeSegment!.targetDominant, isTrue);
+      expect(start.pane('B').dominantMorphPriority, 2);
+      expect(start.paintActors.last.actorId.paneId, 'B');
+      expect(start.pane('A').activeSegment!.targetAudioGain, 0.0);
+      expect(start.pane('B').activeSegment!.targetAudioGain, 1.0);
+    });
+
     test('LAYOUT_START OVERVIEW settles MAIN +2 with MAIN-only audio', () {
       final MosaicResolvedLayoutProgram resolved = programFor('''
   [LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B,C]''').resolve(context());
