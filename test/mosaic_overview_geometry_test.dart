@@ -9,6 +9,10 @@ import 'package:r3nder/mosaic_split_geometry.dart';
 void main() {
   const Rect frame = Rect.fromLTWH(0, 0, 1920, 1080);
   const double titleHeight = 38.0;
+  // The shared painter consumes floating-point rects directly; there is no
+  // canonical pixel-snapping authority to compare against. Keep this tolerance
+  // only for floating arithmetic noise. Never raise it to make an overlap
+  // failure pass.
   const double overlapAreaTolerance = 0.000001;
 
   double area(Rect rect) =>
@@ -92,6 +96,30 @@ void main() {
       });
     }
   }
+
+  test('portrait 16:9 thumbnails keep labels attached', () {
+    const Rect portraitFrame = Rect.fromLTWH(0, 0, 1080, 1920);
+
+    for (final int thumbnailCount in <int>[1, 2, 3]) {
+      final MosaicOverviewGeometry geometry = mosaicOverviewGeometry(
+        frame: portraitFrame,
+        aspect: MosaicSplitClientAspect.aspect16x9,
+        titleHeight: titleHeight,
+        thumbnailCount: thumbnailCount,
+      );
+
+      for (int i = 0; i < thumbnailCount; i++) {
+        final Rect thumb = geometry.thumbnailRects[i];
+        final Rect label = geometry.labelRects[i];
+        expect(
+          label.top - thumb.bottom,
+          closeTo(8.0, 0.000001),
+          reason: 'label $i detached for portrait +$thumbnailCount',
+        );
+        expect(label.bottom, lessThanOrEqualTo(geometry.thumbnailStripRect.bottom));
+      }
+    }
+  });
 
   test('portrait OVERVIEW keeps MAIN and +3 shelf vertically separated', () {
     final MosaicOverviewGeometry geometry = mosaicOverviewGeometry(

@@ -122,8 +122,8 @@ MosaicOverviewGeometry mosaicOverviewGeometry({
 
   final List<Rect> thumbnails = <Rect>[];
   final List<Rect> labels = <Rect>[];
-  final double labelTop = thumbnailStripRect.bottom - labelHeight;
-  final double imageAreaBottom = labelTop - labelGap;
+  final double imageAreaBottom =
+      thumbnailStripRect.bottom - labelGap - labelHeight;
   final double imageAreaTop = thumbnailStripRect.top;
   for (int index = 0; index < thumbnailCount; index++) {
     final double slotLeft =
@@ -142,7 +142,7 @@ MosaicOverviewGeometry mosaicOverviewGeometry({
     labels.add(
       Rect.fromLTWH(
         left,
-        labelTop,
+        top + thumbnailSize.height + labelGap,
         thumbnailSize.width,
         labelHeight,
       ),

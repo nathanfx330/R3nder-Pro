@@ -89,6 +89,7 @@ MosaicLayoutFrame structuralMosaicLayoutOuterFrame({
               labelOpacity: actor.labelOpacity * opacity,
               chrome: actor.chrome,
               z: actor.z,
+              windowTitleSlot: actor.windowTitleSlot,
               activeSegment: actor.activeSegment,
             );
           })(),
