@@ -70,7 +70,49 @@ MosaicLayoutFrame _frameFor(
   return program.resolve(context).evaluate(0);
 }
 
+const String _twoPaneNamedSource = '''[MOSAIC:wall]
+[LAYOUT_START:OVERVIEW:MAIN=A:OTHERS=B]
+[PANE:A]
+[CLIP:a:video/a.mp4:0:0:120:1]
+[/CLIP]
+[/PANE]
+[PANE:B]
+[CLIP:b:video/b.mp4:0:0:120:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:PANENAMES:NAME1="Camera B":OVERLAY=NONE]
+''';
+
 void main() {
+  test('two-pane OVERVIEW keeps normal MAIN chrome title semantics', () {
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(_twoPaneNamedSource).single;
+    final MosaicLayoutFrame frame =
+        _frameFor(_twoPaneNamedSource, placement);
+    final Map<MosaicLayoutActorId, String> titles =
+        structuralMosaicLayoutWindowTitles(
+      frame: frame,
+      placement: placement,
+    );
+    final Map<MosaicLayoutActorId, String> labels =
+        structuralMosaicLayoutPaneLabels(
+      frame: frame,
+      placement: placement,
+    );
+
+    expect(
+      titles[frame.pane('A').actorId],
+      placement.effectiveWindowTitle,
+    );
+    expect(
+      titles[frame.pane('B').actorId],
+      placement.effectiveWindowTitle,
+    );
+    expect(labels[frame.pane('A').actorId], isNull);
+    expect(labels[frame.pane('B').actorId], 'Camera B');
+  });
+
   test('OVERVIEW shelf labels reuse placement slot naming authority', () {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_namedSource).single;

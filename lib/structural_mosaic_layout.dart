@@ -132,7 +132,15 @@ Map<MosaicLayoutActorId, String> structuralMosaicLayoutWindowTitles({
             actor.actorId.kind == MosaicLayoutActorKind.pane,
       )
       .toList(growable: false);
-  if (paneActors.length != 2) return titles;
+  final bool hasOverviewLabelIntent =
+      paneActors.any((MosaicLayoutActorFrame actor) {
+    final MosaicLayoutActiveSegment? segment = actor.activeSegment;
+    return actor.labelOpacity > 0.0 ||
+        (segment != null &&
+            (segment.startLabelOpacity > 0.0 ||
+                segment.targetLabelOpacity > 0.0));
+  });
+  if (paneActors.length != 2 || hasOverviewLabelIntent) return titles;
 
   Rect slotRect(MosaicLayoutActorFrame actor) {
     final MosaicLayoutActiveSegment? segment = actor.activeSegment;
