@@ -41,6 +41,21 @@ const String _audioDocument = '''[SPEED:MAX]
 [STRUCT:EDIT.main:AUDIO]
 ''';
 
+const String _invalidMosaicLayoutAudioDocument = '''[SPEED:MAX]
+[MOSAIC:wall]
+[LAYOUT_START:OVERVIEW:MAIN=pane1:OTHERS=missing]
+[PANE:pane1]
+[CLIP:a:video/a.mp4:0:0:3:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:b:video/b.mp4:0:0:3:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:AUDIO]
+''';
+
 const String _silentDocument = '''[SPEED:MAX]
 [EDIT:main]
 [TRACK:V1]
@@ -170,6 +185,63 @@ void main() {
 
     ready.delete();
     expect(File(ready.path).existsSync(), isFalse);
+  });
+
+  testWidgets(
+      'layout planning failure aborts preview artifact with named diagnostic',
+      (WidgetTester tester) async {
+    final Directory root =
+        Directory.systemTemp.createTempSync('r3_struct_preview_plan_error_');
+    final Directory images = Directory('${root.path}/images')..createSync();
+    final Directory sprites = Directory('${root.path}/sprites')..createSync();
+    final Directory temp = Directory('${root.path}/preview')..createSync();
+    final SceneEngine scene = SceneEngine();
+    addTearDown(() {
+      scene.disposeImages();
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    await _setupScene(
+      tester,
+      scene,
+      _invalidMosaicLayoutAudioDocument,
+      images,
+      sprites,
+    );
+
+    await expectLater(
+      tester.runAsync<ProgramStructuralAudioPreviewArtifact?>(
+        () => prepareProgramStructuralAudioPreviewArtifact(
+          scene: scene,
+          rawDocument: _invalidMosaicLayoutAudioDocument,
+          resolveSource: (String source) => '${root.path}/$source',
+          tempDirectory: temp.path,
+        ),
+      ),
+      throwsA(
+        isA<StructuralAudioPlanException>()
+            .having(
+              (StructuralAudioPlanException error) => error.message,
+              'message',
+              contains('MOSAIC "MOSAIC.wall"'),
+            )
+            .having(
+              (StructuralAudioPlanException error) => error.message,
+              'message',
+              contains('planning audio'),
+            ),
+      ),
+    );
+
+    expect(
+      temp
+          .listSync()
+          .whereType<File>()
+          .where((File file) =>
+              file.path.contains('.r3nder_struct_preview_audio_')),
+      isEmpty,
+    );
+    expect(scene.frameCount, 0);
   });
 
   testWidgets('document without AUDIO skips decode and creates no temp WAV',
