@@ -209,28 +209,33 @@ void main() {
       sprites,
     );
 
-    await expectLater(
-      tester.runAsync<ProgramStructuralAudioPreviewArtifact?>(
-        () => prepareProgramStructuralAudioPreviewArtifact(
+    Object? caught;
+    await tester.runAsync<void>(() async {
+      try {
+        await prepareProgramStructuralAudioPreviewArtifact(
           scene: scene,
           rawDocument: _invalidMosaicLayoutAudioDocument,
           resolveSource: (String source) => '${root.path}/$source',
           tempDirectory: temp.path,
-        ),
-      ),
-      throwsA(
-        isA<StructuralAudioPlanException>()
-            .having(
-              (StructuralAudioPlanException error) => error.message,
-              'message',
-              contains('Structural audio planning for "MOSAIC.wall"'),
-            )
-            .having(
-              (StructuralAudioPlanException error) => error.message,
-              'message',
-              contains('planning audio'),
-            ),
-      ),
+        );
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    expect(
+      caught,
+      isA<StructuralAudioPlanException>()
+          .having(
+            (StructuralAudioPlanException error) => error.message,
+            'message',
+            contains('Structural audio planning for "MOSAIC.wall"'),
+          )
+          .having(
+            (StructuralAudioPlanException error) => error.message,
+            'message',
+            contains('planning audio'),
+          ),
     );
 
     expect(
