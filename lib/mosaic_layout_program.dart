@@ -135,6 +135,15 @@ enum MosaicLayoutOpacityCurve {
   shellEntry,
 }
 
+/// Placement-owned title suffix role for a pane actor.
+///
+/// This is semantic resolver state, not geometry inference. TWOUP assigns the
+/// two slots. OVERVIEW, ONE, FULL, COMPOSITE, and absent actors assign none.
+enum MosaicLayoutWindowTitleSlot {
+  first,
+  second,
+}
+
 class MosaicLayoutActiveSegment {
   final int startFrame;
   final int durationFrames;
@@ -166,6 +175,9 @@ class MosaicLayoutActiveSegment {
   final bool startDominant;
   final bool targetDominant;
 
+  final MosaicLayoutWindowTitleSlot? startWindowTitleSlot;
+  final MosaicLayoutWindowTitleSlot? targetWindowTitleSlot;
+
   final MosaicLayoutOpacityCurve opacityCurve;
 
   const MosaicLayoutActiveSegment({
@@ -190,6 +202,8 @@ class MosaicLayoutActiveSegment {
     required this.targetPresence,
     required this.startDominant,
     required this.targetDominant,
+    this.startWindowTitleSlot,
+    this.targetWindowTitleSlot,
     required this.opacityCurve,
   }) : assert(durationFrames > 1),
        assert(startLabelOpacity >= 0.0 && startLabelOpacity <= 1.0),
@@ -265,6 +279,8 @@ class MosaicLayoutActiveSegment {
         other.targetPresence == targetPresence &&
         other.startDominant == startDominant &&
         other.targetDominant == targetDominant &&
+        other.startWindowTitleSlot == startWindowTitleSlot &&
+        other.targetWindowTitleSlot == targetWindowTitleSlot &&
         other.opacityCurve == opacityCurve;
   }
 
@@ -291,6 +307,8 @@ class MosaicLayoutActiveSegment {
         targetPresence,
         startDominant,
         targetDominant,
+        startWindowTitleSlot,
+        targetWindowTitleSlot,
         opacityCurve,
       ]);
 
@@ -316,6 +334,8 @@ class MosaicLayoutActiveSegment {
         'targetPresence': targetPresence.name,
         'startDominant': startDominant,
         'targetDominant': targetDominant,
+        'startWindowTitleSlot': startWindowTitleSlot?.name,
+        'targetWindowTitleSlot': targetWindowTitleSlot?.name,
         'opacityCurve': opacityCurve.name,
       };
 }
@@ -329,6 +349,7 @@ class MosaicLayoutActorFrame {
   final double labelOpacity;
   final double chrome;
   final MosaicLayoutZ z;
+  final MosaicLayoutWindowTitleSlot? windowTitleSlot;
   final MosaicLayoutActiveSegment? activeSegment;
 
   const MosaicLayoutActorFrame({
@@ -340,6 +361,7 @@ class MosaicLayoutActorFrame {
     this.labelOpacity = 0.0,
     required this.chrome,
     required this.z,
+    this.windowTitleSlot,
     required this.activeSegment,
   });
 
@@ -360,6 +382,7 @@ class MosaicLayoutActorFrame {
         other.labelOpacity == labelOpacity &&
         other.chrome == chrome &&
         other.z == z &&
+        other.windowTitleSlot == windowTitleSlot &&
         other.activeSegment == activeSegment;
   }
 
@@ -373,6 +396,7 @@ class MosaicLayoutActorFrame {
         labelOpacity,
         chrome,
         z,
+        windowTitleSlot,
         activeSegment,
       );
 
@@ -385,6 +409,7 @@ class MosaicLayoutActorFrame {
         'labelOpacity': labelOpacity,
         'chrome': chrome,
         'z': z.toJson(),
+        'windowTitleSlot': windowTitleSlot?.name,
         'activeSegment': activeSegment?.toJson(),
       };
 }
@@ -1085,6 +1110,7 @@ class _TerminalCondition {
   final double restingLabelOpacity;
   final MosaicLayoutZ restingZ;
   final bool dominant;
+  final MosaicLayoutWindowTitleSlot? restingWindowTitleSlot;
 
   const _TerminalCondition({
     required this.included,
@@ -1095,10 +1121,18 @@ class _TerminalCondition {
     required this.restingLabelOpacity,
     required this.restingZ,
     required this.dominant,
+    this.restingWindowTitleSlot,
   }) : assert(!dominant || included, 'dominant requires inclusion'),
        assert(restingAudioGain >= 0.0 && restingAudioGain <= 1.0),
        assert(restingLabelOpacity >= 0.0 && restingLabelOpacity <= 1.0);
 
+  /// Terminal equality is reconciliation authority.
+  ///
+  /// Dominance must remain part of equality: removing it can allow a focal
+  /// ownership change to CONTINUE instead of REDIRECT, so global ownership
+  /// uniqueness would have to be re-established by another explicit mechanism.
+  /// Window-title slot is included for the same reason: presentation-role
+  /// changes are semantic endpoint changes, not geometry.
   @override
   bool operator ==(Object other) {
     return other is _TerminalCondition &&
@@ -1109,7 +1143,8 @@ class _TerminalCondition {
         other.restingLabelRect == restingLabelRect &&
         other.restingLabelOpacity == restingLabelOpacity &&
         other.restingZ == restingZ &&
-        other.dominant == dominant;
+        other.dominant == dominant &&
+        other.restingWindowTitleSlot == restingWindowTitleSlot;
   }
 
   @override
@@ -1122,6 +1157,7 @@ class _TerminalCondition {
         restingLabelOpacity,
         restingZ,
         dominant,
+        restingWindowTitleSlot,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -1133,6 +1169,7 @@ class _TerminalCondition {
         'restingLabelOpacity': restingLabelOpacity,
         'restingZ': restingZ.toJson(),
         'dominant': dominant,
+        'restingWindowTitleSlot': restingWindowTitleSlot?.name,
       };
 }
 
@@ -1147,6 +1184,7 @@ class _ResolvedActorState {
   final double audioGain;
   final double chrome;
   final MosaicLayoutZ z;
+  final MosaicLayoutWindowTitleSlot? windowTitleSlot;
   final MosaicLayoutActiveSegment? activeSegment;
 
   const _ResolvedActorState({
@@ -1160,6 +1198,7 @@ class _ResolvedActorState {
     required this.audioGain,
     required this.chrome,
     required this.z,
+    required this.windowTitleSlot,
     required this.activeSegment,
   });
 
@@ -1179,6 +1218,7 @@ class _ResolvedActorState {
         audioGain: terminal.restingAudioGain,
         chrome: 0.0,
         z: terminal.restingZ,
+        windowTitleSlot: terminal.restingWindowTitleSlot,
         activeSegment: null,
       );
     }
@@ -1194,6 +1234,7 @@ class _ResolvedActorState {
       audioGain: terminal.restingAudioGain,
       chrome: terminal.restingChrome,
       z: terminal.restingZ,
+      windowTitleSlot: terminal.restingWindowTitleSlot,
       activeSegment: null,
     );
   }
@@ -1256,6 +1297,8 @@ class _ResolvedActorState {
       segment.targetAudioGain,
       opacityProgress,
     );
+    final MosaicLayoutWindowTitleSlot? windowTitleSlot =
+        segment.startWindowTitleSlot ?? segment.targetWindowTitleSlot;
 
     return _ResolvedActorState(
       actorId: actorId,
@@ -1272,6 +1315,7 @@ class _ResolvedActorState {
         eased,
       ),
       z: segment.zAt(frame),
+      windowTitleSlot: windowTitleSlot,
       activeSegment: segment,
     );
   }
@@ -1285,6 +1329,7 @@ class _ResolvedActorState {
         labelOpacity: labelOpacity,
         chrome: chrome,
         z: z,
+        windowTitleSlot: windowTitleSlot,
         activeSegment: activeSegment,
       );
 
@@ -1293,6 +1338,7 @@ class _ResolvedActorState {
         'labelRect': _rectJson(labelRect),
         'labelOpacity': labelOpacity,
         'audioGain': audioGain,
+        'windowTitleSlot': windowTitleSlot?.name,
         'frame': toFrame().toJson(),
       };
 }
@@ -1407,6 +1453,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           actorOrdinal: actorA.actorOrdinal,
         ),
         dominant: false,
+        restingWindowTitleSlot: MosaicLayoutWindowTitleSlot.first,
       );
       out[actorB] = _TerminalCondition(
         included: true,
@@ -1424,6 +1471,7 @@ Map<MosaicLayoutActorId, _TerminalCondition> _terminalConditionsForTarget({
           actorOrdinal: actorB.actorOrdinal,
         ),
         dominant: false,
+        restingWindowTitleSlot: MosaicLayoutWindowTitleSlot.second,
       );
       break;
 
@@ -1627,6 +1675,8 @@ _ResolvedActorState _createActor({
     targetPresence: MosaicLayoutPresence.present,
     startDominant: false,
     targetDominant: desired.dominant,
+    startWindowTitleSlot: null,
+    targetWindowTitleSlot: desired.restingWindowTitleSlot,
     opacityCurve: MosaicLayoutOpacityCurve.shellEntry,
   );
 
@@ -1641,6 +1691,7 @@ _ResolvedActorState _createActor({
     audioGain: 0.0,
     chrome: desired.restingChrome,
     z: segment.startZ,
+    windowTitleSlot: desired.restingWindowTitleSlot,
     activeSegment: segment,
   );
 }
@@ -1721,6 +1772,8 @@ _ResolvedActorState _redirectActor({
     targetPresence: targetPresence,
     startDominant: startDominant,
     targetDominant: desired.dominant,
+    startWindowTitleSlot: old.windowTitleSlot,
+    targetWindowTitleSlot: desired.restingWindowTitleSlot,
     opacityCurve: MosaicLayoutOpacityCurve.easedLerp,
   );
 
@@ -1735,6 +1788,7 @@ _ResolvedActorState _redirectActor({
     audioGain: old.audioGain,
     chrome: old.chrome,
     z: old.z,
+    windowTitleSlot: old.windowTitleSlot,
     activeSegment: segment,
   );
 }
