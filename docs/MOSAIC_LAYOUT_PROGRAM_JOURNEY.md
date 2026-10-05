@@ -1212,7 +1212,142 @@ assertion inside an already-green lower-level test.
 
 ---
 
-## 25. Completion state
+## 25. Post-merge focal dominance, audio intent, and OVERVIEW
+
+The next MOSAIC layout work generalized two assumptions that had become too
+narrow.
+
+### Focal ownership became an explicit semantic fact
+
+The old FULL-specific front-layer helper was removed rather than preserved
+under a new name. Terminal states now declare whether a pane is focal:
+
+```text
+COMPOSITE       no dominant pane
+TWOUP           no dominant pane
+ONE             selected pane dominant
+FULL            selected pane dominant
+OVERVIEW        MAIN dominant
+```
+
+An active segment resolves focal paint ownership with this precedence:
+
+```text
+target dominance
+    >
+start dominance
+    >
+ordinary z
+```
+
+Target dominance is eligible only while the actor remains target-present. A
+former focal pane exiting toward absence therefore loses focal priority
+immediately, while a pane becoming MAIN owns the front from the first frame of
+the morph.
+
+This replaced the earlier FULL-morph exception without changing its visible
+contract. The pre-existing FULL transition tests kept their behavioral
+assertions that the focal pane remained the last painted actor; only assertions
+about the old implementation mechanism changed.
+
+Same-band `roleRank` has a separate job. It describes paint order inside a
+settled peer arrangement, so a surviving actor keeps its source role rank for
+the active morph and adopts the target role at settlement. It is not used as a
+proxy for focal ownership.
+
+Interruption snapshots one globally resolved current owner. Raw
+`startDominant` endpoint facts may still exist on an old target-absent CONTINUE
+segment, but target-presence gating makes those facts inert. The executable
+invariant is therefore about the resolved active owner, not the raw count of
+all stored start endpoints.
+
+The equality definition of the terminal condition is load-bearing. In
+particular, `dominant` must remain part of terminal equality. If a future
+refactor removes it, the resolver must explicitly re-establish global focal
+ownership uniqueness or a focal change could incorrectly CONTINUE instead of
+REDIRECT.
+
+### Resting audio intent became independent from visual opacity
+
+The resolver now carries resting pane-audio gain as a terminal fact and
+start/target audio gain on active segments. Existing layouts were initialized
+to reproduce the old opacity-derived envelopes exactly.
+
+CREATE uses the structural shell's opacity progress authority. Redirect and
+exit segments use the existing eased opacity progress. Audio therefore follows
+the same segment timing without deriving semantic audibility from final paint
+opacity. This separation is what lets OVERVIEW keep thumbnails visually
+present and continuously clocked while their resting gain is zero.
+
+### OVERVIEW added focal plus shelf presentation
+
+OVERVIEW is first-class MOSAIC state syntax:
+
+```text
+[LAYOUT_START:OVERVIEW:MAIN=pane1:OTHERS=pane2]
+[LAYOUT:300:OVERVIEW:MAIN=pane1:OTHERS=pane2,pane3:ASPECT=4X3:DUR=12]
+```
+
+`MAIN=` is the focal pane. `OTHERS=` is an ordered, explicit left-to-right
+thumbnail list. The shipped range is one to three thumbnails, so a two-pane
+MOSAIC can present one large MAIN with one small live pane underneath, while a
+four-pane MOSAIC can present MAIN plus three thumbnails. MAIN may not be
+repeated in OTHERS and OTHERS may not contain duplicates.
+
+OVERVIEW uses the existing authored client-aspect enum for MAIN and thumbnails.
+It does not inspect media aspect. MAIN has normal window chrome, focal
+dominance, and resting gain 1. Thumbnails are chrome-free, non-dominant, and
+rest at gain 0 while continuing on the shared source clock.
+
+Supporting MAIN plus three thumbnails required the MOSAIC source model itself
+to accept four panes. Legacy COMPOSITE geometry therefore extends its existing
+hero-plus-stack pattern to hero plus a three-item vertical stack rather than
+making a four-pane source valid only inside OVERVIEW.
+
+### Thumbnail labels are geometry, not a second actor
+
+Each OVERVIEW thumbnail owns a reserved label rectangle carried on the same
+actor frame. Preview and BAKE paint labels through the shared actor painter.
+The label rectangle exists even when names are disabled, so naming cannot move
+video geometry.
+
+Labels are anchored directly below each thumbnail with the authored label gap.
+This matters on portrait output: a wide 16:9 thumbnail may be width-limited and
+much shorter than the shelf's available image region, so pinning labels to the
+bottom of the shelf would visually detach them from the image.
+
+The resting-peer disjointness tests intentionally use a tiny floating-area
+tolerance of `1e-6`. There is no canonical pixel-snapping authority in this
+paint path; the shared painter consumes floating-point rects directly. The
+tolerance exists only for floating arithmetic noise and must never be raised to
+make a genuine overlap failure pass.
+
+### Window-title roles are explicit too
+
+TWOUP placement names are no longer inferred by sorting window geometry, and
+OVERVIEW is no longer detected indirectly from label opacity. The resolver
+carries an explicit nullable window-title slot endpoint:
+
+```text
+TWOUP A       slot 1
+TWOUP B       slot 2
+everything else
+              no slot
+```
+
+A source title slot remains active through a transition until settlement; an
+actor created directly into TWOUP can take its target slot immediately. This
+keeps TWOUP-to-OVERVIEW from dropping both slot suffixes on the first morph
+frame and prevents future states that happen to use labels from silently
+changing title behavior.
+
+This follows the same architectural rule as focal dominance and audio intent:
+presentation meaning is represented directly rather than inferred from an
+unrelated field.
+
+---
+
+## 26. Completion state
 
 **Milestone reached and closed.** The accepted implementation is on `main`.
 The residency-focused regression gate first closed at 52 tests with successful
@@ -1229,7 +1364,7 @@ The completed milestone leaves R3nder with:
 
 - reusable source-relative MOSAIC LAYOUT cues;
 - first-class COME IN ON / LAYOUT_START opening state;
-- COMPOSITE, TWO UP, ONE, and FULL states;
+- COMPOSITE, TWO UP, OVERVIEW, ONE, and FULL states;
 - explicit pane assignment;
 - 16:9 / 4:3 / 9:16 split geometry;
 - MAX;
@@ -1246,8 +1381,10 @@ The completed milestone leaves R3nder with:
 - layout-aware MOSAIC editor viewer;
 - layout-aware TEXT/STRUCT Preview;
 - node-mode ownership that distinguishes dynamic layout from legacy SPLIT;
-- dynamic placement-owned window-slot naming;
-- FULL-morph front-layer depth;
+- explicit placement-owned window-title slot semantics;
+- generalized focal dominance with target-over-start precedence;
+- OVERVIEW MAIN plus one to three live thumbnails;
+- four-pane MOSAIC source support;
 - layout-driven MOSAIC pane audio derived from the same resolved actor program as picture;
 - pane-audio gain that follows visual transition segments instead of hard-switching at cue boundaries;
 - a pinned 5 ms declick for true DUR=0/1 layout edges;
@@ -1268,7 +1405,8 @@ architecture.
 The most important final rule is now broader than picture alone:
 
 > At source frame F, authored MOSAIC state plus placement context fully determine
-> both the visual actor arrangement and the pane-audio presentation state.
+> the visual actor arrangement, focal ownership, title role, label geometry,
+> and pane-audio presentation state.
 
 Decode readiness, UI lifecycle, playback direction, cache lifetime, and whether
 the frame is live or being baked are downstream of that semantic authority.
