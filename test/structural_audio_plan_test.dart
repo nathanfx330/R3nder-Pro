@@ -286,7 +286,7 @@ void main() {
               .having(
                 (StructuralAudioPlanException error) => error.message,
                 'message',
-                contains('MOSAIC "MOSAIC.wall"'),
+                contains('Structural audio planning for "MOSAIC.wall"'),
               )
               .having(
                 (StructuralAudioPlanException error) => error.message,

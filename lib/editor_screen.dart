@@ -1310,6 +1310,9 @@ class _EditorScreenState extends State<EditorScreen> {
     try {
       structuralStarted = await _startStructuralProgramAudioAt(startFrame);
     } on StructuralAudioPlanException catch (error) {
+      // A semantic planning failure is not a transport outage. Continuing on
+      // the legacy bed path here would make authored STRUCT clip audio vanish
+      // while picture playback appeared valid, so abort this play attempt.
       if (generation == _playGeneration && mounted) {
         _startingTextPlayback = false;
         _structuralAudioOwnsRun = false;

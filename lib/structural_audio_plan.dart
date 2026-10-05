@@ -546,7 +546,7 @@ class StructuralAudioPlanner {
       );
     } on StateError catch (error) {
       throw StructuralAudioPlanException(
-        'MOSAIC "${ref.canonicalSource}" layout validation failed while '
+        'Structural audio planning for "${ref.canonicalSource}" failed layout validation while '
         'planning audio: $error',
       );
     }
@@ -566,7 +566,7 @@ class StructuralAudioPlanner {
       resolved = program.resolveForStructuralAudio(legacySeed: legacySeed);
     } on StateError catch (error) {
       throw StructuralAudioPlanException(
-        'MOSAIC "${ref.canonicalSource}" layout resolver failed while '
+        'Structural audio planning for "${ref.canonicalSource}" failed in the layout resolver while '
         'planning audio: $error',
       );
     }
