@@ -1444,17 +1444,22 @@ only the same two pre-existing
 `StructuralAudioSourceRenderCallback` argument-type errors and no new issue
 from this work.
 
-The reviewed cleanup and diagnostic follow-up were then merged to `main`.
-The final accepted main revision for this sequence is:
+The reviewed cleanup and initial diagnostic follow-up were then merged to
+`main` at:
 
 ```text
 335a27eb09aadeea5c0b3e9792eba9adb4f981fd
 ```
 
-A final Rocky smoke test of the merged application succeeded. The already
-accepted two-pane OVERVIEW visual remained unchanged in normal landscape
-Preview and BAKE while the resolver, title-role, label, and audio failure
-contracts underneath it became stricter.
+A later review tightened the same contract from exception-type handling to the
+origin-based layout-audio boundary described above. That follow-up deliberately
+changes no valid audio or picture output; it only broadens which failures are
+classified as semantic planning errors.
+
+A Rocky smoke test of the merged application succeeded. The already accepted
+two-pane OVERVIEW visual remained unchanged in normal landscape Preview and
+BAKE while the resolver, title-role, label, and audio failure contracts
+underneath it became stricter.
 
 ---
 
