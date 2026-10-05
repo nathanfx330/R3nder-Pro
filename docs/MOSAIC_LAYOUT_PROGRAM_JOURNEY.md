@@ -1396,9 +1396,13 @@ looked valid.
 
 ### Planning failure is now distinct from transport failure
 
-The planner now converts MOSAIC layout-validation and resolver `StateError`
-failures into a `StructuralAudioPlanException` that names the affected
-structural source. A typical diagnostic begins:
+The planner now treats the whole layout-derived audio phase as one semantic
+boundary rather than classifying failures by exception type. MOSAIC layout
+validation, resolver/geometry evaluation, and per-pane `paneAudioFrame`
+sampling all run inside that boundary. Any error raised there is converted into
+a `StructuralAudioPlanException` that names the affected structural source.
+That includes resolver `StateError` invariants, geometry `ArgumentError`
+failures, and envelope-sampling errors. A typical diagnostic begins:
 
 ```text
 Structural audio planning for "MOSAIC.wall" ...
@@ -1411,8 +1415,10 @@ authored STRUCT clip audio.
 
 Ordinary transport and backend failures retain the historical graceful
 fallback. A sink or device problem therefore does not gain semantic authority
-over the document, while an invalid resolved audio plan cannot masquerade as a
-valid silent one.
+over the document, while any failure originating in layout-derived audio
+planning cannot masquerade as a valid silent plan. Clip recursion, media
+decode, cache I/O, and transport remain outside that semantic boundary and keep
+their own failure contracts.
 
 ### The first regression failure was the test harness, not the product
 

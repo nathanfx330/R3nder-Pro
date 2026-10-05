@@ -234,7 +234,7 @@ void main() {
           .having(
             (StructuralAudioPlanException error) => error.message,
             'message',
-            contains('planning audio'),
+            contains('evaluating MOSAIC layout audio state'),
           ),
     );
 

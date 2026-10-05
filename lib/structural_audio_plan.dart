@@ -538,38 +538,50 @@ class StructuralAudioPlanner {
     StructuralAudioSourceContext sourceContext,
   ) {
     final MosaicSequence mosaic = document.mosaic(ref.id);
-    final MosaicLayoutProgram program;
+
+    // This is one semantic planning boundary, not an exception-type boundary.
+    // Validation, resolver geometry, and paneAudioFrame sampling all derive the
+    // MOSAIC presentation contribution to audio. Any failure from that phase
+    // must become a planning error so TEXT cannot mistake it for a transport
+    // outage and continue with silently missing authored clip audio.
+    //
+    // Keep _buildLane outside this try. Clip validation, structural recursion,
+    // media decode, cache I/O, and transport failures own different boundaries
+    // and must retain their existing diagnostics.
+    late final List<StructuralAudioLayoutGainEnvelope> layoutGainEnvelopes;
     try {
-      program = MosaicLayoutProgram.fromMosaic(
+      final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
         source: document.source,
         mosaic: mosaic,
       );
-    } on StateError catch (error) {
+
+      MosaicLayoutState? legacySeed;
+      if (sourceContext.legacySplitWindow && program.paneIds.length >= 2) {
+        legacySeed = MosaicLayoutState.twoUp(
+          paneA: program.paneIds[0],
+          paneB: program.paneIds[1],
+          aspect: sourceContext.legacySplitAspect,
+          maximized: sourceContext.legacyMaximizeSplit,
+        );
+      }
+
+      final MosaicResolvedLayoutProgram resolved =
+          program.resolveForStructuralAudio(legacySeed: legacySeed);
+      layoutGainEnvelopes = <StructuralAudioLayoutGainEnvelope>[
+        for (final MosaicPane pane in mosaic.panes)
+          _mosaicPaneGainEnvelope(
+            resolved: resolved,
+            paneId: pane.id,
+            durationFrames: mosaic.projectFrameCount,
+          ),
+      ];
+    } catch (error) {
       throw StructuralAudioPlanException(
-        'Structural audio planning for "${ref.canonicalSource}" failed layout validation while '
-        'planning audio: $error',
+        'Structural audio planning for "${ref.canonicalSource}" failed while '
+        'evaluating MOSAIC layout audio state: $error',
       );
     }
 
-    MosaicLayoutState? legacySeed;
-    if (sourceContext.legacySplitWindow && program.paneIds.length >= 2) {
-      legacySeed = MosaicLayoutState.twoUp(
-        paneA: program.paneIds[0],
-        paneB: program.paneIds[1],
-        aspect: sourceContext.legacySplitAspect,
-        maximized: sourceContext.legacyMaximizeSplit,
-      );
-    }
-
-    final MosaicResolvedLayoutProgram resolved;
-    try {
-      resolved = program.resolveForStructuralAudio(legacySeed: legacySeed);
-    } on StateError catch (error) {
-      throw StructuralAudioPlanException(
-        'Structural audio planning for "${ref.canonicalSource}" failed in the layout resolver while '
-        'planning audio: $error',
-      );
-    }
     final List<StructuralAudioLanePlan> lanes = <StructuralAudioLanePlan>[
       for (int i = 0; i < mosaic.panes.length; i++)
         _buildLane(
@@ -577,11 +589,7 @@ class StructuralAudioPlanner {
           laneId: mosaic.panes[i].id,
           authoredIndex: i,
           clips: mosaic.panes[i].clips,
-          layoutGainEnvelope: _mosaicPaneGainEnvelope(
-            resolved: resolved,
-            paneId: mosaic.panes[i].id,
-            durationFrames: mosaic.projectFrameCount,
-          ),
+          layoutGainEnvelope: layoutGainEnvelopes[i],
         ),
     ];
 
