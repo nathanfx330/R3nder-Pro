@@ -417,7 +417,7 @@ Choose **HARD CUT** to remove the overlap and return to contiguous timing.
 
 ## Multiple panes
 
-A 2- or 3-pane MOSAIC gives each pane its own authored timeline.
+A MOSAIC can contain up to four panes, and each pane has its own authored timeline.
 
 The pane layout controls spatial composition. The clips inside each pane control that pane's time.
 
@@ -433,8 +433,9 @@ keep advancing on the shared source clock but do not contribute to the mix.
 The GUI separates the opening condition from later transitions:
 
 * **COME IN ON** is a dropdown that authors the MOSAIC's opening presentation
-  directly. It does not create a timeline cue. Choose COMPOSITE, TWO UP, ONE,
-  or FULL; TWO UP reuses the pane/aspect/MAX configuration dialog.
+  directly. It does not create a timeline cue. Choose COMPOSITE, TWO UP,
+  OVERVIEW, ONE, or FULL. TWO UP reuses the pane/aspect/MAX configuration
+  dialog; OVERVIEW opens its MAIN/thumbnail/aspect dialog.
 * **LAYOUT CUES** authors later changes at the current playhead. Every authored
   cue remains visible in the cue lane, including a legacy frame-zero cue from an
   older project.
@@ -444,7 +445,9 @@ source-relative LAYOUT cue grammar. Direct script forms are:
 
 ```text
 [LAYOUT_START:TWOUP:A=pane1:B=pane3:ASPECT=4X3]
+[LAYOUT_START:OVERVIEW:MAIN=pane1:OTHERS=pane2]
 [LAYOUT:300:TWOUP:A=pane1:B=pane3:ASPECT=4X3:DUR=12]
+[LAYOUT:450:OVERVIEW:MAIN=pane1:OTHERS=pane2,pane3:ASPECT=16X9:DUR=12]
 [LAYOUT:600:TWOUP:A=pane1:B=pane3:MAX:DUR=12]
 [LAYOUT:900:ONE:PANE=pane1:DUR=12]
 [LAYOUT:1200:FULL:PANE=pane1:DUR=12]
@@ -458,16 +461,26 @@ The states are:
 * **COMPOSITE** — show the MOSAIC as one composite client.
 * **TWOUP** — show two pane windows. Use `A=<pane>` and `B=<pane>` to name
   them explicitly. Bare `TWOUP` means the first two panes in authored order.
+* **OVERVIEW** — show one focal MAIN window with one, two, or three smaller
+  live thumbnails underneath. `MAIN=<pane>` names the focal pane.
+  `OTHERS=<pane>[,<pane>[,<pane>]]` names thumbnails in left-to-right order.
+  MAIN and OTHERS must be distinct explicit pane ids.
 * **ONE** — show one pane in the ordinary structural window. Requires
   `PANE=<pane>`.
 * **FULL** — show one pane full frame. Requires `PANE=<pane>`.
 
-TWOUP options:
+TWOUP and OVERVIEW share the authored client-aspect options:
 
 * `ASPECT=16X9` — default when ASPECT is omitted.
 * `ASPECT=4X3`
 * `ASPECT=9X16`
+
+TWOUP alone also accepts:
+
 * `MAX` — use the horizontal-edge maximized two-window geometry.
+
+OVERVIEW uses the same authored ASPECT for MAIN and all thumbnails. It never
+derives layout aspect from the media file.
 
 Transition duration:
 
@@ -484,7 +497,9 @@ Important timing rules:
 * Hidden panes continue on the same MOSAIC source clock. Hiding a pane does not
   pause its content; it mutes that pane's contribution to the MOSAIC mix.
 * Stable layout states define the intended pane mix: COMPOSITE includes all
-  panes, TWOUP includes A/B, and ONE/FULL include only the selected pane.
+  panes, TWOUP includes A/B, OVERVIEW includes audio from MAIN only, and
+  ONE/FULL include only the selected pane. OVERVIEW thumbnails remain live on
+  the shared source clock while resting at gain 0.
 * Audio transitions are derived from the same resolved actor program as picture.
   For an animated layout change, pane gain follows the actor opacity segment, so
   a TWOUP → ONE dismissal fades while that window retreats instead of cutting at
@@ -505,8 +520,12 @@ Important timing rules:
   describes the whole placement.
 
 Window naming remains placement-owned. `PANENAMES`, `NAME1`, and `NAME2`
-name the two active TWOUP window slots (left/A and right/B). ONE and FULL use
-the base STRUCT title without a slot suffix.
+name the two active TWOUP window slots (left/A and right/B). ONE, FULL, and
+OVERVIEW MAIN use the base STRUCT title without a slot suffix. OVERVIEW
+thumbnail names are drawn below the thumbnail image: the first two shelf slots
+reuse NAME1/NAME2 when authored, and a third thumbnail falls back to `PANE 3`.
+Label space is reserved even when pane names are disabled, so toggling names
+does not move the picture.
 
 ### Trim pane endings together
 
@@ -716,6 +735,7 @@ The structural video vocabulary is:
 [MOSAIC:name]
   [LAYOUT:0:COMPOSITE]
   [LAYOUT:120:TWOUP:A=pane1:B=pane2:ASPECT=16X9:DUR=12]
+  [LAYOUT:180:OVERVIEW:MAIN=pane1:OTHERS=pane2:ASPECT=16X9:DUR=12]
   [LAYOUT:240:ONE:PANE=pane1:DUR=12]
   [LAYOUT:360:FULL:PANE=pane1:DUR=12]
   [PANE:pane1]
@@ -730,7 +750,7 @@ The structural video vocabulary is:
 
 The GUI is the preferred way to author detailed EDIT and MOSAIC geometry. LAYOUT
 directives live directly inside the MOSAIC body, use MOSAIC source frames, and
-accept COMPOSITE, TWOUP, ONE, or FULL as described in section 6. The markup
+accept COMPOSITE, TWOUP, OVERVIEW, ONE, or FULL as described in section 6. The markup
 exists so the project is inspectable, diffable, reconstructable, and not
 trapped inside widget state.
 
