@@ -28,6 +28,7 @@ import 'edit_workspace.dart';
 import 'marker_authoring.dart';
 import 'structural_sequence.dart';
 import 'structural_sequence_preview.dart';
+import 'structural_audio_plan.dart';
 import 'text_structural_audio_preview.dart';
 import 'timeline_landmark_layer.dart';
 import 'timeline_markers.dart';
@@ -947,6 +948,21 @@ class _EditorScreenState extends State<EditorScreen> {
       ));
   }
 
+  void _showStructuralAudioPlanningError(
+    StructuralAudioPlanException error,
+  ) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('STRUCT AUDIO PLANNING ERROR\n${error.message}'),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 8),
+      ));
+  }
+
   List<(int, int)> _computeAssetProblems(String text) {
     final List<(int, int)> out = [];
 
@@ -1293,6 +1309,15 @@ class _EditorScreenState extends State<EditorScreen> {
     bool structuralStarted = false;
     try {
       structuralStarted = await _startStructuralProgramAudioAt(startFrame);
+    } on StructuralAudioPlanException catch (error) {
+      if (generation == _playGeneration && mounted) {
+        _startingTextPlayback = false;
+        _structuralAudioOwnsRun = false;
+        _isPlaying = false;
+        _showStructuralAudioPlanningError(error);
+        setState(() {});
+      }
+      return;
     } catch (error) {
       if (generation == _playGeneration && mounted) {
         _toast('STRUCT audio unavailable: $error');

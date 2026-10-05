@@ -538,10 +538,18 @@ class StructuralAudioPlanner {
     StructuralAudioSourceContext sourceContext,
   ) {
     final MosaicSequence mosaic = document.mosaic(ref.id);
-    final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
-      source: document.source,
-      mosaic: mosaic,
-    );
+    final MosaicLayoutProgram program;
+    try {
+      program = MosaicLayoutProgram.fromMosaic(
+        source: document.source,
+        mosaic: mosaic,
+      );
+    } on StateError catch (error) {
+      throw StructuralAudioPlanException(
+        'MOSAIC "${ref.canonicalSource}" layout validation failed while '
+        'planning audio: $error',
+      );
+    }
 
     MosaicLayoutState? legacySeed;
     if (sourceContext.legacySplitWindow && program.paneIds.length >= 2) {
@@ -553,8 +561,15 @@ class StructuralAudioPlanner {
       );
     }
 
-    final MosaicResolvedLayoutProgram resolved =
-        program.resolveForStructuralAudio(legacySeed: legacySeed);
+    final MosaicResolvedLayoutProgram resolved;
+    try {
+      resolved = program.resolveForStructuralAudio(legacySeed: legacySeed);
+    } on StateError catch (error) {
+      throw StructuralAudioPlanException(
+        'MOSAIC "${ref.canonicalSource}" layout resolver failed while '
+        'planning audio: $error',
+      );
+    }
     final List<StructuralAudioLanePlan> lanes = <StructuralAudioLanePlan>[
       for (int i = 0; i < mosaic.panes.length; i++)
         _buildLane(

@@ -265,6 +265,38 @@ void main() {
       );
     });
 
+    test('MOSAIC layout errors surface as named audio planning errors', () {
+      const String source = '''[MOSAIC:wall]
+[LAYOUT_START:OVERVIEW:MAIN=pane1:OTHERS=missing]
+[PANE:pane1]
+[CLIP:a:video/a.mp4:0:0:10:1]
+[/CLIP]
+[/PANE]
+[PANE:pane2]
+[CLIP:b:video/b.mp4:0:0:10:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+''';
+
+      expect(
+        () => StructuralAudioPlanner.parse(source).plan('MOSAIC.wall'),
+        throwsA(
+          isA<StructuralAudioPlanException>()
+              .having(
+                (StructuralAudioPlanException error) => error.message,
+                'message',
+                contains('MOSAIC "MOSAIC.wall"'),
+              )
+              .having(
+                (StructuralAudioPlanException error) => error.message,
+                'message',
+                contains('planning audio'),
+              ),
+        ),
+      );
+    });
+
     test('crossfade geometry cannot exceed the authored clip duration', () {
       const String source = '''[EDIT:main]
 [TRACK:V1]
