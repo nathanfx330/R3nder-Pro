@@ -1345,9 +1345,114 @@ This follows the same architectural rule as focal dominance and audio intent:
 presentation meaning is represented directly rather than inferred from an
 unrelated field.
 
+
 ---
 
-## 26. Completion state
+## 26. Review closure and structural-audio diagnostics
+
+After OVERVIEW and the two-pane follow-up were visually accepted, a separate
+review pass audited the implementation for semantic shortcuts rather than new
+pixels. That review confirmed that the cleanup had moved the important
+presentation facts into the resolver itself:
+
+- focal dominance is explicit and target-end dominance wins over start-end
+  dominance;
+- TWOUP window-title slots are semantic endpoint facts rather than geometry
+  sorting or label-opacity inference;
+- OVERVIEW labels remain part of their pane actor and are anchored directly to
+  their thumbnail;
+- terminal equality keeps both dominance and window-title role because changes
+  to either fact require reconciliation rather than an accidental CONTINUE;
+- Preview catches a resolver invariant failure and renders a visible
+  `MOSAIC LAYOUT ERROR` panel instead of letting a build exception escape.
+
+One open review question remained: the structural-audio planner also consumes
+the MOSAIC resolver. A resolver invariant must not become missing clip audio
+that looks like valid playback.
+
+### The three audio consumers did not originally fail the same way
+
+Tracing `resolveForStructuralAudio` outward showed three different consumer
+boundaries.
+
+Dashboard Preview was already safe. Artifact preparation let the planner error
+propagate, Main stopped the session, restored the project clock, logged the
+failure, and showed a red Preview-audio diagnostic.
+
+BAKE was also safe. Structural-audio rendering lived inside the export error
+boundary, so a planning failure produced an unsuccessful export with a
+`Structural audio render failed` message rather than a partial successful
+movie.
+
+The source-audio cache and renderer also propagated the exception instead of
+turning it into an empty artifact.
+
+TEXT authoring was the weak path. Its broad catch treated every structural-audio
+failure like a transport outage: it showed a short
+`STRUCT audio unavailable` toast, left `structuralStarted` false, and then
+continued picture playback on the legacy bed path. A semantic layout failure
+could therefore make authored clip audio disappear while the picture still
+looked valid.
+
+### Planning failure is now distinct from transport failure
+
+The planner now converts MOSAIC layout-validation and resolver `StateError`
+failures into a `StructuralAudioPlanException` that names the affected
+structural source. A typical diagnostic begins:
+
+```text
+Structural audio planning for "MOSAIC.wall" ...
+```
+
+TEXT catches that typed planning exception separately. It clears the pending
+play state, shows an eight-second red `STRUCT AUDIO PLANNING ERROR`, and aborts
+the play attempt. It does **not** fall through to picture playback without the
+authored STRUCT clip audio.
+
+Ordinary transport and backend failures retain the historical graceful
+fallback. A sink or device problem therefore does not gain semantic authority
+over the document, while an invalid resolved audio plan cannot masquerade as a
+valid silent one.
+
+### The first regression failure was the test harness, not the product
+
+The preview-artifact regression initially wrapped
+`WidgetTester.runAsync()` in `expectLater(..., throwsA(...))`. Flutter's
+widget-test binding reported the async exception separately, while the matcher
+saw the `runAsync` future complete with null. That produced two apparent
+failures at once.
+
+The stack trace nevertheless proved the production path was already doing the
+right thing: the named `StructuralAudioPlanException` had propagated out of
+the planner.
+
+The regression was corrected to catch the exception **inside**
+`runAsync`, then assert on the captured object after the async boundary.
+No production behavior changed for that correction.
+
+### Final acceptance
+
+The final structural-audio diagnostic gate passed **23/23 tests** on Rocky.
+`flutter analyze` remained at the existing **80-issue baseline**, including
+only the same two pre-existing
+`StructuralAudioSourceRenderCallback` argument-type errors and no new issue
+from this work.
+
+The reviewed cleanup and diagnostic follow-up were then merged to `main`.
+The final accepted main revision for this sequence is:
+
+```text
+335a27eb09aadeea5c0b3e9792eba9adb4f981fd
+```
+
+A final Rocky smoke test of the merged application succeeded. The already
+accepted two-pane OVERVIEW visual remained unchanged in normal landscape
+Preview and BAKE while the resolver, title-role, label, and audio failure
+contracts underneath it became stricter.
+
+---
+
+## 27. Completion state
 
 **Milestone reached and closed.** The accepted implementation is on `main`.
 The residency-focused regression gate first closed at 52 tests with successful
@@ -1357,8 +1462,15 @@ first pane-audio follow-up then reached a 74-test focused gate and Rocky live
 acceptance. Review subsequently exposed the hard cue-boundary audio cut and the
 second-interpreter problem recorded in Failure 11. The resolver-driven audio
 correction then passed a **110-test focused Rocky gate** and a successful live
-Rocky listen, including nested EDIT gain carrying through MOSAIC. That is the
-current accepted state.
+Rocky listen, including nested EDIT gain carrying through MOSAIC. That closed
+the resolver-driven pane-audio architecture before the later focal-dominance,
+OVERVIEW, and review-cleanup sequence.
+
+The later OVERVIEW rollout added its own acceptance chain: a **151-test** full
+feature gate, a **99-test** two-pane OVERVIEW follow-up gate, a **102-test**
+post-review cleanup gate, and finally the **23-test** structural-audio
+diagnostic gate described above. The final merged application was then smoke
+tested successfully on Rocky.
 
 The completed milestone leaves R3nder with:
 
@@ -1391,6 +1503,9 @@ The completed milestone leaves R3nder with:
 - placement-owned legacy SPLIT / aspect / MAX context propagated into structural audio;
 - nested EDIT clip GAIN and MUTE preserved when the EDIT is used inside a MOSAIC pane;
 - placement-aware program-audio memoization and source-audio cache identity;
+- visible Preview diagnostics for MOSAIC resolver invariant failures;
+- typed structural-audio planning diagnostics that prevent TEXT from
+  continuing with missing authored clip audio;
 - legacy cue-less SPLIT compatibility.
 
 The initial feature merged after manual Preview and BAKE acceptance in addition
@@ -1399,8 +1514,10 @@ opening-state, and audio-ownership edge cases recorded above. Each correction
 was accepted only after the relevant focused gate and another live Rocky pass.
 The acceptance progression is therefore 52 tests for the closed residency
 milestone, 74 tests for COME IN ON plus the first pane-audio behavior, and
-**110 tests plus live listening** for the final resolver-driven audio
-architecture.
+**110 tests plus live listening** for the resolver-driven pane-audio
+architecture. The later OVERVIEW sequence then closed through 151-, 99-, and
+102-test gates, followed by the 23-test planning-diagnostic gate and a final
+successful merged Rocky smoke test.
 
 The most important final rule is now broader than picture alone:
 
