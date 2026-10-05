@@ -113,6 +113,74 @@ void main() {
     expect(labels[frame.pane('B').actorId], 'Camera B');
   });
 
+  test('TWOUP title slots remain source-owned until OVERVIEW settles', () {
+    const String source = '''[MOSAIC:wall]
+[LAYOUT_START:TWOUP:A=A:B=B]
+[LAYOUT:100:OVERVIEW:MAIN=A:OTHERS=B:DUR=12]
+[PANE:A]
+[CLIP:a:video/a.mp4:0:0:140:1]
+[/CLIP]
+[/PANE]
+[PANE:B]
+[CLIP:b:video/b.mp4:0:0:140:1]
+[/CLIP]
+[/PANE]
+[/MOSAIC]
+[STRUCT:MOSAIC.wall:PANENAMES:NAME1="Left":NAME2="Right":OVERLAY=NONE]
+''';
+    final StructuralSequencePlacement placement =
+        parseStructuralSequencePlacements(source).single;
+    final EditDocumentModel model = EditDocumentModel.parse(source);
+    final MosaicLayoutProgram program = MosaicLayoutProgram.fromMosaic(
+      source: source,
+      mosaic: model.mosaic('wall'),
+    );
+    final MosaicResolvedLayoutProgram resolved = program.resolve(
+      structuralMosaicLayoutContext(
+        programRect: const Rect.fromLTWH(0, 0, 1920, 1080),
+        placement: placement,
+        program: program,
+        chromeScale: 1.0,
+      ),
+    );
+
+    for (final int frameNumber in <int>[100, 105, 110]) {
+      final MosaicLayoutFrame frame = resolved.evaluate(frameNumber);
+      expect(
+        frame.pane('A').windowTitleSlot,
+        MosaicLayoutWindowTitleSlot.first,
+      );
+      expect(
+        frame.pane('B').windowTitleSlot,
+        MosaicLayoutWindowTitleSlot.second,
+      );
+      final Map<MosaicLayoutActorId, String> titles =
+          structuralMosaicLayoutWindowTitles(
+        frame: frame,
+        placement: placement,
+      );
+      expect(titles[frame.pane('A').actorId], contains('Left'));
+      expect(titles[frame.pane('B').actorId], contains('Right'));
+    }
+
+    final MosaicLayoutFrame settled = resolved.evaluate(111);
+    expect(settled.pane('A').windowTitleSlot, isNull);
+    expect(settled.pane('B').windowTitleSlot, isNull);
+    final Map<MosaicLayoutActorId, String> settledTitles =
+        structuralMosaicLayoutWindowTitles(
+      frame: settled,
+      placement: placement,
+    );
+    expect(
+      settledTitles[settled.pane('A').actorId],
+      placement.effectiveWindowTitle,
+    );
+    expect(
+      settledTitles[settled.pane('B').actorId],
+      placement.effectiveWindowTitle,
+    );
+  });
+
   test('OVERVIEW shelf labels reuse placement slot naming authority', () {
     final StructuralSequencePlacement placement =
         parseStructuralSequencePlacements(_namedSource).single;

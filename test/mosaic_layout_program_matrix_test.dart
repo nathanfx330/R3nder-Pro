@@ -437,6 +437,21 @@ void main() {
     });
   });
 
+  test('TWOUP window-title slots are resolver semantics', () {
+    final MosaicResolvedLayoutProgram resolved = programFor('''
+  [LAYOUT_START:TWOUP:A=A:B=B]''').resolve(context());
+    final MosaicLayoutFrame frame = resolved.evaluate(0);
+
+    expect(
+      frame.pane('A').windowTitleSlot,
+      MosaicLayoutWindowTitleSlot.first,
+    );
+    expect(
+      frame.pane('B').windowTitleSlot,
+      MosaicLayoutWindowTitleSlot.second,
+    );
+  });
+
   group('OVERVIEW matrix', () {
     test('two-pane OVERVIEW is MAIN plus one silent shelf thumbnail', () {
       final MosaicResolvedLayoutProgram resolved = programFor('''
@@ -459,6 +474,8 @@ void main() {
       expect(resolved.paneAudioFrame('A', sourceFrame: 0).gain, 1.0);
       expect(resolved.paneAudioFrame('B', sourceFrame: 0).gain, 0.0);
       expect(frame.paintActors.last.actorId.paneId, 'A');
+      expect(frame.pane('A').windowTitleSlot, isNull);
+      expect(frame.pane('B').windowTitleSlot, isNull);
     });
 
     test('two-pane OVERVIEW MAIN swap promotes the incoming focal pane', () {
