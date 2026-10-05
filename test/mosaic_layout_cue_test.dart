@@ -126,7 +126,7 @@ void main() {
     for (final String tag in <String>[
       '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,right]',
       '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=left,third]',
-      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right]',
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=]',
       '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right,third,left,extra]',
     ]) {
       final String source = sourceWith(tag);
@@ -142,14 +142,42 @@ void main() {
     }
   });
 
-  test('OVERVIEW semantic validation requires at least three MOSAIC panes', () {
+  test('OVERVIEW accepts MAIN plus one thumbnail on a two-pane MOSAIC', () {
     const String source = '''[MOSAIC:wall]
+  [LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right]
   [PANE:left]
     [CLIP:l:video/left.mp4:0:0:120:1]
     [/CLIP]
   [/PANE]
   [PANE:right]
     [CLIP:r:video/right.mp4:0:0:120:1]
+    [/CLIP]
+  [/PANE]
+[/MOSAIC]
+''';
+    final MosaicSequence mosaic = EditDocumentModel.parse(source).mosaic('wall');
+    final MosaicLayoutCue cue =
+        parseMosaicLayoutCues(source: source, mosaic: mosaic).single;
+
+    expect(cue.state.overviewMain, 'left');
+    expect(cue.state.overviewOthers, const <String>['right']);
+    expect(
+      validateMosaicLayoutCues(
+        mosaic: mosaic,
+        cues: <MosaicLayoutCue>[cue],
+      ).isValid,
+      isTrue,
+    );
+    expect(
+      cue.formatTag(),
+      '[LAYOUT:30:OVERVIEW:MAIN=left:OTHERS=right]',
+    );
+  });
+
+  test('OVERVIEW semantic validation requires at least two MOSAIC panes', () {
+    const String source = '''[MOSAIC:wall]
+  [PANE:left]
+    [CLIP:l:video/left.mp4:0:0:120:1]
     [/CLIP]
   [/PANE]
 [/MOSAIC]
@@ -162,7 +190,7 @@ void main() {
           frame: 30,
           state: MosaicLayoutState.overview(
             mainPane: 'left',
-            others: const <String>['right', 'third'],
+            others: const <String>['right'],
           ),
         ),
       ],
@@ -170,7 +198,7 @@ void main() {
 
     expect(
       validation.errors.map((MosaicLayoutIssue issue) => issue.code),
-      contains(MosaicLayoutIssueCode.overviewNeedsThreePanes),
+      contains(MosaicLayoutIssueCode.overviewNeedsTwoPanes),
     );
   });
 

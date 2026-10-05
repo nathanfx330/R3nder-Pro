@@ -34,6 +34,15 @@ const String _source = '''[EDIT:source]
 [/MOSAIC]
 ''';
 
+final String _source2 = _source.replaceFirst(
+  '''[PANE:pane3]
+[CLIP:p3:EDIT.source:0:0:300:1]
+[/CLIP]
+[/PANE]
+''',
+  '',
+);
+
 final String _source4 = _source.replaceFirst(
   '[/MOSAIC]\n',
   '''[PANE:pane4]
@@ -354,6 +363,30 @@ void main() {
       contains(
         '[LAYOUT:40:TWOUP:A=pane1:B=pane3:MAX:ASPECT=4X3]',
       ),
+    );
+  });
+
+  testWidgets('two-pane MOSAIC authors OVERVIEW MAIN plus one thumbnail',
+      (WidgetTester tester) async {
+    final GlobalKey<_HarnessState> host =
+        await _mount(tester, source: _source2);
+
+    expect(_key('mosaic-layout-add-overview'), findsOneWidget);
+    await tester.tap(_key('mosaic-layout-add-overview'));
+    await tester.pumpAndSettle();
+
+    expect(_key('mosaic-layout-overview-main'), findsOneWidget);
+    expect(_key('mosaic-layout-overview-other-1'), findsOneWidget);
+    expect(_key('mosaic-layout-overview-second'), findsNothing);
+    expect(_key('mosaic-layout-overview-other-2'), findsNothing);
+    expect(_key('mosaic-layout-overview-third'), findsNothing);
+
+    await tester.tap(_key('mosaic-layout-overview-apply'));
+    await tester.pumpAndSettle();
+
+    expect(
+      host.currentState!.source,
+      contains('[LAYOUT:40:OVERVIEW:MAIN=pane1:OTHERS=pane2]'),
     );
   });
 

@@ -2,7 +2,7 @@
 //
 // Pure deterministic geometry for MOSAIC OVERVIEW.
 //
-// One focal MAIN window occupies the upper presentation field. Two or three
+// One focal MAIN window occupies the upper presentation field. One to three
 // chrome-free thumbnail clients sit in a centered shelf underneath, with one
 // reserved label rectangle per thumbnail. Media/decoder metadata is
 // deliberately absent: authored ASPECT is the sole client-aspect authority.
@@ -57,11 +57,11 @@ MosaicOverviewGeometry mosaicOverviewGeometry({
       'OVERVIEW title height must be finite and non-negative.',
     );
   }
-  if (thumbnailCount < 2 || thumbnailCount > 3) {
+  if (thumbnailCount < 1 || thumbnailCount > 3) {
     throw ArgumentError.value(
       thumbnailCount,
       'thumbnailCount',
-      'OVERVIEW requires two or three thumbnails.',
+      'OVERVIEW requires one, two, or three thumbnails.',
     );
   }
 

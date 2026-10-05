@@ -81,11 +81,11 @@ class MosaicLayoutState {
         'OVERVIEW MAIN is required.',
       );
     }
-    if (others.length < 2 || others.length > 3) {
+    if (others.isEmpty || others.length > 3) {
       throw ArgumentError.value(
         others,
         'others',
-        'OVERVIEW requires two or three OTHERS panes.',
+        'OVERVIEW requires one, two, or three OTHERS panes.',
       );
     }
     final Set<String> unique = <String>{mainPane, ...others};
@@ -204,8 +204,10 @@ class MosaicLayoutState {
         if (overviewMain == null || overviewMain!.isEmpty) {
           throw StateError('OVERVIEW requires MAIN=<id>.');
         }
-        if (overviewOthers.length < 2 || overviewOthers.length > 3) {
-          throw StateError('OVERVIEW requires two or three OTHERS panes.');
+        if (overviewOthers.isEmpty || overviewOthers.length > 3) {
+          throw StateError(
+            'OVERVIEW requires one, two, or three OTHERS panes.',
+          );
         }
         out
           ..add('MAIN=$overviewMain')
@@ -394,7 +396,7 @@ enum MosaicLayoutIssueCode {
   unknownPane,
   duplicateTwoUpPane,
   bareTwoUpNeedsTwoPanes,
-  overviewNeedsThreePanes,
+  overviewNeedsTwoPanes,
   deadCue,
   legacyWithCues,
   initialWithFrameZeroCue,
@@ -666,13 +668,13 @@ MosaicLayoutValidationResult validateMosaicLayoutCues({
     }
 
     if (cue.state.kind == MosaicLayoutStateKind.overview &&
-        mosaic.panes.length < 3) {
+        mosaic.panes.length < 2) {
       issues.add(
         MosaicLayoutIssue(
           severity: MosaicLayoutIssueSeverity.error,
-          code: MosaicLayoutIssueCode.overviewNeedsThreePanes,
+          code: MosaicLayoutIssueCode.overviewNeedsTwoPanes,
           message:
-              'OVERVIEW at frame ${cue.frame} requires at least three panes.',
+              'OVERVIEW at frame ${cue.frame} requires at least two panes.',
           frame: cue.frame,
         ),
       );
@@ -809,9 +811,9 @@ _ParsedLayoutOptions _parseOptions(
         }
         final List<String> ids =
             value.split(',').map((String id) => id.trim()).toList();
-        if (ids.length < 2 || ids.length > 3) {
+        if (ids.isEmpty || ids.length > 3) {
           throw MosaicLayoutFormatException(
-            'OVERVIEW OTHERS must name two or three panes.',
+            'OVERVIEW OTHERS must name one, two, or three panes.',
             offset,
           );
         }
@@ -891,7 +893,7 @@ _ParsedLayoutOptions _parseOptions(
   if (kind == MosaicLayoutStateKind.overview) {
     if (overviewMain == null || overviewOthers == null) {
       throw MosaicLayoutFormatException(
-        'OVERVIEW requires MAIN=<pane> and OTHERS=<pane>,<pane>[,<pane>].',
+        'OVERVIEW requires MAIN=<pane> and one to three OTHERS panes.',
         offset,
       );
     }

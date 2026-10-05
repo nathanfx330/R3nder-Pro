@@ -698,7 +698,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
     int frame, {
     bool initial = false,
   }) async {
-    if (mosaic.panes.length < 3) return;
+    if (mosaic.panes.length < 2) return;
 
     MosaicLayoutState? existingState;
     if (initial) {
@@ -718,13 +718,21 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
 
     String mainPane = existingState?.overviewMain ?? mosaic.panes[0].id;
     String other1 = existingState?.overviewOthers[0] ?? mosaic.panes[1].id;
-    String other2 = existingState?.overviewOthers[1] ?? mosaic.panes[2].id;
+    String other2 = existingState != null &&
+            existingState.overviewOthers.length >= 2
+        ? existingState.overviewOthers[1]
+        : mosaic.panes.length >= 3
+            ? mosaic.panes[2].id
+            : mosaic.panes[1].id;
     String other3 = existingState != null &&
             existingState.overviewOthers.length == 3
         ? existingState.overviewOthers[2]
         : mosaic.panes.length >= 4
             ? mosaic.panes[3].id
-            : mosaic.panes[2].id;
+            : other2;
+    bool useSecond = existingState != null
+        ? existingState.overviewOthers.length >= 2
+        : mosaic.panes.length >= 3;
     bool useThird = existingState?.overviewOthers.length == 3;
     MosaicSplitClientAspect aspect =
         existingState?.splitAspect ?? MosaicSplitClientAspect.aspect16x9;
@@ -740,12 +748,12 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
             final List<String> selected = <String>[
               mainPane,
               other1,
-              other2,
+              if (useSecond) other2,
               if (useThird) other3,
             ];
-            final bool unique =
-                selected.toSet().length == selected.length;
-            final bool canUseThird = mosaic.panes.length >= 4;
+            final bool unique = selected.toSet().length == selected.length;
+            final bool canUseSecond = mosaic.panes.length >= 3;
+            final bool canUseThird = mosaic.panes.length >= 4 && useSecond;
             return AlertDialog(
               backgroundColor: R3Theme.panel,
               title: Text('Overview', style: widget.theme.value),
@@ -803,27 +811,52 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                         setDialogState(() => other1 = value);
                       },
                     ),
-                    SizedBox(height: sc(10)),
-                    DropdownButtonFormField<String>(
-                      key: const ValueKey<String>(
-                        'mosaic-layout-overview-other-2',
+                    if (canUseSecond) ...<Widget>[
+                      SizedBox(height: sc(4)),
+                      SwitchListTile(
+                        key: const ValueKey<String>(
+                          'mosaic-layout-overview-second',
+                        ),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(
+                          'Second thumbnail',
+                          style: widget.theme.fine,
+                        ),
+                        subtitle: Text(
+                          'Add a second ordered shelf thumbnail.',
+                          style: widget.theme.micro,
+                        ),
+                        value: useSecond,
+                        onChanged: (bool value) {
+                          setDialogState(() {
+                            useSecond = value;
+                            if (!value) useThird = false;
+                          });
+                        },
                       ),
-                      initialValue: other2,
-                      decoration: const InputDecoration(
-                        labelText: 'Thumbnail 2',
-                      ),
-                      items: <DropdownMenuItem<String>>[
-                        for (final MosaicPane pane in mosaic.panes)
-                          DropdownMenuItem<String>(
-                            value: pane.id,
-                            child: Text(pane.id),
+                      if (useSecond)
+                        DropdownButtonFormField<String>(
+                          key: const ValueKey<String>(
+                            'mosaic-layout-overview-other-2',
                           ),
-                      ],
-                      onChanged: (String? value) {
-                        if (value == null) return;
-                        setDialogState(() => other2 = value);
-                      },
-                    ),
+                          initialValue: other2,
+                          decoration: const InputDecoration(
+                            labelText: 'Thumbnail 2',
+                          ),
+                          items: <DropdownMenuItem<String>>[
+                            for (final MosaicPane pane in mosaic.panes)
+                              DropdownMenuItem<String>(
+                                value: pane.id,
+                                child: Text(pane.id),
+                              ),
+                          ],
+                          onChanged: (String? value) {
+                            if (value == null) return;
+                            setDialogState(() => other2 = value);
+                          },
+                        ),
+                    ],
                     if (canUseThird) ...<Widget>[
                       SizedBox(height: sc(4)),
                       SwitchListTile(
@@ -837,7 +870,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                           style: widget.theme.fine,
                         ),
                         subtitle: Text(
-                          'Use MAIN plus three ordered shelf thumbnails.',
+                          'Add a third ordered shelf thumbnail.',
                           style: widget.theme.micro,
                         ),
                         value: useThird,
@@ -918,7 +951,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                               mainPane: mainPane,
                               others: <String>[
                                 other1,
-                                other2,
+                                if (useSecond) other2,
                                 if (useThird) other3,
                               ],
                               aspect: aspect,
@@ -1134,7 +1167,7 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                   value: 'twoup',
                   child: Text('TWO UP…'),
                 ),
-              if (mosaic.panes.length >= 3)
+              if (mosaic.panes.length >= 2)
                 const PopupMenuItem<String>(
                   value: 'overview',
                   child: Text('OVERVIEW…'),
@@ -1252,13 +1285,13 @@ class _MosaicSurfaceState extends State<MosaicSurface> {
                 SizedBox(width: sc(6)),
                 InkWell(
                   key: const ValueKey<String>('mosaic-layout-add-overview'),
-                  onTap: widget.isPlaying || mosaic.panes.length < 3
+                  onTap: widget.isPlaying || mosaic.panes.length < 2
                       ? null
                       : () => _configureOverview(document, mosaic, frame),
                   child: _layoutActionChip(
                     label: 'OVERVIEW',
                     keyName: 'mosaic-layout-add-overview-chip',
-                    enabled: !widget.isPlaying && mosaic.panes.length >= 3,
+                    enabled: !widget.isPlaying && mosaic.panes.length >= 2,
                   ),
                 ),
                 SizedBox(width: sc(6)),

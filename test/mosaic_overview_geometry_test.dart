@@ -34,7 +34,7 @@ void main() {
 
   for (final MosaicSplitClientAspect aspect
       in MosaicSplitClientAspect.values) {
-    for (final int thumbnailCount in <int>[2, 3]) {
+    for (final int thumbnailCount in <int>[1, 2, 3]) {
       test(
           'OVERVIEW +$thumbnailCount ${aspect.name} is bounded, '
           'aspect-correct, and disjoint', () {
@@ -114,7 +114,7 @@ void main() {
   });
 
   test('OVERVIEW rejects invalid thumbnail counts', () {
-    for (final int count in <int>[0, 1, 4]) {
+    for (final int count in <int>[0, 4]) {
       expect(
         () => mosaicOverviewGeometry(
           frame: frame,
