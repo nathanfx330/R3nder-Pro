@@ -713,7 +713,31 @@ class _StructuralMosaicLayoutPreviewState
         }
 
         final ui.Size size = ui.Size(width, height);
-        final MosaicResolvedLayoutProgram resolved = _ensureResolved(size);
+        final MosaicResolvedLayoutProgram resolved;
+        try {
+          resolved = _ensureResolved(size);
+        } catch (error, stack) {
+          _reportRenderError(
+            error,
+            stack,
+            'while resolving layout Preview during build',
+          );
+          return ColoredBox(
+            color: R3Theme.bg,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'MOSAIC LAYOUT ERROR\n$error',
+                  textAlign: TextAlign.center,
+                  style: widget.theme.micro.copyWith(
+                    color: R3Theme.danger,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
         final MosaicLayoutFrame layoutFrame =
             resolved.evaluate(widget.sourceFrame);
         final MosaicLayoutFrame displayFrame =
