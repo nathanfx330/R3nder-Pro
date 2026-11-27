@@ -173,7 +173,7 @@ void main() {
     final ProgramStructuralAudioRender program =
         await ProgramStructuralAudioRenderer(
       timeline: timeline,
-      renderSource: (_) async => sourceRender,
+      renderSource: (_, _) async => sourceRender,
     ).render();
 
     expect(program.interleavedStereo[0], 0.0);

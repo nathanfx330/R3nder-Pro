@@ -68,7 +68,7 @@ void main() {
     final ProgramStructuralAudioRender program =
         await ProgramStructuralAudioRenderer(
       timeline: timeline,
-      renderSource: (String structuralSource) async {
+      renderSource: (String structuralSource, _) async {
         expect(structuralSource, placement.sourceRef.canonicalSource);
         return source;
       },
